@@ -40,7 +40,8 @@ def generate_dataset(theta=None, sigma=SIGMA_OBS, seed=0, frequencies=None):
     observations = []
 
     for t, head_vel in stimuli:
-        eye_pos_clean = simulate(theta, t, head_vel)
+        eye_rot_clean = simulate(theta, t, head_vel)
+        eye_pos_clean = eye_rot_clean[:, 0]   # horizontal component only
         key, subkey = jax.random.split(key)
         noise = sigma * jax.random.normal(subkey, shape=eye_pos_clean.shape)
         observations.append(eye_pos_clean + noise)

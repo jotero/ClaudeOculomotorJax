@@ -64,7 +64,7 @@ def _condition_val_and_grad(phi, tau_c, tau_s, t, head_vel, eye_obs):
     """
     def single_loss(phi):
         theta = _unconstrain_to_params(phi, tau_c, tau_s)
-        eye_pred = simulate(theta, t, head_vel)
+        eye_pred = simulate(theta, t, head_vel)[:, 0]   # horizontal component
         # Normalise by observed variance so all conditions contribute equally.
         # Without this, the 0.05 Hz condition (95 deg amplitude) swamps the
         # 2 Hz condition (1 deg amplitude) which is the primary tau_p signal.

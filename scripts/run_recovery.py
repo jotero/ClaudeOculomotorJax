@@ -57,7 +57,7 @@ def compute_bode(theta, frequencies=FREQUENCIES_HZ, amplitude=AMPLITUDE_DEG_S,
     for freq in frequencies:
         t = jnp.arange(0.0, duration, 1.0 / sample_rate)
         head_vel = amplitude * jnp.sin(2.0 * jnp.pi * freq * t)
-        eye_pos = simulate(theta, t, head_vel)
+        eye_pos = simulate(theta, t, head_vel)[:, 0]   # horizontal component
 
         # Steady-state: use last half of the trial
         half = len(t) // 2
@@ -174,7 +174,7 @@ def plot_time_domain(stimuli, observations, theta_fit):
     condition_labels = [f'{f} Hz' for f in FREQUENCIES_HZ] + ['Step']
 
     for i, ((t, head_vel), eye_obs) in enumerate(zip(stimuli, observations)):
-        eye_pred = np.array(simulate(theta_fit, t, head_vel))
+        eye_pred = np.array(simulate(theta_fit, t, head_vel))[:, 0]
         t_np = np.array(t)
         # Show only first 5 s for clarity (sinusoids); full trial for step
         mask = t_np <= 5.0 if i < len(FREQUENCIES_HZ) else np.ones(len(t_np), dtype=bool)
@@ -209,7 +209,7 @@ def plot_residuals(stimuli, observations, theta_fit):
     condition_labels = [f'{f} Hz' for f in FREQUENCIES_HZ] + ['Step']
 
     for i, ((t, head_vel), eye_obs) in enumerate(zip(stimuli, observations)):
-        eye_pred = np.array(simulate(theta_fit, t, head_vel))
+        eye_pred = np.array(simulate(theta_fit, t, head_vel))[:, 0]
         residual = np.array(eye_obs) - eye_pred
         t_np = np.array(t)
         mask = t_np <= 5.0 if i < len(FREQUENCIES_HZ) else np.ones(len(t_np), dtype=bool)
