@@ -43,11 +43,12 @@ import jax.numpy as jnp
 import diffrax
 
 from oculomotor.sim.synthetic import THETA_TRUE
-from oculomotor.models.vor import simulate
+from oculomotor.models.ocular_motor_simulator import simulate
 from oculomotor.models import canal as canal_ssm
-from oculomotor.models.vor import (
-    vor_vector_field, _N_TOTAL, _IDX_C, _IDX_VS, _IDX_NI, _IDX_P, _DT_SOLVE
+from oculomotor.models.ocular_motor_simulator import (
+    vor_vector_field, _N_TOTAL, _IDX_C, _IDX_VS, _IDX_NI, _IDX_P, _IDX_VIS, _DT_SOLVE
 )
+from oculomotor.sim.stimulus import okr_step, combined, rotation_step
 
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), '..', 'outputs')
 
@@ -290,8 +291,10 @@ def _simulate_all_states(theta, t_array, head_vel_array,
     # Pad 1-D head velocity to 3-D (horizontal only)
     hv1d = head_vel_array
     hv3  = jnp.stack([hv1d, jnp.zeros_like(hv1d), jnp.zeros_like(hv1d)], axis=1)
-    hv_interp   = diffrax.LinearInterpolation(ts=t_array, ys=hv3)
-    x0          = jnp.zeros(_N_TOTAL)
+    vs3       = jnp.zeros_like(hv3)   # dark condition
+    hv_interp = diffrax.LinearInterpolation(ts=t_array, ys=hv3)
+    vs_interp = diffrax.LinearInterpolation(ts=t_array, ys=vs3)
+    x0        = jnp.zeros(_N_TOTAL)
     if canal_gains is None:
         gains_array = jnp.ones(canal_ssm.N_CANALS)
     else:
@@ -304,7 +307,7 @@ def _simulate_all_states(theta, t_array, head_vel_array,
         t1=t_array[-1],
         dt0=dt,
         y0=x0,
-        args=(theta, hv_interp, jnp.float32(canal_floor), gains_array),
+        args=(theta, hv_interp, vs_interp, jnp.float32(canal_floor), gains_array),
         stepsize_controller=diffrax.ConstantStepSize(),
         saveat=diffrax.SaveAt(ts=t_array),
         max_steps=max_steps,
@@ -525,6 +528,97 @@ def demo_3d_hit():
 
 
 # ---------------------------------------------------------------------------
+# Demo 7: Optokinetic nystagmus (OKN) — OKR step response
+# ---------------------------------------------------------------------------
+
+def demo_okr():
+    """OKN slow-phase build-up and VVOR (VOR + OKR in light).
+
+    Panel A: OKN only — stationary head, moving scene.
+             Eye velocity ramps up from 0 toward scene velocity with OKR
+             time constant.  Compare with and without OKR gain.
+
+    Panel B: VVOR — simultaneous head rotation + matched scene motion.
+             In light the VS/OKR complement the VOR → gain closer to 1
+             even at low frequencies where the canal high-pass attenuates.
+    """
+    sr        = 200.0
+    okn_dur   = 30.0
+    scene_vel = 30.0   # deg/s
+
+    # ── Panel A: OKN step (head stationary, scene moves) ─────────────────
+    stim_okn = okr_step(v_scene_deg_s=scene_vel, duration=okn_dur,
+                         axis=0, sample_rate=sr)
+    max_steps_okn = int(okn_dur / _DT_SOLVE) + 500
+
+    eye_okn = np.array(simulate(THETA, stim_okn,
+                                 max_steps=max_steps_okn))[:, 0]   # horizontal
+
+    # No OKR (g_okr = 0) for comparison
+    theta_dark = dict(THETA)
+    theta_dark['g_okr'] = 0.0
+    eye_dark = np.array(simulate(theta_dark, stim_okn,
+                                  max_steps=max_steps_okn))[:, 0]
+
+    t_np = np.array(stim_okn.t)
+    ev_okn  = np.gradient(eye_okn,  float(stim_okn.dt))
+    ev_dark = np.gradient(eye_dark, float(stim_okn.dt))
+
+    # ── Panel B: VVOR — rotation + scene moving together ─────────────────
+    vvor_dur = 60.0
+    freq     = 0.02   # Hz (low freq where canal HP attenuates)
+    stim_vor = rotation_step(v_deg_s=60.0, rotate_dur=15.0,
+                              coast_dur=vvor_dur - 15.0, sample_rate=sr)
+    # Scene co-moves with head (stabilized scene = VOR suppression condition)
+    stim_vvor = combined(stim_vor,
+                          okr_step(v_scene_deg_s=60.0,
+                                   duration=vvor_dur, sample_rate=sr))
+    max_steps_vvor = int(vvor_dur / _DT_SOLVE) + 500
+    eye_vvor = np.array(simulate(THETA, stim_vvor,
+                                  max_steps=max_steps_vvor))[:, 0]
+    eye_vor  = np.array(simulate(THETA, stim_vor,
+                                  max_steps=max_steps_vvor))[:, 0]
+    t_vvor   = np.array(stim_vvor.t)
+    hv_vvor  = np.array(stim_vvor.omega[:, 0])
+
+    ev_vvor = np.gradient(eye_vvor, float(stim_vvor.dt))
+    ev_vor  = np.gradient(eye_vor,  float(stim_vor.dt))
+
+    # ── Plot ──────────────────────────────────────────────────────────────
+    fig, axes = plt.subplots(2, 1, figsize=(10, 8))
+
+    # Panel A
+    ax = axes[0]
+    ax.axhline(scene_vel, color='gray', lw=1.0, ls='--', label='Scene vel (30 deg/s)')
+    ax.plot(t_np, ev_dark, color='tomato',    lw=1.5, ls='--', label='No OKR (g_okr=0)')
+    ax.plot(t_np, ev_okn,  color='steelblue', lw=1.5,          label=f'OKR (g_okr={THETA["g_okr"]})')
+    ax.set_ylabel('Eye velocity (deg/s)')
+    ax.set_xlabel('Time (s)')
+    ax.set_title('Optokinetic nystagmus — step scene velocity (head stationary)')
+    ax.legend(fontsize=9)
+    ax.grid(True, alpha=0.3)
+
+    # Panel B
+    ax = axes[1]
+    ax.plot(t_vvor, hv_vvor,  color='gray',      lw=1.0, alpha=0.7, label='Head vel')
+    ax.plot(t_vvor, ev_vor,   color='tomato',    lw=1.5, ls='--',   label='VOR only (dark)')
+    ax.plot(t_vvor, ev_vvor,  color='steelblue', lw=1.5,            label='VVOR (scene co-moves)')
+    ax.axhline(0, color='k', lw=0.5)
+    ax.set_ylabel('Eye velocity (deg/s)')
+    ax.set_xlabel('Time (s)')
+    ax.set_title('VVOR — step rotation (head + co-moving scene)\n'
+                 'Scene adds OKR support; eye velocity closer to head velocity')
+    ax.legend(fontsize=9)
+    ax.grid(True, alpha=0.3)
+
+    fig.tight_layout()
+    path = os.path.join(OUTPUT_DIR, 'okr.png')
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+    print(f'  Saved {path}')
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -553,6 +647,9 @@ def main():
 
     print('\n6. 3-D head impulse test (all 6 canal axes)')
     demo_3d_hit()
+
+    print('\n7. OKR — optokinetic nystagmus + VVOR')
+    demo_okr()
 
     print(f'\nDone. Plots saved to {OUTPUT_DIR}/')
 

@@ -26,7 +26,7 @@ import jax.numpy as jnp
 from oculomotor.sim.synthetic import generate_dataset, THETA_TRUE
 from oculomotor.sim.stimuli import FREQUENCIES_HZ, AMPLITUDE_DEG_S
 from oculomotor.fitting.optimize import fit
-from oculomotor.models.vor import simulate
+from oculomotor.models.ocular_motor_simulator import simulate
 
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), '..', 'outputs')
 

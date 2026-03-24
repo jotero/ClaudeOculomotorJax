@@ -3,17 +3,19 @@
 import jax
 import jax.numpy as jnp
 
-from oculomotor.models.vor import simulate
+from oculomotor.models.ocular_motor_simulator import simulate
 from oculomotor.sim.stimuli import make_all_stimuli
 
 THETA_TRUE = {
-    'tau_c':  5.0,    # canal adaptation time constant (s); HP corner ≈ 0.03 Hz
-    'tau_s':  0.005,  # canal inertia time constant (s); LP corner ≈ 32 Hz
-    'g_vor':  1.0,    # VOR gain (unitless)
-    'tau_i':  25.0,   # neural integrator time constant (s)
-    'tau_p':  0.15,   # plant time constant (s)
-    'tau_vs': 50.0,   # VS prior time constant (s); τ_eff = 1/(1/τ_vs + K_vs) ≈ 20 s
-    'K_vs':   0.03,   # VS Kalman gain (1/s)
+    'tau_c':      5.0,    # canal adaptation time constant (s); HP corner ≈ 0.03 Hz
+    'tau_s':      0.005,  # canal inertia time constant (s); LP corner ≈ 32 Hz
+    'g_vor':      1.0,    # VOR gain (unitless)
+    'tau_i':      25.0,   # neural integrator time constant (s)
+    'tau_p':      0.15,   # plant time constant (s)
+    'tau_vs':     50.0,   # VS prior time constant (s); τ_eff = 1/(1/τ_vs + K_vs) ≈ 20 s
+    'K_vs':       0.03,   # VS Kalman gain (1/s)
+    'g_okr':      0.7,    # OKR gain (unitless); retinal-slip → VS drive
+    'tau_okr_del': 0.08,  # visual delay time constant (s); ~80 ms
 }
 
 SIGMA_OBS = 0.3  # deg, observation noise std

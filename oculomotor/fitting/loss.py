@@ -3,7 +3,7 @@
 import jax
 import jax.numpy as jnp
 
-from oculomotor.models.vor import simulate
+from oculomotor.models.ocular_motor_simulator import simulate
 
 
 def _unconstrain_to_params(phi, tau_c, tau_s):
