@@ -6,7 +6,8 @@ starting from perturbed initial conditions.
 
 import pytest
 
-from oculomotor.sim.synthetic import generate_dataset, THETA_TRUE
+from oculomotor.sim.synthetic import generate_dataset
+from oculomotor.models.ocular_motor_simulator import THETA_DEFAULT
 from oculomotor.fitting.optimize import fit
 
 THETA_INIT = {
@@ -24,7 +25,7 @@ def _relative_error(recovered, true):
 
 
 def test_parameter_recovery():
-    stimuli, observations = generate_dataset(theta=THETA_TRUE, seed=42)
+    stimuli, observations = generate_dataset(theta=THETA_DEFAULT, seed=42)
 
     theta_fit, _ = fit(
         stimuli, observations,
@@ -34,9 +35,9 @@ def test_parameter_recovery():
     )
 
     for key in ('tau_c', 'g_vor', 'tau_i', 'tau_p'):
-        err = _relative_error(float(theta_fit[key]), THETA_TRUE[key])
-        print(f"  {key}: true={THETA_TRUE[key]:.4f}  fit={float(theta_fit[key]):.4f}  err={err:.2%}")
+        err = _relative_error(float(theta_fit[key]), THETA_DEFAULT[key])
+        print(f"  {key}: true={THETA_DEFAULT[key]:.4f}  fit={float(theta_fit[key]):.4f}  err={err:.2%}")
         assert err <= TOLERANCE, (
-            f"{key}: recovered {float(theta_fit[key]):.4f} vs true {THETA_TRUE[key]:.4f} "
+            f"{key}: recovered {float(theta_fit[key]):.4f} vs true {THETA_DEFAULT[key]:.4f} "
             f"({err:.2%} > {TOLERANCE:.0%})"
         )

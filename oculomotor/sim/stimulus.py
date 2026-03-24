@@ -17,6 +17,7 @@ Paradigm quick-reference
     okr_step(...)             full-field scene step → optokinetic nystagmus (OKN)
     okr_sinusoidal(...)       sinusoidal scene motion → sinusoidal OKR
     combined(...)             superimpose any two stimuli (e.g. VVOR = VOR + OKR)
+    make_all_stimuli(...)     standard battery: sinusoids + step (for fitting / Bode)
 """
 
 import jax.numpy as jnp
@@ -112,7 +113,7 @@ def sinusoidal_rotation(freq_hz=0.1, amplitude=30.0, duration=20.0,
     """
     t     = jnp.arange(0.0, duration, 1.0 / sample_rate)
     omega = amplitude * jnp.sin(2.0 * jnp.pi * freq_hz * t)
-    return Stimulus(t, omega=omega)
+    return Stimulus(t, omega)
 
 
 def hit(direction=1.0, v_peak=200.0, duration=0.15,
@@ -198,3 +199,34 @@ def combined(stim_a, stim_b):
         a_lin   = stim_a.a_lin   + stim_b.a_lin,
         v_scene = stim_a.v_scene + stim_b.v_scene,
     )
+
+
+# ── Standard stimulus battery ──────────────────────────────────────────────────
+
+FREQUENCIES_HZ    = [0.05, 0.1, 0.2, 0.5, 1.0, 2.0]
+AMPLITUDE_DEG_S   = 30.0
+DURATION_S        = 20.0
+SAMPLE_RATE_HZ    = 100.0
+
+
+def make_all_stimuli(frequencies=None, amplitude=AMPLITUDE_DEG_S,
+                     duration=DURATION_S, sample_rate=SAMPLE_RATE_HZ):
+    """Standard fitting battery: sinusoidal rotations at each frequency + a step.
+
+    Args:
+        frequencies:  list of frequencies in Hz (default FREQUENCIES_HZ)
+        amplitude:    peak head velocity (deg/s)
+        duration:     sinusoid duration (s)
+        sample_rate:  samples per second (Hz)
+
+    Returns:
+        list of Stimulus objects (sinusoids first, step last)
+    """
+    if frequencies is None:
+        frequencies = FREQUENCIES_HZ
+    stimuli = [sinusoidal_rotation(f, amplitude=amplitude, duration=duration,
+                                   sample_rate=sample_rate)
+               for f in frequencies]
+    stimuli.append(rotation_step(v_deg_s=amplitude, rotate_dur=1.0,
+                                 coast_dur=39.0, sample_rate=sample_rate))
+    return stimuli

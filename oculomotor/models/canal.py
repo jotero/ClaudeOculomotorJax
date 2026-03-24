@@ -8,8 +8,8 @@ Per-canal signal (scalar — projection onto canal axis):
     h_i     = n_i · ω_head              projected 3-D head angular velocity
     dx1_i   = (h_i − x1_i) / τ_c       adaptation LP state (cupula)
     y_hp_i  = h_i − x1_i               HP intermediate (long time constant)
-    dx2_i   = (y_hp_i − x2_i) / τ_s   inertia LP state
-    y_i     = nl(x2_i, floor) · g_i   bandpass output + nonlinearity
+    dx2_i   = (y_hp_i - x2_i) / τ_s   inertia LP state
+    y_i     = (nl(x2_i) + floor) · g_i   absolute firing rate; rest = floor
 
 Transfer function per canal (ω_head → y):
     H(s) = τ_c·s / [(1+s·τ_c)(1+s·τ_s)]   — bandpass
@@ -55,7 +55,7 @@ from jax.nn import softplus
 
 # ── Canal geometry ─────────────────────────────────────────────────────────────
 
-_S = 0.5 ** 0.5   # sin/cos 45° = 1/√2
+_S = 2 ** -0.5    # sin/cos 45° = 1/√2
 
 ORIENTATIONS = jnp.array([
     [ 1.,   0.,   0.],   # canal 0 — RHC  right horizontal   (yaw+)
@@ -115,19 +115,20 @@ def get_B(theta):
 
 # ── Canal output (nonlinear) ───────────────────────────────────────────────────
 
-def canal_outputs(x_c, floor, gains):
+def canal_nonlinearity(x_c, gains):
     """Compute bandpass afferent outputs for all canals.
 
     Args:
         x_c:   (N_STATES,)  canal state [x1_c0..x1_c5 | x2_c0..x2_c5]
-        floor: scalar        inhibition depth / excitatory threshold (deg/s).
-                             Use 1e6 for linear behaviour (no nonlinearity).
         gains: (N_CANALS,)  per-canal scale; 0.0 = complete loss.
 
     Returns:
-        y: (N_CANALS,)  nonlinear bandpass afferent outputs
+        y: (N_CANALS,)  absolute afferent firing rate (deg/s equivalent)
+           At rest (x2=0): y = FLOOR (resting discharge).
+           Full inhibition: y → 0.  Excitation: y > FLOOR.
     """
     x2   = x_c[N_CANALS:]                              # (N_CANALS,) inertia states
     k    = _SOFTNESS
-    y_nl = -floor + softplus(k * (x2 + floor)) / k + softplus(k * (x2 - floor)) / k
-    return gains * y_nl
+    f    = FLOOR
+    y_nl = -f + softplus(k * (x2 + f)) / k + softplus(k * (x2 - f)) / k
+    return gains * (y_nl + f)   # absolute firing rate: rest = FLOOR, inhibitory → 0

@@ -23,15 +23,16 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import jax.numpy as jnp
 
-from oculomotor.sim.synthetic import generate_dataset, THETA_TRUE
-from oculomotor.sim.stimuli import FREQUENCIES_HZ, AMPLITUDE_DEG_S
+from oculomotor.sim.synthetic import generate_dataset
+from oculomotor.models.ocular_motor_simulator import THETA_DEFAULT
+from oculomotor.sim.stimulus import FREQUENCIES_HZ, AMPLITUDE_DEG_S
 from oculomotor.fitting.optimize import fit
 from oculomotor.models.ocular_motor_simulator import simulate
 
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), '..', 'outputs')
 
-TAU_C_FIXED = THETA_TRUE['tau_c']  # 5.0 s — assumed known, not optimized
-TAU_S_FIXED = THETA_TRUE['tau_s']  # 0.005 s — assumed known, not optimized
+TAU_C_FIXED = THETA_DEFAULT['tau_c']  # 5.0 s — assumed known, not optimized
+TAU_S_FIXED = THETA_DEFAULT['tau_s']  # 0.005 s — assumed known, not optimized
 
 THETA_INIT = {
     'g_vor':  0.7,    # true: 1.0
@@ -117,7 +118,7 @@ def plot_loss_curve(history):
 
 def plot_parameter_trajectories(history):
     keys = ['g_vor', 'tau_i', 'tau_p', 'tau_vs', 'K_vs']
-    true_vals = {k: THETA_TRUE[k] for k in keys}
+    true_vals = {k: THETA_DEFAULT[k] for k in keys}
     labels = {'g_vor': r'$g_{vor}$', 'tau_i': r'$\tau_i$ (s)',
               'tau_p': r'$\tau_p$ (s)', 'tau_vs': r'$\tau_{vs}$ (s)',
               'K_vs': r'$K_{vs}$ (1/s)'}
@@ -173,9 +174,9 @@ def plot_time_domain(stimuli, observations, theta_fit):
 
     condition_labels = [f'{f} Hz' for f in FREQUENCIES_HZ] + ['Step']
 
-    for i, ((t, head_vel), eye_obs) in enumerate(zip(stimuli, observations)):
-        eye_pred = np.array(simulate(theta_fit, t, head_vel))[:, 0]
-        t_np = np.array(t)
+    for i, (stim, eye_obs) in enumerate(zip(stimuli, observations)):
+        eye_pred = np.array(simulate(theta_fit, stim))[:, 0]
+        t_np = np.array(stim.t)
         # Show only first 5 s for clarity (sinusoids); full trial for step
         mask = t_np <= 5.0 if i < len(FREQUENCIES_HZ) else np.ones(len(t_np), dtype=bool)
         ax = axes[i]
@@ -208,10 +209,10 @@ def plot_residuals(stimuli, observations, theta_fit):
 
     condition_labels = [f'{f} Hz' for f in FREQUENCIES_HZ] + ['Step']
 
-    for i, ((t, head_vel), eye_obs) in enumerate(zip(stimuli, observations)):
-        eye_pred = np.array(simulate(theta_fit, t, head_vel))[:, 0]
+    for i, (stim, eye_obs) in enumerate(zip(stimuli, observations)):
+        eye_pred = np.array(simulate(theta_fit, stim))[:, 0]
         residual = np.array(eye_obs) - eye_pred
-        t_np = np.array(t)
+        t_np = np.array(stim.t)
         mask = t_np <= 5.0 if i < len(FREQUENCIES_HZ) else np.ones(len(t_np), dtype=bool)
         ax = axes[i]
         ax.plot(t_np[mask], residual[mask], lw=0.8, color='tomato')
@@ -240,7 +241,7 @@ def main():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
     print("=== Generating synthetic data ===")
-    stimuli, observations = generate_dataset(theta=THETA_TRUE, seed=0)
+    stimuli, observations = generate_dataset(theta=THETA_DEFAULT, seed=0)
     print(f"  {len(stimuli)} conditions, {len(stimuli[0][0])} samples each")
 
     print("\n=== Fitting model ===")
@@ -258,7 +259,7 @@ def main():
     print(f"  tau_s = {TAU_S_FIXED:.4f} s  [FIXED — not optimized]")
     print("\n=== Parameter recovery summary ===")
     for key in ('g_vor', 'tau_i', 'tau_p', 'tau_vs', 'K_vs'):
-        true_val = THETA_TRUE[key]
+        true_val = THETA_DEFAULT[key]
         fit_val = float(theta_fit[key])
         err = abs(fit_val - true_val) / abs(true_val) * 100
         status = "OK" if err <= 10.0 else "FAIL"
@@ -267,7 +268,7 @@ def main():
     print("\n=== Saving diagnostic plots ===")
     plot_loss_curve(history)
     plot_parameter_trajectories(history)
-    plot_bode(THETA_TRUE, theta_fit)
+    plot_bode(THETA_DEFAULT, theta_fit)
     plot_time_domain(stimuli, observations, theta_fit)
     plot_residuals(stimuli, observations, theta_fit)
 

@@ -42,17 +42,17 @@ import matplotlib.pyplot as plt
 import jax.numpy as jnp
 import diffrax
 
-from oculomotor.sim.synthetic import THETA_TRUE
+from oculomotor.models.ocular_motor_simulator import THETA_DEFAULT
 from oculomotor.models.ocular_motor_simulator import simulate
 from oculomotor.models import canal as canal_ssm
 from oculomotor.models.ocular_motor_simulator import (
-    vor_vector_field, _N_TOTAL, _IDX_C, _IDX_VS, _IDX_NI, _IDX_P, _IDX_VIS, _DT_SOLVE
+    vor_vector_field, _N_TOTAL, _IDX_C, _IDX_VS, _IDX_NI, _IDX_P, _IDX_VIS, _IDX_OKR, _DT_SOLVE
 )
-from oculomotor.sim.stimulus import okr_step, combined, rotation_step
+from oculomotor.sim.stimulus import okr_step, rotation_step, Stimulus
 
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), '..', 'outputs')
 
-THETA = THETA_TRUE  # ground-truth parameters for all demos
+THETA = THETA_DEFAULT  # ground-truth parameters for all demos
 
 
 # ---------------------------------------------------------------------------
@@ -152,8 +152,6 @@ def demo_velocity_storage():
 
 def demo_hit():
     """HIT: normal canal pair vs. unilateral loss."""
-    FLOOR = 80.0
-
     conditions = [
         ('Normal (rightward)',     +1.0, None),
         ('Normal (leftward)',      -1.0, None),
@@ -170,7 +168,7 @@ def demo_hit():
         dt = float(t[1] - t[0])
         max_steps = int(4.0 / dt) + 100
         eye_pos = np.array(simulate(THETA, t, hv,
-                                    canal_floor=FLOOR, canal_gains=gains,
+                                    canal_gains=gains,
                                     max_steps=max_steps, dt_solve=dt))[:, 0]
         ev      = eye_velocity(eye_pos, dt)
         hv_np   = np.array(hv)
@@ -237,61 +235,29 @@ def demo_low_freq():
 
 
 # ---------------------------------------------------------------------------
-# Demo 4: Ewald's 2nd law across amplitudes
-# ---------------------------------------------------------------------------
-
-def demo_ewald():
-    """VOR gain vs. head velocity amplitude: asymmetry from half-wave rectification."""
-    amplitudes = np.array([20, 50, 100, 150, 200, 250, 300], dtype=float)
-    FLOOR = 80.0
-
-    gains_right = []
-    gains_left  = []
-
-    for amp in amplitudes:
-        for direction, gains_list in [(+1.0, gains_right), (-1.0, gains_left)]:
-            t, hv = hit_stimulus(direction=direction, v_peak=amp,
-                                 duration=0.15, total_time=2.0, sample_rate=200.0)
-            dt        = float(t[1] - t[0])
-            max_steps = int(2.0 / dt) + 100
-            eye_pos   = np.array(simulate(THETA, t, hv,
-                                          canal_floor=FLOOR,
-                                          max_steps=max_steps, dt_solve=dt))[:, 0]
-            ev       = eye_velocity(eye_pos, dt)
-            hit_mask = np.array(t) <= 0.2
-            peak_eye = np.max(np.abs(ev[hit_mask]))
-            gains_list.append(peak_eye / amp)
-
-    fig, ax = plt.subplots(figsize=(7, 4))
-    ax.plot(amplitudes, gains_right, 'o-', color='steelblue', label='Rightward (canal A)')
-    ax.plot(amplitudes, gains_left,  's-', color='tomato',    label='Leftward  (canal B)')
-    ax.axhline(1.0, color='k', ls='--', lw=0.8, label='Ideal gain = 1')
-    ax.set_xlabel('Head impulse amplitude (deg/s)')
-    ax.set_ylabel('VOR gain (peak eye vel / head vel)')
-    ax.set_title("Ewald's 2nd law — VOR gain saturation with canal floor")
-    ax.legend()
-    ax.grid(True, alpha=0.3)
-    ax.set_ylim(0, 1.2)
-    fig.tight_layout()
-    path = os.path.join(OUTPUT_DIR, 'ewald.png')
-    fig.savefig(path, dpi=150)
-    plt.close(fig)
-    print(f'  Saved {path}')
-
-
-# ---------------------------------------------------------------------------
 # Demo 5: Signal trace — internal states
 # ---------------------------------------------------------------------------
 
-def _simulate_all_states(theta, t_array, head_vel_array,
-                          canal_floor=1e6, canal_gains=None,
+def _simulate_all_states(theta, t_or_stimulus, head_vel_array=None,
+                          canal_gains=None,
                           max_steps=2000, dt_solve=None):
-    """Run the VOR ODE and return the full state matrix (T, N_TOTAL)."""
+    """Run the VOR ODE and return the full state matrix (T, N_TOTAL).
+
+    Accepts either a Stimulus object (second arg) or old-style (t_array, head_vel_array).
+    """
     dt = _DT_SOLVE if dt_solve is None else dt_solve
-    # Pad 1-D head velocity to 3-D (horizontal only)
-    hv1d = head_vel_array
-    hv3  = jnp.stack([hv1d, jnp.zeros_like(hv1d), jnp.zeros_like(hv1d)], axis=1)
-    vs3       = jnp.zeros_like(hv3)   # dark condition
+
+    if hasattr(t_or_stimulus, 'omega'):          # Stimulus object
+        stim    = t_or_stimulus
+        t_array = stim.t
+        hv3     = stim.omega
+        vs3     = stim.v_scene
+    else:                                         # raw arrays
+        t_array = t_or_stimulus
+        hv1d    = head_vel_array
+        hv3     = jnp.stack([hv1d, jnp.zeros_like(hv1d), jnp.zeros_like(hv1d)], axis=1)
+        vs3     = jnp.zeros_like(hv3)
+
     hv_interp = diffrax.LinearInterpolation(ts=t_array, ys=hv3)
     vs_interp = diffrax.LinearInterpolation(ts=t_array, ys=vs3)
     x0        = jnp.zeros(_N_TOTAL)
@@ -307,7 +273,7 @@ def _simulate_all_states(theta, t_array, head_vel_array,
         t1=t_array[-1],
         dt0=dt,
         y0=x0,
-        args=(theta, hv_interp, vs_interp, jnp.float32(canal_floor), gains_array),
+        args=(theta, hv_interp, vs_interp, gains_array),
         stepsize_controller=diffrax.ConstantStepSize(),
         saveat=diffrax.SaveAt(ts=t_array),
         max_steps=max_steps,
@@ -315,7 +281,7 @@ def _simulate_all_states(theta, t_array, head_vel_array,
     return solution.ys  # (T, N_TOTAL)
 
 
-def _extract_signals(theta, t_array, head_vel_array, states, canal_floor=1e6):
+def _extract_signals(theta, t_array, head_vel_array, states):
     """Reconstruct intermediate signals from a saved state trajectory.
 
     Canal state layout (6-canal, 3-D):
@@ -340,7 +306,7 @@ def _extract_signals(theta, t_array, head_vel_array, states, canal_floor=1e6):
 
     # Canal nonlinearity (same smooth softplus formula as canal_ssm)
     k   = canal_ssm._SOFTNESS
-    f   = float(canal_floor)
+    f   = float(canal_ssm.FLOOR)
     y_c = -f + sp_softplus(k * (x2 + f)) / k + sp_softplus(k * (x2 - f)) / k  # (T, 6)
 
     pinv = np.array(canal_ssm.PINV_SENS)              # (3, 6)
@@ -430,13 +396,12 @@ def demo_signal_trace():
     dt_hit        = float(t_hit[1] - t_hit[0])   # 0.005 s
     max_steps_hit = int(4.0 / dt_hit) + 200
     states_hit = _simulate_all_states(THETA, t_hit, hv_hit,
-                                       canal_floor=80.0,
                                        max_steps=max_steps_hit, dt_solve=dt_hit)
-    sigs_hit   = _extract_signals(THETA, t_hit, hv_hit, states_hit, canal_floor=80.0)
+    sigs_hit   = _extract_signals(THETA, t_hit, hv_hit, states_hit)
     t_np_hit   = np.array(t_hit)
     mask       = t_np_hit <= 1.0
     _plot_signal_trace(t_np_hit[mask], {k: v[mask] for k, v in sigs_hit.items()},
-                       title='Signal trace — HIT (200 deg/s, canal_floor=80)',
+                       title='Signal trace — HIT (200 deg/s)',
                        path=os.path.join(OUTPUT_DIR, 'trace_hit.png'))
 
 
@@ -455,7 +420,6 @@ def demo_3d_hit():
     at VOR gain ≈ 1. Cross-axis eye movements should be ~0 (confirmed in
     the bottom row of each panel).
     """
-    FLOOR = 80.0
     dt    = 1.0 / 200.0   # 200 Hz
     total = 2.0            # s, enough to see the transient
     max_steps = int(total / dt) + 100
@@ -485,7 +449,6 @@ def demo_3d_hit():
         hv_3d = jnp.zeros((len(t_j), 3)).at[:, axis_idx].set(sign * 200.0 * pulse)
 
         eye_rot = np.array(simulate(THETA, t_j, hv_3d,
-                                    canal_floor=FLOOR,
                                     max_steps=max_steps, dt_solve=dt))  # (T, 3)
         t_np  = np.array(t_j)
         hv_np = np.array(hv_3d)
@@ -532,90 +495,146 @@ def demo_3d_hit():
 # ---------------------------------------------------------------------------
 
 def demo_okr():
-    """OKN slow-phase build-up and VVOR (VOR + OKR in light).
+    """OKN signal cascade debug — 6-panel waterfall from scene motion to eye velocity.
 
-    Panel A: OKN only — stationary head, moving scene.
-             Eye velocity ramps up from 0 toward scene velocity with OKR
-             time constant.  Compare with and without OKR gain.
-
-    Panel B: VVOR — simultaneous head rotation + matched scene motion.
-             In light the VS/OKR complement the VOR → gain closer to 1
-             even at low frequencies where the canal high-pass attenuates.
+    Scene moves for on_dur seconds then stops. Shows OKN build-up during motion
+    and OKAN decay after scene stop. Every intermediate signal in the OKR pathway:
+        scene vel → retinal slip → visual delay → OKR store → OKR drive → VS → eye
     """
     sr        = 200.0
-    okn_dur   = 30.0
+    on_dur    = 30.0   # scene on (s)
+    off_dur   = 40.0   # scene off / OKAN phase (s)
+    total_dur = on_dur + off_dur
     scene_vel = 30.0   # deg/s
 
-    # ── Panel A: OKN step (head stationary, scene moves) ─────────────────
-    stim_okn = okr_step(v_scene_deg_s=scene_vel, duration=okn_dur,
-                         axis=0, sample_rate=sr)
-    max_steps_okn = int(okn_dur / _DT_SOLVE) + 500
+    # Build on-then-off scene velocity stimulus manually
+    t_arr     = jnp.arange(0.0, total_dur, 1.0 / sr)
+    v_sc      = jnp.where(t_arr < on_dur, scene_vel, 0.0)
+    v_scene   = jnp.zeros((len(t_arr), 3)).at[:, 0].set(v_sc)
+    stim_okn  = Stimulus(t_arr, omega=jnp.zeros(len(t_arr)), v_scene=v_scene)
 
-    eye_okn = np.array(simulate(THETA, stim_okn,
-                                 max_steps=max_steps_okn))[:, 0]   # horizontal
+    max_steps = int(total_dur / _DT_SOLVE) + 500
+    theta_no_okr = {**THETA, 'g_okr': 0.0}
 
-    # No OKR (g_okr = 0) for comparison
-    theta_dark = dict(THETA)
-    theta_dark['g_okr'] = 0.0
-    eye_dark = np.array(simulate(theta_dark, stim_okn,
-                                  max_steps=max_steps_okn))[:, 0]
+    # Full state trace — OKN with OKR
+    states = _simulate_all_states(THETA, stim_okn, max_steps=max_steps)
+    t_np   = np.array(stim_okn.t)
+    dt     = float(stim_okn.dt)
 
-    t_np = np.array(stim_okn.t)
-    ev_okn  = np.gradient(eye_okn,  float(stim_okn.dt))
-    ev_dark = np.gradient(eye_dark, float(stim_okn.dt))
+    # State slices (horizontal axis = 0)
+    x_vis = np.array(states[:, _IDX_VIS])    # (T, 12)  visual delay cascade
+    x_okr = np.array(states[:, _IDX_OKR])    # (T, 3)   OKR slow store
+    x_vs  = np.array(states[:, _IDX_VS])     # (T, 3)   velocity storage
+    x_p   = np.array(states[:, _IDX_P])      # (T, 3)   plant / eye pos
 
-    # ── Panel B: VVOR — rotation + scene moving together ─────────────────
-    vvor_dur = 60.0
-    freq     = 0.02   # Hz (low freq where canal HP attenuates)
-    stim_vor = rotation_step(v_deg_s=60.0, rotate_dur=15.0,
-                              coast_dur=vvor_dur - 15.0, sample_rate=sr)
-    # Scene co-moves with head (stabilized scene = VOR suppression condition)
-    stim_vvor = combined(stim_vor,
-                          okr_step(v_scene_deg_s=60.0,
-                                   duration=vvor_dur, sample_rate=sr))
-    max_steps_vvor = int(vvor_dur / _DT_SOLVE) + 500
-    eye_vvor = np.array(simulate(THETA, stim_vvor,
-                                  max_steps=max_steps_vvor))[:, 0]
-    eye_vor  = np.array(simulate(THETA, stim_vor,
-                                  max_steps=max_steps_vvor))[:, 0]
-    t_vvor   = np.array(stim_vvor.t)
-    hv_vvor  = np.array(stim_vvor.omega[:, 0])
+    # Derived signals (horizontal)
+    w_scene_np = np.where(t_np < on_dur, scene_vel, 0.0)
+    eye_vel    = np.gradient(x_p[:, 0], dt)
+    e_slip     = w_scene_np - 0.0 - eye_vel           # w_scene − w_head − w_eye
+    e_delayed  = x_vis[:, -3]                          # last cascade stage, horizontal
+    u_okr_sig  = THETA['g_okr'] * (x_okr[:, 0] + e_delayed)  # direct + store
 
-    ev_vvor = np.gradient(eye_vvor, float(stim_vvor.dt))
-    ev_vor  = np.gradient(eye_vor,  float(stim_vor.dt))
+    # Reference: eye velocity without OKR
+    eye_no_okr = np.array(simulate(theta_no_okr, stim_okn, max_steps=max_steps))[:, 0]
+    ev_no_okr  = np.gradient(eye_no_okr, dt)
 
-    # ── Plot ──────────────────────────────────────────────────────────────
-    fig, axes = plt.subplots(2, 1, figsize=(10, 8))
+    # ── 6-panel cascade plot ───────────────────────────────────────────────
+    fig, axes = plt.subplots(6, 1, figsize=(12, 16), sharex=True)
+    fig.suptitle('OKN signal cascade — scene on then off (head stationary)', fontsize=11)
 
-    # Panel A
-    ax = axes[0]
-    ax.axhline(scene_vel, color='gray', lw=1.0, ls='--', label='Scene vel (30 deg/s)')
-    ax.plot(t_np, ev_dark, color='tomato',    lw=1.5, ls='--', label='No OKR (g_okr=0)')
-    ax.plot(t_np, ev_okn,  color='steelblue', lw=1.5,          label=f'OKR (g_okr={THETA["g_okr"]})')
-    ax.set_ylabel('Eye velocity (deg/s)')
-    ax.set_xlabel('Time (s)')
-    ax.set_title('Optokinetic nystagmus — step scene velocity (head stationary)')
-    ax.legend(fontsize=9)
-    ax.grid(True, alpha=0.3)
+    # 0: Scene velocity (input)
+    axes[0].plot(t_np, w_scene_np, color='steelblue', lw=1.5, label='w_scene')
+    axes[0].set_ylabel('Scene vel\n(deg/s)')
+    axes[0].legend(fontsize=8)
 
-    # Panel B
-    ax = axes[1]
-    ax.plot(t_vvor, hv_vvor,  color='gray',      lw=1.0, alpha=0.7, label='Head vel')
-    ax.plot(t_vvor, ev_vor,   color='tomato',    lw=1.5, ls='--',   label='VOR only (dark)')
-    ax.plot(t_vvor, ev_vvor,  color='steelblue', lw=1.5,            label='VVOR (scene co-moves)')
-    ax.axhline(0, color='k', lw=0.5)
-    ax.set_ylabel('Eye velocity (deg/s)')
-    ax.set_xlabel('Time (s)')
-    ax.set_title('VVOR — step rotation (head + co-moving scene)\n'
-                 'Scene adds OKR support; eye velocity closer to head velocity')
-    ax.legend(fontsize=9)
-    ax.grid(True, alpha=0.3)
+    # 1: Eye velocity (output)
+    axes[1].plot(t_np, w_scene_np, color='gray', lw=1.0, ls=':', alpha=0.4, label='Scene vel')
+    axes[1].plot(t_np, ev_no_okr,  color='tomato',    lw=1.5, ls='--', label='No OKR')
+    axes[1].plot(t_np, eye_vel,    color='steelblue', lw=1.5,          label='OKR enabled')
+    axes[1].set_ylabel('Eye vel\n(deg/s)')
+    axes[1].legend(fontsize=8)
+
+    # 2: Retinal slip
+    axes[2].plot(t_np, e_slip, color='purple', lw=1.5,
+                 label='e_slip = w_scene − w_head − w_eye')
+    axes[2].set_ylabel('Retinal slip\n(deg/s)')
+    axes[2].legend(fontsize=8)
+
+    # 3: Delayed retinal slip (visual delay output)
+    axes[3].plot(t_np, e_delayed, color='darkorange', lw=1.5,
+                 label=f'e_delayed  (τ_vis = {THETA["tau_vis"]} s)')
+    axes[3].set_ylabel('Delayed slip\n(deg/s)')
+    axes[3].legend(fontsize=8)
+
+    # 4: OKR slow store state
+    axes[4].plot(t_np, x_okr[:, 0], color='green', lw=1.5,
+                 label=f'x_okr  (τ_okan = {THETA["tau_okan"]} s)')
+    axes[4].set_ylabel('OKR store\n(deg/s)')
+    axes[4].legend(fontsize=8)
+
+    # 5: OKR drive and VS state
+    axes[5].plot(t_np, u_okr_sig,  color='green',     lw=1.5,
+                 label=f'u_okr = g_okr·(x_okr + e_delayed)  (g = {THETA["g_okr"]})')
+    axes[5].plot(t_np, x_vs[:, 0], color='steelblue', lw=1.5, ls='--',
+                 label='x_vs  (VS state)')
+    axes[5].set_ylabel('OKR drive /\nVS (deg/s)')
+    axes[5].set_xlabel('Time (s)')
+    axes[5].legend(fontsize=8)
+
+    # Mark scene stop on every panel
+    for ax in axes:
+        ax.axvline(on_dur, color='k', lw=0.8, ls='--', alpha=0.5)
+        ax.axhline(0, color='gray', lw=0.5)
+        ax.grid(True, alpha=0.3)
 
     fig.tight_layout()
     path = os.path.join(OUTPUT_DIR, 'okr.png')
     fig.savefig(path, dpi=150)
     plt.close(fig)
     print(f'  Saved {path}')
+
+    # ── VVOR comparison: vestibular only vs vestibular + visual OKR ───────
+    vvor_dur  = 80.0   # s (15 s rotation + 65 s coast to see VS + OKR decay)
+    stim_vor  = rotation_step(v_deg_s=60.0, rotate_dur=15.0,
+                               coast_dur=vvor_dur - 15.0, sample_rate=sr)
+    max_steps_vvor = int(vvor_dur / _DT_SOLVE) + 500
+
+    eye_dark = np.array(simulate(theta_no_okr, stim_vor,
+                                  max_steps=max_steps_vvor))[:, 0]
+    eye_vvor = np.array(simulate(THETA,        stim_vor,
+                                  max_steps=max_steps_vvor))[:, 0]
+    t_vvor   = np.array(stim_vor.t)
+    hv_vvor  = np.array(stim_vor.omega[:, 0])
+    ev_dark  = np.gradient(eye_dark, float(stim_vor.dt))
+    ev_vvor  = np.gradient(eye_vvor, float(stim_vor.dt))
+
+    fig2, axes2 = plt.subplots(2, 1, figsize=(11, 7), sharex=True)
+    fig2.suptitle('VVOR — step rotation, stationary world\n'
+                  'Vestibular only (dark) vs Vestibular + visual OKR (light)', fontsize=11)
+
+    axes2[0].plot(t_vvor, hv_vvor,  color='gray',      lw=1.0, alpha=0.6, label='Head vel')
+    axes2[0].plot(t_vvor, ev_dark,  color='tomato',    lw=1.5, ls='--',   label='VOR only (g_okr=0)')
+    axes2[0].plot(t_vvor, ev_vvor,  color='steelblue', lw=1.5,            label=f'VVOR (g_okr={THETA["g_okr"]})')
+    axes2[0].axvline(15.0, color='k', lw=0.8, ls='--', alpha=0.5)
+    axes2[0].axhline(0,   color='gray', lw=0.5)
+    axes2[0].set_ylabel('Eye vel (deg/s)')
+    axes2[0].legend(fontsize=9)
+    axes2[0].grid(True, alpha=0.3)
+
+    axes2[1].plot(t_vvor, eye_dark, color='tomato',    lw=1.5, ls='--', label='VOR only')
+    axes2[1].plot(t_vvor, eye_vvor, color='steelblue', lw=1.5,          label='VVOR')
+    axes2[1].axvline(15.0, color='k', lw=0.8, ls='--', alpha=0.5)
+    axes2[1].axhline(0,   color='gray', lw=0.5)
+    axes2[1].set_ylabel('Eye pos (deg)')
+    axes2[1].set_xlabel('Time (s)')
+    axes2[1].legend(fontsize=9)
+    axes2[1].grid(True, alpha=0.3)
+
+    fig2.tight_layout()
+    path2 = os.path.join(OUTPUT_DIR, 'vvor.png')
+    fig2.savefig(path2, dpi=150)
+    plt.close(fig2)
+    print(f'  Saved {path2}')
 
 
 # ---------------------------------------------------------------------------
@@ -639,16 +658,13 @@ def main():
     print('\n3. Low-frequency VOR attenuation')
     demo_low_freq()
 
-    print("\n4. Ewald's 2nd law")
-    demo_ewald()
-
-    print('\n5. Signal trace (step + HIT)')
+    print('\n4. Signal trace (step + HIT)')
     demo_signal_trace()
 
-    print('\n6. 3-D head impulse test (all 6 canal axes)')
+    print('\n5. 3-D head impulse test (all 6 canal axes)')
     demo_3d_hit()
 
-    print('\n7. OKR — optokinetic nystagmus + VVOR')
+    print('\n6. OKR — optokinetic nystagmus signal cascade')
     demo_okr()
 
     print(f'\nDone. Plots saved to {OUTPUT_DIR}/')
