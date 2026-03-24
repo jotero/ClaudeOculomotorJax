@@ -132,3 +132,21 @@ def canal_nonlinearity(x_c, gains):
     f    = FLOOR
     y_nl = -f + softplus(k * (x2 + f)) / k + softplus(k * (x2 - f)) / k
     return gains * (y_nl + f)   # absolute firing rate: rest = FLOOR, inhibitory → 0
+
+
+def step(x_c, w_head, theta, gains):
+    """Single ODE step: state derivative + afferent output.
+
+    Args:
+        x_c:    (N_STATES,)  canal state
+        w_head: (3,)         head angular velocity (deg/s)
+        theta:  dict         model parameters
+        gains:  (N_CANALS,)  per-canal scale factors
+
+    Returns:
+        dx:       (N_STATES,)  dx_c/dt
+        y_canals: (N_CANALS,)  afferent firing rates
+    """
+    dx = get_A(theta) @ x_c + get_B(theta) @ w_head
+    y  = canal_nonlinearity(x_c, gains)
+    return dx, y

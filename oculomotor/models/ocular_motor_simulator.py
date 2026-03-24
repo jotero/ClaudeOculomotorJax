@@ -47,12 +47,12 @@ Output:
 import jax.numpy as jnp
 import diffrax
 
-from oculomotor.models import canal as canal_ssm
-from oculomotor.models import velocity_storage as vs_ssm
-from oculomotor.models import neural_integrator as ni_ssm
-from oculomotor.models import plant as plant_ssm
-from oculomotor.models import visual_delay as vd_ssm
-from oculomotor.models import okr as okr_ssm
+from oculomotor.models import canal
+from oculomotor.models import velocity_storage as vs
+from oculomotor.models import neural_integrator as ni
+from oculomotor.models import plant
+from oculomotor.models import visual_delay
+from oculomotor.models import okr 
 
 # ── Canonical model parameters ─────────────────────────────────────────────────
 
@@ -71,12 +71,12 @@ THETA_DEFAULT = {
 
 # ── State vector layout ────────────────────────────────────────────────────────
 
-_NC      = canal_ssm.N_STATES    # 12  (x1+x2 per canal, 6 canals)
-_NVS     = vs_ssm.N_STATES       #  3
-_NNI     = ni_ssm.N_STATES       #  3
-_NP      = plant_ssm.N_STATES    #  3
-_NVis    = vd_ssm.N_STATES       # 12  visual delay cascade
-_NOKR    = okr_ssm.N_STATES      #  3  OKR slow store
+_NC      = canal.N_STATES    # 12  (x1+x2 per canal, 6 canals)
+_NVS     = vs.N_STATES       #  3
+_NNI     = ni.N_STATES       #  3
+_NP      = plant.N_STATES    #  3
+_NVis    = visual_delay.N_STATES       # 12  visual delay cascade
+_NOKR    = okr.N_STATES      #  3  OKR slow store
 _N_TOTAL = _NC + _NVS + _NNI + _NP + _NVis + _NOKR   # 27
 
 _IDX_C   = slice(0,                                    _NC)
@@ -98,11 +98,8 @@ def vor_vector_field(t, x, args):
 
     Args:
         t:    scalar time (s)
-        x:    global state array, shape (_N_TOTAL,) = (24,)
+        x:    global state vector, shape (_N_TOTAL,)
         args: (theta, hv_interp, vs_interp, canal_gains)
-              hv_interp   evaluates to (3,) head angular velocity at time t
-              vs_interp   evaluates to (3,) visual scene velocity at time t
-              canal_gains — (N_CANALS,) per-canal gains
 
     Returns:
         dx_dt: shape (_N_TOTAL,)
@@ -116,51 +113,25 @@ def vor_vector_field(t, x, args):
     x_vis = x[_IDX_VIS]
     x_okr = x[_IDX_OKR]
 
-    # ══ SENSING (world inputs → retinal slip) ════════════════════════════════
+    w_head  = hv_interp.evaluate(t)    # (3,) head angular velocity (deg/s)
+    w_scene = vs_interp.evaluate(t)    # (3,) scene angular velocity (deg/s)
 
-    # Physical angular velocities (deg/s)
-    w_head  = hv_interp.evaluate(t)                             # (3,) head angular velocity
-    w_scene = vs_interp.evaluate(t)                             # (3,) scene angular velocity
+    # ── Sensing ───────────────────────────────────────────────────────────────
+    dx_c, y_canals = canal.step(x_c, w_head, theta, canal_gains)
 
-    # Canal transduction: bandpass dynamics + nonlinear output + PINV mixing
-    dx_c     = canal_ssm.get_A(theta) @ x_c + canal_ssm.get_B(theta) @ w_head
-    y_canals = canal_ssm.canal_nonlinearity(x_c, canal_gains)
-    u_canal  = canal_ssm.PINV_SENS @ y_canals                   # (3,) head vel estimate (deg/s)
+    # Eye velocity for retinal slip — approximated without OKR (delayed/small)
+    _, u_ni_approx = vs.step(x_vs, jnp.concatenate([y_canals, jnp.zeros(3)]), theta)
+    _, u_p_approx  = ni.step(x_ni, u_ni_approx, theta)
+    w_eye          = plant.velocity(x_p, u_p_approx, theta)
 
-    # Eye angular velocity from current state (no OKR — delayed, second-order effect here)
-    u_ni_est = vs_ssm.C @ x_vs + vs_ssm.D @ u_canal
-    u_p_est  = ni_ssm.C @ x_ni + ni_ssm.get_D(theta) @ u_ni_est
-    w_eye    = plant_ssm.get_A(theta) @ x_p + plant_ssm.get_B(theta) @ u_p_est  # (3,)
+    e_slip               = w_scene - w_head - w_eye    # (3,) retinal slip (deg/s)
+    dx_vis, e_delayed    = visual_delay.step(x_vis, e_slip, theta)
+    dx_okr, u_okr        = okr.step(x_okr, e_delayed, theta)
 
-    # Retinal slip: scene − head − eye (physical gaze stabilization error, deg/s)
-    # Uses w_head (not canal estimate) — retina measures actual motion
-    # ≈ 0 in dark VOR (perfect compensation: w_eye ≈ −w_head)
-    # ≠ 0 during OKN (w_scene ≠ 0, w_head = w_eye = 0)
-    e_slip = w_scene - w_head - w_eye                           # (3,) deg/s
-
-    # Visual delay cascade: low-pass filter chain approximating pure delay τ_vis
-    dx_vis    = vd_ssm.get_A(theta) @ x_vis + vd_ssm.get_B(theta) @ e_slip
-    e_delayed = vd_ssm.C @ x_vis                                # (3,) delayed retinal slip
-
-    # OKR slow store: charges from delayed slip, holds drive when slip → 0
-    dx_okr = okr_ssm.get_A(theta) @ x_okr + okr_ssm.get_B(theta) @ e_delayed
-
-    # ══ NEURAL PROCESSING (sensory + visual → motor commands) ════════════════
-
-    # OKR drive: direct (fast) + store (sustained) — no algebraic loop
-    u_okr = okr_ssm.get_C(theta) @ x_okr + okr_ssm.get_D(theta) @ e_delayed  # (3,)
-
-    # Velocity Storage: canal estimate + OKR → stored slow-phase velocity
-    u_vs  = u_canal - u_okr
-    dx_vs = vs_ssm.get_A(theta) @ x_vs + vs_ssm.get_B(theta) @ u_vs
-
-    # Neural Integrator: velocity → position command (pulse-step)
-    u_ni  = vs_ssm.C @ x_vs + vs_ssm.D @ u_vs
-    dx_ni = ni_ssm.get_A(theta) @ x_ni + ni_ssm.get_B(theta) @ u_ni
-
-    # Plant: eye rotation vector driven by pulse-step command
-    u_p  = ni_ssm.C @ x_ni + ni_ssm.get_D(theta) @ u_ni
-    dx_p = plant_ssm.get_A(theta) @ x_p + plant_ssm.get_B(theta) @ u_p
+    # ── Motor pathway ─────────────────────────────────────────────────────────
+    dx_vs, u_ni     = vs.step(x_vs, jnp.concatenate([y_canals, u_okr]), theta)
+    dx_ni, u_p      = ni.step(x_ni, u_ni, theta)
+    dx_p, _         = plant.step(x_p, u_p, theta)
 
     return jnp.concatenate([dx_c, dx_vs, dx_ni, dx_p, dx_vis, dx_okr])
 
@@ -231,7 +202,7 @@ def simulate(theta, t_array_or_stimulus, head_vel_array=None,
     x0        = jnp.zeros(_N_TOTAL)
 
     if canal_gains is None:
-        gains_array = jnp.ones(canal_ssm.N_CANALS)
+        gains_array = jnp.ones(canal.N_CANALS)
     else:
         gains_array = jnp.array(list(canal_gains), dtype=jnp.float32)
 

@@ -56,3 +56,20 @@ def get_D(theta):
         q_eye(s) = −g_vor × q_head(s)  at all VOR frequencies.
     """
     return (-theta['g_vor'] * theta['tau_p']) * jnp.eye(3)
+
+
+def step(x_ni, u_ni, theta):
+    """Single ODE step: state derivative + motor command output.
+
+    Args:
+        x_ni:  (3,)  NI state (position command)
+        u_ni:  (3,)  velocity command from VS
+        theta: dict  model parameters
+
+    Returns:
+        dx:  (3,)  dx_ni/dt
+        u_p: (3,)  pulse-step motor command to plant (C@x + D@u)
+    """
+    dx  = get_A(theta) @ x_ni + get_B(theta) @ u_ni
+    u_p = C @ x_ni + get_D(theta) @ u_ni
+    return dx, u_p

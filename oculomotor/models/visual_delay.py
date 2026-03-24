@@ -68,3 +68,20 @@ def get_B(theta):
     tau = theta.get('tau_vis', 0.08)
     k   = N_STAGES / tau
     return k * _B_STRUCT
+
+
+def step(x_vis, e_slip, theta):
+    """Single ODE step: state derivative + delayed retinal slip output.
+
+    Args:
+        x_vis:  (N_STATES,)  delay cascade state
+        e_slip: (3,)         instantaneous retinal slip (deg/s)
+        theta:  dict         model parameters
+
+    Returns:
+        dx:        (N_STATES,)  dx_vis/dt
+        e_delayed: (3,)         delayed retinal slip  C@x_vis
+    """
+    dx        = get_A(theta) @ x_vis + get_B(theta) @ e_slip
+    e_delayed = C @ x_vis
+    return dx, e_delayed

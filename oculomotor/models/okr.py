@@ -60,3 +60,20 @@ def get_C(theta):
 def get_D(theta):
     """(3 × 3) direct feedthrough: g_okr scales instantaneous delayed slip."""
     return theta.get('g_okr', 0.0) * jnp.eye(3)
+
+
+def step(x_okr, e_delayed, theta):
+    """Single ODE step: state derivative + OKR drive output.
+
+    Args:
+        x_okr:     (3,)  OKR slow-store state
+        e_delayed: (3,)  delayed retinal slip from visual delay cascade
+        theta:     dict  model parameters
+
+    Returns:
+        dx:    (3,)  dx_okr/dt
+        u_okr: (3,)  OKR drive to VS  (direct + store: g_okr*(e_delayed + x_okr))
+    """
+    dx    = get_A(theta) @ x_okr + get_B(theta) @ e_delayed
+    u_okr = get_C(theta) @ x_okr + get_D(theta) @ e_delayed
+    return dx, u_okr

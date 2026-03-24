@@ -45,3 +45,30 @@ def get_B(theta):
 
 
 C = jnp.eye(3)   # (3, 3) — output is the full rotation vector
+
+
+def velocity(x_p, u_p, theta):
+    """Eye angular velocity = d(x_p)/dt (algebraic from plant ODE).
+
+    For the first-order plant, velocity is not an independent state but is
+    fully determined by position and motor command: w_eye = (u_p − x_p)/τ_p.
+    Used to compute retinal slip without adding redundant state variables.
+    """
+    return get_A(theta) @ x_p + get_B(theta) @ u_p
+
+
+def step(x_p, u_p, theta):
+    """Single ODE step: state derivative + eye position output.
+
+    Args:
+        x_p:   (3,)  plant state (eye rotation vector, deg)
+        u_p:   (3,)  pulse-step motor command from NI
+        theta: dict  model parameters
+
+    Returns:
+        dx:    (3,)  dx_p/dt  (= eye angular velocity)
+        q_eye: (3,)  eye rotation vector C@x_p  (= x_p for this plant)
+    """
+    dx    = get_A(theta) @ x_p + get_B(theta) @ u_p
+    q_eye = C @ x_p
+    return dx, q_eye
