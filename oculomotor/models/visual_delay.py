@@ -7,11 +7,11 @@ A cascade of N_STAGES first-order LP filters, each with time constant
     Cascade (N=4):    impulse response ~ Gamma(4, τ), std = τ/2
     Cascade (N→∞):    impulse response → δ(t − τ)    (pure delay)
 
-With N_STAGES = 4 and τ = 0.08 s:
+With N_STAGES = 40 and τ = 0.08 s:
     Mean delay   = 0.08 s
-    Spread std   = 0.04 s       (vs 0.08 s for single LP)
-    −3 dB BW    ≈ 22 Hz         (visual reflexes operate below ~2 Hz → effectively exact)
-    Heun-stable  ✓ (τ_stage = 0.02 s, dt/τ_stage = 0.25)
+    Spread std   = τ/√N ≈ 0.013 s   (vs 0.04 s for N=4 — much sharper step)
+    −3 dB BW    ≈ 66 Hz
+    Heun-stable  ✓ (τ_stage = 0.002 s, requires dt ≤ 0.004 s — use dt=0.001 s)
 
 Two signals are delayed independently through the same cascade:
     Signal 0 — e_slip  (3,)  retinal velocity slip  → OKR drive
@@ -35,7 +35,7 @@ import jax.numpy as jnp
 
 # ── Cascade parameters ─────────────────────────────────────────────────────────
 
-N_STAGES = 4              # cascade depth
+N_STAGES = 40             # cascade depth — sharp step (std ≈ τ/√N ≈ 13 ms)
 N_SIG    = 2              # number of signals (slip + position error)
 N_STATES = N_STAGES * 3 * N_SIG   # 24 total states
 

@@ -47,10 +47,10 @@ _C = {
 THETA_SAC = {**THETA_DEFAULT,
              'g_vor':          0.0,   # no VOR — head is still
              'g_okr':          0.0,   # no OKR — dark / saccade only
-             'g_burst':      700.0,   # burst ceiling (deg/s); peak vel → g_burst as amp → ∞
+             'g_burst':      600.0,   # burst ceiling (deg/s); peak vel → g_burst as amp → ∞
              'threshold_sac':  0.5,   # trigger threshold (deg)
              'k_sac':         15.0,   # sigmoid steepness (1/deg)
-             'e_sat_sac':     10.0,   # tanh saturation amplitude (deg); ~half-sat at e_sat
+             'e_sat_sac':      7.0,   # tanh saturation amplitude (deg); ~half-sat at e_sat
              'tau_reset_sac':  0.1,   # resettable integrator reset TC (s)
              }
 
@@ -88,8 +88,8 @@ def _extract_all(theta, t_array, hv3, vs3, pt3, max_steps=100000):
         p_t           = target_interp.evaluate(t)
         tt            = sg.target_to_angle(p_t)
         e_motor       = tt - x_p
-        e_pos_delayed = visual_delay.C_pos @ x_vis   # delayed (for diagnostics only)
-        _, u_burst    = sg.step(x_reset_int, e_motor, theta)
+        e_pos_delayed = visual_delay.C_pos @ x_vis   # what the SG actually sees
+        _, u_burst    = sg.step(x_reset_int, e_pos_delayed, theta)
         return {'q_eye': x_p, 'x_ni': x_ni, 'e_motor': e_motor,
                 'e_pos_delayed': e_pos_delayed,
                 'x_reset_int': x_reset_int, 'u_burst': u_burst}

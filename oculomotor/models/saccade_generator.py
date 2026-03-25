@@ -147,10 +147,22 @@ def step(x_sg, u_sg, theta):
         dx_sg:   (N_STATES,)  state derivative
         u_burst: (3,)         saccade velocity command (deg/s)
     """
-    u_burst_raw, gate_thresh = input_nonlinearity(u_sg, theta)
+    # Burst driven by remaining error: delayed motor error minus copy accumulation
+    # (Robinson local-feedback model: copy fires until it matches the delayed target)
+    e_residual = u_sg - x_sg
+    u_burst_raw, gate_thresh = input_nonlinearity(e_residual, theta)
 
-    dx = (        gate_thresh  * (get_A_ni(theta)    @ x_sg + B @ u_burst_raw)
-         + (1.0 - gate_thresh) * (get_A_reset(theta) @ x_sg))
+    # Direction gate: suppress burst when residual points OPPOSITE to target error.
+    # After burst completes, x_reset_int > e_pos_delayed → e_residual flips sign →
+    # without this gate, a backward saccade would fire → oscillation.
+    e_norm   = u_sg       / (jnp.linalg.norm(u_sg)       + 1e-6)
+    res_norm = e_residual / (jnp.linalg.norm(e_residual)  + 1e-6)
+    dir_gate = jax.nn.relu(jnp.dot(e_norm, res_norm))   # 0 when anti-aligned, 1 when aligned
 
-    u_burst = gate_thresh * u_burst_raw
+    gate_eff = gate_thresh * dir_gate
+
+    dx = (        gate_eff  * (get_A_ni(theta)    @ x_sg + B @ u_burst_raw)
+         + (1.0 - gate_eff) * (get_A_reset(theta) @ x_sg))
+
+    u_burst = gate_eff * u_burst_raw
     return dx, u_burst

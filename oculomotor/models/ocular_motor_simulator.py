@@ -105,7 +105,7 @@ _IDX_VIS = slice(_NC + _NVS + _NNI + _NP,                   _NC + _NVS + _NNI + 
 _IDX_OKR = slice(_NC + _NVS + _NNI + _NP + _NVis,           _NC + _NVS + _NNI + _NP + _NVis + _NOKR)
 _IDX_SG  = slice(_NC + _NVS + _NNI + _NP + _NVis + _NOKR,   _N_TOTAL)
 
-_DT_SOLVE = 0.005  # Heun fixed step (s); must satisfy dt < 2*tau_s (inertia TC)
+_DT_SOLVE = 0.001  # Heun fixed step (s); must satisfy dt < 2*tau_stage_vis = 0.004 s
 
 
 # ── ODE vector field ───────────────────────────────────────────────────────────
@@ -140,17 +140,18 @@ def vor_vector_field(t, x, args):
     # ── Vestibular sensing ────────────────────────────────────────────────────
     dx_c, y_canals = canal.step(x_c, w_head, theta, canal_gains)
 
-    # ── Read delayed slip from visual delay state ────────────────────────────
+    # ── Read delayed signals from visual delay state ─────────────────────────
     e_slip_delayed = visual_delay.C_slip @ x_vis   # (3,) delayed retinal slip
+    e_pos_delayed  = visual_delay.C_pos  @ x_vis   # (3,) delayed position error
 
     # ── OKR and velocity storage ───────────────────────────────────────────────
     dx_okr, u_okr = okr.step(x_okr, e_slip_delayed, theta)
     dx_vs, u_ni   = vs.step(x_vs, jnp.concatenate([y_canals, u_okr]), theta)
 
-    # ── Saccade generator (instantaneous motor error) ─────────────────────────
+    # ── Saccade generator (delayed motor error → Robinson local feedback) ─────
     theta_target   = sg.target_to_angle(p_target)   # (3,) target angle (deg)
     e_motor        = theta_target - x_p              # (3,) instantaneous motor error
-    dx_sg, u_burst = sg.step(x_sg, e_motor, theta)
+    dx_sg, u_burst = sg.step(x_sg, e_pos_delayed, theta)
 
     # ── Neural integrator + plant (VOR + saccade combined) ───────────────────
     dx_ni, u_p = ni.step(x_ni, u_ni, theta)
