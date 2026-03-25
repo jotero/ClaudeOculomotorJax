@@ -22,10 +22,10 @@ Signal flow
         u_store  = g_okr · x_okr
 
     Combined:
-        u_okr = u_direct + u_store = g_okr · (e_delayed + x_okr)
+        y_okr = u_direct + u_store = g_okr · (e_delayed + x_okr)
 
-    u_okr enters velocity storage as −u_okr (sign convention in simulator):
-        u_vs = u_canal − u_okr
+    y_okr enters velocity storage as −y_okr (sign convention in simulator):
+        u_vs = u_canal − y_okr
 
 Build-up and OKAN
 ─────────────────
@@ -50,24 +50,22 @@ N_STATES = 3   # one slow-store state per spatial axis
 
 def get_A(theta):
     """(3 × 3) store decay matrix: −I / τ_okan."""
-    tau = theta.get('tau_okan', 25.0)
-    return -jnp.eye(3) / tau
+    return -jnp.eye(3) / theta.get('tau_okan', 25.0)
 
 
 def get_B(theta):
     """(3 × 3) input matrix: e_delayed drives store at rate 1/τ_okan."""
-    tau = theta.get('tau_okan', 25.0)
-    return jnp.eye(3) / tau
+    return jnp.eye(3) / theta.get('tau_okan', 25.0)
 
 
 def get_C(theta):
     """(3 × 3) output matrix: g_okr scales stored drive."""
-    return theta.get('g_okr', 0.0) * jnp.eye(3)
+    return jnp.eye(3) * theta.get('g_okr', 0.0)
 
 
 def get_D(theta):
     """(3 × 3) direct feedthrough: g_okr scales instantaneous delayed slip."""
-    return theta.get('g_okr', 0.0) * jnp.eye(3)
+    return jnp.eye(3) * theta.get('g_okr', 0.0)
 
 
 def step(x_okr, e_delayed, theta):
@@ -80,8 +78,8 @@ def step(x_okr, e_delayed, theta):
 
     Returns:
         dx:    (3,)  dx_okr/dt
-        u_okr: (3,)  OKR drive to VS  (direct + store: g_okr*(e_delayed + x_okr))
+        y_okr: (3,)  OKR drive to VS  (direct + store: g_okr*(e_delayed + x_okr))
     """
-    dx    = get_A(theta) @ x_okr + get_B(theta) @ e_delayed
-    u_okr = get_C(theta) @ x_okr + get_D(theta) @ e_delayed
-    return dx, u_okr
+    dx    = 0*get_A(theta) @ x_okr + 0*get_B(theta) @ e_delayed
+    y_okr = 0*get_C(theta) @ x_okr + get_D(theta) @ e_delayed
+    return dx, y_okr

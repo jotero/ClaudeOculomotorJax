@@ -47,7 +47,8 @@ _C = {
 
 THETA_SAC = {**THETA_DEFAULT,
              'g_vor':          0.0,   # no VOR — head is still
-             'g_okr':          0.0,   # no OKR — dark / saccade only
+             'K_vis':          0.0,   # no visual → dark / saccade only
+             'g_vis':          0.0,
              'g_burst':      600.0,   # burst ceiling (deg/s); peak vel → g_burst as amp → ∞
              'threshold_sac':  0.5,   # trigger threshold (deg)
              'k_sac':         15.0,   # sigmoid steepness (1/deg)
@@ -61,17 +62,22 @@ THETA_SAC = {**THETA_DEFAULT,
 
 def _extract_all(theta, t_array, hv3, vs3, pt3, max_steps=100000):
     """Run simulator and extract full state + intermediate signals."""
+    T             = len(t_array)
     gains_array   = jnp.ones(6)
     dt_arr        = jnp.diff(t_array)
     hp3           = jnp.concatenate([
         jnp.zeros((1, 3)),
         jnp.cumsum(0.5 * (hv3[:-1] + hv3[1:]) * dt_arr[:, None], axis=0),
     ])
-    hv_interp     = diffrax.LinearInterpolation(ts=t_array, ys=hv3)
-    hp_interp     = diffrax.LinearInterpolation(ts=t_array, ys=hp3)
-    vs_interp     = diffrax.LinearInterpolation(ts=t_array, ys=vs3)
-    target_interp = diffrax.LinearInterpolation(ts=t_array, ys=pt3)
-    x0            = jnp.zeros(_N_TOTAL)
+    # Saccade demos: target is visible → scene present for position error pathway.
+    # Visual (OKR) drive is controlled via K_vis / g_vis in theta.
+    sg1               = jnp.ones(T, dtype=jnp.float32)
+    hv_interp         = diffrax.LinearInterpolation(ts=t_array, ys=hv3)
+    hp_interp         = diffrax.LinearInterpolation(ts=t_array, ys=hp3)
+    vs_interp         = diffrax.LinearInterpolation(ts=t_array, ys=vs3)
+    target_interp     = diffrax.LinearInterpolation(ts=t_array, ys=pt3)
+    scene_gain_interp = diffrax.LinearInterpolation(ts=t_array, ys=sg1)
+    x0                = jnp.zeros(_N_TOTAL)
 
     solution = diffrax.diffeqsolve(
         diffrax.ODETerm(vor_vector_field),
@@ -80,7 +86,8 @@ def _extract_all(theta, t_array, hv3, vs3, pt3, max_steps=100000):
         t1=t_array[-1],
         dt0=0.001,
         y0=x0,
-        args=(theta, hv_interp, hp_interp, vs_interp, target_interp, gains_array),
+        args=(theta, hv_interp, hp_interp, vs_interp, target_interp,
+              scene_gain_interp, gains_array),
         stepsize_controller=diffrax.ConstantStepSize(),
         saveat=diffrax.SaveAt(ts=t_array),
         max_steps=max_steps,
@@ -248,7 +255,8 @@ def demo_saccade_vor():
 
     theta_vor_sac = {**THETA_DEFAULT,
                      'g_vor':         1.0,
-                     'g_okr':         0.0,
+                     'K_vis':         0.0,   # dark — no OKR
+                     'g_vis':         0.0,
                      'g_burst':      40.0,
                      'threshold_sac': 3.0,   # larger → fewer, larger saccades
                      'k_sac':        10.0,

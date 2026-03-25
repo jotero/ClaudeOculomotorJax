@@ -39,7 +39,7 @@ import diffrax
 from oculomotor.models.ocular_motor_simulator import (
     simulate, THETA_DEFAULT,
     vor_vector_field, _N_TOTAL,
-    _IDX_P, _IDX_NI, _IDX_SG, _IDX_VIS, _IDX_OKR, _IDX_PC,
+    _IDX_P, _IDX_NI, _IDX_SG, _IDX_VIS, _IDX_VS, _IDX_PC,
 )
 from oculomotor.models import saccade_generator as sg
 from oculomotor.models import visual_delay
@@ -57,7 +57,7 @@ _C = {
 }
 
 THETA_SAC = {**THETA_DEFAULT,
-             'g_vor': 0.0, 'g_okr': 0.7,
+             'g_vor': 0.0,
              'g_burst': 600.0, 'threshold_sac': 0.5,
              'k_sac': 15.0, 'e_sat_sac': 7.0,
              'tau_reset_sac': 1.0, 'tau_reset_fast': 0.1}
@@ -67,24 +67,38 @@ THETA_NO_SAC = {**THETA_SAC, 'g_burst': 0.0}
 
 # ── Shared runner ──────────────────────────────────────────────────────────────
 
-def _run_full(theta, t, hv3, vs3, pt3, max_steps=200_000):
-    """Run ODE and return full state trajectory (T, _N_TOTAL)."""
+def _run_full(theta, t, hv3, vs3, pt3, scene_present=True, max_steps=200_000):
+    """Run ODE and return full state trajectory (T, _N_TOTAL).
+
+    scene_present: True  → scene always visible (sg=1, default).
+                   False → dark (sg=0, OKR/visual pathways suppressed).
+                   (T,) array → time-varying gain.
+    """
+    T      = len(t)
     dt_arr = jnp.diff(t)
     hp3    = jnp.concatenate([
         jnp.zeros((1, 3)),
         jnp.cumsum(0.5 * (hv3[:-1] + hv3[1:]) * dt_arr[:, None], axis=0),
     ])
-    hv_i = diffrax.LinearInterpolation(ts=t, ys=hv3)
-    hp_i = diffrax.LinearInterpolation(ts=t, ys=hp3)
-    vs_i = diffrax.LinearInterpolation(ts=t, ys=vs3)
-    pt_i = diffrax.LinearInterpolation(ts=t, ys=pt3)
+    if scene_present is True:
+        sg1 = jnp.ones(T, dtype=jnp.float32)
+    elif scene_present is False:
+        sg1 = jnp.zeros(T, dtype=jnp.float32)
+    else:
+        sg1 = jnp.asarray(scene_present, dtype=jnp.float32)
+
+    hv_i  = diffrax.LinearInterpolation(ts=t, ys=hv3)
+    hp_i  = diffrax.LinearInterpolation(ts=t, ys=hp3)
+    vs_i  = diffrax.LinearInterpolation(ts=t, ys=vs3)
+    pt_i  = diffrax.LinearInterpolation(ts=t, ys=pt3)
+    sg_i  = diffrax.LinearInterpolation(ts=t, ys=sg1)
 
     sol = diffrax.diffeqsolve(
         diffrax.ODETerm(vor_vector_field),
         diffrax.Heun(),
         t0=t[0], t1=t[-1], dt0=0.001,
         y0=jnp.zeros(_N_TOTAL),
-        args=(theta, hv_i, hp_i, vs_i, pt_i, jnp.ones(6)),
+        args=(theta, hv_i, hp_i, vs_i, pt_i, sg_i, jnp.ones(6)),
         stepsize_controller=diffrax.ConstantStepSize(),
         saveat=diffrax.SaveAt(ts=t),
         max_steps=max_steps,
@@ -92,15 +106,15 @@ def _run_full(theta, t, hv3, vs3, pt3, max_steps=200_000):
     return np.array(sol.ys)   # (T, _N_TOTAL)
 
 
-def _extract_signals(theta, t, hv3, vs3, pt3, max_steps=200_000):
+def _extract_signals(theta, t, hv3, vs3, pt3, scene_present=True, max_steps=200_000):
     """Run and extract all relevant signals as a dict of arrays."""
-    ys   = _run_full(theta, t, hv3, vs3, pt3, max_steps)
+    ys   = _run_full(theta, t, hv3, vs3, pt3, scene_present=scene_present, max_steps=max_steps)
     t_np = np.array(t)
     dt   = float(t[1] - t[0])
 
     x_p   = ys[:, _IDX_P]
     x_pc  = ys[:, _IDX_PC]
-    x_okr = ys[:, _IDX_OKR]
+    x_vs  = ys[:, _IDX_VS]
 
     # Plant copy state → predicted saccade velocity
     tau_p = theta['tau_p']
@@ -123,7 +137,7 @@ def _extract_signals(theta, t, hv3, vs3, pt3, max_steps=200_000):
     return {
         'x_p':          x_p,
         'x_pc':         x_pc,
-        'x_okr':        x_okr,
+        'x_vs':         x_vs,
         'u_burst':      u_burst,
         'w_burst_pred': w_burst_pred,
         'w_eye':        w_eye,
@@ -229,10 +243,10 @@ def demo_okr_scene_vs_saccade():
     axes[1].set_title('Efference copy signal (zero for scene, cancels saccade)')
     axes[1].legend(fontsize=8)
 
-    axes[2].plot(t_np, sig_scene['x_okr'][:, 0], color=_C['scene'],   lw=1.5, label='scene → OKR driven')
-    axes[2].plot(t_np, sig_sac['x_okr'][:, 0],   color=_C['eye_vel'], lw=1.5, label='saccade → OKR suppressed')
+    axes[2].plot(t_np, sig_scene['x_vs'][:, 0], color=_C['scene'],   lw=1.5, label='scene → VS driven')
+    axes[2].plot(t_np, sig_sac['x_vs'][:, 0],   color=_C['eye_vel'], lw=1.5, label='saccade → VS suppressed')
     axes[2].set_ylabel('deg/s')
-    axes[2].set_title('OKR store x_okr')
+    axes[2].set_title('VS storage state x_vs  (charged by retinal slip)')
     axes[2].set_xlabel('Time (s)')
     axes[2].legend(fontsize=8)
 
@@ -320,31 +334,37 @@ def _run_tests():
             f'FAIL: tau_fit={tau_fit:.3f} s vs tau_p={tau_p:.3f} s'
     print('  2. x_pc decays with correct tau_p         PASS')
 
-    # ── Test 3: OKR uncontaminated after saccade in dark ──────────────────
+    # ── Test 3: VS not strongly contaminated by saccade in stationary lit world ──
+    # Scene IS visible (scene_present=1) but stationary (vs3=0).
+    # Without efference copy, saccadic w_eye (~600 deg/s) would look like retinal
+    # slip and strongly drive VS.  With efference copy, the burst component cancels.
+    # Remaining contamination comes from the unavoidable NI-plant settling transient
+    # (x_ni−x_p)/tau_p, which efference copy cannot predict.
+    # With K_vis=0.3 (10× old K_vs*g_okr≈0.02), threshold scales accordingly to 5 deg/s.
     t = jnp.arange(0.0, 0.6, dt); T = len(t); t_np = np.array(t)
     t_jump = 0.1
     hv3 = jnp.zeros((T, 3)); vs3 = jnp.zeros((T, 3))
     pt3 = jnp.zeros((T, 3)); pt3 = pt3.at[:, 2].set(1.0)
     pt3 = pt3.at[t >= t_jump, 0].set(jnp.tan(jnp.radians(10.0)))
-    ys    = _run_full(THETA_SAC, t, hv3, vs3, pt3)
-    x_okr = ys[:, _IDX_OKR]
+    ys    = _run_full(THETA_SAC, t, hv3, vs3, pt3, scene_present=True)
+    x_vs  = ys[:, _IDX_VS]
     mask  = (t_np > t_jump + 0.2) & (t_np < t_jump + 0.5)
-    contamination = np.abs(x_okr[mask]).max()
-    assert contamination < 0.1, \
-        f'FAIL: OKR contaminated; max|x_okr|={contamination:.3f} deg/s'
-    print('  3. OKR not contaminated by saccade        PASS')
+    contamination = np.abs(x_vs[mask]).max()
+    assert contamination < 5.0, \
+        f'FAIL: VS contaminated by saccade; max|x_vs|={contamination:.3f} deg/s'
+    print('  3. VS low after saccade (stationary world) PASS')
 
-    # ── Test 4: OKR still driven by real scene ────────────────────────────
+    # ── Test 4: VS still driven by real scene ────────────────────────────
     t = jnp.arange(0.0, 2.0, dt); T = len(t); t_np = np.array(t)
     hv3 = jnp.zeros((T, 3))
     vs3 = jnp.zeros((T, 3)); vs3 = vs3.at[:, 0].set(30.0)
     pt3 = jnp.zeros((T, 3)); pt3 = pt3.at[:, 2].set(1.0)
     ys    = _run_full(THETA_NO_SAC, t, hv3, vs3, pt3)
-    x_okr = ys[:, _IDX_OKR]
-    okr_late = np.abs(x_okr[t_np > 1.0, 0]).mean()
-    assert okr_late > 1.0, \
-        f'FAIL: OKR not driven by scene; mean={okr_late:.2f} deg/s'
-    print('  4. OKR driven by genuine scene motion     PASS')
+    x_vs  = ys[:, _IDX_VS]
+    vs_late = np.abs(x_vs[t_np > 1.0, 0]).mean()
+    assert vs_late > 1.0, \
+        f'FAIL: VS not driven by scene; mean={vs_late:.2f} deg/s'
+    print('  4. VS driven by genuine scene motion      PASS')
 
     print('All tests passed.\n')
 

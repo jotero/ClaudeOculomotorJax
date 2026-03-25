@@ -4,40 +4,35 @@ Signal flow (3-D):
 
     VOR pathway:
         w_head (3,) → [Canal Array] → y_canals (6,)
-                    → PINV_SENS (3×6) → u_canal (3,)
 
-    OKR pathway  [see models/visual_delay.py and models/okr.py]:
-        x_vis     (12,)  visual delay cascade state (4 stages × 3 axes)
-        e_delayed (3,)   = C · x_vis  — delayed retinal slip (read from state)
-        u_okr     (3,)   OKR drive from delayed slip + store
+    Visual delay:
+        e_slip (3,)  = scene_gain · (w_scene − w_head − w_eye + w_burst_pred)
+        x_vis  (240) cascade state; e_slip_delayed = C_slip @ x_vis
 
-    Visual delay update (end of step, after motor pathway):
-        w_eye     (3,)   = dx_p  — exact eye velocity (u_p now known)
-        e_slip    (3,)   = w_scene − w_head − w_eye  — exact retinal slip at t
-        dx_vis           updates x_vis with current e_slip
-
-    Combined VS input:
-        u_vs = u_canal − u_okr  (handled inside vs.step via stacked input)
+    Velocity storage (unified canal + visual):
+        VS input: [y_canals (6,) | e_slip_delayed (3,)]
+        VS owns PINV_SENS mixing (canal) and visual gains K_vis / g_vis.
+        w_est (3,) = VS output: velocity estimate → NI with sign flip −g_vor.
+        OKAN driven by x_vs decaying with τ_eff = 1/(1/τ_vs + K_vs).
 
     Saccade pathway  [see models/saccade_generator.py]:
         p_target  (3,)   Cartesian target position → theta_target (deg) via atan2
-        e_motor   (3,)   = theta_target − q_eye  (motor error in deg)
+        e_pos_delayed (3,) delayed retinal position error → saccade motor error
         u_burst   (3,)   saccade velocity command from local-feedback burst model
 
-    Downstream (VOR + Saccade combined):
-        u_vs → [VS] → x_vs (3,)  slow storage state
-        u_ni = x_vs + u_vs               (Robinson/Raphan feedthrough)
-        u_ni + u_burst → [NI] → x_ni (3,)   position command (burst charges NI)
-        u_p  = C·x_ni + D·(u_ni + u_burst)   pulse-step (burst feeds plant directly)
-        u_p  → [Plant] → q (3,)              eye rotation vector (deg)
+    Downstream (VOR + OKR + Saccade combined):
+        u_vel = −g_vor · w_est + u_burst        combined eye-velocity command
+        u_vel → [NI] → x_ni (3,)               position command
+        u_p  = C·x_ni + τ_p·u_vel              pulse-step to plant
+        u_p  → [Plant] → q (3,)                eye rotation vector (deg)
 
-Global state vector (270 states):
-    x = [x_c (12) | x_vs (3) | x_ni (3) | x_p (3) | x_vis (240) | x_okr (3) | x_sg (3) | x_pc (3)]
-         ─ canal ─   ─ VS ─   ─  NI  ─   plant      vis delay      OKR store   sacc gen   plant copy
+Global state vector (267 states):
+    x = [x_c (12) | x_vs (3) | x_ni (3) | x_p (3) | x_vis (240) | x_sg (3) | x_pc (3)]
+         ─ canal ─   ─ VS ─   ─  NI  ─   plant      vis delay      sacc gen   plant copy
                                            (120 slip + 120 pos error, 40 stages × 3 axes × 2 sig)
 
-    x_pc — efference-copy plant: tracks burst-driven eye velocity to remove
-           saccadic contamination from the retinal slip before it enters OKR.
+    x_pc — efference-copy plant: tracks burst-driven eye velocity to subtract
+           saccadic contamination from retinal slip before it enters VS.
 
 Head velocity input:
     Accepts 1-D (T,) horizontal-only array — padded to (T, 3) internally.
@@ -66,7 +61,6 @@ from oculomotor.models import neural_integrator as ni
 from oculomotor.models import plant
 from oculomotor.models import retina
 from oculomotor.models import visual_delay
-from oculomotor.models import okr
 from oculomotor.models import saccade_generator as sg
 
 # ── Canonical model parameters ─────────────────────────────────────────────────
@@ -81,8 +75,19 @@ THETA_DEFAULT = {
     # Architecture: Raphan, Matsuo & Cohen (1979 Exp Brain Res);
     # Kalman-filter formulation: Laurens & Angelaki (2011 Exp Brain Res)
     'tau_vs':        50.0,    # prior TC (s); Laurens & Angelaki (2011)
-    'K_vs':           0.03,   # Kalman gain (1/s); τ_eff ≈ 20 s matches
+    'K_vs':           0.03,   # canal Kalman gain (1/s); τ_eff ≈ 20 s matches
                               # Cohen, Matsuo & Raphan (1977 J Neurophysiol)
+
+    # ── OKR — visual pathway into VS ─────────────────────────────────────────
+    # Retinal slip drives VS with two components:
+    #   K_vis: state gain — charges x_vs, sustains OKAN after scene off
+    #   g_vis: direct feedthrough — fast OKR onset, contributes to SS gain
+    # SS OKR gain ≈ (20·K_vis + g_vis) / (1 + 20·K_vis + g_vis) with defaults ≈ 86%
+    # OKAN TC = τ_eff = 1/(1/τ_vs + K_vs) ≈ 20 s (independent of K_vis)
+    # Data: Raphan et al. (1979); Cohen et al. (1977); Waespe & Henn (1977
+    # Exp Brain Res)
+    'K_vis':          0.3,    # visual state gain (1/s)
+    'g_vis':          0.3,    # visual direct feedthrough (unitless)
 
     # ── VOR ───────────────────────────────────────────────────────────────────
     # Healthy primate VOR gain ≈ 1.0 (Collewijn et al. 1983 J Physiol;
@@ -104,13 +109,6 @@ THETA_DEFAULT = {
     # Miles, Kawano & Optican 1986 J Neurophysiol)
     'tau_vis':        0.08,   # visual delay TC (s)
 
-    # ── OKR (optokinetic reflex) ──────────────────────────────────────────────
-    # Raphan et al. (1979); Cohen et al. (1977); Waespe & Henn (1977
-    # Exp Brain Res)
-    'g_okr':          0.7,    # OKR gain (unitless); retinal-slip → VS drive
-    'tau_okan':      25.0,    # OKR store TC (s); OKAN decay in monkey
-                              # (Raphan et al. 1979; Cohen et al. 1977)
-
     # ── Saccade generator (disabled by default; set g_burst > 0 to enable) ───
     # Local-feedback burst model: Robinson (1975); burst neurons: Fuchs,
     # Scudder & Kaneko (1988 J Neurophysiol); main sequence: Bahill,
@@ -131,19 +129,17 @@ _NVS     = vs.N_STATES              #  3
 _NNI     = ni.N_STATES              #  3
 _NP      = plant.N_STATES           #  3
 _NVis    = visual_delay.N_STATES    # 240 visual delay (120 slip + 120 pos error)
-_NOKR    = okr.N_STATES             #   3 OKR slow store
 _NSG     = sg.N_STATES              #   3 saccade generator (x_reset_int)
 _NPC     = 3                        #   3 efference-copy plant (burst-driven)
-_N_TOTAL = _NC + _NVS + _NNI + _NP + _NVis + _NOKR + _NSG + _NPC    # 270
+_N_TOTAL = _NC + _NVS + _NNI + _NP + _NVis + _NSG + _NPC    # 267
 
-_IDX_C   = slice(0,                                              _NC)
-_IDX_VS  = slice(_NC,                                            _NC + _NVS)
-_IDX_NI  = slice(_NC + _NVS,                                     _NC + _NVS + _NNI)
-_IDX_P   = slice(_NC + _NVS + _NNI,                              _NC + _NVS + _NNI + _NP)
-_IDX_VIS = slice(_NC + _NVS + _NNI + _NP,                        _NC + _NVS + _NNI + _NP + _NVis)
-_IDX_OKR = slice(_NC + _NVS + _NNI + _NP + _NVis,                _NC + _NVS + _NNI + _NP + _NVis + _NOKR)
-_IDX_SG  = slice(_NC + _NVS + _NNI + _NP + _NVis + _NOKR,        _NC + _NVS + _NNI + _NP + _NVis + _NOKR + _NSG)
-_IDX_PC  = slice(_NC + _NVS + _NNI + _NP + _NVis + _NOKR + _NSG, _N_TOTAL)
+_IDX_C   = slice(0,                                     _NC)
+_IDX_VS  = slice(_NC,                                   _NC + _NVS)
+_IDX_NI  = slice(_NC + _NVS,                            _NC + _NVS + _NNI)
+_IDX_P   = slice(_NC + _NVS + _NNI,                     _NC + _NVS + _NNI + _NP)
+_IDX_VIS = slice(_NC + _NVS + _NNI + _NP,               _NC + _NVS + _NNI + _NP + _NVis)
+_IDX_SG  = slice(_NC + _NVS + _NNI + _NP + _NVis,       _NC + _NVS + _NNI + _NP + _NVis + _NSG)
+_IDX_PC  = slice(_NC + _NVS + _NNI + _NP + _NVis + _NSG, _N_TOTAL)
 
 _DT_SOLVE = 0.001  # Heun fixed step (s); must satisfy dt < 2*tau_stage_vis = 0.004 s
 
@@ -158,37 +154,44 @@ def vor_vector_field(t, x, args):
     Args:
         t:    scalar time (s)
         x:    global state vector, shape (_N_TOTAL,)
-        args: (theta, hv_interp, hp_interp, vs_interp, target_interp, canal_gains)
+        args: (theta, hv_interp, hp_interp, vs_interp, target_interp,
+               scene_gain_interp, canal_gains)
+
+              scene_gain_interp — LinearInterpolation of a (T,) scalar array,
+              values in [0, 1].  0 = dark (no retinal image), 1 = full scene.
+              Gates the retinal slip entering the visual delay cascade.
+              Position error (saccade target) is NOT gated — saccades work in dark.
 
     Returns:
         dx_dt: shape (_N_TOTAL,)
     """
-    theta, hv_interp, hp_interp, vs_interp, target_interp, canal_gains = args
+    theta, hv_interp, hp_interp, vs_interp, target_interp, scene_gain_interp, canal_gains = args
 
     x_c   = x[_IDX_C]
     x_vs  = x[_IDX_VS]
     x_ni  = x[_IDX_NI]
     x_p   = x[_IDX_P]
     x_vis = x[_IDX_VIS]
-    x_okr = x[_IDX_OKR]
     x_sg  = x[_IDX_SG]
     x_pc  = x[_IDX_PC]
 
-    w_head   = hv_interp.evaluate(t)       # (3,) head angular velocity (deg/s)
-    q_head   = hp_interp.evaluate(t)       # (3,) head angular position (deg)
-    w_scene  = vs_interp.evaluate(t)       # (3,) scene angular velocity (deg/s)
-    p_target = target_interp.evaluate(t)   # (3,) Cartesian target position
-
-    # ── Vestibular sensing ────────────────────────────────────────────────────
-    dx_c, y_canals = canal.step(x_c, w_head, theta, canal_gains)
+    w_head     = hv_interp.evaluate(t)           # (3,) head angular velocity (deg/s)
+    q_head     = hp_interp.evaluate(t)           # (3,) head angular position (deg)
+    w_scene    = vs_interp.evaluate(t)           # (3,) scene angular velocity (deg/s)
+    p_target   = target_interp.evaluate(t)       # (3,) Cartesian target position
+    scene_gain = scene_gain_interp.evaluate(t)   # scalar: 0=dark, 1=full scene
 
     # ── Read delayed signals from visual delay state ─────────────────────────
     e_slip_delayed = visual_delay.C_slip @ x_vis   # (3,) delayed retinal slip
     e_pos_delayed  = visual_delay.C_pos  @ x_vis   # (3,) delayed position error
 
-    # ── OKR and velocity storage ───────────────────────────────────────────────
-    dx_okr, u_okr = okr.step(x_okr, e_slip_delayed, theta)
-    dx_vs, w_est  = vs.step(x_vs, jnp.concatenate([y_canals, u_okr]), theta)
+    # ── Vestibular sensing ────────────────────────────────────────────────────
+    dx_c, y_canals = canal.step(x_c, w_head, theta, canal_gains)
+
+    # ── Velocity storage: unified canal + visual input ────────────────────────
+    # VS owns PINV_SENS mixing and visual gains (K_vis, g_vis).
+    # w_est is the velocity estimate: positive = head/scene moving rightward.
+    dx_vs, w_est = vs.step(x_vs, jnp.concatenate([y_canals, e_slip_delayed]), theta)
 
     # ── Saccade generator (delayed motor error → Robinson local feedback) ─────
     dx_sg, u_burst = sg.step(x_sg, e_pos_delayed, theta)
@@ -208,10 +211,10 @@ def vor_vector_field(t, x, args):
     # ── Retinal signals (position error + velocity slip) → visual delay ──────
     w_eye  = dx_p
     e_pos  = retina.target_to_angle(p_target) - q_head - x_p          # position error (deg)
-    e_slip = w_scene - w_head - w_eye + w_burst_pred                   # add back predicted burst vel → cancels saccadic slip
+    e_slip = scene_gain * (w_scene - w_head - w_eye + w_burst_pred)    # gated by scene: 0 in dark
     dx_vis, _, _ = visual_delay.step(x_vis, e_slip, e_pos, theta)
 
-    return jnp.concatenate([dx_c, dx_vs, dx_ni, dx_p, dx_vis, dx_okr, dx_sg, dx_pc])
+    return jnp.concatenate([dx_c, dx_vs, dx_ni, dx_p, dx_vis, dx_sg, dx_pc])
 
 
 # ── Simulation entry point ─────────────────────────────────────────────────────
@@ -219,28 +222,34 @@ def vor_vector_field(t, x, args):
 def simulate(theta, t_array_or_stimulus, head_vel_array=None,
              v_scene_array=None,
              p_target_array=None,
+             scene_present_array=None,
              canal_gains=None,
              max_steps=10000, dt_solve=None):
     """Integrate the oculomotor ODE and return eye rotation vector.
 
     Args:
         theta:                dict with keys tau_c, tau_s, g_vor, tau_i, tau_p,
-                              tau_vs, K_vs, and optionally g_okr, tau_vis,
-                              g_burst, tau_fb_sac, threshold_sac, k_sac, tau_ref.
+                              tau_vs, K_vs, K_vis, g_vis, tau_vis, and optionally
+                              g_burst, threshold_sac, k_sac, e_sat_sac, tau_reset_*.
         t_array_or_stimulus:  1-D time array (s), shape (T,)  — OR —
                               a Stimulus object (oculomotor.sim.stimulus).
         head_vel_array:       head angular velocity, shape (T,) or (T, 3).
                               If 1-D, treated as horizontal (yaw); pitch/roll = 0.
         v_scene_array:        visual scene angular velocity, shape (T, 3) or None.
-                              None (default) = dark — no visual drive.
+                              None (default) = dark — also sets scene_present=0
+                              unless scene_present_array is given explicitly.
         p_target_array:       Cartesian target position, shape (T, 3) or (3,) or None.
-                              None = straight ahead [0, 0, 1] — saccades inactive
-                              unless g_burst > 0 in theta.
+                              None = straight ahead [0, 0, 1].
                               Shape (3,) = constant target (replicated over time).
+        scene_present_array:  scene visibility gain, shape (T,), values in [0, 1].
+                              None (default) = inferred: 1.0 if v_scene_array was
+                              provided, 0.0 (dark) if v_scene_array is None.
+                              Pass explicitly to simulate a stationary lit scene
+                              (v_scene=zeros) or a scene that turns on/off mid-trial.
         canal_gains:          per-canal gains, length N_CANALS. Default None=all 1.
                               Set element to 0.0 to simulate individual canal loss.
         max_steps:            ODE solver step budget (≥ duration / dt_solve).
-        dt_solve:             Heun fixed step size (s). Default: _DT_SOLVE (0.005).
+        dt_solve:             Heun fixed step size (s). Default: _DT_SOLVE (0.001).
 
     Returns:
         eye_rot: eye rotation vector (deg), shape (T, 3)
@@ -293,11 +302,22 @@ def simulate(theta, t_array_or_stimulus, head_vel_array=None,
         jnp.cumsum(0.5 * (hv3[:-1] + hv3[1:]) * dt_arr[:, None], axis=0),
     ])                                                              # (T, 3)
 
-    hv_interp     = diffrax.LinearInterpolation(ts=t_array, ys=hv3)
-    hp_interp     = diffrax.LinearInterpolation(ts=t_array, ys=hp3)
-    vs_interp     = diffrax.LinearInterpolation(ts=t_array, ys=vs3)
-    target_interp = diffrax.LinearInterpolation(ts=t_array, ys=pt3)
-    x0            = jnp.zeros(_N_TOTAL)
+    # ── Scene presence gain (time-varying, [0,1]) ─────────────────────────────
+    # None → infer: 1 if v_scene_array was provided, 0 (dark) if None.
+    # Pass explicitly for stationary-world or mid-trial light-on/off scenarios.
+    if scene_present_array is not None:
+        sg1 = jnp.asarray(scene_present_array, dtype=jnp.float32)
+    elif v_scene_array is not None:
+        sg1 = jnp.ones(T, dtype=jnp.float32)
+    else:
+        sg1 = jnp.zeros(T, dtype=jnp.float32)   # dark
+
+    hv_interp         = diffrax.LinearInterpolation(ts=t_array, ys=hv3)
+    hp_interp         = diffrax.LinearInterpolation(ts=t_array, ys=hp3)
+    vs_interp         = diffrax.LinearInterpolation(ts=t_array, ys=vs3)
+    target_interp     = diffrax.LinearInterpolation(ts=t_array, ys=pt3)
+    scene_gain_interp = diffrax.LinearInterpolation(ts=t_array, ys=sg1)
+    x0                = jnp.zeros(_N_TOTAL)
 
     if canal_gains is None:
         gains_array = jnp.ones(canal.N_CANALS)
@@ -311,7 +331,8 @@ def simulate(theta, t_array_or_stimulus, head_vel_array=None,
         t1=t_array[-1],
         dt0=dt,
         y0=x0,
-        args=(theta, hv_interp, hp_interp, vs_interp, target_interp, gains_array),
+        args=(theta, hv_interp, hp_interp, vs_interp, target_interp,
+              scene_gain_interp, gains_array),
         stepsize_controller=diffrax.ConstantStepSize(),
         saveat=diffrax.SaveAt(ts=t_array),
         max_steps=max_steps,

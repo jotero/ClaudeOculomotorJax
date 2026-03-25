@@ -99,8 +99,8 @@ def get_A(theta):
     Z   = jnp.zeros((N_CANALS, N_CANALS))
     ac  = -1.0 / theta['tau_c']
     as_ = -1.0 / theta['tau_s']
-    top = jnp.concatenate([ac * I,   Z       ], axis=1)
-    bot = jnp.concatenate([as_ * I,  as_ * I ], axis=1)
+    top = jnp.concatenate([ac * I  ,  Z       ], axis=1)
+    bot = jnp.concatenate([as_ * I ,  as_ * I ], axis=1)
     return jnp.concatenate([top, bot], axis=0)   # (N_STATES, N_STATES)
 
 
