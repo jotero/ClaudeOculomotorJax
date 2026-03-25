@@ -17,24 +17,29 @@ Input:  u_sg = e_motor (3,)        = theta_target − x_p  (actual motor error)
 Output: u_burst (3,)               saccade velocity command (deg/s)
 
 ──────────────────────────────────────────────────────────────────────────────
-Nonlinearities
+Nonlinearities and modal gating
 ──────────────────────────────────────────────────────────────────────────────
-Input nonlinearity D(e_motor, θ):
-    gate_thresh = σ(k_sac · (|e_motor| − threshold_sac))   threshold gate
-    ê           = e_motor / |e_motor|                       direction unit vector
-    u_burst     = g_burst · tanh(|e_motor| / e_sat_sac) · ê · gate_thresh
+Input nonlinearity (replaces linear D):
+    gate_thresh  = σ(k_sac · (|e_motor| − threshold_sac))   threshold gate
+    ê            = e_motor / |e_motor|                       direction unit vector
+    u_burst_raw  = g_burst · tanh(|e_motor| / e_sat_sac) · ê  (no gate here)
 
     • gate_thresh ≈ 0 below threshold  → burst off
     • gate_thresh ≈ 1 above threshold  → burst on; magnitude set by tanh
     • tanh gives compressive nonlinearity → realistic main-sequence saturation
-      (small saccades linear, large saccades approach g_burst ceiling)
 
-State matrix A(gate_thresh, θ):
-    leak = gate_thresh / tau_i  +  (1 − gate_thresh) / tau_reset_sac
-    A    = −leak · I₃
+Modal gating in step():
+    A_ni and A_reset carry only dynamics (no gate in the matrices).
+    gate_thresh is multiplied in step() to blend the two modes:
 
-    • gate_thresh ≈ 1 (saccade active):  A = −(1/tau_i)·I   ← same as real NI
-    • gate_thresh ≈ 0 (between saccades): A = −(1/tau_reset)·I  ← fast reset to 0
+        dx = gate_thresh       · (A_ni    @ x  +  B @ u_burst_raw)   [saccade mode]
+           + (1−gate_thresh)   · (A_reset @ x)                        [reset mode]
+
+        u_burst = gate_thresh · u_burst_raw                           [gated output]
+
+    • A_ni   = −(1/tau_i)     · I₃   — NI dynamics, same as real NI
+    • A_reset = −(1/tau_reset) · I₃  — fast decay to 0
+    • B      = I₃                    — unit input gain
 
 ──────────────────────────────────────────────────────────────────────────────
 Output insertion (in simulator):
@@ -76,21 +81,20 @@ def target_to_angle(p_target):
     return jnp.array([yaw, pitch, 0.0])
 
 
-# ── Nonlinear input → output (replaces linear D) ─────────────────────────────
+# ── Input nonlinearity (replaces linear D) ───────────────────────────────────
 
 def input_nonlinearity(e_motor, theta):
-    """Threshold gate × tanh saturation → burst command and gate scalar.
+    """Threshold gate + tanh saturation → raw burst magnitude and gate scalar.
 
-    Two nonlinearities applied to the motor error vector:
-      1. Threshold gate:  gate_thresh = σ(k · (|e_motor| − threshold_sac))
-      2. tanh saturation: u_burst     = g_burst · tanh(|e_motor| / e_sat_sac) · ê
+    Returns the raw (ungated) burst and the gate separately so that step()
+    can apply the gate exactly once to both the state equation and the output.
 
     Args:
         e_motor: (3,)  motor error = theta_target − x_p
         theta:   dict  model parameters
 
     Returns:
-        u_burst:     (3,)    burst velocity command (deg/s)
+        u_burst_raw: (3,)    burst magnitude, gate NOT yet applied
         gate_thresh: scalar  saccade gate in [0, 1]
     """
     g_burst       = theta.get('g_burst',        600.0)
@@ -101,32 +105,25 @@ def input_nonlinearity(e_motor, theta):
     err_mag     = jnp.linalg.norm(e_motor)
     gate_thresh = jax.nn.sigmoid(k_sac * (err_mag - threshold_sac))
 
-    e_dir   = e_motor / (err_mag + 1e-6)
-    u_burst = g_burst * jnp.tanh(err_mag / e_sat_sac) * e_dir * gate_thresh
+    e_dir       = e_motor / (err_mag + 1e-6)
+    u_burst_raw = g_burst * jnp.tanh(err_mag / e_sat_sac) * e_dir   # no gate here
 
-    return u_burst, gate_thresh
-
-
-# ── State matrix (depends on gate from input nonlinearity) ───────────────────
-
-B = jnp.eye(3)   # (3, 3) — burst integrates into x_reset_int with unit gain
+    return u_burst_raw, gate_thresh
 
 
-def get_A(gate_thresh, theta):
-    """(3, 3) state matrix — gated diagonal leak.
+# ── Mode matrices (pure dynamics — no gating inside) ─────────────────────────
 
-    Interpolates between NI leak (during saccade) and fast reset (between):
-        leak = gate_thresh / tau_i  +  (1 − gate_thresh) / tau_reset_sac
-        A    = −leak · I₃
+B = jnp.eye(3)   # (3, 3) — unit input gain (constant)
 
-    Args:
-        gate_thresh: scalar  from input_nonlinearity
-        theta:       dict    model parameters
-    """
-    tau_i     = theta.get('tau_i',         25.0)
-    tau_reset = theta.get('tau_reset_sac',  0.1)
-    leak      = gate_thresh / tau_i + (1.0 - gate_thresh) / tau_reset
-    return -leak * jnp.eye(3)
+
+def get_A_ni(theta):
+    """(3, 3) saccade-mode state matrix — NI dynamics, same as real NI."""
+    return (-1.0 / theta.get('tau_i', 25.0)) * jnp.eye(3)
+
+
+def get_A_reset(theta):
+    """(3, 3) reset-mode state matrix — fast decay to 0 between saccades."""
+    return (-1.0 / theta.get('tau_reset_sac', 0.1)) * jnp.eye(3)
 
 
 # ── SSM step ─────────────────────────────────────────────────────────────────
@@ -134,8 +131,12 @@ def get_A(gate_thresh, theta):
 def step(x_sg, u_sg, theta):
     """Single ODE step: state derivative + burst output.
 
-    dx_sg  = A(gate_thresh, θ) @ x_sg  +  B @ u_burst
-    u_burst = input_nonlinearity(e_motor, θ)
+    gate_thresh blends the two modes — applied to inputs, not baked into A:
+
+        dx = gate       · (A_ni    @ x  +  B @ u_burst_raw)   saccade mode
+           + (1−gate)   · (A_reset @ x)                        reset mode
+
+        u_burst = gate · u_burst_raw                           gated output
 
     Args:
         x_sg:  (N_STATES,)  x_reset_int (3,) — resettable integrator
@@ -146,6 +147,10 @@ def step(x_sg, u_sg, theta):
         dx_sg:   (N_STATES,)  state derivative
         u_burst: (3,)         saccade velocity command (deg/s)
     """
-    u_burst, gate_thresh = input_nonlinearity(u_sg, theta)
-    dx = get_A(gate_thresh, theta) @ x_sg + B @ u_burst
+    u_burst_raw, gate_thresh = input_nonlinearity(u_sg, theta)
+
+    dx = (        gate_thresh  * (get_A_ni(theta)    @ x_sg + B @ u_burst_raw)
+         + (1.0 - gate_thresh) * (get_A_reset(theta) @ x_sg))
+
+    u_burst = gate_thresh * u_burst_raw
     return dx, u_burst

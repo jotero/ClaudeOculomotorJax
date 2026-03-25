@@ -31,9 +31,10 @@ Signal flow (3-D):
         u_p  = C·x_ni + D·(u_ni + u_burst)   pulse-step (burst feeds plant directly)
         u_p  → [Plant] → q (3,)              eye rotation vector (deg)
 
-Global state vector (39 states):
-    x = [x_c (12) | x_vs (3) | x_ni (3) | x_p (3) | x_vis (12) | x_okr (3) | x_sg (3)]
+Global state vector (51 states):
+    x = [x_c (12) | x_vs (3) | x_ni (3) | x_p (3) | x_vis (24) | x_okr (3) | x_sg (3)]
          ─ canal ─   ─ VS ─   ─  NI  ─   plant     vis delay     OKR store   saccade gen
+                                           (12 slip + 12 pos error)
 
 Head velocity input:
     Accepts 1-D (T,) horizontal-only array — padded to (T, 3) internally.
@@ -91,10 +92,10 @@ _NC      = canal.N_STATES           # 12  (x1+x2 per canal, 6 canals)
 _NVS     = vs.N_STATES              #  3
 _NNI     = ni.N_STATES              #  3
 _NP      = plant.N_STATES           #  3
-_NVis    = visual_delay.N_STATES    # 12  visual delay cascade
+_NVis    = visual_delay.N_STATES    # 24  visual delay (12 slip + 12 pos error)
 _NOKR    = okr.N_STATES             #  3  OKR slow store
 _NSG     = sg.N_STATES              #  3  saccade generator (x_reset_int)
-_N_TOTAL = _NC + _NVS + _NNI + _NP + _NVis + _NOKR + _NSG    # 39
+_N_TOTAL = _NC + _NVS + _NNI + _NP + _NVis + _NOKR + _NSG    # 51
 
 _IDX_C   = slice(0,                                         _NC)
 _IDX_VS  = slice(_NC,                                       _NC + _NVS)
@@ -139,16 +140,16 @@ def vor_vector_field(t, x, args):
     # ── Vestibular sensing ────────────────────────────────────────────────────
     dx_c, y_canals = canal.step(x_c, w_head, theta, canal_gains)
 
-    # ── Read delayed visual signal from state (no current slip needed yet) ────
-    e_delayed = visual_delay.C @ x_vis    # (3,) delayed retinal slip from state
+    # ── Read delayed slip from visual delay state ────────────────────────────
+    e_slip_delayed = visual_delay.C_slip @ x_vis   # (3,) delayed retinal slip
 
     # ── OKR and velocity storage ───────────────────────────────────────────────
-    dx_okr, u_okr = okr.step(x_okr, e_delayed, theta)
+    dx_okr, u_okr = okr.step(x_okr, e_slip_delayed, theta)
     dx_vs, u_ni   = vs.step(x_vs, jnp.concatenate([y_canals, u_okr]), theta)
 
-    # ── Saccade generator (resettable integrator, threshold on motor error) ──
+    # ── Saccade generator (instantaneous motor error) ─────────────────────────
     theta_target   = sg.target_to_angle(p_target)   # (3,) target angle (deg)
-    e_motor        = theta_target - x_p              # (3,) actual motor error
+    e_motor        = theta_target - x_p              # (3,) instantaneous motor error
     dx_sg, u_burst = sg.step(x_sg, e_motor, theta)
 
     # ── Neural integrator + plant (VOR + saccade combined) ───────────────────
@@ -159,10 +160,10 @@ def vor_vector_field(t, x, args):
 
     dx_p, _ = plant.step(x_p, u_p, theta)
 
-    # ── Update visual delay with current retinal slip ─────────────────────────
+    # ── Update visual delay: retinal slip + position error ────────────────────
     w_eye  = dx_p
     e_slip = w_scene - w_head - w_eye
-    dx_vis, _ = visual_delay.step(x_vis, e_slip, theta)
+    dx_vis, _, _ = visual_delay.step(x_vis, e_slip, e_motor, theta)
 
     return jnp.concatenate([dx_c, dx_vs, dx_ni, dx_p, dx_vis, dx_okr, dx_sg])
 

@@ -21,9 +21,10 @@ import numpy as np
 from oculomotor.models.ocular_motor_simulator import (
     simulate, THETA_DEFAULT,
     vor_vector_field, _N_TOTAL,
-    _IDX_NI, _IDX_P, _IDX_SG,
+    _IDX_NI, _IDX_P, _IDX_SG, _IDX_VIS,
 )
 from oculomotor.models import saccade_generator as sg
+from oculomotor.models import visual_delay
 import diffrax
 
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), '..', 'outputs')
@@ -46,7 +47,7 @@ _C = {
 THETA_SAC = {**THETA_DEFAULT,
              'g_vor':          0.0,   # no VOR — head is still
              'g_okr':          0.0,   # no OKR — dark / saccade only
-             'g_burst':      600.0,   # burst ceiling (deg/s); peak vel → g_burst as amp → ∞
+             'g_burst':      700.0,   # burst ceiling (deg/s); peak vel → g_burst as amp → ∞
              'threshold_sac':  0.5,   # trigger threshold (deg)
              'k_sac':         15.0,   # sigmoid steepness (1/deg)
              'e_sat_sac':     10.0,   # tanh saturation amplitude (deg); ~half-sat at e_sat
@@ -80,14 +81,17 @@ def _extract_all(theta, t_array, hv3, vs3, pt3, max_steps=100000):
     ys = solution.ys   # (T, _N_TOTAL)
 
     def _signals_at(x, t):
-        x_p         = x[_IDX_P]
-        x_ni        = x[_IDX_NI]
-        x_reset_int = x[_IDX_SG]          # (3,) resettable integrator
-        p_t         = target_interp.evaluate(t)
-        tt          = sg.target_to_angle(p_t)
-        e_motor     = tt - x_p
-        _, u_burst  = sg.step(x_reset_int, e_motor, theta)
+        x_p           = x[_IDX_P]
+        x_ni          = x[_IDX_NI]
+        x_vis         = x[_IDX_VIS]
+        x_reset_int   = x[_IDX_SG]          # (3,) resettable integrator
+        p_t           = target_interp.evaluate(t)
+        tt            = sg.target_to_angle(p_t)
+        e_motor       = tt - x_p
+        e_pos_delayed = visual_delay.C_pos @ x_vis   # delayed (for diagnostics only)
+        _, u_burst    = sg.step(x_reset_int, e_motor, theta)
         return {'q_eye': x_p, 'x_ni': x_ni, 'e_motor': e_motor,
+                'e_pos_delayed': e_pos_delayed,
                 'x_reset_int': x_reset_int, 'u_burst': u_burst}
 
     raw = jax.vmap(lambda x, t: _signals_at(x, t))(ys, t_array)
@@ -128,9 +132,11 @@ def demo_saccade_single():
     _vl(axes[0]); axes[0].set_ylabel('deg'); axes[0].set_title('Position: eye, NI cmd, target')
     axes[0].legend(fontsize=8); axes[0].axhline(0, color='k', lw=0.5)
 
-    # 1: motor error
-    axes[1].plot(t_np, sig['e_motor'][:, 0], color=_C['error'], lw=1.5, label='e_motor (target−eye)')
-    _vl(axes[1]); axes[1].set_ylabel('deg'); axes[1].set_title('Motor Error')
+    # 1: motor error vs resettable integrator — crossing = burst off
+    axes[1].plot(t_np, sig['e_motor'][:, 0],       color=_C['error'],  lw=1.5, label='e_motor (target−eye)')
+    axes[1].plot(t_np, sig['e_pos_delayed'][:, 0], color=_C['error'],  lw=1.2, ls='--', label='e_pos_delayed')
+    axes[1].plot(t_np, sig['x_reset_int'][:, 0],   color=_C['reset'],  lw=1.5, label='x_reset_int')
+    _vl(axes[1]); axes[1].set_ylabel('deg'); axes[1].set_title('Motor Error vs Resettable Integrator')
     axes[1].legend(fontsize=8); axes[1].axhline(0, color='k', lw=0.5)
 
     # 2: burst command

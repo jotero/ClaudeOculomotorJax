@@ -1,4 +1,4 @@
-"""Visual delay SSM — gamma-distributed delay (method of stages).
+"""Visual delay SSM — gamma-distributed delay for two retinal signals.
 
 A cascade of N_STAGES first-order LP filters, each with time constant
 τ/N_STAGES, approximates a pure delay of τ seconds.
@@ -13,16 +13,18 @@ With N_STAGES = 4 and τ = 0.08 s:
     −3 dB BW    ≈ 22 Hz         (visual reflexes operate below ~2 Hz → effectively exact)
     Heun-stable  ✓ (τ_stage = 0.02 s, dt/τ_stage = 0.25)
 
+Two signals are delayed independently through the same cascade:
+    Signal 0 — e_slip  (3,)  retinal velocity slip  → OKR drive
+    Signal 1 — e_pos   (3,)  retinal position error → saccade motor error
+
 Signal flow
 ───────────
-    e_slip → x_vis[0] → x_vis[1] → x_vis[2] → x_vis[3]
-             (3,)        (3,)        (3,)        (3,)
+    e_slip → [stage 0..3] → e_slip_delayed     (for OKR)
+    e_pos  → [stage 0..3] → e_pos_delayed      (for saccades)
 
-    e_delayed = C @ x_vis = x_vis[-3:]       (delayed retinal slip)
-
-State (N_STAGES × 3 = 12): four 3-D delay stages [x0|x1|x2|x3]
-Input (3):  e_slip   — instantaneous retinal slip (deg/s), from simulator
-Output (3): e_delayed — delayed retinal slip (deg/s)
+State layout (N_STAGES × 3 × N_SIG = 24):
+    x_vis = [x_slip_0 (3) | x_slip_1 (3) | x_slip_2 (3) | x_slip_3 (3) |
+             x_pos_0  (3) | x_pos_1  (3) | x_pos_2  (3) | x_pos_3  (3)]
 
 Parameters
 ──────────
@@ -33,55 +35,70 @@ import jax.numpy as jnp
 
 # ── Cascade parameters ─────────────────────────────────────────────────────────
 
-N_STAGES = 4              # cascade depth (4 → std = τ/2, BW ≈ 22 Hz for τ=0.08s)
-N_STATES = N_STAGES * 3  # 12 total states
+N_STAGES = 4              # cascade depth
+N_SIG    = 2              # number of signals (slip + position error)
+N_STATES = N_STAGES * 3 * N_SIG   # 24 total states
 
-# ── Structural matrices (computed once at import, scaled by theta at runtime) ──
+_N_PER_SIG = N_STAGES * 3   # 12 states per signal
 
-# B structure: e_slip enters only the first stage
-_B_STRUCT = jnp.zeros((N_STATES, 3)).at[:3, :].set(jnp.eye(3))
+# ── Structural matrices (computed once at import) ─────────────────────────────
 
-# C: select last stage output (delayed retinal slip)
-C = jnp.zeros((3, N_STATES)).at[:, -3:].set(jnp.eye(3))
+def _make_cascade_A_struct():
+    """Block bidiagonal A for one signal's N_STAGES cascade (12×12)."""
+    A = -jnp.eye(_N_PER_SIG)   # diagonal = −1 (scaled by k at runtime)
+    for i in range(1, N_STAGES):
+        A = A.at[i*3:(i+1)*3, (i-1)*3:i*3].set(jnp.eye(3))
+    return A
+
+_A_STRUCT = _make_cascade_A_struct()   # (12, 12) — shared by both signals
+
+# B structure: input enters only the first stage of each signal's cascade
+_B_STRUCT_SIG = jnp.zeros((_N_PER_SIG, 3)).at[:3, :].set(jnp.eye(3))   # (12, 3)
+
+# C: select last stage of each signal's cascade
+C_slip = jnp.zeros((3, N_STATES)).at[:, _N_PER_SIG - 3 : _N_PER_SIG].set(jnp.eye(3))
+C_pos  = jnp.zeros((3, N_STATES)).at[:, N_STATES - 3 :              ].set(jnp.eye(3))
 
 
 # ── ABCD matrices ──────────────────────────────────────────────────────────────
 
 def get_A(theta):
-    """(N_STATES × N_STATES) cascade state matrix.
+    """(N_STATES × N_STATES) block-diagonal cascade state matrix.
 
-    Block lower-bidiagonal:
-        diagonal blocks    = −k · I₃     (decay)
-        subdiagonal blocks = +k · I₃     (feed from previous stage)
-    where k = N_STAGES / tau_vis.
+    Two identical cascades — one per signal — on the diagonal.
     """
     tau = theta.get('tau_vis', 0.08)
     k   = N_STAGES / tau
-    A   = -k * jnp.eye(N_STATES)
-    for i in range(1, N_STAGES):
-        A = A.at[i*3:(i+1)*3, (i-1)*3:i*3].set(k * jnp.eye(3))
-    return A
+    A_blk = k * _A_STRUCT   # (12, 12) for one signal
+    return jnp.block([[A_blk,           jnp.zeros((_N_PER_SIG, _N_PER_SIG))],
+                      [jnp.zeros((_N_PER_SIG, _N_PER_SIG)), A_blk          ]])
 
 
 def get_B(theta):
-    """(N_STATES × 3) input matrix: e_slip drives first stage only."""
-    tau = theta.get('tau_vis', 0.08)
-    k   = N_STAGES / tau
-    return k * _B_STRUCT
+    """(N_STATES × 6) input matrix: each signal drives its own first stage."""
+    tau   = theta.get('tau_vis', 0.08)
+    k     = N_STAGES / tau
+    B_blk = k * _B_STRUCT_SIG   # (12, 3) for one signal
+    return jnp.block([[B_blk,                   jnp.zeros((_N_PER_SIG, 3))],
+                      [jnp.zeros((_N_PER_SIG, 3)), B_blk                  ]])
 
 
-def step(x_vis, e_slip, theta):
-    """Single ODE step: state derivative + delayed retinal slip output.
+def step(x_vis, e_slip, e_pos, theta):
+    """Single ODE step: state derivative + both delayed outputs.
 
     Args:
-        x_vis:  (N_STATES,)  delay cascade state
-        e_slip: (3,)         instantaneous retinal slip (deg/s)
-        theta:  dict         model parameters
+        x_vis:  (N_STATES,)  delay cascade state (24,)
+        e_slip: (3,)          instantaneous retinal slip (deg/s)
+        e_pos:  (3,)          instantaneous retinal position error (deg)
+        theta:  dict          model parameters
 
     Returns:
-        dx:        (N_STATES,)  dx_vis/dt
-        e_delayed: (3,)         delayed retinal slip  C@x_vis
+        dx:             (N_STATES,)  dx_vis/dt
+        e_slip_delayed: (3,)         delayed retinal slip   (for OKR)
+        e_pos_delayed:  (3,)         delayed position error (for saccades)
     """
-    dx        = get_A(theta) @ x_vis + get_B(theta) @ e_slip
-    e_delayed = C @ x_vis
-    return dx, e_delayed
+    u            = jnp.concatenate([e_slip, e_pos])   # (6,)
+    dx           = get_A(theta) @ x_vis + get_B(theta) @ u
+    e_slip_delayed = C_slip @ x_vis
+    e_pos_delayed  = C_pos  @ x_vis
+    return dx, e_slip_delayed, e_pos_delayed
