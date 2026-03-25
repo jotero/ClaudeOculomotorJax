@@ -1,7 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "Bash(.venv/Scripts/python scripts/run_recovery.py)"
+      "Bash(.venv/Scripts/python scripts/run_recovery.py)",
+      "Bash(.venv/Scripts/python.exe scripts/demo_saccade.py)"
     ]
   }
 }

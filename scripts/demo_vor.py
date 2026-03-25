@@ -1,28 +1,14 @@
-"""VOR demo suite — replicates key literature findings + internal signal trace.
+"""VOR demo suite — diagnostic signal-cascade plots.
 
-Demonstrations
---------------
-1. Velocity storage — step rotation + post-rotatory nystagmus
-     Canal adapts with τ_c; VS extends eye velocity signal with τ_eff ≈ 20 s.
-     After head stops, canal briefly signals opposite direction (post-rotatory).
-     Refs: Raphan et al. (1979); Cohen et al. (1977).
+Two main diagnostics:
+1. vor_dark.png  — full 8-panel signal cascade for step rotation in the dark.
+     Head vel → canal (adaptation, bandpass, afferent) → u_canal → VS → NI → eye.
+     Overlays with/without VS on the VS-state and eye-velocity panels.
 
-2. Head impulse test (HIT) — push-pull canal pair with half-wave rectification
-     Fast (150 ms) high-amplitude (200 deg/s) head rotation.
-     Ewald's 2nd law: slight asymmetry in healthy subject.
-     Unilateral loss: dramatically reduced VOR gain ipsilateral to lesion.
-     Refs: Halmagyi & Curthoys (1988); Ewald (1892).
+2. okr.png       — 6-panel OKN cascade: scene on then off (OKAN).
+     Scene vel → retinal slip → visual delay → OKR store → u_okr → eye vel.
 
-3. Low-frequency VOR attenuation
-     Canal high-pass cuts off below ~0.03 Hz. Eye position fails to track
-     head position for very slow sinusoidal rotation.
-
-4. Ewald's 2nd law — VOR gain vs. head velocity amplitude
-     Half-wave rectification causes saturation / asymmetry at large amplitudes.
-
-5. Signal trace — internal states for step and HIT
-     6-panel plot: head_vel → canal → VS → NI → plant → eye_vel.
-     Useful for verifying signal flow and diagnosing model behaviour.
+3. vvor.png      — VVOR comparison: step rotation, VOR only vs VOR + OKR.
 
 Usage
 -----
@@ -42,209 +28,41 @@ import matplotlib.pyplot as plt
 import jax.numpy as jnp
 import diffrax
 
-from oculomotor.models.ocular_motor_simulator import THETA_DEFAULT
-from oculomotor.models.ocular_motor_simulator import simulate
+from oculomotor.models.ocular_motor_simulator import THETA_DEFAULT, simulate
 from oculomotor.models import canal as canal_ssm
 from oculomotor.models.ocular_motor_simulator import (
-    vor_vector_field, _N_TOTAL, _IDX_C, _IDX_VS, _IDX_NI, _IDX_P, _IDX_VIS, _IDX_OKR, _DT_SOLVE
+    vor_vector_field, _N_TOTAL,
+    _IDX_C, _IDX_VS, _IDX_NI, _IDX_P, _IDX_VIS, _IDX_OKR, _DT_SOLVE,
 )
-from oculomotor.sim.stimulus import okr_step, rotation_step, Stimulus
+from oculomotor.sim.stimulus import rotation_step, Stimulus
 
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), '..', 'outputs')
-
-THETA = THETA_DEFAULT  # ground-truth parameters for all demos
+THETA = THETA_DEFAULT
 
 
 # ---------------------------------------------------------------------------
 # Stimulus helpers
 # ---------------------------------------------------------------------------
 
-def sustained_rotation(v_deg_s=60.0, rotate_dur=20.0, coast_dur=60.0,
-                        sample_rate=100.0):
-    """Constant-velocity rotation then sudden stop."""
+def _sustained_rotation(v_deg_s=60.0, rotate_dur=15.0, coast_dur=60.0,
+                         sample_rate=100.0):
     total = rotate_dur + coast_dur
-    t = jnp.arange(0.0, total, 1.0 / sample_rate)
+    t  = jnp.arange(0.0, total, 1.0 / sample_rate)
     hv = jnp.where(t < rotate_dur, v_deg_s, 0.0)
     return t, hv
 
 
-def hit_stimulus(direction=1.0, v_peak=200.0, duration=0.15,
-                 total_time=8.0, sample_rate=200.0):
-    """Haversine head-velocity pulse (smooth onset/offset HIT)."""
-    t = jnp.arange(0.0, total_time, 1.0 / sample_rate)
-    within = (t >= 0.0) & (t <= duration)
-    pulse = jnp.where(within, jnp.sin(jnp.pi * t / duration) ** 2, 0.0)
-    return t, direction * v_peak * pulse
-
-
-def sinusoidal(freq_hz=0.02, amplitude=30.0, duration=100.0, sample_rate=100.0):
-    """Sinusoidal head velocity."""
-    t = jnp.arange(0.0, duration, 1.0 / sample_rate)
-    hv = amplitude * jnp.sin(2.0 * jnp.pi * freq_hz * t)
-    return t, hv
-
-
-def eye_velocity(eye_pos_array, dt):
-    """Numerical derivative of eye position → eye velocity."""
-    return np.gradient(np.array(eye_pos_array), dt)
+def _eye_velocity(eye_pos, dt):
+    return np.gradient(np.array(eye_pos), dt)
 
 
 # ---------------------------------------------------------------------------
-# Demo 1: Velocity storage
-# ---------------------------------------------------------------------------
-
-def demo_velocity_storage():
-    """Step rotation: per-rotatory nystagmus and post-rotatory aftereffect."""
-    t, hv = sustained_rotation(v_deg_s=60.0, rotate_dur=15.0, coast_dur=60.0)
-    dt        = float(t[1] - t[0])
-    max_steps = int((float(t[-1]) - float(t[0])) / _DT_SOLVE) + 500
-    eye_pos_vs = np.array(simulate(THETA, t, hv, max_steps=max_steps))[:, 0]
-    ev_vs = eye_velocity(eye_pos_vs, dt)
-
-    theta_no_vs = dict(THETA)
-    theta_no_vs['tau_vs'] = 0.1
-    theta_no_vs['K_vs']   = 0.001
-    eye_pos_novs = np.array(simulate(theta_no_vs, t, hv, max_steps=max_steps))[:, 0]
-    ev_novs = eye_velocity(eye_pos_novs, dt)
-
-    t_np = np.array(t)
-    rotate_dur = 15.0
-
-    fig, axes = plt.subplots(3, 1, figsize=(10, 9), sharex=True)
-
-    axes[0].plot(t_np, np.array(hv), color='gray', lw=1.5)
-    axes[0].axvline(rotate_dur, color='k', ls='--', lw=0.8, alpha=0.5)
-    axes[0].set_ylabel('Head vel (deg/s)')
-    axes[0].set_title('Velocity storage — step rotation')
-    axes[0].grid(True, alpha=0.3)
-
-    axes[1].plot(t_np, ev_vs,   color='steelblue', lw=1.5, label='With VS (τ_eff≈20s)')
-    axes[1].plot(t_np, ev_novs, color='tomato',    lw=1.5, ls='--', label='Without VS')
-    axes[1].axvline(rotate_dur, color='k', ls='--', lw=0.8, alpha=0.5)
-    axes[1].axhline(0, color='k', lw=0.5)
-    axes[1].set_ylabel('Eye vel (deg/s)')
-    axes[1].legend(fontsize=9)
-    axes[1].grid(True, alpha=0.3)
-
-    post_mask = t_np >= rotate_dur
-    axes[2].plot(t_np[post_mask] - rotate_dur,
-                 ev_vs[post_mask],   color='steelblue', lw=1.5, label='With VS')
-    axes[2].plot(t_np[post_mask] - rotate_dur,
-                 ev_novs[post_mask], color='tomato',    lw=1.5, ls='--', label='Without VS')
-    axes[2].axhline(0, color='k', lw=0.5)
-    axes[2].set_xlabel('Time after rotation stop (s)')
-    axes[2].set_ylabel('Eye vel (deg/s)\n[post-rotatory]')
-    axes[2].legend(fontsize=9)
-    axes[2].grid(True, alpha=0.3)
-    tau_eff = 1.0 / (1.0 / THETA['tau_vs'] + THETA['K_vs'])
-    axes[2].set_title(f'Post-rotatory nystagmus  (τ_eff = {tau_eff:.1f} s)')
-
-    fig.tight_layout()
-    path = os.path.join(OUTPUT_DIR, 'velocity_storage.png')
-    fig.savefig(path, dpi=150)
-    plt.close(fig)
-    print(f'  Saved {path}')
-
-
-# ---------------------------------------------------------------------------
-# Demo 2: Head impulse test
-# ---------------------------------------------------------------------------
-
-def demo_hit():
-    """HIT: normal canal pair vs. unilateral loss."""
-    conditions = [
-        ('Normal (rightward)',     +1.0, None),
-        ('Normal (leftward)',      -1.0, None),
-        ('Right loss (rightward)', +1.0, (0.0, 1.0, 1.0, 1.0, 1.0, 1.0)),
-        ('Right loss (leftward)',  -1.0, (0.0, 1.0, 1.0, 1.0, 1.0, 1.0)),
-    ]
-
-    fig, axes = plt.subplots(2, 2, figsize=(12, 7))
-    axes = axes.flat
-
-    for ax, (label, direction, gains) in zip(axes, conditions):
-        t, hv = hit_stimulus(direction=direction, v_peak=200.0,
-                             duration=0.15, total_time=4.0, sample_rate=200.0)
-        dt = float(t[1] - t[0])
-        max_steps = int(4.0 / dt) + 100
-        eye_pos = np.array(simulate(THETA, t, hv,
-                                    canal_gains=gains,
-                                    max_steps=max_steps, dt_solve=dt))[:, 0]
-        ev      = eye_velocity(eye_pos, dt)
-        hv_np   = np.array(hv)
-        t_np    = np.array(t)
-
-        hit_mask   = t_np <= 0.2
-        peak_head  = np.max(np.abs(hv_np[hit_mask]))
-        peak_eye   = np.max(np.abs(ev[hit_mask]))
-        gain       = peak_eye / peak_head if peak_head > 0 else 0.0
-
-        ax.plot(t_np, hv_np * (-1), color='gray',     lw=1.0, alpha=0.7, label='−Head vel')
-        ax.plot(t_np, ev,           color='steelblue', lw=1.5, label='Eye vel')
-        ax.axhline(0, color='k', lw=0.5)
-        ax.set_xlim(0, 1.5)
-        ax.set_title(f'{label}\nVOR gain = {gain:.2f}')
-        ax.set_xlabel('Time (s)')
-        ax.set_ylabel('Velocity (deg/s)')
-        ax.legend(fontsize=8)
-        ax.grid(True, alpha=0.3)
-
-    fig.suptitle('Head Impulse Test  (floor = 80 deg/s)')
-    fig.tight_layout()
-    path = os.path.join(OUTPUT_DIR, 'hit.png')
-    fig.savefig(path, dpi=150)
-    plt.close(fig)
-    print(f'  Saved {path}')
-
-
-# ---------------------------------------------------------------------------
-# Demo 3: Low-frequency VOR attenuation
-# ---------------------------------------------------------------------------
-
-def demo_low_freq():
-    """Canal high-pass: VOR fails for very slow head movements."""
-    freqs = [0.005, 0.02, 0.1, 0.5]
-    fig, axes = plt.subplots(len(freqs), 1, figsize=(10, 10), sharex=False)
-
-    for ax, freq in zip(axes, freqs):
-        dur = max(3.0 / freq, 20.0)
-        sr  = 100.0
-        t, hv = sinusoidal(freq_hz=freq, amplitude=30.0,
-                           duration=dur, sample_rate=sr)
-        max_steps = int(dur / _DT_SOLVE) + 500
-        eye_pos   = np.array(simulate(THETA, t, hv, max_steps=max_steps))[:, 0]
-        head_pos  = np.cumsum(np.array(hv)) / sr
-
-        t_np = np.array(t)
-        ax.plot(t_np, head_pos,  color='gray',      lw=1.0, alpha=0.8,
-                label='Head pos (expected −eye)')
-        ax.plot(t_np, -eye_pos,  color='steelblue', lw=1.5,
-                label='−Eye pos (actual)')
-        ax.set_ylabel('Position (deg)')
-        ax.set_title(f'{freq} Hz  (canal HP corner ≈ 0.03 Hz)')
-        ax.legend(fontsize=8)
-        ax.grid(True, alpha=0.3)
-
-    axes[-1].set_xlabel('Time (s)')
-    fig.suptitle('Low-frequency VOR attenuation — canal high-pass')
-    fig.tight_layout()
-    path = os.path.join(OUTPUT_DIR, 'low_freq_vor.png')
-    fig.savefig(path, dpi=150)
-    plt.close(fig)
-    print(f'  Saved {path}')
-
-
-# ---------------------------------------------------------------------------
-# Demo 5: Signal trace — internal states
+# Full state simulation + signal extraction
 # ---------------------------------------------------------------------------
 
 def _simulate_all_states(theta, t_or_stimulus, head_vel_array=None,
-                          canal_gains=None,
-                          max_steps=2000, dt_solve=None):
-    """Run the VOR ODE and return the full state matrix (T, N_TOTAL).
-
-    Accepts either a Stimulus object (second arg) or old-style (t_array, head_vel_array).
-    """
+                          canal_gains=None, max_steps=5000, dt_solve=None):
+    """Return full state matrix (T, N_TOTAL)."""
     dt = _DT_SOLVE if dt_solve is None else dt_solve
 
     if hasattr(t_or_stimulus, 'omega'):          # Stimulus object
@@ -252,7 +70,7 @@ def _simulate_all_states(theta, t_or_stimulus, head_vel_array=None,
         t_array = stim.t
         hv3     = stim.omega
         vs3     = stim.v_scene
-    else:                                         # raw arrays
+    else:
         t_array = t_or_stimulus
         hv1d    = head_vel_array
         hv3     = jnp.stack([hv1d, jnp.zeros_like(hv1d), jnp.zeros_like(hv1d)], axis=1)
@@ -261,331 +79,266 @@ def _simulate_all_states(theta, t_or_stimulus, head_vel_array=None,
     hv_interp = diffrax.LinearInterpolation(ts=t_array, ys=hv3)
     vs_interp = diffrax.LinearInterpolation(ts=t_array, ys=vs3)
     x0        = jnp.zeros(_N_TOTAL)
-    if canal_gains is None:
-        gains_array = jnp.ones(canal_ssm.N_CANALS)
-    else:
-        gains_array = jnp.array(list(canal_gains), dtype=jnp.float32)
+    gains     = (jnp.ones(canal_ssm.N_CANALS) if canal_gains is None
+                 else jnp.array(list(canal_gains), dtype=jnp.float32))
 
-    solution = diffrax.diffeqsolve(
+    sol = diffrax.diffeqsolve(
         diffrax.ODETerm(vor_vector_field),
         diffrax.Heun(),
-        t0=t_array[0],
-        t1=t_array[-1],
-        dt0=dt,
-        y0=x0,
-        args=(theta, hv_interp, vs_interp, gains_array),
+        t0=t_array[0], t1=t_array[-1], dt0=dt, y0=x0,
+        args=(theta, hv_interp, vs_interp, gains),
         stepsize_controller=diffrax.ConstantStepSize(),
         saveat=diffrax.SaveAt(ts=t_array),
         max_steps=max_steps,
     )
-    return solution.ys  # (T, N_TOTAL)
+    return sol.ys   # (T, N_TOTAL)
 
 
-def _extract_signals(theta, t_array, head_vel_array, states):
+def _extract_signals(theta, t_array, head_vel_1d, states):
     """Reconstruct intermediate signals from a saved state trajectory.
 
-    Canal state layout (6-canal, 3-D):
-      x_c = [x1_c0..x1_c5 | x2_c0..x2_c5]   (T, 12)
-      x1 = adaptation LP (tau_c) per canal
-      x2 = inertia LP (tau_s)  per canal = bandpass output
-
-    Signal trace shows horizontal push-pull pair (canals 0 & 1) and
-    horizontal components of VS / NI / plant states for clarity.
+    Returns a dict of horizontal-axis (yaw) signals.
+    Canal afferents y_c0/y_c1 are the y_nl component only (no FLOOR offset);
+    add canal_ssm.FLOOR to get absolute firing rates for plotting.
+    u_canal is the head velocity estimate after PINV mixing (correct regardless
+    of FLOOR offset because push-pull pairs cancel it).
     """
     from scipy.special import softplus as sp_softplus
 
-    hv   = np.array(head_vel_array)                   # (T,) 1-D horizontal
-    x_c  = np.array(states[:, _IDX_C])                # (T, 12)
-    x_vs = np.array(states[:, _IDX_VS])               # (T, 3)
-    x_ni = np.array(states[:, _IDX_NI])               # (T, 3)
-    x_p  = np.array(states[:, _IDX_P])                # (T, 3)
+    hv   = np.array(head_vel_1d)
+    x_c  = np.array(states[:, _IDX_C])     # (T, 12)
+    x_vs = np.array(states[:, _IDX_VS])    # (T, 3)
+    x_ni = np.array(states[:, _IDX_NI])    # (T, 3)
+    x_p  = np.array(states[:, _IDX_P])     # (T, 3)
 
-    nc = canal_ssm.N_CANALS                           # 6
-    x1 = x_c[:, :nc]                                  # (T, 6) adaptation LP
-    x2 = x_c[:, nc:]                                  # (T, 6) inertia LP = BP output
+    nc = canal_ssm.N_CANALS
+    x1 = x_c[:, :nc]   # adaptation LP states
+    x2 = x_c[:, nc:]   # inertia LP (= bandpass) states
 
-    # Canal nonlinearity (same smooth softplus formula as canal_ssm)
     k   = canal_ssm._SOFTNESS
     f   = float(canal_ssm.FLOOR)
-    y_c = -f + sp_softplus(k * (x2 + f)) / k + sp_softplus(k * (x2 - f)) / k  # (T, 6)
+    y_c = -f + sp_softplus(k * (x2 + f)) / k + sp_softplus(k * (x2 - f)) / k   # (T,6) y_nl
 
-    pinv = np.array(canal_ssm.PINV_SENS)              # (3, 6)
-    u_vs = (pinv @ y_c.T).T                           # (T, 3) velocity estimate
-    u_ni = x_vs + u_vs                                # (T, 3) VS state + direct canal
-    u_p  = x_ni - theta['g_vor'] * theta['tau_p'] * u_ni   # (T, 3) pulse-step
+    pinv    = np.array(canal_ssm.PINV_SENS)   # (3, 6)
+    u_canal = (pinv @ y_c.T).T                # (T, 3) head vel estimate
+    u_ni    = x_vs + u_canal                  # (T, 3) VS output to NI
+    u_p     = x_ni - theta['g_vor'] * theta['tau_p'] * u_ni   # (T, 3) pulse-step
 
-    # Horizontal component for trace plots
-    eye_pos = x_p[:, 0]                               # yaw (deg)
+    eye_pos = x_p[:, 0]
     dt      = float(t_array[1] - t_array[0])
     eye_vel = np.gradient(eye_pos, dt)
 
-    return dict(head_vel=hv,
-                # horizontal push-pull pair (canals 0 & 1)
-                x1_c0=x1[:, 0], x1_c1=x1[:, 1],
-                x2_c0=x2[:, 0], x2_c1=x2[:, 1],
-                y_c0=y_c[:, 0], y_c1=y_c[:, 1],
-                # horizontal components of downstream signals
-                u_vs=u_vs[:, 0], x_vs=x_vs[:, 0],
-                u_ni=u_ni[:, 0], x_ni=x_ni[:, 0],
-                u_p=u_p[:, 0],
-                eye_pos=eye_pos, eye_vel=eye_vel)
+    return dict(
+        head_vel = hv,
+        x1_c0    = x1[:, 0],   x1_c1    = x1[:, 1],
+        x2_c0    = x2[:, 0],   x2_c1    = x2[:, 1],
+        y_c0     = y_c[:, 0],  y_c1     = y_c[:, 1],   # y_nl (no FLOOR offset)
+        u_canal  = u_canal[:, 0],
+        x_vs     = x_vs[:, 0],
+        u_ni     = u_ni[:, 0],
+        x_ni     = x_ni[:, 0],
+        u_p      = u_p[:, 0],
+        eye_pos  = eye_pos,
+        eye_vel  = eye_vel,
+    )
 
 
-def _plot_signal_trace(t_np, sigs, title, path):
-    """6-panel waterfall: head → canal (bandpass) → VS → NI → plant → eye_vel."""
-    fig, axes = plt.subplots(6, 1, figsize=(11, 14), sharex=True)
+# ---------------------------------------------------------------------------
+# Plot 1: VOR in the dark — full signal cascade
+# ---------------------------------------------------------------------------
 
+def demo_vor_dark():
+    """8-panel signal cascade: head → canal → VS → NI → plant → eye."""
+    rotate_dur = 15.0
+    t, hv = _sustained_rotation(v_deg_s=60.0, rotate_dur=rotate_dur, coast_dur=60.0)
+    t_np  = np.array(t)
+    max_s = int((float(t[-1]) - float(t[0])) / _DT_SOLVE) + 500
+
+    states    = _simulate_all_states(THETA, t, hv, max_steps=max_s)
+    sigs      = _extract_signals(THETA, t, hv, states)
+
+    theta_no_vs = {**THETA, 'tau_vs': 0.1, 'K_vs': 0.001}
+    states_nv   = _simulate_all_states(theta_no_vs, t, hv, max_steps=max_s)
+    sigs_nv     = _extract_signals(theta_no_vs, t, hv, states_nv)
+
+    tau_eff = 1.0 / (1.0 / THETA['tau_vs'] + THETA['K_vs'])
+    FLOOR   = float(canal_ssm.FLOOR)
+
+    fig, axes = plt.subplots(8, 1, figsize=(12, 22), sharex=True)
+    fig.suptitle(f'VOR in the dark — step rotation  ({rotate_dur:.0f} s @ 60 deg/s)\n'
+                 f'Signal cascade: head → canal → VS → NI → plant',
+                 fontsize=11)
+
+    vline_kw = dict(color='k', lw=0.8, ls='--', alpha=0.4)
+    for ax in axes:
+        ax.axvline(rotate_dur, **vline_kw)
+        ax.axhline(0, color='gray', lw=0.5)
+        ax.grid(True, alpha=0.25)
+
+    # 0 — Head velocity
     axes[0].plot(t_np, sigs['head_vel'], color='k', lw=1.5)
     axes[0].set_ylabel('Head vel\n(deg/s)')
-    axes[0].set_title(title)
+    axes[0].set_title('Input')
 
-    axes[1].plot(t_np, sigs['x1_c0'], 'steelblue', lw=1.0, ls=':',  label='x1_c0 (adapt LP)')
-    axes[1].plot(t_np, sigs['x1_c1'], 'tomato',    lw=1.0, ls=':',  label='x1_c1 (adapt LP)')
-    axes[1].plot(t_np, sigs['x2_c0'], 'steelblue', lw=1.2, ls='--', label='x2_c0 (inertia LP)')
-    axes[1].plot(t_np, sigs['x2_c1'], 'tomato',    lw=1.2, ls='--', label='x2_c1 (inertia LP)')
-    axes[1].plot(t_np, sigs['y_c0'],  'steelblue', lw=1.5,          label='y_c0 (BP out)')
-    axes[1].plot(t_np, sigs['y_c1'],  'tomato',    lw=1.5,          label='y_c1 (BP out)')
-    axes[1].set_ylabel('Canal\n(deg/s)')
-    axes[1].legend(fontsize=7, ncol=2)
+    # 1 — Canal adaptation LP (x1) — slow drift-tracking filter
+    axes[1].plot(t_np, sigs['x1_c0'], color='steelblue', lw=1.2, label='RHC (c0)')
+    axes[1].plot(t_np, sigs['x1_c1'], color='tomato',    lw=1.2, label='LHC (c1)')
+    axes[1].set_ylabel('Adaptation LP\nx1  (deg/s)')
+    axes[1].set_title(f'Canal — adaptation state  (τ_c = {THETA["tau_c"]} s)')
+    axes[1].legend(fontsize=8, loc='upper right')
 
-    axes[2].plot(t_np, sigs['u_vs'], 'purple', lw=1.5,          label='u_vs (canal → VS)')
-    axes[2].plot(t_np, sigs['x_vs'], 'purple', lw=1.5, ls='--', label='x_vs (VS state)')
-    axes[2].set_ylabel('VS\n(deg/s)')
-    axes[2].legend(fontsize=7)
+    # 2 — Canal inertia LP = bandpass (x2)
+    axes[2].plot(t_np, sigs['x2_c0'], color='steelblue', lw=1.2, label='RHC (c0)')
+    axes[2].plot(t_np, sigs['x2_c1'], color='tomato',    lw=1.2, label='LHC (c1)')
+    axes[2].set_ylabel('Inertia LP\nx2  (deg/s)')
+    axes[2].set_title(f'Canal — bandpass state  (τ_s = {THETA["tau_s"]} s)')
+    axes[2].legend(fontsize=8, loc='upper right')
 
-    axes[3].plot(t_np, sigs['u_ni'], 'green', lw=1.5,          label='u_ni = x_vs + u_vs')
-    axes[3].plot(t_np, sigs['x_ni'], 'green', lw=1.5, ls='--', label='x_ni (eye pos cmd)')
-    axes[3].set_ylabel('NI\n(deg/s or deg)')
-    axes[3].legend(fontsize=7)
+    # 3 — Canal afferent absolute firing rate (y_nl + FLOOR)
+    axes[3].plot(t_np, sigs['y_c0'] + FLOOR, color='steelblue', lw=1.5, label='RHC (c0)')
+    axes[3].plot(t_np, sigs['y_c1'] + FLOOR, color='tomato',    lw=1.5, label='LHC (c1)')
+    axes[3].axhline(FLOOR, color='gray', lw=1.0, ls=':', label=f'Resting = {FLOOR:.0f}')
+    axes[3].set_ylabel('Afferent\nfiring rate  (spk/s)')
+    axes[3].set_title('Canal afferent output  (nonlinear, push-pull)')
+    axes[3].legend(fontsize=8)
 
-    axes[4].plot(t_np, sigs['u_p'],    'darkorange', lw=1.5,          label='u_p (pulse-step)')
-    axes[4].plot(t_np, sigs['eye_pos'], 'darkorange', lw=1.5, ls='--', label='eye_pos')
-    axes[4].set_ylabel('Plant\n(deg)')
-    axes[4].legend(fontsize=7)
+    # 4 — u_canal: head vel estimate after PINV mixing
+    axes[4].plot(t_np, sigs['u_canal'],   color='purple', lw=1.5, label='u_canal  (PINV @ y)')
+    axes[4].plot(t_np, sigs['head_vel'],  color='gray',   lw=1.0, ls=':', alpha=0.6,
+                 label='Head vel  (true)')
+    axes[4].set_ylabel('Head vel\nestimate  (deg/s)')
+    axes[4].set_title('Canal → head velocity estimate  (PINV_SENS @ y_canals)')
+    axes[4].legend(fontsize=8)
 
-    axes[5].plot(t_np, sigs['eye_vel'],    'steelblue', lw=1.5, label='eye_vel')
-    axes[5].plot(t_np, -sigs['head_vel'],  'k',         lw=1.0, ls='--', alpha=0.5, label='−head_vel (ideal)')
-    axes[5].set_ylabel('Eye vel\n(deg/s)')
-    axes[5].set_xlabel('Time (s)')
-    axes[5].legend(fontsize=7)
+    # 5 — VS state: with vs without VS
+    axes[5].plot(t_np, sigs['x_vs'],    color='steelblue', lw=1.5,
+                 label=f'x_vs  (τ_eff = {tau_eff:.0f} s)')
+    axes[5].plot(t_np, sigs_nv['x_vs'], color='tomato',    lw=1.5, ls='--',
+                 label='x_vs  (no VS)')
+    axes[5].set_ylabel('VS state\n(deg/s)')
+    axes[5].set_title(f'Velocity storage  (τ_vs = {THETA["tau_vs"]} s,  K_vs = {THETA["K_vs"]} /s)')
+    axes[5].legend(fontsize=8)
 
-    for ax in axes:
-        ax.axhline(0, color='gray', lw=0.5)
-        ax.grid(True, alpha=0.3)
+    # 6 — NI: velocity input u_ni + position state x_ni
+    axes[6].plot(t_np, sigs['u_ni'], color='seagreen', lw=1.5,          label='u_ni  (vel cmd in)')
+    axes[6].plot(t_np, sigs['x_ni'], color='seagreen', lw=1.5, ls='--', label='x_ni  (pos state)')
+    axes[6].set_ylabel('NI\n(deg/s, deg)')
+    axes[6].set_title(f'Neural integrator  (τ_i = {THETA["tau_i"]} s,  g_vor = {THETA["g_vor"]})')
+    axes[6].legend(fontsize=8)
+
+    # 7 — Eye velocity: with VS vs without VS vs ideal
+    axes[7].plot(t_np, sigs['eye_vel'],    color='steelblue', lw=1.5,
+                 label='Eye vel  (with VS)')
+    axes[7].plot(t_np, sigs_nv['eye_vel'], color='tomato',    lw=1.5, ls='--',
+                 label='Eye vel  (no VS)')
+    axes[7].plot(t_np, -sigs['head_vel'],  color='gray',      lw=1.0, ls=':',  alpha=0.6,
+                 label='−Head vel  (ideal VOR)')
+    axes[7].set_ylabel('Eye vel\n(deg/s)')
+    axes[7].set_xlabel('Time (s)')
+    axes[7].set_title('Plant output  (eye velocity)')
+    axes[7].legend(fontsize=8)
 
     fig.tight_layout()
-    fig.savefig(path, dpi=150)
-    plt.close(fig)
-    print(f'  Saved {path}')
-
-
-def demo_signal_trace():
-    """Internal signal waterfall for step rotation and HIT."""
-    # Step rotation
-    t, hv = sustained_rotation(v_deg_s=60.0, rotate_dur=15.0, coast_dur=60.0)
-    max_steps_step = int((float(t[-1]) - float(t[0])) / _DT_SOLVE) + 500
-    states = _simulate_all_states(THETA, t, hv, max_steps=max_steps_step)
-    sigs   = _extract_signals(THETA, t, hv, states)
-    _plot_signal_trace(np.array(t), sigs,
-                       title='Signal trace — step rotation (60 deg/s, 15 s)',
-                       path=os.path.join(OUTPUT_DIR, 'trace_step.png'))
-
-    # HIT — use fine dt matching sample rate so plant is accurately integrated
-    t_hit, hv_hit = hit_stimulus(v_peak=200.0, duration=0.15,
-                                  total_time=4.0, sample_rate=200.0)
-    dt_hit        = float(t_hit[1] - t_hit[0])   # 0.005 s
-    max_steps_hit = int(4.0 / dt_hit) + 200
-    states_hit = _simulate_all_states(THETA, t_hit, hv_hit,
-                                       max_steps=max_steps_hit, dt_solve=dt_hit)
-    sigs_hit   = _extract_signals(THETA, t_hit, hv_hit, states_hit)
-    t_np_hit   = np.array(t_hit)
-    mask       = t_np_hit <= 1.0
-    _plot_signal_trace(t_np_hit[mask], {k: v[mask] for k, v in sigs_hit.items()},
-                       title='Signal trace — HIT (200 deg/s)',
-                       path=os.path.join(OUTPUT_DIR, 'trace_hit.png'))
-
-
-# ---------------------------------------------------------------------------
-# Demo 6: 3-D head impulse test
-# ---------------------------------------------------------------------------
-
-def demo_3d_hit():
-    """Six head impulses — one per canal pair / axis direction.
-
-    Yaw ±  → horizontal (x) eye response
-    Pitch ± → vertical   (y) eye response
-    Roll ±  → torsional  (z) eye response
-
-    For a symmetric model the compensatory axis should mirror head velocity
-    at VOR gain ≈ 1. Cross-axis eye movements should be ~0 (confirmed in
-    the bottom row of each panel).
-    """
-    dt    = 1.0 / 200.0   # 200 Hz
-    total = 2.0            # s, enough to see the transient
-    max_steps = int(total / dt) + 100
-
-    # (axis_name, axis_idx, direction_label, head_vel_3d_sign)
-    conditions = [
-        ('Yaw  +  (rightward)',  0, +1),
-        ('Yaw  −  (leftward)',   0, -1),
-        ('Pitch + (upward)',     1, +1),
-        ('Pitch − (downward)',   1, -1),
-        ('Roll +  (CW)',         2, +1),
-        ('Roll −  (CCW)',        2, -1),
-    ]
-    axis_labels = ['Yaw (x)', 'Pitch (y)', 'Roll (z)']
-    colors      = ['steelblue', 'tomato', 'seagreen']
-
-    fig, axes = plt.subplots(3, 2, figsize=(12, 10), sharex=True)
-
-    for col, (label, axis_idx, sign) in enumerate(conditions):
-        row = col // 2
-        ax  = axes[row, col % 2]
-
-        # Build 3-D head velocity: impulse only on the target axis
-        t_j   = jnp.arange(0.0, total, dt)
-        pulse = jnp.sin(jnp.pi * t_j / 0.15) ** 2 * jnp.where(
-                    (t_j >= 0.0) & (t_j <= 0.15), 1.0, 0.0)
-        hv_3d = jnp.zeros((len(t_j), 3)).at[:, axis_idx].set(sign * 200.0 * pulse)
-
-        eye_rot = np.array(simulate(THETA, t_j, hv_3d,
-                                    max_steps=max_steps, dt_solve=dt))  # (T, 3)
-        t_np  = np.array(t_j)
-        hv_np = np.array(hv_3d)
-
-        # Eye velocity (numerical derivative)
-        ev = np.gradient(eye_rot, dt, axis=0)   # (T, 3)
-
-        hit_mask   = t_np <= 0.25
-        peak_head  = np.max(np.abs(hv_np[hit_mask, axis_idx]))
-        peak_eye   = np.max(np.abs(ev[hit_mask, axis_idx]))
-        gain       = peak_eye / peak_head if peak_head > 0 else 0.0
-
-        # Plot all 3 eye-velocity axes; highlight the compensatory one
-        for a, (alabel, c) in enumerate(zip(axis_labels, colors)):
-            lw  = 1.8 if a == axis_idx else 0.8
-            ls  = '-'  if a == axis_idx else '--'
-            al  = 1.0  if a == axis_idx else 0.35
-            ax.plot(t_np, ev[:, a], color=c, lw=lw, ls=ls, alpha=al, label=alabel)
-
-        ax.plot(t_np, -hv_np[:, axis_idx], color='gray', lw=1.0,
-                alpha=0.6, ls=':', label='−Head vel')
-        ax.axhline(0, color='k', lw=0.5)
-        ax.set_xlim(0, 1.0)
-        ax.set_title(f'{label}\nVOR gain = {gain:.2f}', fontsize=9)
-        ax.set_ylabel('Eye vel (deg/s)')
-        ax.grid(True, alpha=0.3)
-        if row == 2:
-            ax.set_xlabel('Time (s)')
-        if col == 0:
-            ax.legend(fontsize=7, loc='upper right')
-
-    fig.suptitle('3-D Head Impulse Test — one impulse per canal axis\n'
-                 'Solid = compensatory axis  |  Dashed = cross-axis (should be ~0)',
-                 fontsize=10)
-    fig.tight_layout()
-    path = os.path.join(OUTPUT_DIR, 'hit_3d.png')
+    path = os.path.join(OUTPUT_DIR, 'vor_dark.png')
     fig.savefig(path, dpi=150)
     plt.close(fig)
     print(f'  Saved {path}')
 
 
 # ---------------------------------------------------------------------------
-# Demo 7: Optokinetic nystagmus (OKN) — OKR step response
+# Plot 2: OKR — signal cascade + VVOR comparison
 # ---------------------------------------------------------------------------
 
 def demo_okr():
-    """OKN signal cascade debug — 6-panel waterfall from scene motion to eye velocity.
-
-    Scene moves for on_dur seconds then stops. Shows OKN build-up during motion
-    and OKAN decay after scene stop. Every intermediate signal in the OKR pathway:
-        scene vel → retinal slip → visual delay → OKR store → OKR drive → VS → eye
-    """
+    """OKN signal cascade (scene on → OKAN) and VVOR comparison."""
     sr        = 200.0
-    on_dur    = 30.0   # scene on (s)
-    off_dur   = 40.0   # scene off / OKAN phase (s)
+    on_dur    = 30.0
+    off_dur   = 40.0
     total_dur = on_dur + off_dur
-    scene_vel = 30.0   # deg/s
+    scene_vel = 30.0
 
-    # Build on-then-off scene velocity stimulus manually
-    t_arr     = jnp.arange(0.0, total_dur, 1.0 / sr)
-    v_sc      = jnp.where(t_arr < on_dur, scene_vel, 0.0)
-    v_scene   = jnp.zeros((len(t_arr), 3)).at[:, 0].set(v_sc)
-    stim_okn  = Stimulus(t_arr, omega=jnp.zeros(len(t_arr)), v_scene=v_scene)
+    t_arr    = jnp.arange(0.0, total_dur, 1.0 / sr)
+    v_sc     = jnp.where(t_arr < on_dur, scene_vel, 0.0)
+    v_scene  = jnp.zeros((len(t_arr), 3)).at[:, 0].set(v_sc)
+    stim_okn = Stimulus(t_arr, omega=jnp.zeros(len(t_arr)), v_scene=v_scene)
 
-    max_steps = int(total_dur / _DT_SOLVE) + 500
+    max_s        = int(total_dur / _DT_SOLVE) + 500
     theta_no_okr = {**THETA, 'g_okr': 0.0}
 
-    # Full state trace — OKN with OKR
-    states = _simulate_all_states(THETA, stim_okn, max_steps=max_steps)
-    t_np   = np.array(stim_okn.t)
-    dt     = float(stim_okn.dt)
+    states    = _simulate_all_states(THETA,        stim_okn, max_steps=max_s)
+    t_np      = np.array(stim_okn.t)
+    dt        = float(stim_okn.dt)
 
-    # State slices (horizontal axis = 0)
-    x_vis = np.array(states[:, _IDX_VIS])    # (T, 12)  visual delay cascade
-    x_okr = np.array(states[:, _IDX_OKR])    # (T, 3)   OKR slow store
-    x_vs  = np.array(states[:, _IDX_VS])     # (T, 3)   velocity storage
-    x_p   = np.array(states[:, _IDX_P])      # (T, 3)   plant / eye pos
+    x_vis = np.array(states[:, _IDX_VIS])
+    x_okr = np.array(states[:, _IDX_OKR])
+    x_vs  = np.array(states[:, _IDX_VS])
+    x_p   = np.array(states[:, _IDX_P])
 
-    # Derived signals (horizontal)
     w_scene_np = np.where(t_np < on_dur, scene_vel, 0.0)
     eye_vel    = np.gradient(x_p[:, 0], dt)
-    e_slip     = w_scene_np - 0.0 - eye_vel           # w_scene − w_head − w_eye
-    e_delayed  = x_vis[:, -3]                          # last cascade stage, horizontal
-    u_okr_sig  = THETA['g_okr'] * (x_okr[:, 0] + e_delayed)  # direct + store
+    e_slip     = w_scene_np - 0.0 - eye_vel
+    e_delayed  = x_vis[:, -3]                                          # last cascade stage
+    u_okr_sig  = THETA['g_okr'] * (x_okr[:, 0] + e_delayed)
 
-    # Reference: eye velocity without OKR
-    eye_no_okr = np.array(simulate(theta_no_okr, stim_okn, max_steps=max_steps))[:, 0]
+    eye_no_okr = np.array(simulate(theta_no_okr, stim_okn, max_steps=max_s))[:, 0]
     ev_no_okr  = np.gradient(eye_no_okr, dt)
 
-    # ── 6-panel cascade plot ───────────────────────────────────────────────
-    fig, axes = plt.subplots(6, 1, figsize=(12, 16), sharex=True)
-    fig.suptitle('OKN signal cascade — scene on then off (head stationary)', fontsize=11)
+    # ── OKN cascade ───────────────────────────────────────────────────────────
+    fig, axes = plt.subplots(6, 1, figsize=(12, 17), sharex=True)
+    fig.suptitle(f'OKN signal cascade — scene on {on_dur:.0f} s then off  (OKAN phase)\n'
+                 f'g_okr = {THETA["g_okr"]},  τ_okan = {THETA["tau_okan"]} s,  '
+                 f'τ_vis = {THETA["tau_vis"]} s',
+                 fontsize=11)
 
-    # 0: Scene velocity (input)
-    axes[0].plot(t_np, w_scene_np, color='steelblue', lw=1.5, label='w_scene')
+    vline_kw = dict(color='k', lw=0.8, ls='--', alpha=0.4)
+    for ax in axes:
+        ax.axvline(on_dur, **vline_kw)
+        ax.axhline(0, color='gray', lw=0.5)
+        ax.grid(True, alpha=0.25)
+
+    # 0 — Scene velocity (input)
+    axes[0].plot(t_np, w_scene_np, color='steelblue', lw=1.5)
     axes[0].set_ylabel('Scene vel\n(deg/s)')
-    axes[0].legend(fontsize=8)
+    axes[0].set_title('Input: visual scene velocity')
 
-    # 1: Eye velocity (output)
-    axes[1].plot(t_np, w_scene_np, color='gray', lw=1.0, ls=':', alpha=0.4, label='Scene vel')
-    axes[1].plot(t_np, ev_no_okr,  color='tomato',    lw=1.5, ls='--', label='No OKR')
-    axes[1].plot(t_np, eye_vel,    color='steelblue', lw=1.5,          label='OKR enabled')
-    axes[1].set_ylabel('Eye vel\n(deg/s)')
+    # 1 — Retinal slip
+    axes[1].plot(t_np, e_slip, color='purple', lw=1.5,
+                 label='e_slip = w_scene − w_head − w_eye')
+    axes[1].set_ylabel('Retinal slip\n(deg/s)')
+    axes[1].set_title('Retinal slip  (sensory error)')
     axes[1].legend(fontsize=8)
 
-    # 2: Retinal slip
-    axes[2].plot(t_np, e_slip, color='purple', lw=1.5,
-                 label='e_slip = w_scene − w_head − w_eye')
-    axes[2].set_ylabel('Retinal slip\n(deg/s)')
+    # 2 — Delayed slip (visual delay cascade output)
+    axes[2].plot(t_np, e_delayed, color='darkorange', lw=1.5,
+                 label=f'e_delayed  (τ_vis = {THETA["tau_vis"]} s,  4-stage gamma)')
+    axes[2].set_ylabel('Delayed slip\n(deg/s)')
+    axes[2].set_title('Visual delay cascade output')
     axes[2].legend(fontsize=8)
 
-    # 3: Delayed retinal slip (visual delay output)
-    axes[3].plot(t_np, e_delayed, color='darkorange', lw=1.5,
-                 label=f'e_delayed  (τ_vis = {THETA["tau_vis"]} s)')
-    axes[3].set_ylabel('Delayed slip\n(deg/s)')
+    # 3 — OKR slow store state
+    axes[3].plot(t_np, x_okr[:, 0], color='green', lw=1.5,
+                 label=f'x_okr  (τ_okan = {THETA["tau_okan"]} s)')
+    axes[3].set_ylabel('OKR store\n(deg/s)')
+    axes[3].set_title('OKR slow store state  (sustains drive when slip → 0)')
     axes[3].legend(fontsize=8)
 
-    # 4: OKR slow store state
-    axes[4].plot(t_np, x_okr[:, 0], color='green', lw=1.5,
-                 label=f'x_okr  (τ_okan = {THETA["tau_okan"]} s)')
-    axes[4].set_ylabel('OKR store\n(deg/s)')
+    # 4 — OKR drive (direct + store)
+    axes[4].plot(t_np, u_okr_sig,   color='green',     lw=1.5,
+                 label=f'u_okr = g_okr · (e_delayed + x_okr)')
+    axes[4].plot(t_np, x_vs[:, 0],  color='steelblue', lw=1.5, ls='--',
+                 label='x_vs  (VS state)')
+    axes[4].set_ylabel('OKR drive /\nVS state  (deg/s)')
+    axes[4].set_title('OKR drive into VS  (direct + store)')
     axes[4].legend(fontsize=8)
 
-    # 5: OKR drive and VS state
-    axes[5].plot(t_np, u_okr_sig,  color='green',     lw=1.5,
-                 label=f'u_okr = g_okr·(x_okr + e_delayed)  (g = {THETA["g_okr"]})')
-    axes[5].plot(t_np, x_vs[:, 0], color='steelblue', lw=1.5, ls='--',
-                 label='x_vs  (VS state)')
-    axes[5].set_ylabel('OKR drive /\nVS (deg/s)')
+    # 5 — Eye velocity: with OKR vs without
+    axes[5].plot(t_np, w_scene_np, color='gray',      lw=1.0, ls=':',  alpha=0.5, label='Scene vel')
+    axes[5].plot(t_np, ev_no_okr,  color='tomato',    lw=1.5, ls='--', label='Eye vel  (no OKR)')
+    axes[5].plot(t_np, eye_vel,    color='steelblue', lw=1.5,          label='Eye vel  (with OKR)')
+    axes[5].set_ylabel('Eye vel\n(deg/s)')
     axes[5].set_xlabel('Time (s)')
+    axes[5].set_title('Eye velocity  (OKN slow phase + OKAN)')
     axes[5].legend(fontsize=8)
-
-    # Mark scene stop on every panel
-    for ax in axes:
-        ax.axvline(on_dur, color='k', lw=0.8, ls='--', alpha=0.5)
-        ax.axhline(0, color='gray', lw=0.5)
-        ax.grid(True, alpha=0.3)
 
     fig.tight_layout()
     path = os.path.join(OUTPUT_DIR, 'okr.png')
@@ -593,42 +346,40 @@ def demo_okr():
     plt.close(fig)
     print(f'  Saved {path}')
 
-    # ── VVOR comparison: vestibular only vs vestibular + visual OKR ───────
-    vvor_dur  = 80.0   # s (15 s rotation + 65 s coast to see VS + OKR decay)
+    # ── VVOR comparison ───────────────────────────────────────────────────────
+    vvor_dur  = 80.0
     stim_vor  = rotation_step(v_deg_s=60.0, rotate_dur=15.0,
                                coast_dur=vvor_dur - 15.0, sample_rate=sr)
-    max_steps_vvor = int(vvor_dur / _DT_SOLVE) + 500
+    max_sv    = int(vvor_dur / _DT_SOLVE) + 500
 
-    eye_dark = np.array(simulate(theta_no_okr, stim_vor,
-                                  max_steps=max_steps_vvor))[:, 0]
-    eye_vvor = np.array(simulate(THETA,        stim_vor,
-                                  max_steps=max_steps_vvor))[:, 0]
-    t_vvor   = np.array(stim_vor.t)
-    hv_vvor  = np.array(stim_vor.omega[:, 0])
-    ev_dark  = np.gradient(eye_dark, float(stim_vor.dt))
-    ev_vvor  = np.gradient(eye_vvor, float(stim_vor.dt))
+    eye_dark  = np.array(simulate(theta_no_okr, stim_vor, max_steps=max_sv))[:, 0]
+    eye_vvor  = np.array(simulate(THETA,        stim_vor, max_steps=max_sv))[:, 0]
+    t_vv      = np.array(stim_vor.t)
+    hv_vv     = np.array(stim_vor.omega[:, 0])
+    ev_dark   = np.gradient(eye_dark, float(stim_vor.dt))
+    ev_vvor   = np.gradient(eye_vvor, float(stim_vor.dt))
 
     fig2, axes2 = plt.subplots(2, 1, figsize=(11, 7), sharex=True)
     fig2.suptitle('VVOR — step rotation, stationary world\n'
-                  'Vestibular only (dark) vs Vestibular + visual OKR (light)', fontsize=11)
+                  'Vestibular only (dark) vs Vestibular + visual (light)',
+                  fontsize=11)
 
-    axes2[0].plot(t_vvor, hv_vvor,  color='gray',      lw=1.0, alpha=0.6, label='Head vel')
-    axes2[0].plot(t_vvor, ev_dark,  color='tomato',    lw=1.5, ls='--',   label='VOR only (g_okr=0)')
-    axes2[0].plot(t_vvor, ev_vvor,  color='steelblue', lw=1.5,            label=f'VVOR (g_okr={THETA["g_okr"]})')
-    axes2[0].axvline(15.0, color='k', lw=0.8, ls='--', alpha=0.5)
-    axes2[0].axhline(0,   color='gray', lw=0.5)
+    for ax in axes2:
+        ax.axvline(15.0, color='k', lw=0.8, ls='--', alpha=0.4)
+        ax.axhline(0, color='gray', lw=0.5)
+        ax.grid(True, alpha=0.25)
+
+    axes2[0].plot(t_vv, hv_vv,   color='gray',      lw=1.0, alpha=0.6,  label='Head vel')
+    axes2[0].plot(t_vv, ev_dark, color='tomato',    lw=1.5, ls='--',    label=f'VOR only  (g_okr=0)')
+    axes2[0].plot(t_vv, ev_vvor, color='steelblue', lw=1.5,             label=f'VVOR  (g_okr={THETA["g_okr"]})')
     axes2[0].set_ylabel('Eye vel (deg/s)')
     axes2[0].legend(fontsize=9)
-    axes2[0].grid(True, alpha=0.3)
 
-    axes2[1].plot(t_vvor, eye_dark, color='tomato',    lw=1.5, ls='--', label='VOR only')
-    axes2[1].plot(t_vvor, eye_vvor, color='steelblue', lw=1.5,          label='VVOR')
-    axes2[1].axvline(15.0, color='k', lw=0.8, ls='--', alpha=0.5)
-    axes2[1].axhline(0,   color='gray', lw=0.5)
+    axes2[1].plot(t_vv, eye_dark, color='tomato',    lw=1.5, ls='--', label='VOR only')
+    axes2[1].plot(t_vv, eye_vvor, color='steelblue', lw=1.5,          label='VVOR')
     axes2[1].set_ylabel('Eye pos (deg)')
     axes2[1].set_xlabel('Time (s)')
     axes2[1].legend(fontsize=9)
-    axes2[1].grid(True, alpha=0.3)
 
     fig2.tight_layout()
     path2 = os.path.join(OUTPUT_DIR, 'vvor.png')
@@ -645,26 +396,14 @@ def main():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
     print('=== VOR Demo Suite ===')
-    print(f'Parameters: tau_c={THETA["tau_c"]}s  g_vor={THETA["g_vor"]}  '
-          f'tau_i={THETA["tau_i"]}s  tau_p={THETA["tau_p"]}s  '
-          f'tau_vs={THETA["tau_vs"]}s  K_vs={THETA["K_vs"]}')
+    print(f'  τ_c={THETA["tau_c"]} s  g_vor={THETA["g_vor"]}  τ_i={THETA["tau_i"]} s  '
+          f'τ_p={THETA["tau_p"]} s  τ_vs={THETA["tau_vs"]} s  K_vs={THETA["K_vs"]}')
+    print(f'  g_okr={THETA["g_okr"]}  τ_okan={THETA["tau_okan"]} s  τ_vis={THETA["tau_vis"]} s')
 
-    print('\n1. Velocity storage + post-rotatory nystagmus')
-    demo_velocity_storage()
+    print('\n1. VOR in the dark — signal cascade')
+    demo_vor_dark()
 
-    print('\n2. Head impulse test (normal & unilateral loss)')
-    demo_hit()
-
-    print('\n3. Low-frequency VOR attenuation')
-    demo_low_freq()
-
-    print('\n4. Signal trace (step + HIT)')
-    demo_signal_trace()
-
-    print('\n5. 3-D head impulse test (all 6 canal axes)')
-    demo_3d_hit()
-
-    print('\n6. OKR — optokinetic nystagmus signal cascade')
+    print('\n2. OKR — OKN cascade + VVOR')
     demo_okr()
 
     print(f'\nDone. Plots saved to {OUTPUT_DIR}/')
