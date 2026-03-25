@@ -28,7 +28,10 @@ State layout (N_STAGES × 3 × N_SIG = 240):
 
 Parameters
 ──────────
-    tau_vis  — total visual delay (s).  Default: 0.08 s.
+    tau_vis  — total visual delay (s).  Default: 0.08 s; ~80 ms latency to
+               OKR onset (Cohen et al. 1977 J Neurophysiol; Miles, Kawano &
+               Optican 1986 J Neurophysiol for smooth pursuit; Ilg 1997
+               Curr Opin Neurobiol for OKR).
 """
 
 import jax.numpy as jnp

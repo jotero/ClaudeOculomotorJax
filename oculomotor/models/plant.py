@@ -4,6 +4,10 @@ Level 1b: three independent first-order LP filters, one per rotational axis
 (yaw, pitch, roll).  All axes share the same time constant τ_p.  No
 cross-axis coupling, no muscle geometry.  Simple and gradient-friendly.
 
+First-order plant model: Robinson (1964 IEEE Trans Biomed Eng; 1981 Ann Rev
+Neurosci). The pulse-step input architecture (NI feedthrough tau_p) that
+cancels the plant lag is from Robinson (1975).
+
     dx_p/dt = A_p(θ) @ x_p + B_p(θ) @ u_p
     y_p     = C_p @ x_p
 
@@ -20,7 +24,8 @@ the readout module converts q to muscle coordinates; the plant ODE itself
 remains identical.
 
 Parameters:
-  τ_p — plant time constant (s). Typical: 0.15 s. Shared across axes.
+  τ_p — plant time constant (s). Typical: 0.15 s, shared across axes
+        (Robinson 1981; Goldstein 1983 Biol Cybern).
 
 Future levels:
   Level 2 — Robinson torque model: τ(q,ω) = B·ω + K·q, 6-muscle activations.

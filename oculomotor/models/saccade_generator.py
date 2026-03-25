@@ -1,5 +1,10 @@
 """Saccade Generator SSM — Robinson (1975) local-feedback burst model.
 
+Robinson DА (1975) "Oculomotor control signals" in "Basic Mechanisms of Ocular
+Motility and Their Clinical Implications", Pergamon, pp. 337–374.
+Burst neuron recordings: Fuchs, Scudder & Kaneko (1988 J Neurophysiol).
+Main sequence (velocity–amplitude): Bahill, Clark & Stark (1975 Math Biosci).
+
 Architecture
 ────────────
 A resettable integrator (x_reset_int) mirrors the neural integrator during a
@@ -68,12 +73,20 @@ Output insertion (in simulator)
 Parameters
 ──────────
     g_burst        burst ceiling (deg/s)              default 600.0
+                   Peak saccade velocity ~600–700 deg/s for large saccades
+                   (Bahill et al. 1975; Fuchs et al. 1988).
     threshold_sac  retinal-error threshold (deg)      default 0.5
+                   Saccadic dead-zone ~0.5° (Steinman et al. 1967 Science;
+                   Becker 1989 in "Neurobiology of Saccadic Eye Movements").
     k_sac          sigmoid steepness (1/deg)          default 15.0
     e_sat_sac      tanh saturation amplitude (deg)    default 7.0
+                   Main-sequence saturation: peak velocity plateaus beyond
+                   ~10–15° (Bahill et al. 1975).
     tau_i          NI leak TC — shared with NI (s)    default 25.0
     tau_reset_sac  reset TC when error is large (s)   default 1.0
     tau_reset_fast reset TC when eye is on target (s) default 0.1
+                   Saccadic refractory period ~200 ms (Fischer &
+                   Ramsperger 1984 Exp Brain Res).
 """
 
 import jax.numpy as jnp

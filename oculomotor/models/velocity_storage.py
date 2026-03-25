@@ -1,8 +1,10 @@
 """Velocity Storage SSM — brainstem internal model estimator (3-D).
 
-Implements the Laurens & Angelaki (2011) internal model / Kalman-filter
-framework. The VS state ω̂ is the brain's 3-D estimate of true head angular
-velocity, updated by canal afferents and OKR drive.
+Implements the Laurens & Angelaki (2011 Exp Brain Res) internal model /
+Kalman-filter framework, on top of the Robinson (1977) / Raphan, Matsuo &
+Cohen (1979 Exp Brain Res) velocity-storage architecture.
+The VS state ω̂ is the brain's 3-D estimate of true head angular velocity,
+updated by canal afferents and OKR drive.
 
     dx_vs/dt = A_vs(θ) @ x_vs + B_vs(θ) @ u
       y_vs   = C_vs @ x_vs  +  D_vs @ u       (D feedthrough)
@@ -43,8 +45,10 @@ Canal feedthrough (D includes PINV_SENS):
     These off-diagonal terms are zero for Level 1b; add later.
 
 Parameters:
-  τ_vs  — prior time constant (s).   Typical: 50 s.
-  K_vs  — Kalman gain (1/s).         Typical: 0.03 /s.
+  τ_vs  — prior time constant (s).   Typical: 50 s  (Laurens & Angelaki 2011).
+  K_vs  — Kalman gain (1/s).         Typical: 0.03 /s; yields τ_eff ≈ 20 s
+           matching the measured VS time constant (Raphan et al. 1979;
+           Cohen, Matsuo & Raphan 1977 J Neurophysiol).
 """
 
 import jax.numpy as jnp
@@ -92,9 +96,9 @@ def step(x_vs, u, theta):
         theta: dict  model parameters
 
     Returns:
-        dx:   (3,)  dx_vs/dt
-        u_ni: (3,)  velocity command to neural integrator
+        dx:    (3,)  dx_vs/dt
+        w_est: (3,)  angular velocity estimate (deg/s)
     """
-    dx   = get_A(theta) @ x_vs + get_B(theta) @ u
-    u_ni = C @ x_vs + _D_STRUCT @ u
-    return dx, u_ni
+    dx    = get_A(theta) @ x_vs + get_B(theta) @ u
+    w_est = C @ x_vs + _D_STRUCT @ u
+    return dx, w_est

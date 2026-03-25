@@ -31,10 +31,13 @@ Signal flow (3-D):
         u_p  = C·x_ni + D·(u_ni + u_burst)   pulse-step (burst feeds plant directly)
         u_p  → [Plant] → q (3,)              eye rotation vector (deg)
 
-Global state vector (267 states):
-    x = [x_c (12) | x_vs (3) | x_ni (3) | x_p (3) | x_vis (240) | x_okr (3) | x_sg (3)]
-         ─ canal ─   ─ VS ─   ─  NI  ─   plant      vis delay      OKR store   saccade gen
+Global state vector (270 states):
+    x = [x_c (12) | x_vs (3) | x_ni (3) | x_p (3) | x_vis (240) | x_okr (3) | x_sg (3) | x_pc (3)]
+         ─ canal ─   ─ VS ─   ─  NI  ─   plant      vis delay      OKR store   sacc gen   plant copy
                                            (120 slip + 120 pos error, 40 stages × 3 axes × 2 sig)
+
+    x_pc — efference-copy plant: tracks burst-driven eye velocity to remove
+           saccadic contamination from the retinal slip before it enters OKR.
 
 Head velocity input:
     Accepts 1-D (T,) horizontal-only array — padded to (T, 3) internally.
@@ -70,36 +73,55 @@ from oculomotor.models import saccade_generator as sg
 
 THETA_DEFAULT = {
     # ── Semicircular canals ───────────────────────────────────────────────────
-    'tau_c':          5.0,    # adaptation TC (s); HP corner ≈ 0.03 Hz
-    'tau_s':          0.005,  # inertia TC (s); LP corner ≈ 32 Hz
+    # Torsion-pendulum model: Steinhausen (1931); Fernandez & Goldberg (1971)
+    'tau_c':          5.0,    # cupula adaptation TC (s); HP corner ≈ 0.03 Hz
+    'tau_s':          0.005,  # endolymph inertia TC (s); LP corner ≈ 32 Hz
 
-    # ── Velocity storage (VS) — Laurens & Angelaki internal model ────────────
-    'tau_vs':        50.0,    # prior TC (s); τ_eff = 1/(1/τ_vs + K_vs) ≈ 20 s
-    'K_vs':           0.03,   # Kalman gain (1/s)
+    # ── Velocity storage (VS) — Raphan/Laurens & Angelaki internal model ─────
+    # Architecture: Raphan, Matsuo & Cohen (1979 Exp Brain Res);
+    # Kalman-filter formulation: Laurens & Angelaki (2011 Exp Brain Res)
+    'tau_vs':        50.0,    # prior TC (s); Laurens & Angelaki (2011)
+    'K_vs':           0.03,   # Kalman gain (1/s); τ_eff ≈ 20 s matches
+                              # Cohen, Matsuo & Raphan (1977 J Neurophysiol)
 
     # ── VOR ───────────────────────────────────────────────────────────────────
+    # Healthy primate VOR gain ≈ 1.0 (Collewijn et al. 1983 J Physiol;
+    # Huterer & Cullen 2002 J Neurophysiol)
     'g_vor':          1.0,    # VOR gain (unitless)
 
     # ── Neural integrator (NI) ────────────────────────────────────────────────
-    'tau_i':         25.0,    # leak TC (s); perfect integrator → ∞
+    # Robinson (1975); leak fitted in monkey by Cannon & Robinson (1985
+    # Biol Cybern)
+    'tau_i':         25.0,    # leak TC (s); ~25 s in healthy brainstem
 
     # ── Ocular plant ──────────────────────────────────────────────────────────
-    'tau_p':          0.15,   # plant TC (s); ~150 ms
+    # First-order plant: Robinson (1964 IEEE Trans Biomed Eng; 1981 Ann Rev
+    # Neurosci); τ_p ≈ 150 ms (Goldstein 1983 Biol Cybern)
+    'tau_p':          0.15,   # plant TC (s)
 
     # ── Visual pathway ────────────────────────────────────────────────────────
-    'tau_vis':        0.08,   # visual delay TC (s); ~80 ms
+    # OKR/SP onset latency ~80 ms (Cohen et al. 1977 J Neurophysiol;
+    # Miles, Kawano & Optican 1986 J Neurophysiol)
+    'tau_vis':        0.08,   # visual delay TC (s)
 
     # ── OKR (optokinetic reflex) ──────────────────────────────────────────────
+    # Raphan et al. (1979); Cohen et al. (1977); Waespe & Henn (1977
+    # Exp Brain Res)
     'g_okr':          0.7,    # OKR gain (unitless); retinal-slip → VS drive
-    'tau_okan':      25.0,    # OKR store TC (s); sustains OKN + OKAN
+    'tau_okan':      25.0,    # OKR store TC (s); OKAN decay in monkey
+                              # (Raphan et al. 1979; Cohen et al. 1977)
 
     # ── Saccade generator (disabled by default; set g_burst > 0 to enable) ───
+    # Local-feedback burst model: Robinson (1975); burst neurons: Fuchs,
+    # Scudder & Kaneko (1988 J Neurophysiol); main sequence: Bahill,
+    # Clark & Stark (1975 Math Biosci)
     'g_burst':        0.0,    # burst ceiling (deg/s); 0 = saccades disabled
-    'threshold_sac':  0.5,    # trigger threshold (deg)
+    'threshold_sac':  0.5,    # trigger threshold (deg); dead-zone ~0.5°
+                              # (Steinman et al. 1967 Science)
     'k_sac':         15.0,    # sigmoid steepness (1/deg)
     'e_sat_sac':      7.0,    # tanh saturation amplitude (deg)
-    'tau_reset_sac':  1.0,    # reset TC (s) — slow when target present
-    'tau_reset_fast': 0.1,    # reset TC (s) — fast once error < threshold
+    'tau_reset_sac':  1.0,    # reset TC (s) — slow when error is large
+    'tau_reset_fast': 0.1,    # reset TC (s) — fast once eye is on target
 }
 
 # ── State vector layout ────────────────────────────────────────────────────────
@@ -111,15 +133,17 @@ _NP      = plant.N_STATES           #  3
 _NVis    = visual_delay.N_STATES    # 240 visual delay (120 slip + 120 pos error)
 _NOKR    = okr.N_STATES             #   3 OKR slow store
 _NSG     = sg.N_STATES              #   3 saccade generator (x_reset_int)
-_N_TOTAL = _NC + _NVS + _NNI + _NP + _NVis + _NOKR + _NSG    # 267
+_NPC     = 3                        #   3 efference-copy plant (burst-driven)
+_N_TOTAL = _NC + _NVS + _NNI + _NP + _NVis + _NOKR + _NSG + _NPC    # 270
 
-_IDX_C   = slice(0,                                         _NC)
-_IDX_VS  = slice(_NC,                                       _NC + _NVS)
-_IDX_NI  = slice(_NC + _NVS,                                _NC + _NVS + _NNI)
-_IDX_P   = slice(_NC + _NVS + _NNI,                         _NC + _NVS + _NNI + _NP)
-_IDX_VIS = slice(_NC + _NVS + _NNI + _NP,                   _NC + _NVS + _NNI + _NP + _NVis)
-_IDX_OKR = slice(_NC + _NVS + _NNI + _NP + _NVis,           _NC + _NVS + _NNI + _NP + _NVis + _NOKR)
-_IDX_SG  = slice(_NC + _NVS + _NNI + _NP + _NVis + _NOKR,   _N_TOTAL)
+_IDX_C   = slice(0,                                              _NC)
+_IDX_VS  = slice(_NC,                                            _NC + _NVS)
+_IDX_NI  = slice(_NC + _NVS,                                     _NC + _NVS + _NNI)
+_IDX_P   = slice(_NC + _NVS + _NNI,                              _NC + _NVS + _NNI + _NP)
+_IDX_VIS = slice(_NC + _NVS + _NNI + _NP,                        _NC + _NVS + _NNI + _NP + _NVis)
+_IDX_OKR = slice(_NC + _NVS + _NNI + _NP + _NVis,                _NC + _NVS + _NNI + _NP + _NVis + _NOKR)
+_IDX_SG  = slice(_NC + _NVS + _NNI + _NP + _NVis + _NOKR,        _NC + _NVS + _NNI + _NP + _NVis + _NOKR + _NSG)
+_IDX_PC  = slice(_NC + _NVS + _NNI + _NP + _NVis + _NOKR + _NSG, _N_TOTAL)
 
 _DT_SOLVE = 0.001  # Heun fixed step (s); must satisfy dt < 2*tau_stage_vis = 0.004 s
 
@@ -148,6 +172,7 @@ def vor_vector_field(t, x, args):
     x_vis = x[_IDX_VIS]
     x_okr = x[_IDX_OKR]
     x_sg  = x[_IDX_SG]
+    x_pc  = x[_IDX_PC]
 
     w_head   = hv_interp.evaluate(t)       # (3,) head angular velocity (deg/s)
     q_head   = hp_interp.evaluate(t)       # (3,) head angular position (deg)
@@ -163,22 +188,30 @@ def vor_vector_field(t, x, args):
 
     # ── OKR and velocity storage ───────────────────────────────────────────────
     dx_okr, u_okr = okr.step(x_okr, e_slip_delayed, theta)
-    dx_vs, u_ni   = vs.step(x_vs, jnp.concatenate([y_canals, u_okr]), theta)
+    dx_vs, w_est  = vs.step(x_vs, jnp.concatenate([y_canals, u_okr]), theta)
 
     # ── Saccade generator (delayed motor error → Robinson local feedback) ─────
     dx_sg, u_burst = sg.step(x_sg, e_pos_delayed, theta)
 
-    # ── Neural integrator + plant (VOR + saccade combined) ───────────────────
-    dx_ni, u_p = ni.step(x_ni, u_ni, u_burst, theta)
+    # ── Neural integrator + plant ─────────────────────────────────────────────
+    # VOR: sign flip (eyes oppose head) and gain applied here, not inside NI.
+    # Burst already in eye coordinates — unit gain, no sign flip needed.
+    u_vel  = -theta['g_vor'] * w_est + u_burst   # combined eye-velocity command
+    dx_ni, u_p = ni.step(x_ni, u_vel, theta)
     dx_p,  _   = plant.step(x_p, u_p, theta)
+
+    # ── Efference copy: plant driven by burst only → predicted saccade velocity
+    tau_p        = theta['tau_p']
+    dx_pc        = -(1.0 / tau_p) * x_pc + u_burst   # mirrors plant, burst input only
+    w_burst_pred = dx_pc                              # predicted saccade eye velocity
 
     # ── Retinal signals (position error + velocity slip) → visual delay ──────
     w_eye  = dx_p
-    e_pos  = retina.target_to_angle(p_target) - q_head - x_p   # position error  (deg)
-    e_slip = w_scene - w_head - w_eye                          # velocity slip   (deg/s)
+    e_pos  = retina.target_to_angle(p_target) - q_head - x_p          # position error (deg)
+    e_slip = w_scene - w_head - w_eye + w_burst_pred                   # add back predicted burst vel → cancels saccadic slip
     dx_vis, _, _ = visual_delay.step(x_vis, e_slip, e_pos, theta)
 
-    return jnp.concatenate([dx_c, dx_vs, dx_ni, dx_p, dx_vis, dx_okr, dx_sg])
+    return jnp.concatenate([dx_c, dx_vs, dx_ni, dx_p, dx_vis, dx_okr, dx_sg, dx_pc])
 
 
 # ── Simulation entry point ─────────────────────────────────────────────────────

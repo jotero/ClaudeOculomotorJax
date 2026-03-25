@@ -1,29 +1,42 @@
-"""Neural Integrator SSM — brainstem velocity-to-position integrator (3-D).
+"""Neural Integrator SSM — leaky integrator of eye-velocity commands (3-D).
 
-Converts the VOR velocity command into a sustained eye-position command.
-This is the *plastic* subsystem: g_vor and tau_i can be modified by
-cerebellar learning.
+Converts a combined eye-velocity command into a sustained eye-position command.
+The NI is agnostic to the source of the velocity: VOR, saccade, OKR, or any
+combination.  Gains and sign conventions live upstream in the simulator.
 
-    dx_n/dt = A_n(θ) @ x_n + B_n(θ) @ u_n
-    y_n     = C_n @ x_n + D_n(θ) @ u_n
+Architecture: Robinson (1975) "Oculomotor control signals" in "Basic Mechanisms
+of Ocular Motility", pp. 337–374. Leak time constant characterized in primate
+by Cannon & Robinson (1985 Biol Cybern).
 
-States:  x_n = [pos_cmd_x, pos_cmd_y, pos_cmd_z]   (3,)   motor position cmd (deg)
-Input:   u_n = [ω̂_x, ω̂_y, ω̂_z]                   (3,)   velocity from VS
-Output:  y_n → feeds Plant SSM (pulse-step signal)
+    dx_n/dt = A_n(θ) @ x_n + u_vel
+    y_n     = C_n @ x_n + tau_p · u_vel
 
-The VOR sign inversion (eyes opposite to head) lives in B_n via −g_vor.
-The integrator leak lives in A_n via −1/τ_i.
+States:  x_n = [pos_cmd_x, pos_cmd_y, pos_cmd_z]   (3,)   eye position command (deg)
+Input:   u_vel                                       (3,)   combined eye-velocity command
+                                                            (already in eye coordinates,
+                                                            sign-flipped and gain-scaled
+                                                            by the caller)
+Output:  y_n → pulse-step signal to Plant SSM
 
-Pulse-step output (full NI output to plant):
-    y_ni = C @ x_ni + D(θ) @ u_ni
+Pulse-step output:
+    y_n = x_n  +  tau_p · u_vel
 
-With D = −g_vor · τ_p · I the plant's LP lag is exactly cancelled:
-    q_eye(s) = −g_vor · q_head(s)   at all VOR frequencies.
+    The tau_p feedthrough exactly cancels the plant's low-pass lag so that
+    eye position tracks the velocity command at all frequencies.
+    tau_p is a plant parameter, not a VOR or saccade parameter — it belongs
+    here because the NI must know the plant it drives.
+
+VOR gain and sign:
+    The sign inversion (eyes move opposite to head) and g_vor live in the
+    simulator, applied to the VS velocity estimate before it reaches the NI:
+        u_vor = −g_vor · w_est
+    The NI itself is gain-free.
 
 Parameters:
-  g_vor  — VOR gain (unitless). Healthy: ~1.0.
-  tau_i  — integrator time constant (s). Healthy: >20 s (near-perfect).
-  tau_p  — plant time constant (s); appears in D for lag cancellation.
+  tau_i  — integrator leak TC (s).  Healthy: >20 s (near-perfect integration);
+           fitted value ~25 s in normal rhesus monkey
+           (Cannon & Robinson 1985; Robinson 1975).
+  tau_p  — plant TC (s); used only for the lag-cancellation feedthrough.
 """
 
 import jax.numpy as jnp
@@ -38,46 +51,28 @@ def get_A(theta):
     return (-1.0 / theta['tau_i']) * jnp.eye(3)
 
 
-def get_B(theta):
-    """(3, 3) input matrix — VOR gain with sign inversion."""
-    return (-theta['g_vor']) * jnp.eye(3)
-
-
-C = jnp.eye(3)   # (3, 3) — position component of output
+B = jnp.eye(3)   # (3, 3) — unit input gain (constant)
+C = jnp.eye(3)   # (3, 3) — identity output (constant)
 
 
 def get_D(theta):
-    """(3, 3) direct feedthrough — velocity burst component of motor neuron signal.
-
-    The full output fed to the plant is:
-        y_ni = C @ x_ni  +  D(θ) @ u_ni      (pulse-step signal)
-
-    With D = −g_vor × τ_p · I the plant's low-pass lag is exactly cancelled:
-        q_eye(s) = −g_vor × q_head(s)  at all VOR frequencies.
-    """
-    return (-theta['g_vor'] * theta['tau_p']) * jnp.eye(3)
+    """(3, 3) feedthrough — tau_p · I, cancels plant LP lag."""
+    return theta['tau_p'] * jnp.eye(3)
 
 
-def step(x_ni, u_ni, u_burst, theta):
+def step(x_ni, u_vel, theta):
     """Single ODE step: state derivative + motor command output.
 
-    Two distinct input channels with different gains:
-
-        u_ni    — velocity command from VS, scaled by B = −g_vor·I
-                  (VOR sign inversion lives here)
-        u_burst — saccade burst command, unit gain into state, +tau_p into plant
-                  (already in eye coordinates — no sign flip, no g_vor scaling)
-
     Args:
-        x_ni:    (3,)  NI state (position command)
-        u_ni:    (3,)  velocity command from VS
-        u_burst: (3,)  saccade burst velocity command (deg/s); zeros if no saccade
-        theta:   dict  model parameters
+        x_ni:  (3,)  NI state (eye position command, deg)
+        u_vel: (3,)  combined eye-velocity command (deg/s)
+                     caller is responsible for sign flip and gain scaling
+        theta: dict  model parameters (tau_i, tau_p)
 
     Returns:
         dx:  (3,)  dx_ni/dt
         u_p: (3,)  pulse-step motor command to plant
     """
-    dx  = get_A(theta) @ x_ni + get_B(theta) @ u_ni + u_burst
-    u_p = C @ x_ni + get_D(theta) @ u_ni + theta['tau_p'] * u_burst
+    dx  = get_A(theta) @ x_ni + u_vel
+    u_p = C @ x_ni + get_D(theta) @ u_vel
     return dx, u_p

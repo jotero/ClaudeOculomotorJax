@@ -1,6 +1,7 @@
 """Canal SSMs — array of bandpass semicircular canal filters.
 
-Each canal is a second-order system (torsion-pendulum model, Steinhausen 1931):
+Each canal is a second-order system (torsion-pendulum model, Steinhausen 1931;
+Fernandez & Goldberg 1971 J Neurophysiol):
 a long-TC adaptation LP (cupula stiffness) cascades with a short-TC inertia LP
 (endolymph), giving a bandpass response.
 
@@ -17,7 +18,7 @@ Transfer function per canal (ω_head → y):
     High-cut at 1/(2π·τ_s) ≈ 32  Hz    (τ_s ≈ 0.005 s)
 
 Canal nonlinearity nl(y, floor) — smooth, differentiable everywhere:
-    y < −floor  →  −floor              inhibitory saturation (Ewald's 2nd law)
+    y < −floor  →  −floor              inhibitory saturation (Ewald's 2nd law, 1892)
     |y| ≤ floor →  y                   linear regime
     y >  floor  →  2y − floor          excitatory gain doubles past threshold
 
@@ -29,7 +30,8 @@ Canal geometry (semi-anatomical, 45° vertical canals):
     Horizontal canals lie in the yaw plane.
     Vertical canals form two coplanar push-pull pairs (LARP and RALP), each
     tilted 45° between the pitch and roll axes — matching the standard
-    anatomical description of anterior/posterior canal planes.
+    anatomical description of anterior/posterior canal planes
+    (Blanks, Curthoys & Markham 1975 Acta Otolaryngol).
 
     Convention: x = rightward yaw, y = upward pitch, z = CW roll (right ear down)
 
@@ -69,7 +71,8 @@ ORIENTATIONS = jnp.array([
 N_CANALS           = ORIENTATIONS.shape[0]          # 6
 N_STATES_PER_CANAL = 2                              # x1 (adaptation LP) + x2 (inertia LP)
 N_STATES           = N_CANALS * N_STATES_PER_CANAL  # 12
-FLOOR              = 80.0   # deg/s — physiological resting discharge
+FLOOR              = 80.0   # deg/s — physiological resting discharge; ~70–100 sp/s in primate
+                             # (Goldberg & Fernandez 1971 J Neurophysiol)
 
 # Pseudo-inverse: maps (N_CANALS,) canal outputs → (3,) angular velocity estimate.
 # For orthogonal push-pull pairs PINV_SENS = (1/2) ORIENTATIONS^T, shape (3, 6).

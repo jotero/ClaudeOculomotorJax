@@ -3,6 +3,11 @@
 Converts delayed retinal slip (from visual_delay module) into a VS drive
 signal via a slow store (first-order low-pass on the delayed slip).
 
+Architecture: Raphan, Matsuo & Cohen (1979 Exp Brain Res) velocity-storage
+model; direct + store decomposition from Cohen, Matsuo & Raphan (1977
+J Neurophysiol). OKN/OKAN data in monkey from Waespe & Henn (1977
+Exp Brain Res).
+
 Signal flow
 ───────────
     e_delayed (3,)   — delayed retinal slip, output of visual_delay cascade
@@ -31,8 +36,11 @@ Build-up and OKAN
 
 Parameters
 ──────────
-    g_okr   — OKR gain (unitless).         Default: 0.7.
-    τ_okan  — store time constant (s).     Default: 25.0 s.
+    g_okr   — OKR gain (unitless).         Default: 0.7
+               (Cohen et al. 1977; Collewijn 1972 Exp Brain Res).
+    τ_okan  — store time constant (s).     Default: 25.0 s; matches OKAN
+               decay measured in monkey (Raphan et al. 1979;
+               Cohen et al. 1977).
 """
 
 import jax.numpy as jnp
