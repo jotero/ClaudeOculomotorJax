@@ -19,12 +19,12 @@ Two signals are delayed independently through the same cascade:
 
 Signal flow
 ───────────
-    e_slip → [stage 0..3] → e_slip_delayed     (for OKR)
-    e_pos  → [stage 0..3] → e_pos_delayed      (for saccades)
+    e_slip → [stage 0..39] → e_slip_delayed     (for OKR)
+    e_pos  → [stage 0..39] → e_pos_delayed      (for saccades)
 
-State layout (N_STAGES × 3 × N_SIG = 24):
-    x_vis = [x_slip_0 (3) | x_slip_1 (3) | x_slip_2 (3) | x_slip_3 (3) |
-             x_pos_0  (3) | x_pos_1  (3) | x_pos_2  (3) | x_pos_3  (3)]
+State layout (N_STAGES × 3 × N_SIG = 240):
+    x_vis = [x_slip_0 (3) | … | x_slip_39 (3) |   (120 states)
+             x_pos_0  (3) | … | x_pos_39  (3)]     (120 states)
 
 Parameters
 ──────────
@@ -37,9 +37,9 @@ import jax.numpy as jnp
 
 N_STAGES = 40             # cascade depth — sharp step (std ≈ τ/√N ≈ 13 ms)
 N_SIG    = 2              # number of signals (slip + position error)
-N_STATES = N_STAGES * 3 * N_SIG   # 24 total states
+N_STATES = N_STAGES * 3 * N_SIG   # 240 total states
 
-_N_PER_SIG = N_STAGES * 3   # 12 states per signal
+_N_PER_SIG = N_STAGES * 3   # 120 states per signal
 
 # ── Structural matrices (computed once at import) ─────────────────────────────
 

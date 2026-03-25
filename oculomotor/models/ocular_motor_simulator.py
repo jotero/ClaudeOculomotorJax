@@ -31,10 +31,10 @@ Signal flow (3-D):
         u_p  = C·x_ni + D·(u_ni + u_burst)   pulse-step (burst feeds plant directly)
         u_p  → [Plant] → q (3,)              eye rotation vector (deg)
 
-Global state vector (51 states):
-    x = [x_c (12) | x_vs (3) | x_ni (3) | x_p (3) | x_vis (24) | x_okr (3) | x_sg (3)]
-         ─ canal ─   ─ VS ─   ─  NI  ─   plant     vis delay     OKR store   saccade gen
-                                           (12 slip + 12 pos error)
+Global state vector (267 states):
+    x = [x_c (12) | x_vs (3) | x_ni (3) | x_p (3) | x_vis (240) | x_okr (3) | x_sg (3)]
+         ─ canal ─   ─ VS ─   ─  NI  ─   plant      vis delay      OKR store   saccade gen
+                                           (120 slip + 120 pos error, 40 stages × 3 axes × 2 sig)
 
 Head velocity input:
     Accepts 1-D (T,) horizontal-only array — padded to (T, 3) internally.
@@ -61,6 +61,7 @@ from oculomotor.models import canal
 from oculomotor.models import velocity_storage as vs
 from oculomotor.models import neural_integrator as ni
 from oculomotor.models import plant
+from oculomotor.models import retina
 from oculomotor.models import visual_delay
 from oculomotor.models import okr
 from oculomotor.models import saccade_generator as sg
@@ -68,22 +69,37 @@ from oculomotor.models import saccade_generator as sg
 # ── Canonical model parameters ─────────────────────────────────────────────────
 
 THETA_DEFAULT = {
-    'tau_c':        5.0,    # canal adaptation time constant (s); HP corner ≈ 0.03 Hz
-    'tau_s':        0.005,  # canal inertia time constant (s); LP corner ≈ 32 Hz
-    'g_vor':        1.0,    # VOR gain (unitless)
-    'tau_i':        25.0,   # neural integrator time constant (s)
-    'tau_p':        0.15,   # plant time constant (s)
-    'tau_vs':       50.0,   # VS prior time constant (s); τ_eff = 1/(1/τ_vs + K_vs) ≈ 20 s
-    'K_vs':         0.03,   # VS Kalman gain (1/s)
-    'g_okr':        0.7,    # OKR gain (unitless); retinal-slip → VS drive
-    'tau_vis':      0.08,   # visual delay time constant (s); ~80 ms
-    'tau_okan':     25.0,   # OKR store time constant (s); gives sustained OKN + OKAN
-    # saccade generator (disabled by default; set g_burst > 0 to enable)
-    'g_burst':        0.0,   # burst ceiling (deg/s); 0 = saccades disabled
-    'threshold_sac':  0.5,   # saccade threshold (deg)
-    'k_sac':         15.0,   # sigmoid steepness (1/deg)
-    'e_sat_sac':     10.0,   # tanh saturation amplitude (deg)
-    'tau_reset_sac':  0.1,   # resettable integrator decay TC (s)
+    # ── Semicircular canals ───────────────────────────────────────────────────
+    'tau_c':          5.0,    # adaptation TC (s); HP corner ≈ 0.03 Hz
+    'tau_s':          0.005,  # inertia TC (s); LP corner ≈ 32 Hz
+
+    # ── Velocity storage (VS) — Laurens & Angelaki internal model ────────────
+    'tau_vs':        50.0,    # prior TC (s); τ_eff = 1/(1/τ_vs + K_vs) ≈ 20 s
+    'K_vs':           0.03,   # Kalman gain (1/s)
+
+    # ── VOR ───────────────────────────────────────────────────────────────────
+    'g_vor':          1.0,    # VOR gain (unitless)
+
+    # ── Neural integrator (NI) ────────────────────────────────────────────────
+    'tau_i':         25.0,    # leak TC (s); perfect integrator → ∞
+
+    # ── Ocular plant ──────────────────────────────────────────────────────────
+    'tau_p':          0.15,   # plant TC (s); ~150 ms
+
+    # ── Visual pathway ────────────────────────────────────────────────────────
+    'tau_vis':        0.08,   # visual delay TC (s); ~80 ms
+
+    # ── OKR (optokinetic reflex) ──────────────────────────────────────────────
+    'g_okr':          0.7,    # OKR gain (unitless); retinal-slip → VS drive
+    'tau_okan':      25.0,    # OKR store TC (s); sustains OKN + OKAN
+
+    # ── Saccade generator (disabled by default; set g_burst > 0 to enable) ───
+    'g_burst':        0.0,    # burst ceiling (deg/s); 0 = saccades disabled
+    'threshold_sac':  0.5,    # trigger threshold (deg)
+    'k_sac':         15.0,    # sigmoid steepness (1/deg)
+    'e_sat_sac':      7.0,    # tanh saturation amplitude (deg)
+    'tau_reset_sac':  1.0,    # reset TC (s) — slow when target present
+    'tau_reset_fast': 0.1,    # reset TC (s) — fast once error < threshold
 }
 
 # ── State vector layout ────────────────────────────────────────────────────────
@@ -92,10 +108,10 @@ _NC      = canal.N_STATES           # 12  (x1+x2 per canal, 6 canals)
 _NVS     = vs.N_STATES              #  3
 _NNI     = ni.N_STATES              #  3
 _NP      = plant.N_STATES           #  3
-_NVis    = visual_delay.N_STATES    # 24  visual delay (12 slip + 12 pos error)
-_NOKR    = okr.N_STATES             #  3  OKR slow store
-_NSG     = sg.N_STATES              #  3  saccade generator (x_reset_int)
-_N_TOTAL = _NC + _NVS + _NNI + _NP + _NVis + _NOKR + _NSG    # 51
+_NVis    = visual_delay.N_STATES    # 240 visual delay (120 slip + 120 pos error)
+_NOKR    = okr.N_STATES             #   3 OKR slow store
+_NSG     = sg.N_STATES              #   3 saccade generator (x_reset_int)
+_N_TOTAL = _NC + _NVS + _NNI + _NP + _NVis + _NOKR + _NSG    # 267
 
 _IDX_C   = slice(0,                                         _NC)
 _IDX_VS  = slice(_NC,                                       _NC + _NVS)
@@ -118,12 +134,12 @@ def vor_vector_field(t, x, args):
     Args:
         t:    scalar time (s)
         x:    global state vector, shape (_N_TOTAL,)
-        args: (theta, hv_interp, vs_interp, target_interp, canal_gains)
+        args: (theta, hv_interp, hp_interp, vs_interp, target_interp, canal_gains)
 
     Returns:
         dx_dt: shape (_N_TOTAL,)
     """
-    theta, hv_interp, vs_interp, target_interp, canal_gains = args
+    theta, hv_interp, hp_interp, vs_interp, target_interp, canal_gains = args
 
     x_c   = x[_IDX_C]
     x_vs  = x[_IDX_VS]
@@ -134,6 +150,7 @@ def vor_vector_field(t, x, args):
     x_sg  = x[_IDX_SG]
 
     w_head   = hv_interp.evaluate(t)       # (3,) head angular velocity (deg/s)
+    q_head   = hp_interp.evaluate(t)       # (3,) head angular position (deg)
     w_scene  = vs_interp.evaluate(t)       # (3,) scene angular velocity (deg/s)
     p_target = target_interp.evaluate(t)   # (3,) Cartesian target position
 
@@ -149,22 +166,17 @@ def vor_vector_field(t, x, args):
     dx_vs, u_ni   = vs.step(x_vs, jnp.concatenate([y_canals, u_okr]), theta)
 
     # ── Saccade generator (delayed motor error → Robinson local feedback) ─────
-    theta_target   = sg.target_to_angle(p_target)   # (3,) target angle (deg)
-    e_motor        = theta_target - x_p              # (3,) instantaneous motor error
     dx_sg, u_burst = sg.step(x_sg, e_pos_delayed, theta)
 
     # ── Neural integrator + plant (VOR + saccade combined) ───────────────────
-    dx_ni, u_p = ni.step(x_ni, u_ni, theta)
-    tau_p  = theta['tau_p']
-    u_p    = u_p + tau_p * u_burst    # velocity pulse → plant (cancels LP lag)
-    dx_ni  = dx_ni + u_burst          # burst integrates into real NI → holds position
+    dx_ni, u_p = ni.step(x_ni, u_ni, u_burst, theta)
+    dx_p,  _   = plant.step(x_p, u_p, theta)
 
-    dx_p, _ = plant.step(x_p, u_p, theta)
-
-    # ── Update visual delay: retinal slip + position error ────────────────────
+    # ── Retinal signals (position error + velocity slip) → visual delay ──────
     w_eye  = dx_p
-    e_slip = w_scene - w_head - w_eye
-    dx_vis, _, _ = visual_delay.step(x_vis, e_slip, e_motor, theta)
+    e_pos  = retina.target_to_angle(p_target) - q_head - x_p   # position error  (deg)
+    e_slip = w_scene - w_head - w_eye                          # velocity slip   (deg/s)
+    dx_vis, _, _ = visual_delay.step(x_vis, e_slip, e_pos, theta)
 
     return jnp.concatenate([dx_c, dx_vs, dx_ni, dx_p, dx_vis, dx_okr, dx_sg])
 
@@ -241,7 +253,15 @@ def simulate(theta, t_array_or_stimulus, head_vel_array=None,
     else:
         pt3 = jnp.asarray(p_target_array)
 
+    # ── Head position: trapezoidal integral of head velocity ──────────────────
+    dt_arr = jnp.diff(t_array)                                     # (T-1,)
+    hp3    = jnp.concatenate([
+        jnp.zeros((1, 3)),
+        jnp.cumsum(0.5 * (hv3[:-1] + hv3[1:]) * dt_arr[:, None], axis=0),
+    ])                                                              # (T, 3)
+
     hv_interp     = diffrax.LinearInterpolation(ts=t_array, ys=hv3)
+    hp_interp     = diffrax.LinearInterpolation(ts=t_array, ys=hp3)
     vs_interp     = diffrax.LinearInterpolation(ts=t_array, ys=vs3)
     target_interp = diffrax.LinearInterpolation(ts=t_array, ys=pt3)
     x0            = jnp.zeros(_N_TOTAL)
@@ -258,7 +278,7 @@ def simulate(theta, t_array_or_stimulus, head_vel_array=None,
         t1=t_array[-1],
         dt0=dt,
         y0=x0,
-        args=(theta, hv_interp, vs_interp, target_interp, gains_array),
+        args=(theta, hv_interp, hp_interp, vs_interp, target_interp, gains_array),
         stepsize_controller=diffrax.ConstantStepSize(),
         saveat=diffrax.SaveAt(ts=t_array),
         max_steps=max_steps,

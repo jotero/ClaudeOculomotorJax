@@ -58,18 +58,26 @@ def get_D(theta):
     return (-theta['g_vor'] * theta['tau_p']) * jnp.eye(3)
 
 
-def step(x_ni, u_ni, theta):
+def step(x_ni, u_ni, u_burst, theta):
     """Single ODE step: state derivative + motor command output.
 
+    Two distinct input channels with different gains:
+
+        u_ni    — velocity command from VS, scaled by B = −g_vor·I
+                  (VOR sign inversion lives here)
+        u_burst — saccade burst command, unit gain into state, +tau_p into plant
+                  (already in eye coordinates — no sign flip, no g_vor scaling)
+
     Args:
-        x_ni:  (3,)  NI state (position command)
-        u_ni:  (3,)  velocity command from VS
-        theta: dict  model parameters
+        x_ni:    (3,)  NI state (position command)
+        u_ni:    (3,)  velocity command from VS
+        u_burst: (3,)  saccade burst velocity command (deg/s); zeros if no saccade
+        theta:   dict  model parameters
 
     Returns:
         dx:  (3,)  dx_ni/dt
-        u_p: (3,)  pulse-step motor command to plant (C@x + D@u)
+        u_p: (3,)  pulse-step motor command to plant
     """
-    dx  = get_A(theta) @ x_ni + get_B(theta) @ u_ni
-    u_p = C @ x_ni + get_D(theta) @ u_ni
+    dx  = get_A(theta) @ x_ni + get_B(theta) @ u_ni + u_burst
+    u_p = C @ x_ni + get_D(theta) @ u_ni + theta['tau_p'] * u_burst
     return dx, u_p

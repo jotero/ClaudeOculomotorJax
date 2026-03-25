@@ -23,6 +23,7 @@ from oculomotor.models.ocular_motor_simulator import (
     vor_vector_field, _N_TOTAL,
     _IDX_NI, _IDX_P, _IDX_SG, _IDX_VIS,
 )
+from oculomotor.models import retina
 from oculomotor.models import saccade_generator as sg
 from oculomotor.models import visual_delay
 import diffrax
@@ -50,8 +51,9 @@ THETA_SAC = {**THETA_DEFAULT,
              'g_burst':      600.0,   # burst ceiling (deg/s); peak vel → g_burst as amp → ∞
              'threshold_sac':  0.5,   # trigger threshold (deg)
              'k_sac':         15.0,   # sigmoid steepness (1/deg)
-             'e_sat_sac':      7.0,   # tanh saturation amplitude (deg); ~half-sat at e_sat
-             'tau_reset_sac':  0.1,   # resettable integrator reset TC (s)
+             'e_sat_sac':      7.0,   # tanh saturation amplitude (deg)
+             'tau_reset_sac':  1.0,   # slow reset TC (s) — active when target present
+             'tau_reset_fast': 0.1,   # fast reset TC (s) — kicks in after error < threshold
              }
 
 
@@ -60,7 +62,13 @@ THETA_SAC = {**THETA_DEFAULT,
 def _extract_all(theta, t_array, hv3, vs3, pt3, max_steps=100000):
     """Run simulator and extract full state + intermediate signals."""
     gains_array   = jnp.ones(6)
+    dt_arr        = jnp.diff(t_array)
+    hp3           = jnp.concatenate([
+        jnp.zeros((1, 3)),
+        jnp.cumsum(0.5 * (hv3[:-1] + hv3[1:]) * dt_arr[:, None], axis=0),
+    ])
     hv_interp     = diffrax.LinearInterpolation(ts=t_array, ys=hv3)
+    hp_interp     = diffrax.LinearInterpolation(ts=t_array, ys=hp3)
     vs_interp     = diffrax.LinearInterpolation(ts=t_array, ys=vs3)
     target_interp = diffrax.LinearInterpolation(ts=t_array, ys=pt3)
     x0            = jnp.zeros(_N_TOTAL)
@@ -72,7 +80,7 @@ def _extract_all(theta, t_array, hv3, vs3, pt3, max_steps=100000):
         t1=t_array[-1],
         dt0=0.001,
         y0=x0,
-        args=(theta, hv_interp, vs_interp, target_interp, gains_array),
+        args=(theta, hv_interp, hp_interp, vs_interp, target_interp, gains_array),
         stepsize_controller=diffrax.ConstantStepSize(),
         saveat=diffrax.SaveAt(ts=t_array),
         max_steps=max_steps,
@@ -86,10 +94,9 @@ def _extract_all(theta, t_array, hv3, vs3, pt3, max_steps=100000):
         x_vis         = x[_IDX_VIS]
         x_reset_int   = x[_IDX_SG]          # (3,) resettable integrator
         p_t           = target_interp.evaluate(t)
-        tt            = sg.target_to_angle(p_t)
-        e_motor       = tt - x_p
+        e_motor       = retina.target_to_angle(p_t) - x_p
         e_pos_delayed = visual_delay.C_pos @ x_vis   # what the SG actually sees
-        _, u_burst    = sg.step(x_reset_int, e_pos_delayed, theta)
+        _, u_burst    = sg.step(x_reset_int, e_pos_delayed, theta)  # matches ODE
         return {'q_eye': x_p, 'x_ni': x_ni, 'e_motor': e_motor,
                 'e_pos_delayed': e_pos_delayed,
                 'x_reset_int': x_reset_int, 'u_burst': u_burst}
@@ -101,77 +108,72 @@ def _extract_all(theta, t_array, hv3, vs3, pt3, max_steps=100000):
 # ── Demo 1: single saccade ─────────────────────────────────────────────────────
 
 def demo_saccade_single():
-    """10° rightward saccade with head still — full signal cascade."""
-    dt    = 0.001
-    T_end = 1.0
-    t     = jnp.arange(0.0, T_end, dt)
-    T     = len(t)
-    t_np  = np.array(t)
-    t_jump = 0.3
+    """Saccades of 4 amplitudes (2, 5, 10, 20°) — 4 columns × 4 signal rows."""
+    amplitudes = [2.0, 5.0, 10.0, 20.0]
+    dt     = 0.001
+    T_end  = 1.0
+    t_jump = 0.2
+    t      = jnp.arange(0.0, T_end, dt)
+    T      = len(t)
+    t_np   = np.array(t)
 
-    hv3 = jnp.zeros((T, 3))
-    vs3 = jnp.zeros((T, 3))
-    pt3 = jnp.zeros((T, 3))
-    pt3 = pt3.at[:, 2].set(1.0)
-    pt3 = pt3.at[t >= t_jump, 0].set(jnp.tan(jnp.radians(10.0)))
+    n_rows, n_cols = 4, len(amplitudes)
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(4 * n_cols, 2.8 * n_rows),
+                             sharex=True)
+    fig.suptitle('Saccade Generator — Signal Cascade', fontsize=13)
 
-    sig = _extract_all(THETA_SAC, t, hv3, vs3, pt3)
-    target_yaw = np.degrees(np.arctan2(np.array(pt3[:, 0]), np.array(pt3[:, 2])))
-    eye_vel    = np.gradient(sig['q_eye'][:, 0], t_np)
+    row_labels = ['Position (deg)', 'Error / Copy (deg)',
+                  'Burst + Velocity (deg/s)', 'Copy vs NI (deg)']
+    for r, lbl in enumerate(row_labels):
+        axes[r, 0].set_ylabel(lbl, fontsize=8)
 
-    fig, axes = plt.subplots(4, 2, figsize=(12, 10))
-    fig.suptitle('Saccade Generator — Single 10° Saccade', fontsize=13)
-    axes = axes.ravel()
+    for ci, amp in enumerate(amplitudes):
+        hv3 = jnp.zeros((T, 3))
+        vs3 = jnp.zeros((T, 3))
+        pt3 = jnp.zeros((T, 3))
+        pt3 = pt3.at[:, 2].set(1.0)
+        pt3 = pt3.at[t >= t_jump, 0].set(jnp.tan(jnp.radians(amp)))
 
-    def _vl(ax): ax.axvline(t_jump, color='gray', lw=0.8, ls='--', alpha=0.6)
+        sig        = _extract_all(THETA_SAC, t, hv3, vs3, pt3)
+        target_yaw = np.degrees(np.arctan2(np.array(pt3[:, 0]), np.array(pt3[:, 2])))
+        eye_vel    = np.gradient(sig['q_eye'][:, 0], t_np)
 
-    # 0: eye pos vs target
-    axes[0].plot(t_np, target_yaw,         color=_C['target'], lw=1.5, label='target')
-    axes[0].plot(t_np, sig['q_eye'][:, 0], color=_C['eye'],    lw=1.5, label='eye (q)')
-    axes[0].plot(t_np, sig['x_ni'][:, 0],  color=_C['ni'],     lw=1.2, ls='--', label='x_ni (NI cmd)')
-    _vl(axes[0]); axes[0].set_ylabel('deg'); axes[0].set_title('Position: eye, NI cmd, target')
-    axes[0].legend(fontsize=8); axes[0].axhline(0, color='k', lw=0.5)
+        def _vl(ax): ax.axvline(t_jump, color='gray', lw=0.7, ls='--', alpha=0.5)
 
-    # 1: motor error vs resettable integrator — crossing = burst off
-    axes[1].plot(t_np, sig['e_motor'][:, 0],       color=_C['error'],  lw=1.5, label='e_motor (target−eye)')
-    axes[1].plot(t_np, sig['e_pos_delayed'][:, 0], color=_C['error'],  lw=1.2, ls='--', label='e_pos_delayed')
-    axes[1].plot(t_np, sig['x_reset_int'][:, 0],   color=_C['reset'],  lw=1.5, label='x_reset_int')
-    _vl(axes[1]); axes[1].set_ylabel('deg'); axes[1].set_title('Motor Error vs Resettable Integrator')
-    axes[1].legend(fontsize=8); axes[1].axhline(0, color='k', lw=0.5)
+        axes[0, ci].set_title(f'{amp:.0f}°', fontsize=10)
 
-    # 2: burst command
-    axes[2].plot(t_np, sig['u_burst'][:, 0], color=_C['burst'], lw=1.5)
-    _vl(axes[2]); axes[2].set_ylabel('deg/s'); axes[2].set_title('Burst Output  u_burst')
-    axes[2].axhline(0, color='k', lw=0.5)
+        # Row 0: position
+        axes[0, ci].plot(t_np, target_yaw,         color=_C['target'], lw=1.5, label='target')
+        axes[0, ci].plot(t_np, sig['q_eye'][:, 0], color=_C['eye'],    lw=1.5, label='eye')
+        axes[0, ci].plot(t_np, sig['x_ni'][:, 0],  color=_C['ni'],     lw=1.0, ls='--', label='NI cmd')
+        _vl(axes[0, ci]); axes[0, ci].axhline(0, color='k', lw=0.4)
+        if ci == 0: axes[0, ci].legend(fontsize=7)
 
-    # 3: eye velocity
-    axes[3].plot(t_np, eye_vel, color=_C['vel'], lw=1.5)
-    _vl(axes[3]); axes[3].set_ylabel('deg/s'); axes[3].set_title('Eye Velocity  dq/dt')
-    axes[3].axhline(0, color='k', lw=0.5)
+        # Row 1: delayed error & resettable integrator
+        axes[1, ci].plot(t_np, sig['e_motor'][:, 0],       color=_C['error'], lw=1.5, label='e_motor')
+        axes[1, ci].plot(t_np, sig['e_pos_delayed'][:, 0], color=_C['error'], lw=1.0, ls='--', label='e_delayed')
+        axes[1, ci].plot(t_np, sig['x_reset_int'][:, 0],   color=_C['reset'], lw=1.5, label='x_reset_int')
+        _vl(axes[1, ci]); axes[1, ci].axhline(0, color='k', lw=0.4)
+        if ci == 0: axes[1, ci].legend(fontsize=7)
 
-    # 4: resettable integrator vs real NI
-    axes[4].plot(t_np, sig['x_reset_int'][:, 0], color=_C['reset'], lw=1.5, label='x_reset_int')
-    axes[4].plot(t_np, sig['x_ni'][:, 0],         color=_C['ni'],    lw=1.2, ls='--', label='x_ni (real NI)')
-    axes[4].axhline(10.0, color=_C['target'], lw=0.8, ls=':', label='target')
-    _vl(axes[4]); axes[4].set_ylabel('deg'); axes[4].set_title('Resettable Integrator vs Real NI')
-    axes[4].legend(fontsize=8)
+        # Row 2: burst command + eye velocity (twin-y)
+        ax2 = axes[2, ci]
+        ax2.plot(t_np, sig['u_burst'][:, 0], color=_C['burst'], lw=1.5, label='u_burst')
+        ax2.plot(t_np, eye_vel,               color=_C['vel'],   lw=1.2, ls='--', label='eye vel')
+        _vl(ax2); ax2.axhline(0, color='k', lw=0.4)
+        if ci == 0: ax2.legend(fontsize=7)
 
-    # 5: position error
-    axes[5].plot(t_np, target_yaw - sig['q_eye'][:, 0], color=_C['error'], lw=1.5)
-    _vl(axes[5]); axes[5].set_ylabel('deg'); axes[5].set_title('Position Error  (target − eye)')
-    axes[5].axhline(0, color='k', lw=0.5)
+        # Row 3: copy vs NI
+        axes[3, ci].plot(t_np, sig['x_reset_int'][:, 0], color=_C['reset'], lw=1.5, label='x_reset_int')
+        axes[3, ci].plot(t_np, sig['x_ni'][:, 0],         color=_C['ni'],    lw=1.0, ls='--', label='x_ni')
+        axes[3, ci].axhline(amp, color=_C['target'], lw=0.8, ls=':', label='target')
+        _vl(axes[3, ci]); axes[3, ci].axhline(0, color='k', lw=0.4)
+        if ci == 0: axes[3, ci].legend(fontsize=7)
 
-    # 6: phase plane — eye vel vs motor error
-    sc = axes[6].scatter(sig['e_motor'][:, 0], eye_vel, c=t_np, cmap='plasma', s=3)
-    axes[6].set_xlabel('Motor error (deg)'); axes[6].set_ylabel('Eye vel (deg/s)')
-    axes[6].set_title('Phase Plane'); plt.colorbar(sc, ax=axes[6], label='time (s)')
-    axes[6].axhline(0, color='k', lw=0.5); axes[6].axvline(0, color='k', lw=0.5)
+        axes[n_rows - 1, ci].set_xlabel('Time (s)')
+        for r in range(n_rows):
+            axes[r, ci].set_xlim(0, T_end)
 
-    # 7: unused — hide
-    axes[7].set_visible(False)
-
-    for ax in [axes[i] for i in range(6)]:
-        ax.set_xlabel('Time (s)'); ax.set_xlim(0, T_end)
     fig.tight_layout()
     path = os.path.join(OUTPUT_DIR, 'saccade_single.png')
     fig.savefig(path, dpi=150); plt.close(fig)
