@@ -109,8 +109,8 @@ def _extract_all(theta, t_array, hv3, vs3, pt3, max_steps=100000):
 # ── Demo 1: single saccade ─────────────────────────────────────────────────────
 
 def demo_saccade_single():
-    """Saccades of 4 amplitudes (2, 5, 10, 20°) — 4 columns × 4 signal rows."""
-    amplitudes = [2.0, 5.0, 10.0, 20.0]
+    """Saccades of 5 amplitudes (1, 2, 5, 10, 20°) — 5 columns × 4 signal rows."""
+    amplitudes = [1.0, 2.0, 5.0, 10.0, 20.0]
     dt     = 0.001
     T_end  = 1.0
     t_jump = 0.2
