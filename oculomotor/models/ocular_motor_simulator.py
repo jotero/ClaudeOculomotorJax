@@ -26,13 +26,17 @@ Signal flow (3-D):
         u_p  = C·x_ni + τ_p·u_vel              pulse-step to plant
         u_p  → [Plant] → q (3,)                eye rotation vector (deg)
 
-Global state vector (267 states):
-    x = [x_c (12) | x_vs (3) | x_ni (3) | x_p (3) | x_vis (240) | x_sg (3) | x_pc (3)]
-         ─ canal ─   ─ VS ─   ─  NI  ─   plant      vis delay      sacc gen   plant copy
+Global state vector (270 states):
+    x = [x_c (12) | x_vs (3) | x_ni (3) | x_p (3) | x_vis (240) | x_sg (3) | x_pc (3) | x_ni_pc (3)]
+         ─ canal ─   ─ VS ─   ─  NI  ─   plant      vis delay      sacc gen   plant copy   NI copy
                                            (120 slip + 120 pos error, 40 stages × 3 axes × 2 sig)
 
-    x_pc — efference-copy plant: tracks burst-driven eye velocity to subtract
-           saccadic contamination from retinal slip before it enters VS.
+    x_pc    — efference-copy plant position (burst-driven): follows x_ni_pc with tau_p lag.
+    x_ni_pc — efference-copy NI (burst-driven): integrates u_burst with tau_i leak.
+
+    Together they mirror the full NI+plant response to u_burst alone, so that
+        w_burst_pred = (x_ni_pc − x_pc)/tau_p + u_burst
+    exactly equals dx_p_burst, giving perfect burst cancellation in e_slip.
 
 Head velocity input:
     Accepts 1-D (T,) horizontal-only array — padded to (T, 3) internally.
@@ -133,16 +137,18 @@ _NNI     = ni.N_STATES              #  3
 _NP      = plant.N_STATES           #  3
 _NVis    = visual_delay.N_STATES    # 240 visual delay (120 slip + 120 pos error)
 _NSG     = sg.N_STATES              #   3 saccade generator (x_reset_int)
-_NPC     = 3                        #   3 efference-copy plant (burst-driven)
-_N_TOTAL = _NC + _NVS + _NNI + _NP + _NVis + _NSG + _NPC    # 267
+_NPC     = 3                        #   3 efference-copy plant position (burst-driven)
+_NPC_NI  = 3                        #   3 efference-copy NI (burst-driven)
+_N_TOTAL = _NC + _NVS + _NNI + _NP + _NVis + _NSG + _NPC + _NPC_NI    # 270
 
-_IDX_C   = slice(0,                                     _NC)
-_IDX_VS  = slice(_NC,                                   _NC + _NVS)
-_IDX_NI  = slice(_NC + _NVS,                            _NC + _NVS + _NNI)
-_IDX_P   = slice(_NC + _NVS + _NNI,                     _NC + _NVS + _NNI + _NP)
-_IDX_VIS = slice(_NC + _NVS + _NNI + _NP,               _NC + _NVS + _NNI + _NP + _NVis)
-_IDX_SG  = slice(_NC + _NVS + _NNI + _NP + _NVis,       _NC + _NVS + _NNI + _NP + _NVis + _NSG)
-_IDX_PC  = slice(_NC + _NVS + _NNI + _NP + _NVis + _NSG, _N_TOTAL)
+_IDX_C     = slice(0,                                          _NC)
+_IDX_VS    = slice(_NC,                                        _NC + _NVS)
+_IDX_NI    = slice(_NC + _NVS,                                 _NC + _NVS + _NNI)
+_IDX_P     = slice(_NC + _NVS + _NNI,                          _NC + _NVS + _NNI + _NP)
+_IDX_VIS   = slice(_NC + _NVS + _NNI + _NP,                    _NC + _NVS + _NNI + _NP + _NVis)
+_IDX_SG    = slice(_NC + _NVS + _NNI + _NP + _NVis,            _NC + _NVS + _NNI + _NP + _NVis + _NSG)
+_IDX_PC    = slice(_NC + _NVS + _NNI + _NP + _NVis + _NSG,     _NC + _NVS + _NNI + _NP + _NVis + _NSG + _NPC)
+_IDX_NI_PC = slice(_NC + _NVS + _NNI + _NP + _NVis + _NSG + _NPC, _N_TOTAL)
 
 _DT_SOLVE = 0.001  # Heun fixed step (s); must satisfy dt < 2*tau_stage_vis = 0.004 s
 
@@ -170,13 +176,14 @@ def vor_vector_field(t, x, args):
     """
     theta, hv_interp, hp_interp, vs_interp, target_interp, scene_gain_interp, canal_gains = args
 
-    x_c   = x[_IDX_C]
-    x_vs  = x[_IDX_VS]
-    x_ni  = x[_IDX_NI]
-    x_p   = x[_IDX_P]
-    x_vis = x[_IDX_VIS]
-    x_sg  = x[_IDX_SG]
-    x_pc  = x[_IDX_PC]
+    x_c     = x[_IDX_C]
+    x_vs    = x[_IDX_VS]
+    x_ni    = x[_IDX_NI]
+    x_p     = x[_IDX_P]
+    x_vis   = x[_IDX_VIS]
+    x_sg    = x[_IDX_SG]
+    x_pc    = x[_IDX_PC]
+    x_ni_pc = x[_IDX_NI_PC]
 
     w_head     = hv_interp.evaluate(t)           # (3,) head angular velocity (deg/s)
     q_head     = hp_interp.evaluate(t)           # (3,) head angular position (deg)
@@ -206,10 +213,16 @@ def vor_vector_field(t, x, args):
     dx_ni, u_p = ni.step(x_ni, u_vel, theta)
     dx_p,  _   = plant.step(x_p, u_p, theta)
 
-    # ── Efference copy: plant driven by burst only → predicted saccade velocity
+    # ── Efference copy: 2-state NI+plant copy driven by burst only ───────────
+    # x_ni_pc tracks x_ni_burst (NI integrates u_burst), x_pc tracks x_p_burst
+    # (plant follows x_ni_pc).  Together they predict the full burst-driven eye
+    # velocity so the burst component cancels exactly in e_slip:
+    #   w_burst_pred = (x_ni_pc − x_pc)/tau_p + u_burst  ≡  dx_p_burst
     tau_p        = theta['tau_p']
-    dx_pc        = -(1.0 / tau_p) * x_pc + u_burst   # mirrors plant, burst input only
-    w_burst_pred = dx_pc                              # predicted saccade eye velocity
+    tau_i        = theta['tau_i']
+    dx_ni_pc     = -(1.0 / tau_i) * x_ni_pc + u_burst              # NI copy
+    dx_pc        = (x_ni_pc - x_pc) / tau_p + u_burst              # plant copy
+    w_burst_pred = dx_pc                                            # predicted burst velocity
 
     # ── Retinal signals (position error + velocity slip) → visual delay ──────
     w_eye  = dx_p
@@ -217,7 +230,7 @@ def vor_vector_field(t, x, args):
     e_slip = scene_gain * (w_scene - w_head - w_eye + w_burst_pred)    # gated by scene: 0 in dark
     dx_vis, _, _ = visual_delay.step(x_vis, e_slip, e_pos, theta)
 
-    return jnp.concatenate([dx_c, dx_vs, dx_ni, dx_p, dx_vis, dx_sg, dx_pc])
+    return jnp.concatenate([dx_c, dx_vs, dx_ni, dx_p, dx_vis, dx_sg, dx_pc, dx_ni_pc])
 
 
 # ── Simulation entry point ─────────────────────────────────────────────────────

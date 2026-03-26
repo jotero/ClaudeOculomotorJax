@@ -133,7 +133,13 @@ def input_nonlinearity(e_pos_delayed, e_residual, theta):
     e_res_dir   = e_residual / (e_res_mag + 1e-6)
     u_burst_raw = burst_mag * e_res_dir
 
-    return u_burst_raw, gate_err, gate_res
+    # Direction gate: suppress burst when residual points opposite to error.
+    # Prevents backward burst when x_reset_int overshoots e_pos_delayed.
+    e_norm   = e_pos_delayed / (jnp.linalg.norm(e_pos_delayed)       + 1e-6)
+    res_norm = e_residual / (jnp.linalg.norm(e_residual)  + 1e-6)
+    gate_dir = jax.nn.relu(jnp.dot(e_norm, res_norm))
+
+    return u_burst_raw, gate_err, gate_res, gate_dir
 
 
 # ── Mode matrices (pure dynamics — no gating inside) ─────────────────────────
@@ -165,17 +171,12 @@ def step(x_sg, u_sg, theta):
         dx_sg:   (N_STATES,)  state derivative
         u_burst: (3,)         saccade velocity command (deg/s)
     """
-    e_residual = u_sg - x_sg   # Robinson residual: delayed error minus copy
+    e_residual = u_sg - x_sg   # Robinson residual: delayed error minus resetable integrator
 
-    u_burst_raw, gate_err, gate_res = input_nonlinearity(u_sg, e_residual, theta)
+    u_burst_raw, gate_err, gate_res, gate_dir = input_nonlinearity(u_sg, e_residual, theta)
 
-    # Direction gate: suppress burst when residual points opposite to error.
-    # Prevents backward burst when x_reset_int overshoots e_pos_delayed.
-    e_norm   = u_sg       / (jnp.linalg.norm(u_sg)       + 1e-6)
-    res_norm = e_residual / (jnp.linalg.norm(e_residual)  + 1e-6)
-    dir_gate = jax.nn.relu(jnp.dot(e_norm, res_norm))
 
-    gate_eff = gate_err * gate_res * dir_gate
+    gate_eff = gate_err * gate_res * gate_dir
 
     # Adaptive reset TC: slow when error is large (prevents re-trigger during
     # plant settling), fast when eye is on target (ready for next saccade).
