@@ -71,19 +71,22 @@ THETA_DEFAULT = {
     'tau_c':          5.0,    # cupula adaptation TC (s); HP corner ≈ 0.03 Hz
     'tau_s':          0.005,  # endolymph inertia TC (s); LP corner ≈ 32 Hz
 
-    # ── Velocity storage (VS) — Raphan/Laurens & Angelaki internal model ─────
-    # Architecture: Raphan, Matsuo & Cohen (1979 Exp Brain Res);
-    # Kalman-filter formulation: Laurens & Angelaki (2011 Exp Brain Res)
-    'tau_vs':        50.0,    # prior TC (s); Laurens & Angelaki (2011)
-    'K_vs':           0.03,   # canal Kalman gain (1/s); τ_eff ≈ 20 s matches
-                              # Cohen, Matsuo & Raphan (1977 J Neurophysiol)
+    # ── Velocity storage (VS) — Raphan, Matsuo & Cohen (1979) architecture ──
+    # Leaky integrator: A = −1/τ_vs  (τ_vs IS the storage TC directly).
+    # K_vs controls canal coupling; independent of τ_vs (no compound formula).
+    # Architecture: Raphan, Matsuo & Cohen (1979 Exp Brain Res)
+    'tau_vs':        20.0,    # storage / OKAN TC (s); ~20 s in monkey
+                              # Cohen, Matsuo & Raphan (1977 J Neurophysiol);
+                              # Raphan, Matsuo & Cohen (1979 Exp Brain Res)
+    'K_vs':           0.1,    # canal coupling gain (1/s); x_vs_ss = K_vs·τ_vs·u_canal
+                              # K_vs=0.1 → VS charges to ~19 deg/s in 15-s rotation
 
     # ── OKR — visual pathway into VS ─────────────────────────────────────────
     # Retinal slip drives VS with two components:
     #   K_vis: state gain — charges x_vs, sustains OKAN after scene off
     #   g_vis: direct feedthrough — fast OKR onset, contributes to SS gain
-    # SS OKR gain ≈ (20·K_vis + g_vis) / (1 + 20·K_vis + g_vis) with defaults ≈ 86%
-    # OKAN TC = τ_eff = 1/(1/τ_vs + K_vs) ≈ 20 s (independent of K_vis)
+    # SS OKR gain ≈ (τ_vs·K_vis + g_vis) / (1 + τ_vs·K_vis + g_vis) ≈ 86%
+    # OKAN TC = τ_vs = 20 s (independent of K_vis and K_vs)
     # Data: Raphan et al. (1979); Cohen et al. (1977); Waespe & Henn (1977
     # Exp Brain Res)
     'K_vis':          0.3,    # visual state gain (1/s)

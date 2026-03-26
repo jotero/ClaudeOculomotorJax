@@ -1,12 +1,11 @@
-"""Velocity Storage SSM — brainstem internal model estimator (3-D).
+"""Velocity Storage SSM — Raphan/Cohen (1979) leaky-integrator architecture.
 
-Implements the Laurens & Angelaki (2011 Exp Brain Res) internal model /
-Kalman-filter framework, on top of the Robinson (1977) / Raphan, Matsuo &
-Cohen (1979 Exp Brain Res) velocity-storage architecture.
-The VS state ω̂ is the brain's 3-D estimate of true head angular velocity,
-updated by canal afferents and delayed retinal slip.
+Implements the Raphan, Matsuo & Cohen (1979 Exp Brain Res) velocity-storage
+model: a leaky integrator charged by semicircular canal afferents (and
+retinal slip), with storage TC = τ_vs directly settable to match post-
+rotatory nystagmus / OKAN data (~20 s in monkey: Cohen et al. 1977).
 
-    dx_vs/dt = A_vs(θ) @ x_vs + B_vs(θ) @ u
+    dx_vs/dt = A_vs @ x_vs + B_vs(θ) @ u
       y_vs   = C_vs @ x_vs  +  D_vs(θ) @ u       (D feedthrough)
 
 States:  x_vs = [ω̂_x, ω̂_y, ω̂_z]                    (3,)   angular velocity estimate
@@ -14,30 +13,50 @@ Input:   u    = [y_canals (6,) | e_slip_delayed (3,)]  (9,)   stacked afferents 
 Output:  y_vs = ω̂  →  feeds Neural SSM
 
 ──────────────────────────────────────────────────────────────────────────
-Derivation (Kalman predictor-corrector in continuous time):
+Architecture (Raphan et al. 1979):
 
-    Canal pathway (fast head-motion sensing):
-        dω̂/dt += K_vs · (u_canal − ω̂)   [Kalman correction on canal estimate]
+    VS is a leaky integrator with storage TC τ_vs, driven by canal afferents
+    (K_vs gain) and retinal slip (K_vis gain).  The two parameters are
+    INDEPENDENT: τ_vs sets the storage/OKAN decay; K_vs sets how aggressively
+    canal signals charge the store.
 
-    Visual pathway (OKR drive — retinal slip charges VS negatively):
-        dω̂/dt -= K_vis · e_slip_delayed  [direct drive from delayed retinal slip]
+    Canal pathway:
+        dω̂/dt += K_vs · u_canal       [canal charges VS; K_vs = coupling gain]
+
+    Visual pathway (OKR / OKAN):
+        dω̂/dt -= K_vis · e_slip_delayed
+
+    Leak:
+        dω̂/dt -= ω̂ / τ_vs            [τ_vs = storage/OKAN time constant directly]
 
     Combined:
-        dω̂/dt = F·ω̂ + K_vs·(u_canal − ω̂) − K_vis·e_slip_delayed
-               = (F − K_vs)·ω̂ + K_vs·u_canal − K_vis·e_slip_delayed
+        dω̂/dt = −(1/τ_vs)·ω̂ + K_vs·u_canal − K_vis·e_slip_delayed
 
 where u_canal = PINV_SENS @ y_canals  (3,)  is internal — VS owns the mixing.
 
 In 3-D (independent axes, diagonal matrices):
-    F   = −(1/τ_vs) · I₃
-    ⟹  A_vs = −(1/τ_vs + K_vs) · I₃               (3×3)
-        B_vs = [K_vs·PINV_SENS | −K_vis·I₃]        (3×9)    θ-dependent
-        D_vs = [PINV_SENS      | −g_vis·I₃]         (3×9)    θ-dependent
+    A_vs = −(1/τ_vs) · I₃                     (3×3)  θ-dependent via τ_vs only
+    B_vs = [K_vs·PINV_SENS | −K_vis·I₃]       (3×9)  θ-dependent
+    D_vs = [PINV_SENS      | −g_vis·I₃]        (3×9)  θ-dependent
 
-Effective VS time constant (canal pathway):
-    τ_eff = 1 / (1/τ_vs + K_vs)
+Storage/OKAN time constant = τ_vs (directly; no compound formula).
+Typical: τ_vs = 20 s  (Cohen, Matsuo & Raphan 1977 J Neurophysiol;
+                        Raphan, Matsuo & Cohen 1979 Exp Brain Res).
 
-Typical healthy: τ_vs = 50 s, K_vs = 0.03 /s  →  τ_eff ≈ 20 s
+──────────────────────────────────────────────────────────────────────────
+Why K_vs and τ_vs are independent:
+
+  In the Laurens & Angelaki (2011) Kalman formulation, A = −(1/τ_vs + K_vs),
+  so K_vs appears in BOTH the decay and the drive, creating a constraint:
+      τ_eff = 1/(1/τ_vs + K_vs)
+  To get τ_eff = 20 s one needs tiny K_vs ≈ 0.03 /s, which charges VS too
+  slowly — the canal adapts (τ_c = 5 s) before VS can accumulate significant
+  velocity.
+
+  The Raphan model avoids this: A = −1/τ_vs, so τ_vs IS the storage TC
+  directly, and K_vs is free to be large (e.g. 0.1 /s) for rapid charging.
+  With K_vs = 0.1 and τ_vs = 20 s, VS charges to ~19 deg/s during a 15-s
+  constant-velocity rotation vs ~6 deg/s with the Kalman formulation.
 
 ──────────────────────────────────────────────────────────────────────────
 Visual pathway (OKR / OKAN):
@@ -47,11 +66,11 @@ Visual pathway (OKR / OKAN):
   w_est = x_vs − g_vis·e_slip_delayed becomes more negative, and
   u_vel = −g_vor · w_est increases in the scene direction → eye follows. ✓
 
-  OKR steady-state gain (τ_eff = 20 s, g_vor = 1):
-      w_eye/w_scene ≈ (20·K_vis + g_vis) / (1 + 20·K_vis + g_vis)
+  OKR steady-state gain (τ_vs = 20 s, g_vor = 1):
+      w_eye/w_scene ≈ (τ_vs·K_vis + g_vis) / (1 + τ_vs·K_vis + g_vis)
 
-  OKAN time constant = τ_eff = 1/(1/τ_vs + K_vs), independent of K_vis.
-  When scene turns off, x_vs (negative) decays with τ_eff → OKAN. ✓
+  OKAN time constant = τ_vs, independent of K_vis.
+  When scene turns off, x_vs (negative) decays with τ_vs → OKAN. ✓
 
 ──────────────────────────────────────────────────────────────────────────
 Canal feedthrough (D includes PINV_SENS):
@@ -61,17 +80,19 @@ Canal feedthrough (D includes PINV_SENS):
   • At low frequencies x_vs dominates (velocity storage extension).
 
 3-D extension notes:
-    F    → off-diagonal gravity coupling terms (axis-dependent VS)
+    A_vs → off-diagonal gravity coupling terms (axis-dependent VS)
     K_vs → 3×3 gain matrix
     These off-diagonal terms are zero for Level 1b; add later.
 
 Parameters:
-  τ_vs  — prior time constant (s).    Typical: 50 s  (Laurens & Angelaki 2011).
-  K_vs  — canal Kalman gain (1/s).    Typical: 0.03 /s; yields τ_eff ≈ 20 s
-           matching the measured VS time constant (Raphan et al. 1979;
-           Cohen, Matsuo & Raphan 1977 J Neurophysiol).
+  τ_vs  — storage time constant (s).  Typical: 20 s  (Raphan et al. 1979;
+           Cohen et al. 1977).  This IS the OKAN TC — set directly from data.
+  K_vs  — canal coupling gain (1/s).  Typical: 0.1 /s.  Controls how fast
+           canal afferents charge the VS store.  Independent of τ_vs.
+           Larger K_vs → VS charges faster but SS level = K_vs·τ_vs·u_canal
+           (e.g. K_vs=0.05 → x_vs_ss = u_canal at constant canal drive).
   K_vis — visual state gain (1/s).    Default: 0.3 /s; charges VS from slip.
-           Does NOT affect OKAN time constant (only τ_vs and K_vs do).
+           Does NOT affect OKAN time constant (only τ_vs controls OKAN TC).
   g_vis — visual direct feedthrough.  Default: 0.3; provides fast OKR onset.
            Combined with K_vis sets steady-state OKR gain ≈ 86% at defaults.
 """
@@ -87,8 +108,8 @@ C = jnp.eye(3)     # (3, 3) state output
 
 
 def get_A(theta):
-    """(3, 3) state matrix — prior decay + canal Kalman correction, diagonal."""
-    a = -(1.0 / theta['tau_vs'] + theta['K_vs'])
+    """(3, 3) state matrix — storage leak only; K_vs drives only B, not A."""
+    a = -(1.0 / theta['tau_vs'])
     return a * jnp.eye(3)
 
 

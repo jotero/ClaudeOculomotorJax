@@ -199,7 +199,7 @@ def demo_vor_dark():
     states_nv   = _simulate_all_states(theta_no_vs, t, hv, max_steps=max_s)
     sigs_nv     = _extract_signals(theta_no_vs, t, hv, states_nv)
 
-    tau_eff = 1.0 / (1.0 / THETA['tau_vs'] + THETA['K_vs'])
+    tau_eff = THETA['tau_vs']   # = storage TC directly (Raphan architecture)
     FLOOR   = float(canal_ssm.FLOOR)
 
     fig, axes = plt.subplots(8, 1, figsize=(12, 22), sharex=True)
@@ -290,24 +290,34 @@ def demo_vor_dark():
 # ---------------------------------------------------------------------------
 
 def demo_okr():
-    """OKN signal cascade (scene on → OKAN) and VVOR comparison."""
+    """OKN nystagmus cascade (scene on → OKAN) and VVOR comparison.
+
+    Saccades enabled: OKR slow phase + resetting fast phases → OKN nystagmus.
+    Target stays at straight-ahead; when OKR drives eye eccentric, saccade
+    generator resets it → sawtooth eye position, nystagmus eye velocity.
+    Efference copy suppresses saccadic contamination of x_vs / e_delayed.
+    """
     sr        = 200.0
     on_dur    = 30.0
     off_dur   = 40.0
     total_dur = on_dur + off_dur
     scene_vel = 30.0
 
+    # Saccades enabled with default saccade parameters (same as saccade demo).
+    # g_burst = 600 deg/s burst ceiling; threshold_sac / tau_reset_fast from THETA.
+    theta_okn    = {**THETA, 'g_burst': 600.0}
+    theta_no_vis = {**THETA, 'K_vis': 0.0, 'g_vis': 0.0}
+
     t_arr    = jnp.arange(0.0, total_dur, 1.0 / sr)
     v_sc     = jnp.where(t_arr < on_dur, scene_vel, 0.0)
     v_scene  = jnp.zeros((len(t_arr), 3)).at[:, 0].set(v_sc)
     stim_okn = Stimulus(t_arr, omega=jnp.zeros(len(t_arr)), v_scene=v_scene)
 
-    max_s        = int(total_dur / _DT_SOLVE) + 500
-    theta_no_vis = {**THETA, 'K_vis': 0.0, 'g_vis': 0.0}
+    max_s = int(total_dur / _DT_SOLVE) + 500
 
-    states    = _simulate_all_states(THETA,        stim_okn, max_steps=max_s)
-    t_np      = np.array(stim_okn.t)
-    dt        = float(stim_okn.dt)
+    states = _simulate_all_states(theta_okn, stim_okn, max_steps=max_s)
+    t_np   = np.array(stim_okn.t)
+    dt     = float(stim_okn.dt)
 
     x_vis = np.array(states[:, _IDX_VIS])
     x_vs  = np.array(states[:, _IDX_VS])
@@ -315,22 +325,27 @@ def demo_okr():
 
     w_scene_np  = np.where(t_np < on_dur, scene_vel, 0.0)
     eye_vel     = np.gradient(x_p[:, 0], dt)
-    e_slip      = w_scene_np - 0.0 - eye_vel    # w_scene - w_head - w_eye (head=0)
-    # Delayed slip: last stage of slip cascade via C_slip selector
+    e_slip      = w_scene_np - 0.0 - eye_vel    # w_scene - w_head - w_eye (head=0); spikes during fast phases
+    # Delayed slip via efference-copy-corrected cascade — clean (no fast-phase spikes)
     e_delayed_3 = x_vis @ np.array(visual_delay.C_slip).T           # (T, 3)
     e_delayed   = e_delayed_3[:, 0]                                   # horizontal axis
     # VS visual direct drive (instantaneous contribution from delayed slip)
     u_vis_direct = THETA['g_vis'] * e_delayed
+
+    # Slow-phase velocity: mask out fast-phase saccades (|vel| > SPV_CLIP)
+    SPV_CLIP = 50.0   # deg/s; OKN slow phase ≤ scene_vel ≈ 30 deg/s, fast phases >> 60
+    spv = np.where(np.abs(eye_vel) < SPV_CLIP, eye_vel, np.nan)
 
     eye_no_vis = np.array(simulate(theta_no_vis, stim_okn, max_steps=max_s))[:, 0]
     ev_no_vis  = np.gradient(eye_no_vis, dt)
 
     # ── OKN cascade ───────────────────────────────────────────────────────────
     fig, axes = plt.subplots(6, 1, figsize=(12, 17), sharex=True)
-    fig.suptitle(f'OKN signal cascade — scene on {on_dur:.0f} s then off  (OKAN phase)\n'
-                 f'K_vis = {THETA["K_vis"]},  g_vis = {THETA["g_vis"]},  '
-                 f'τ_eff ≈ 20 s,  τ_vis = {THETA["tau_vis"]} s',
-                 fontsize=11)
+    fig.suptitle(f'OKN nystagmus — scene on {on_dur:.0f} s then off  (OKAN phase)\n'
+                 f'K_vis={THETA["K_vis"]},  g_vis={THETA["g_vis"]},  '
+                 f'τ_vs={THETA["tau_vs"]} s,  τ_vis={THETA["tau_vis"]} s,  '
+                 f'g_burst={theta_okn["g_burst"]:.0f} deg/s  (saccades on → OKN nystagmus)',
+                 fontsize=10)
 
     vline_kw = dict(color='k', lw=0.8, ls='--', alpha=0.4)
     for ax in axes:
@@ -343,18 +358,19 @@ def demo_okr():
     axes[0].set_ylabel('Scene vel\n(deg/s)')
     axes[0].set_title('Input: visual scene velocity')
 
-    # 1 — Retinal slip
-    axes[1].plot(t_np, e_slip, color='purple', lw=1.5,
-                 label='e_slip = w_scene − w_head − w_eye')
+    # 1 — Retinal slip (raw; has spikes at fast-phase saccades — clip y-axis)
+    axes[1].plot(t_np, e_slip, color='purple', lw=0.7,
+                 label='e_slip = w_scene − w_head − w_eye  (raw; fast-phase spikes clipped)')
+    axes[1].set_ylim(-55, 55)   # clip saccade spikes; slow phase ≤ 30 deg/s
     axes[1].set_ylabel('Retinal slip\n(deg/s)')
-    axes[1].set_title('Retinal slip  (sensory error)')
+    axes[1].set_title('Retinal slip  (raw — spikes during fast phases; y-axis clipped)')
     axes[1].legend(fontsize=8)
 
-    # 2 — Delayed slip (visual delay cascade output)
+    # 2 — Delayed slip (efference-copy-corrected — clean, no fast-phase spikes)
     axes[2].plot(t_np, e_delayed, color='darkorange', lw=1.5,
-                 label=f'e_delayed  (τ_vis = {THETA["tau_vis"]} s,  40-stage gamma)')
+                 label=f'e_delayed  (efference-copy corrected, τ_vis={THETA["tau_vis"]} s)')
     axes[2].set_ylabel('Delayed slip\n(deg/s)')
-    axes[2].set_title('Visual delay cascade output')
+    axes[2].set_title('Visual delay cascade output  (clean — efference copy suppresses saccade artefacts)')
     axes[2].legend(fontsize=8)
 
     # 3 — VS storage state (charges during OKN, drives OKAN)
@@ -374,13 +390,15 @@ def demo_okr():
     axes[4].set_title('Visual contributions to eye-velocity command')
     axes[4].legend(fontsize=8)
 
-    # 5 — Eye velocity: with vs without visual drive
+    # 5 — Eye velocity: nystagmus (raw) + slow phase + no-visual comparison
     axes[5].plot(t_np, w_scene_np, color='gray',      lw=1.0, ls=':',  alpha=0.5, label='Scene vel')
-    axes[5].plot(t_np, ev_no_vis,  color='tomato',    lw=1.5, ls='--', label='Eye vel  (no visual drive)')
-    axes[5].plot(t_np, eye_vel,    color='steelblue', lw=1.5,          label='Eye vel  (with visual drive)')
+    axes[5].plot(t_np, ev_no_vis,  color='tomato',    lw=1.5, ls='--', label='Eye vel  (no visual drive, no saccades)')
+    axes[5].plot(t_np, eye_vel,    color='steelblue', lw=0.5, alpha=0.4, label='Eye vel  (raw — with fast phases)')
+    axes[5].plot(t_np, spv,        color='steelblue', lw=1.8,          label=f'Eye vel  (slow phase, |v|<{SPV_CLIP:.0f})')
+    axes[5].set_ylim(-45, 45)   # zoom to slow-phase range; fast phases clipped
     axes[5].set_ylabel('Eye vel\n(deg/s)')
     axes[5].set_xlabel('Time (s)')
-    axes[5].set_title('Eye velocity  (OKN slow phase + OKAN)')
+    axes[5].set_title(f'Eye velocity — OKN nystagmus (slow phase + fast-phase resets) + OKAN  [y clipped to ±{SPV_CLIP:.0f}]')
     axes[5].legend(fontsize=8)
 
     fig.tight_layout()
@@ -390,14 +408,18 @@ def demo_okr():
     print(f'  Saved {path}')
 
     # ── VVOR comparison ───────────────────────────────────────────────────────
-    # VVOR paradigm: head rotates at 10 deg/s for 3 s (30 deg total — within
-    # comfortable range without plant limits).  World is visually stationary
-    # (v_scene=0 but scene IS present → scene_present=1).
-    # Dark case: scene_present=0 → pure VOR (OKR cannot fire).
-    # Lit case:  residual VOR slip drives OKR → partially compensates.
-    vvor_dur   = 3.0 + 20.0   # 3 s rotation + 20 s coast to observe VS/OKR decay
-    stim_vor   = rotation_step(v_deg_s=10.0, rotate_dur=3.0,
-                                coast_dur=20.0, sample_rate=sr)
+    # VVOR paradigm: head rotates at 10 deg/s for 15 s.  World is visually
+    # stationary (v_scene=0 but scene IS present → scene_present=1).
+    # Dark case: scene_present=0 → pure VOR (VOR adapts, eye vel drops to ~3 deg/s).
+    # Lit case:  OKR on residual slip corrects VOR adaptation → eye vel stays
+    #            close to head vel throughout rotation.
+    # 15 s chosen so canal fully adapts (τ_c = 5 s → 67% VOR collapse by 15 s),
+    # giving OKR enough slip to show clear compensation.
+    rotate_dur_vv = 15.0
+    coast_dur_vv  = 40.0
+    vvor_dur      = rotate_dur_vv + coast_dur_vv
+    stim_vor      = rotation_step(v_deg_s=10.0, rotate_dur=rotate_dur_vv,
+                                   coast_dur=coast_dur_vv, sample_rate=sr)
     T_vv       = len(stim_vor.t)
     sg_dark    = jnp.zeros(T_vv, dtype=jnp.float32)   # dark
     sg_lit     = jnp.ones(T_vv,  dtype=jnp.float32)   # stationary lit world
@@ -413,12 +435,12 @@ def demo_okr():
     ev_vvor   = np.gradient(eye_vvor, float(stim_vor.dt))
 
     fig2, axes2 = plt.subplots(3, 1, figsize=(11, 9), sharex=True)
-    fig2.suptitle('VVOR — step rotation, stationary world\n'
-                  'Dark (VOR only) vs stationary world (VOR + OKR on residual slip)',
+    fig2.suptitle(f'VVOR — {rotate_dur_vv:.0f} s rotation @ 10 deg/s, stationary world\n'
+                  'Dark (VOR only, canal adapts) vs lit (OKR corrects residual slip)',
                   fontsize=11)
 
     for ax in axes2:
-        ax.axvline(15.0, color='k', lw=0.8, ls='--', alpha=0.4)
+        ax.axvline(rotate_dur_vv, color='k', lw=0.8, ls='--', alpha=0.4)
         ax.axhline(0, color='gray', lw=0.5)
         ax.grid(True, alpha=0.25)
 
@@ -461,7 +483,7 @@ def main():
     print('=== VOR Demo Suite ===')
     print(f'  τ_c={THETA["tau_c"]} s  g_vor={THETA["g_vor"]}  τ_i={THETA["tau_i"]} s  '
           f'τ_p={THETA["tau_p"]} s  τ_vs={THETA["tau_vs"]} s  K_vs={THETA["K_vs"]}')
-    print(f'  K_vis={THETA["K_vis"]}  g_vis={THETA["g_vis"]}  τ_vis={THETA["tau_vis"]} s  τ_eff≈20s')
+    print(f'  K_vis={THETA["K_vis"]}  g_vis={THETA["g_vis"]}  τ_vis={THETA["tau_vis"]} s  τ_vs(OKAN)={THETA["tau_vs"]} s')
 
     print('\n1. VOR in the dark — signal cascade')
     demo_vor_dark()
