@@ -20,7 +20,7 @@ import numpy as np
 
 from oculomotor.models.ocular_motor_simulator import (
     simulate, THETA_DEFAULT,
-    vor_vector_field, _N_TOTAL,
+    ODE_ocular_motor, _N_TOTAL,
     _IDX_NI, _IDX_P, _IDX_SG, _IDX_VIS,
 )
 from oculomotor.models import retina
@@ -46,15 +46,10 @@ _C = {
 # ── Saccade theta (VOR disabled — head still) ─────────────────────────────────
 
 THETA_SAC = {**THETA_DEFAULT,
-             'g_vor':          0.0,   # no VOR — head is still
-             'K_vis':          0.0,   # no visual → dark / saccade only
-             'g_vis':          0.0,
-             'g_burst':      600.0,   # burst ceiling (deg/s); peak vel → g_burst as amp → ∞
-             'threshold_sac':  0.5,   # trigger threshold (deg)
-             'k_sac':         50.0,   # sigmoid steepness (1/deg)
-             'e_sat_sac':      7.0,   # tanh saturation amplitude (deg)
-             'tau_reset_sac':  1.0,   # slow reset TC (s) — active when target present
-             'tau_reset_fast': 0.1,   # fast reset TC (s) — kicks in after error < threshold
+             'canal_gains': jnp.zeros(6),   # no VOR — head is still
+             'K_vis':       0.0,             # dark — no visual drive
+             'g_vis':       0.0,
+             'g_burst':     600.0,           # burst ceiling (deg/s)
              }
 
 
@@ -62,9 +57,8 @@ THETA_SAC = {**THETA_DEFAULT,
 
 def _extract_all(theta, t_array, hv3, vs3, pt3, max_steps=100000):
     """Run simulator and extract full state + intermediate signals."""
-    T             = len(t_array)
-    gains_array   = jnp.ones(6)
-    dt_arr        = jnp.diff(t_array)
+    T      = len(t_array)
+    dt_arr = jnp.diff(t_array)
     hp3           = jnp.concatenate([
         jnp.zeros((1, 3)),
         jnp.cumsum(0.5 * (hv3[:-1] + hv3[1:]) * dt_arr[:, None], axis=0),
@@ -80,14 +74,14 @@ def _extract_all(theta, t_array, hv3, vs3, pt3, max_steps=100000):
     x0                = jnp.zeros(_N_TOTAL)
 
     solution = diffrax.diffeqsolve(
-        diffrax.ODETerm(vor_vector_field),
+        diffrax.ODETerm(ODE_ocular_motor),
         diffrax.Heun(),
         t0=t_array[0],
         t1=t_array[-1],
         dt0=0.001,
         y0=x0,
         args=(theta, hv_interp, hp_interp, vs_interp, target_interp,
-              scene_gain_interp, gains_array),
+              scene_gain_interp),
         stepsize_controller=diffrax.ConstantStepSize(),
         saveat=diffrax.SaveAt(ts=t_array),
         max_steps=max_steps,
@@ -254,7 +248,6 @@ def demo_saccade_vor():
     pt3 = jnp.zeros((T, 3)); pt3 = pt3.at[:, 2].set(1.0)   # target: straight ahead
 
     theta_vor_sac = {**THETA_DEFAULT,
-                     'g_vor':         1.0,
                      'K_vis':         0.0,   # dark — no OKR
                      'g_vis':         0.0,
                      'g_burst':      40.0,

@@ -61,7 +61,7 @@ def fit(stimuli, observations, theta_init, tau_c, tau_s, n_steps=500, learning_r
 def _fit_lbfgs(stimuli, observations, theta_init, tau_c, tau_s, max_iter=500, print_every=50):
     """scipy L-BFGS-B with JAX gradients.  Converges in ~100-200 evaluations."""
     phi_init = params_to_phi(theta_init)
-    _PARAM_KEYS = ('g_vor', 'tau_i', 'tau_p', 'tau_vs', 'K_vs')
+    _PARAM_KEYS = ('tau_i', 'tau_p', 'tau_vs', 'K_vs')
     history = {'loss': []} | {k: [] for k in _PARAM_KEYS}
     call_count = [0]
     tau_c_j = jnp.array(tau_c, dtype=jnp.float32)
@@ -79,7 +79,6 @@ def _fit_lbfgs(stimuli, observations, theta_init, tau_c, tau_s, max_iter=500, pr
         call_count[0] += 1
         if print_every and call_count[0] % print_every == 0:
             print(f"eval {call_count[0]:4d}  loss={loss_f:.6f}  "
-                  f"g_vor={float(theta['g_vor']):.3f}  "
                   f"tau_i={float(theta['tau_i']):.3f}  "
                   f"tau_p={float(theta['tau_p']):.4f}  "
                   f"tau_vs={float(theta['tau_vs']):.1f}  "
@@ -105,7 +104,7 @@ def _fit_adam(stimuli, observations, theta_init, tau_c, tau_s, n_steps=2000, lea
                             optax.adam(lr_schedule))
     opt_state = optimizer.init(phi_init)
 
-    _PARAM_KEYS = ('g_vor', 'tau_i', 'tau_p', 'tau_vs', 'K_vs')
+    _PARAM_KEYS = ('tau_i', 'tau_p', 'tau_vs', 'K_vs')
     phi = phi_init
     history = {'loss': []} | {k: [] for k in _PARAM_KEYS}
     tau_c_j = jnp.array(tau_c, dtype=jnp.float32)
@@ -119,7 +118,6 @@ def _fit_adam(stimuli, observations, theta_init, tau_c, tau_s, n_steps=2000, lea
             history[k].append(float(theta[k]))
         if print_every and i % print_every == 0:
             print(f"step {i:5d}  loss={float(loss_val):.6f}  "
-                  f"g_vor={float(theta['g_vor']):.3f}  "
                   f"tau_i={float(theta['tau_i']):.3f}  "
                   f"tau_p={float(theta['tau_p']):.4f}  "
                   f"tau_vs={float(theta['tau_vs']):.1f}  "

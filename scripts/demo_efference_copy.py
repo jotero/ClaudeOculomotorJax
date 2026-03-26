@@ -41,7 +41,7 @@ import diffrax
 
 from oculomotor.models.ocular_motor_simulator import (
     simulate, THETA_DEFAULT,
-    vor_vector_field, _N_TOTAL,
+    ODE_ocular_motor, _N_TOTAL,
     _IDX_P, _IDX_NI, _IDX_SG, _IDX_VIS, _IDX_VS, _IDX_PC, _IDX_NI_PC,
 )
 from oculomotor.models import saccade_generator as sg
@@ -60,10 +60,8 @@ _C = {
 }
 
 THETA_SAC = {**THETA_DEFAULT,
-             'g_vor': 0.0,
-             'g_burst': 600.0, 'threshold_sac': 0.5,
-             'k_sac': 15.0, 'e_sat_sac': 7.0,
-             'tau_reset_sac': 1.0, 'tau_reset_fast': 0.1}
+             'canal_gains': jnp.zeros(6),   # no VOR — head is still
+             'g_burst': 600.0}
 
 THETA_NO_SAC = {**THETA_SAC, 'g_burst': 0.0}
 
@@ -101,11 +99,11 @@ def _run_full(theta, t, hv3, vs3, pt3, scene_present=True, max_steps=200_000):
     sg_i  = diffrax.LinearInterpolation(ts=t, ys=sg1)
 
     sol = diffrax.diffeqsolve(
-        diffrax.ODETerm(vor_vector_field),
+        diffrax.ODETerm(ODE_ocular_motor),
         diffrax.Heun(),
         t0=t[0], t1=t[-1], dt0=0.001,
         y0=jnp.zeros(_N_TOTAL),
-        args=(theta, hv_i, hp_i, vs_i, pt_i, sg_i, jnp.ones(6)),
+        args=(theta, hv_i, hp_i, vs_i, pt_i, sg_i),
         stepsize_controller=diffrax.ConstantStepSize(),
         saveat=diffrax.SaveAt(ts=t),
         max_steps=max_steps,
@@ -143,10 +141,12 @@ def _extract_signals(theta, t, hv3, vs3, pt3, scene_present=True, max_steps=200_
     u_burst = np.array(jax.vmap(_burst_at)(ys_j, t))   # (T, 3)
 
     w_burst_pred = (x_ni_pc - x_pc) / tau_p + u_burst  # 2-state efference copy velocity
-    # Exact w_eye from plant ODE:  dx_p = (x_ni - x_p)/tau_p + u_vel,  u_vel = -g_vor*w_est + u_burst.
-    # For THETA_SAC (g_vor=0): u_vel = u_burst, so w_eye = (x_ni - x_p)/tau_p + u_burst = w_burst_pred.
-    # For general theta we'd need w_est; use gradient as fallback only for g_vor != 0 cases.
-    if theta.get('g_vor', 1.0) == 0.0:
+    # Exact w_eye from plant ODE:  dx_p = (x_ni - x_p)/tau_p + u_vel,  u_vel = -w_est + u_burst.
+    # For THETA_SAC (canal_gains=0, K_vis=0, g_vis=0): w_est=0, so w_eye = (x_ni - x_p)/tau_p + u_burst.
+    canal_gains = theta.get('canal_gains', None)
+    no_vor = (canal_gains is not None and jnp.all(canal_gains == 0.0)
+              and theta.get('K_vis', 0.3) == 0.0 and theta.get('g_vis', 0.3) == 0.0)
+    if no_vor:
         w_eye = (x_ni - x_p) / tau_p + u_burst   # exact (no gradient artifacts)
     else:
         w_eye = np.gradient(x_p, dt, axis=0)      # approximation

@@ -106,7 +106,7 @@ N_OUTPUTS = 3   # u_burst (3,)
 
 # ── Input nonlinearity ────────────────────────────────────────────────────────
 
-def input_nonlinearity(e_pos_delayed, e_residual, theta):
+def burst_nonlinearity(e_pos_delayed, e_residual, theta):
     """Compute burst vector and the two scalar error gates.
 
     Burst MAGNITUDE saturates on |e_pos_delayed| → nonlinear main sequence
@@ -180,7 +180,7 @@ def step(x_sg, u_sg, theta):
     """
     e_residual = u_sg - x_sg   # Robinson residual: delayed error minus resetable integrator
 
-    u_burst_raw, gate_err, gate_res, gate_dir = input_nonlinearity(u_sg, e_residual, theta)
+    u_burst_raw, gate_err, gate_res, gate_dir = burst_nonlinearity(u_sg, e_residual, theta)
 
 
     gate_eff = gate_err * gate_res * gate_dir

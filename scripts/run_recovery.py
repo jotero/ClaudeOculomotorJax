@@ -35,7 +35,6 @@ TAU_C_FIXED = THETA_DEFAULT['tau_c']  # 5.0 s — assumed known, not optimized
 TAU_S_FIXED = THETA_DEFAULT['tau_s']  # 0.005 s — assumed known, not optimized
 
 THETA_INIT = {
-    'g_vor':  0.7,    # true: 1.0
     'tau_i':  10.0,   # true: 25.0
     'tau_p':  0.30,   # true: 0.15  (lower-bounded at 0.05 in reparameterization)
     'tau_vs': 20.0,   # true: 50.0  (τ_eff_init ≈ 8 s vs true ≈ 20 s)
@@ -117,12 +116,12 @@ def plot_loss_curve(history):
 
 
 def plot_parameter_trajectories(history):
-    keys = ['g_vor', 'tau_i', 'tau_p', 'tau_vs', 'K_vs']
+    keys = ['tau_i', 'tau_p', 'tau_vs', 'K_vs']
     true_vals = {k: THETA_DEFAULT[k] for k in keys}
-    labels = {'g_vor': r'$g_{vor}$', 'tau_i': r'$\tau_i$ (s)',
+    labels = {'tau_i': r'$\tau_i$ (s)',
               'tau_p': r'$\tau_p$ (s)', 'tau_vs': r'$\tau_{vs}$ (s)',
               'K_vs': r'$K_{vs}$ (1/s)'}
-    fig, axes = plt.subplots(2, 3, figsize=(14, 7))
+    fig, axes = plt.subplots(2, 2, figsize=(10, 7))
     for ax, key in zip(axes.flat, keys):
         ax.plot(history[key], color='steelblue', lw=1.5, label='fitted')
         ax.axhline(true_vals[key], color='tomato', ls='--', lw=1.5, label='true')
@@ -258,7 +257,7 @@ def main():
     print(f"\n  tau_c = {TAU_C_FIXED:.4f} s  [FIXED — not optimized]")
     print(f"  tau_s = {TAU_S_FIXED:.4f} s  [FIXED — not optimized]")
     print("\n=== Parameter recovery summary ===")
-    for key in ('g_vor', 'tau_i', 'tau_p', 'tau_vs', 'K_vs'):
+    for key in ('tau_i', 'tau_p', 'tau_vs', 'K_vs'):
         true_val = THETA_DEFAULT[key]
         fit_val = float(theta_fit[key])
         err = abs(fit_val - true_val) / abs(true_val) * 100

@@ -12,7 +12,6 @@ from oculomotor.fitting.optimize import fit
 
 THETA_INIT = {
     'tau_c': 3.0,
-    'g_vor': 0.7,
     'tau_i': 10.0,
     'tau_p': 0.30,
 }
@@ -34,7 +33,7 @@ def test_parameter_recovery():
         print_every=0,
     )
 
-    for key in ('tau_c', 'g_vor', 'tau_i', 'tau_p'):
+    for key in ('tau_c', 'tau_i', 'tau_p'):
         err = _relative_error(float(theta_fit[key]), THETA_DEFAULT[key])
         print(f"  {key}: true={THETA_DEFAULT[key]:.4f}  fit={float(theta_fit[key]):.4f}  err={err:.2%}")
         assert err <= TOLERANCE, (

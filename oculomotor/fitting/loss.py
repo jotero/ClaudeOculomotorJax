@@ -13,38 +13,31 @@ def _unconstrain_to_params(phi, tau_c, tau_s):
 
     phi index  parameter   transform                    constraint
     ─────────────────────────────────────────────────────────────────
-    0          g_vor       sigmoid × 2                  ∈ (0, 2)
-    1          tau_i       softplus                     > 0
-    2          tau_p       0.05 + softplus              > 0.05 (Heun stability)
-    3          tau_vs      softplus                     > 0
-    4          K_vs        softplus                     > 0
+    0          tau_i       softplus                     > 0
+    1          tau_p       0.05 + softplus              > 0.05 (Heun stability)
+    2          tau_vs      softplus                     > 0
+    3          K_vs        softplus                     > 0
     """
     softplus = lambda x: jnp.log1p(jnp.exp(x))
     return {
         'tau_c':  tau_c,
         'tau_s':  tau_s,
-        'g_vor':  jax.nn.sigmoid(phi[0]) * 2.0,
-        'tau_i':  softplus(phi[1]),
-        'tau_p':  0.05 + softplus(phi[2]),
-        'tau_vs': softplus(phi[3]),
-        'K_vs':   softplus(phi[4]),
+        'tau_i':  softplus(phi[0]),
+        'tau_p':  0.05 + softplus(phi[1]),
+        'tau_vs': softplus(phi[2]),
+        'K_vs':   softplus(phi[3]),
     }
 
 
 def params_to_phi(theta):
-    """Map physical parameter dict theta → unconstrained vector phi (5 elements).
+    """Map physical parameter dict theta → unconstrained vector phi (4 elements).
 
     tau_c and tau_s are not included — they are treated as known fixed parameters.
     """
     def softplus_inv(y):
         return jnp.log(jnp.expm1(y))
 
-    def sigmoid_inv_times2(val):
-        p = val / 2.0
-        return jnp.log(p / (1.0 - p))
-
     return jnp.array([
-        sigmoid_inv_times2(theta['g_vor']),
         softplus_inv(theta['tau_i']),
         softplus_inv(theta['tau_p'] - 0.05),   # inverse of 0.05 + softplus(·)
         softplus_inv(theta['tau_vs']),

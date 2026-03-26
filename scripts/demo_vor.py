@@ -32,7 +32,7 @@ from oculomotor.models.ocular_motor_simulator import THETA_DEFAULT, simulate
 from oculomotor.models import canal as canal_ssm
 from oculomotor.models import visual_delay
 from oculomotor.models.ocular_motor_simulator import (
-    vor_vector_field, _N_TOTAL,
+    ODE_ocular_motor, _N_TOTAL,
     _IDX_C, _IDX_VS, _IDX_NI, _IDX_P, _IDX_VIS, _DT_SOLVE,
 )
 from oculomotor.sim.stimulus import rotation_step, Stimulus
@@ -62,7 +62,7 @@ def _eye_velocity(eye_pos, dt):
 # ---------------------------------------------------------------------------
 
 def _simulate_all_states(theta, t_or_stimulus, head_vel_array=None,
-                          canal_gains=None, scene_present=None,
+                          scene_present=None,
                           max_steps=5000, dt_solve=None):
     """Return full state matrix (T, N_TOTAL).
 
@@ -113,15 +113,12 @@ def _simulate_all_states(theta, t_or_stimulus, head_vel_array=None,
     target_interp     = diffrax.LinearInterpolation(ts=t_array, ys=pt3)
     scene_gain_interp = diffrax.LinearInterpolation(ts=t_array, ys=sg1)
     x0                = jnp.zeros(_N_TOTAL)
-    gains             = (jnp.ones(canal_ssm.N_CANALS) if canal_gains is None
-                         else jnp.array(list(canal_gains), dtype=jnp.float32))
-
     sol = diffrax.diffeqsolve(
-        diffrax.ODETerm(vor_vector_field),
+        diffrax.ODETerm(ODE_ocular_motor),
         diffrax.Heun(),
         t0=t_array[0], t1=t_array[-1], dt0=dt, y0=x0,
         args=(theta, hv_interp, hp_interp, vs_interp, target_interp,
-              scene_gain_interp, gains),
+              scene_gain_interp),
         stepsize_controller=diffrax.ConstantStepSize(),
         saveat=diffrax.SaveAt(ts=t_array),
         max_steps=max_steps,
@@ -159,8 +156,8 @@ def _extract_signals(theta, t_array, head_vel_1d, states):
     # VS output w_est = x_vs + PINV@y_canals - g_vis*e_slip_delayed
     # In dark (VOR demo): e_slip_delayed ≈ 0, so w_est ≈ x_vs + PINV@y_canals
     w_est   = x_vs + u_canal                  # (T, 3) velocity estimate sent to NI
-    # NI motor command: u_p = x_ni + tau_p * u_vel, u_vel = -g_vor * w_est
-    u_p     = x_ni - theta['g_vor'] * theta['tau_p'] * w_est   # (T, 3) pulse-step
+    # NI motor command: u_p = x_ni + tau_p * u_vel, u_vel = -w_est
+    u_p     = x_ni - theta['tau_p'] * w_est   # (T, 3) pulse-step
 
     eye_pos = x_p[:, 0]
     dt      = float(t_array[1] - t_array[0])
@@ -263,7 +260,7 @@ def demo_vor_dark():
     axes[6].plot(t_np, sigs['w_est'], color='seagreen', lw=1.5,          label='w_est  (VS velocity estimate, deg/s)')
     axes[6].plot(t_np, sigs['x_ni'],  color='seagreen', lw=1.5, ls='--', label='x_ni   (NI position state, deg)')
     axes[6].set_ylabel('deg/s  /  deg')
-    axes[6].set_title(f'VS output w_est and NI state  (τ_i = {THETA["tau_i"]} s,  g_vor = {THETA["g_vor"]})')
+    axes[6].set_title(f'VS output w_est and NI state  (τ_i = {THETA["tau_i"]} s)')
     axes[6].legend(fontsize=8)
 
     # 7 — Eye velocity: with VS vs without VS vs ideal
@@ -381,7 +378,7 @@ def demo_okr():
     axes[3].legend(fontsize=8)
 
     # 4 — Visual direct drive vs VS state contribution to u_vel
-    u_vel_from_vs  = -x_vs[:, 0]                  # -g_vor * x_vs (g_vor=1)
+    u_vel_from_vs  = -x_vs[:, 0]                  # -w_est ≈ -x_vs for canal-only drive
     axes[4].plot(t_np, u_vis_direct,   color='green',     lw=1.5,
                  label=f'g_vis · e_delayed  (direct,  g_vis={THETA["g_vis"]})')
     axes[4].plot(t_np, u_vel_from_vs,  color='steelblue', lw=1.5, ls='--',
@@ -481,7 +478,7 @@ def main():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
     print('=== VOR Demo Suite ===')
-    print(f'  τ_c={THETA["tau_c"]} s  g_vor={THETA["g_vor"]}  τ_i={THETA["tau_i"]} s  '
+    print(f'  τ_c={THETA["tau_c"]} s  τ_i={THETA["tau_i"]} s  '
           f'τ_p={THETA["tau_p"]} s  τ_vs={THETA["tau_vs"]} s  K_vs={THETA["K_vs"]}')
     print(f'  K_vis={THETA["K_vis"]}  g_vis={THETA["g_vis"]}  τ_vis={THETA["tau_vis"]} s  τ_vs(OKAN)={THETA["tau_vs"]} s')
 

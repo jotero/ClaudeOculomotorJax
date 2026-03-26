@@ -137,19 +137,21 @@ def canal_nonlinearity(x_c, gains):
     return gains * (y_nl + f)   # absolute firing rate: rest = FLOOR, inhibitory → 0
 
 
-def step(x_c, w_head, theta, gains):
+def step(x_c, w_head, theta):
     """Single ODE step: state derivative + afferent output.
 
     Args:
         x_c:    (N_STATES,)  canal state
         w_head: (3,)         head angular velocity (deg/s)
-        theta:  dict         model parameters
-        gains:  (N_CANALS,)  per-canal scale factors
+        theta:  dict         model parameters; canal_gains (N_CANALS,) is read
+                             from theta (default: ones — all canals intact).
+                             Set individual elements to 0.0 to simulate canal loss.
 
     Returns:
         dx:       (N_STATES,)  dx_c/dt
         y_canals: (N_CANALS,)  afferent firing rates
     """
+    gains = theta.get('canal_gains', jnp.ones(N_CANALS))
     dx = get_A(theta) @ x_c + get_B(theta) @ w_head
     y  = canal_nonlinearity(x_c, gains)
     return dx, y

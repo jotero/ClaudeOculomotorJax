@@ -66,6 +66,7 @@ from oculomotor.models import plant
 from oculomotor.models import retina
 from oculomotor.models import visual_delay
 from oculomotor.models import saccade_generator as sg
+from oculomotor.models import efference_copy as ec
 
 # ── Canonical model parameters ─────────────────────────────────────────────────
 
@@ -74,6 +75,9 @@ THETA_DEFAULT = {
     # Torsion-pendulum model: Steinhausen (1931); Fernandez & Goldberg (1971)
     'tau_c':          5.0,    # cupula adaptation TC (s); HP corner ≈ 0.03 Hz
     'tau_s':          0.005,  # endolymph inertia TC (s); LP corner ≈ 32 Hz
+    # Per-canal gains (6,): scale afferent output; 1 = intact, 0 = lesioned.
+    # Sets effective VOR gain. Healthy primate ≈ 1.0 (Collewijn et al. 1983).
+    'canal_gains':    jnp.ones(canal.N_CANALS),
 
     # ── Velocity storage (VS) — Raphan, Matsuo & Cohen (1979) architecture ──
     # Leaky integrator: A = −1/τ_vs  (τ_vs IS the storage TC directly).
@@ -95,11 +99,6 @@ THETA_DEFAULT = {
     # Exp Brain Res)
     'K_vis':          0.3,    # visual state gain (1/s)
     'g_vis':          0.3,    # visual direct feedthrough (unitless)
-
-    # ── VOR ───────────────────────────────────────────────────────────────────
-    # Healthy primate VOR gain ≈ 1.0 (Collewijn et al. 1983 J Physiol;
-    # Huterer & Cullen 2002 J Neurophysiol)
-    'g_vor':          1.0,    # VOR gain (unitless)
 
     # ── Neural integrator (NI) ────────────────────────────────────────────────
     # Robinson (1975); leak fitted in monkey by Cannon & Robinson (1985
@@ -137,9 +136,8 @@ _NNI     = ni.N_STATES              #  3
 _NP      = plant.N_STATES           #  3
 _NVis    = visual_delay.N_STATES    # 240 visual delay (120 slip + 120 pos error)
 _NSG     = sg.N_STATES              #   3 saccade generator (x_reset_int)
-_NPC     = 3                        #   3 efference-copy plant position (burst-driven)
-_NPC_NI  = 3                        #   3 efference-copy NI (burst-driven)
-_N_TOTAL = _NC + _NVS + _NNI + _NP + _NVis + _NSG + _NPC + _NPC_NI    # 270
+_NEC     = ec.N_STATES              #   6 efference copy [x_ni_pc(3) | x_pc(3)]
+_N_TOTAL = _NC + _NVS + _NNI + _NP + _NVis + _NSG + _NEC              # 270
 
 _IDX_C     = slice(0,                                          _NC)
 _IDX_VS    = slice(_NC,                                        _NC + _NVS)
@@ -147,15 +145,17 @@ _IDX_NI    = slice(_NC + _NVS,                                 _NC + _NVS + _NNI
 _IDX_P     = slice(_NC + _NVS + _NNI,                          _NC + _NVS + _NNI + _NP)
 _IDX_VIS   = slice(_NC + _NVS + _NNI + _NP,                    _NC + _NVS + _NNI + _NP + _NVis)
 _IDX_SG    = slice(_NC + _NVS + _NNI + _NP + _NVis,            _NC + _NVS + _NNI + _NP + _NVis + _NSG)
-_IDX_PC    = slice(_NC + _NVS + _NNI + _NP + _NVis + _NSG,     _NC + _NVS + _NNI + _NP + _NVis + _NSG + _NPC)
-_IDX_NI_PC = slice(_NC + _NVS + _NNI + _NP + _NVis + _NSG + _NPC, _N_TOTAL)
+_IDX_EC    = slice(_NC + _NVS + _NNI + _NP + _NVis + _NSG,     _N_TOTAL)
+# Sub-slices within the efference copy block (for backwards-compatible demo access)
+_IDX_PC    = slice(_NC + _NVS + _NNI + _NP + _NVis + _NSG,     _NC + _NVS + _NNI + _NP + _NVis + _NSG + 3)
+_IDX_NI_PC = slice(_NC + _NVS + _NNI + _NP + _NVis + _NSG + 3, _N_TOTAL)
 
 _DT_SOLVE = 0.001  # Heun fixed step (s); must satisfy dt < 2*tau_stage_vis = 0.004 s
 
 
 # ── ODE vector field ───────────────────────────────────────────────────────────
 
-def vor_vector_field(t, x, args):
+def ODE_ocular_motor(t, x, args):
     """ODE right-hand side: chains all SSMs.
 
     Compatible with diffrax: signature f(t, x, args).
@@ -164,7 +164,7 @@ def vor_vector_field(t, x, args):
         t:    scalar time (s)
         x:    global state vector, shape (_N_TOTAL,)
         args: (theta, hv_interp, hp_interp, vs_interp, target_interp,
-               scene_gain_interp, canal_gains)
+               scene_gain_interp)
 
               scene_gain_interp — LinearInterpolation of a (T,) scalar array,
               values in [0, 1].  0 = dark (no retinal image), 1 = full scene.
@@ -174,7 +174,7 @@ def vor_vector_field(t, x, args):
     Returns:
         dx_dt: shape (_N_TOTAL,)
     """
-    theta, hv_interp, hp_interp, vs_interp, target_interp, scene_gain_interp, canal_gains = args
+    theta, hv_interp, hp_interp, vs_interp, target_interp, scene_gain_interp = args
 
     x_c     = x[_IDX_C]
     x_vs    = x[_IDX_VS]
@@ -182,8 +182,7 @@ def vor_vector_field(t, x, args):
     x_p     = x[_IDX_P]
     x_vis   = x[_IDX_VIS]
     x_sg    = x[_IDX_SG]
-    x_pc    = x[_IDX_PC]
-    x_ni_pc = x[_IDX_NI_PC]
+    x_ec    = x[_IDX_EC]
 
     w_head     = hv_interp.evaluate(t)           # (3,) head angular velocity (deg/s)
     q_head     = hp_interp.evaluate(t)           # (3,) head angular position (deg)
@@ -196,7 +195,7 @@ def vor_vector_field(t, x, args):
     e_pos_delayed  = visual_delay.C_pos  @ x_vis   # (3,) delayed position error
 
     # ── Vestibular sensing ────────────────────────────────────────────────────
-    dx_c, y_canals = canal.step(x_c, w_head, theta, canal_gains)
+    dx_c, y_canals = canal.step(x_c, w_head, theta)
 
     # ── Velocity storage: unified canal + visual input ────────────────────────
     # VS owns PINV_SENS mixing and visual gains (K_vis, g_vis).
@@ -207,30 +206,20 @@ def vor_vector_field(t, x, args):
     dx_sg, u_burst = sg.step(x_sg, e_pos_delayed, theta)
 
     # ── Neural integrator + plant ─────────────────────────────────────────────
-    # VOR: sign flip (eyes oppose head) and gain applied here, not inside NI.
+    # VOR: sign flip (eyes oppose head). Gain lives in canal_gains (theta).
     # Burst already in eye coordinates — unit gain, no sign flip needed.
-    u_vel  = -theta['g_vor'] * w_est + u_burst   # combined eye-velocity command
-    dx_ni, u_p = ni.step(x_ni, u_vel, theta)
+    dx_ni, u_p = ni.step(x_ni -w_est + u_burst, theta)
     dx_p,  _   = plant.step(x_p, u_p, theta)
 
-    # ── Efference copy: 2-state NI+plant copy driven by burst only ───────────
-    # x_ni_pc tracks x_ni_burst (NI integrates u_burst), x_pc tracks x_p_burst
-    # (plant follows x_ni_pc).  Together they predict the full burst-driven eye
-    # velocity so the burst component cancels exactly in e_slip:
-    #   w_burst_pred = (x_ni_pc − x_pc)/tau_p + u_burst  ≡  dx_p_burst
-    tau_p        = theta['tau_p']
-    tau_i        = theta['tau_i']
-    dx_ni_pc     = -(1.0 / tau_i) * x_ni_pc + u_burst              # NI copy
-    dx_pc        = (x_ni_pc - x_pc) / tau_p + u_burst              # plant copy
-    w_burst_pred = dx_pc                                           # predicted burst velocity
+    # ── Efference copy: NI+plant copy driven by burst only ───────────────────
+    dx_ec, w_burst_pred = ec.step(x_ec, u_burst, theta)
 
     # ── Retinal signals (position error + velocity slip) → visual delay ──────
-    w_eye  = dx_p
     e_pos  = retina.target_to_angle(p_target) - q_head - x_p          # position error (deg)
-    e_slip = scene_gain * (w_scene - w_head - w_eye + w_burst_pred)    # gated by scene: 0 in dark
+    e_slip = scene_gain * (w_scene - w_head - dx_p + w_burst_pred)    # gated by scene: 0 in dark
     dx_vis, _, _ = visual_delay.step(x_vis, e_slip, e_pos, theta)
 
-    return jnp.concatenate([dx_c, dx_vs, dx_ni, dx_p, dx_vis, dx_sg, dx_pc, dx_ni_pc])
+    return jnp.concatenate([dx_c, dx_vs, dx_ni, dx_p, dx_vis, dx_sg, dx_ec])
 
 
 # ── Simulation entry point ─────────────────────────────────────────────────────
@@ -239,12 +228,11 @@ def simulate(theta, t_array_or_stimulus, head_vel_array=None,
              v_scene_array=None,
              p_target_array=None,
              scene_present_array=None,
-             canal_gains=None,
              max_steps=10000, dt_solve=None):
     """Integrate the oculomotor ODE and return eye rotation vector.
 
     Args:
-        theta:                dict with keys tau_c, tau_s, g_vor, tau_i, tau_p,
+        theta:                dict with keys tau_c, tau_s, canal_gains, tau_i, tau_p,
                               tau_vs, K_vs, K_vis, g_vis, tau_vis, and optionally
                               g_burst, threshold_sac, k_sac, e_sat_sac, tau_reset_*.
         t_array_or_stimulus:  1-D time array (s), shape (T,)  — OR —
@@ -262,8 +250,6 @@ def simulate(theta, t_array_or_stimulus, head_vel_array=None,
                               provided, 0.0 (dark) if v_scene_array is None.
                               Pass explicitly to simulate a stationary lit scene
                               (v_scene=zeros) or a scene that turns on/off mid-trial.
-        canal_gains:          per-canal gains, length N_CANALS. Default None=all 1.
-                              Set element to 0.0 to simulate individual canal loss.
         max_steps:            ODE solver step budget (≥ duration / dt_solve).
         dt_solve:             Heun fixed step size (s). Default: _DT_SOLVE (0.001).
 
@@ -335,20 +321,15 @@ def simulate(theta, t_array_or_stimulus, head_vel_array=None,
     scene_gain_interp = diffrax.LinearInterpolation(ts=t_array, ys=sg1)
     x0                = jnp.zeros(_N_TOTAL)
 
-    if canal_gains is None:
-        gains_array = jnp.ones(canal.N_CANALS)
-    else:
-        gains_array = jnp.array(list(canal_gains), dtype=jnp.float32)
-
     solution = diffrax.diffeqsolve(
-        diffrax.ODETerm(vor_vector_field),
+        diffrax.ODETerm(ODE_ocular_motor),
         diffrax.Heun(),
         t0=t_array[0],
         t1=t_array[-1],
         dt0=dt,
         y0=x0,
         args=(theta, hv_interp, hp_interp, vs_interp, target_interp,
-              scene_gain_interp, gains_array),
+              scene_gain_interp),
         stepsize_controller=diffrax.ConstantStepSize(),
         saveat=diffrax.SaveAt(ts=t_array),
         max_steps=max_steps,
