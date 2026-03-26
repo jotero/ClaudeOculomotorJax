@@ -146,9 +146,9 @@ _IDX_P     = slice(_NC + _NVS + _NNI,                          _NC + _NVS + _NNI
 _IDX_VIS   = slice(_NC + _NVS + _NNI + _NP,                    _NC + _NVS + _NNI + _NP + _NVis)
 _IDX_SG    = slice(_NC + _NVS + _NNI + _NP + _NVis,            _NC + _NVS + _NNI + _NP + _NVis + _NSG)
 _IDX_EC    = slice(_NC + _NVS + _NNI + _NP + _NVis + _NSG,     _N_TOTAL)
-# Sub-slices within the efference copy block (for backwards-compatible demo access)
-_IDX_PC    = slice(_NC + _NVS + _NNI + _NP + _NVis + _NSG,     _NC + _NVS + _NNI + _NP + _NVis + _NSG + 3)
-_IDX_NI_PC = slice(_NC + _NVS + _NNI + _NP + _NVis + _NSG + 3, _N_TOTAL)
+# Sub-slices within the efference copy block: ec module stores [x_ni_pc(3) | x_pc(3)]
+_IDX_NI_PC = slice(_NC + _NVS + _NNI + _NP + _NVis + _NSG,     _NC + _NVS + _NNI + _NP + _NVis + _NSG + 3)
+_IDX_PC    = slice(_NC + _NVS + _NNI + _NP + _NVis + _NSG + 3, _N_TOTAL)
 
 _DT_SOLVE = 0.001  # Heun fixed step (s); must satisfy dt < 2*tau_stage_vis = 0.004 s
 
@@ -208,7 +208,7 @@ def ODE_ocular_motor(t, x, args):
     # ── Neural integrator + plant ─────────────────────────────────────────────
     # VOR: sign flip (eyes oppose head). Gain lives in canal_gains (theta).
     # Burst already in eye coordinates — unit gain, no sign flip needed.
-    dx_ni, u_p = ni.step(x_ni -w_est + u_burst, theta)
+    dx_ni, u_p = ni.step(x_ni, -w_est + u_burst, theta)
     dx_p,  _   = plant.step(x_p, u_p, theta)
 
     # ── Efference copy: NI+plant copy driven by burst only ───────────────────

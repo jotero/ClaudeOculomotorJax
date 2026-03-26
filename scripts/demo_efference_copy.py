@@ -42,10 +42,12 @@ import diffrax
 from oculomotor.models.ocular_motor_simulator import (
     simulate, THETA_DEFAULT,
     ODE_ocular_motor, _N_TOTAL,
-    _IDX_P, _IDX_NI, _IDX_SG, _IDX_VIS, _IDX_VS, _IDX_PC, _IDX_NI_PC,
+    _IDX_C, _IDX_P, _IDX_NI, _IDX_SG, _IDX_VIS, _IDX_VS, _IDX_PC, _IDX_NI_PC,
 )
 from oculomotor.models import saccade_generator as sg
 from oculomotor.models import visual_delay
+from oculomotor.models import canal
+from oculomotor.models import velocity_storage as vs_mod
 from oculomotor.models import retina
 
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), '..', 'outputs')
@@ -141,15 +143,22 @@ def _extract_signals(theta, t, hv3, vs3, pt3, scene_present=True, max_steps=200_
     u_burst = np.array(jax.vmap(_burst_at)(ys_j, t))   # (T, 3)
 
     w_burst_pred = (x_ni_pc - x_pc) / tau_p + u_burst  # 2-state efference copy velocity
-    # Exact w_eye from plant ODE:  dx_p = (x_ni - x_p)/tau_p + u_vel,  u_vel = -w_est + u_burst.
-    # For THETA_SAC (canal_gains=0, K_vis=0, g_vis=0): w_est=0, so w_eye = (x_ni - x_p)/tau_p + u_burst.
-    canal_gains = theta.get('canal_gains', None)
-    no_vor = (canal_gains is not None and jnp.all(canal_gains == 0.0)
-              and theta.get('K_vis', 0.3) == 0.0 and theta.get('g_vis', 0.3) == 0.0)
-    if no_vor:
-        w_eye = (x_ni - x_p) / tau_p + u_burst   # exact (no gradient artifacts)
-    else:
-        w_eye = np.gradient(x_p, dt, axis=0)      # approximation
+
+    # Exact w_eye from plant ODE: w_eye = (x_ni - x_p)/tau_p + u_vel
+    # where u_vel = -w_est + u_burst and w_est = VS output.
+    # Recompute w_est analytically from stored state (no numerical gradient needed).
+    x_c_j   = jnp.array(ys[:, _IDX_C])
+    x_vs_j  = jnp.array(ys[:, _IDX_VS])
+    x_vis_j = jnp.array(ys[:, _IDX_VIS])
+    cg      = jnp.array(theta.get('canal_gains', jnp.ones(canal.N_CANALS)))
+    def _w_est_at(x_c_t, x_vs_t, x_vis_t):
+        y_canals       = canal.canal_nonlinearity(x_c_t, cg)
+        e_slip_delayed = visual_delay.C_slip @ x_vis_t
+        u_vs           = jnp.concatenate([y_canals, e_slip_delayed])
+        _, w_est_t     = vs_mod.step(x_vs_t, u_vs, theta)
+        return w_est_t
+    w_est = np.array(jax.vmap(_w_est_at)(x_c_j, x_vs_j, x_vis_j))   # (T, 3)
+    w_eye = (x_ni - x_p) / tau_p + (-w_est + u_burst)                # exact eye velocity
 
     return {
         'x_p':          x_p,
