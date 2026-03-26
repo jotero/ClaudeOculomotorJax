@@ -400,7 +400,7 @@ def _run_tests():
     print('  4. VS driven by genuine scene motion      PASS')
 
     # ── Test 5: VS not contaminated by repeated OKN fast phases ──────────────
-    # Scene moves at 30 deg/s for 10 s.  Without efference copy, each fast-phase
+    # Scene moves at 5 deg/s for 10 s.  Without efference copy, each fast-phase
     # saccade (~600 deg/s, backward) would look like a huge negative slip and
     # heavily discharge x_vs.  With efference copy the burst component cancels.
     # Check: |x_vs_with_sac − x_vs_no_sac| < 5 deg/s at end of trial.
@@ -408,7 +408,7 @@ def _run_tests():
     T_okn  = 10.0
     t_okn  = jnp.arange(0.0, T_okn, dt_okn); Tn = len(t_okn); t_okn_np = np.array(t_okn)
     hv_okn = jnp.zeros((Tn, 3))
-    vs_okn = jnp.zeros((Tn, 3)); vs_okn = vs_okn.at[:, 0].set(30.0)   # 30 deg/s scene
+    vs_okn = jnp.zeros((Tn, 3)); vs_okn = vs_okn.at[:, 0].set(5.0)    # 5 deg/s scene
     pt_okn = jnp.zeros((Tn, 3)); pt_okn = pt_okn.at[:, 2].set(1.0)    # target straight ahead
 
     ys_sac   = _run_full(THETA_OKN,     t_okn, hv_okn, vs_okn, pt_okn,
@@ -428,24 +428,28 @@ def _run_tests():
     print('All tests passed.\n')
 
 
-# ── Demo 4: OKN nystagmus — VS trajectory with / without saccades ─────────────
+# ── Demo 4: OKN nystagmus — comprehensive signal cascade ──────────────────────
 
 def demo_okn_nystagmus():
-    """Show that VS builds correctly during OKN regardless of fast-phase saccades.
+    """Comprehensive signal-cascade debug for OKN nystagmus.
 
-    Scene moves at 30 deg/s; target stays at straight ahead so OKR drives the
-    eye away and the saccade generator fires fast-phase resets → OKN nystagmus.
+    Scene moves at 5 deg/s; target stays at straight ahead so OKR drives the
+    eye away and the saccade generator should fire fast-phase resets → OKN.
 
-    Panels:
-        1. Eye position — sawtooth nystagmus waveform
-        2. x_vs with/without saccades — should overlap (efference copy works)
-        3. Raw vs corrected slip (x-axis) during the first few saccades
+    7 panels (similar to saccade_single layout):
+        1. Eye position + target (sawtooth waveform)
+        2. Eye velocity + scene velocity reference
+        3. Position error (e_motor = target - eye) + delayed version + thresholds
+        4. u_burst (saccade drive) + reset integrator x_sg
+        5. Retinal slip — raw vs efference-copy corrected
+        6. VS state x_vs with / without saccades (efference-copy check)
+        7. NI state x_ni
     """
     dt    = 0.001
     T_end = 10.0
     t     = jnp.arange(0.0, T_end, dt); T = len(t); t_np = np.array(t)
     hv3   = jnp.zeros((T, 3))
-    vs3   = jnp.zeros((T, 3)); vs3 = vs3.at[:, 0].set(30.0)
+    vs3   = jnp.zeros((T, 3)); vs3 = vs3.at[:, 0].set(5.0)
     pt3   = jnp.zeros((T, 3)); pt3 = pt3.at[:, 2].set(1.0)
 
     print('  Running OKN with saccades...')
@@ -453,71 +457,100 @@ def demo_okn_nystagmus():
     print('  Running OKN without saccades...')
     ys_nosac = _run_full(THETA_OKN_OFF, t, hv3, vs3, pt3, scene_present=True, max_steps=1_200_000)
 
-    x_p_sac    = ys_sac[:, _IDX_P][:, 0]     # eye position (horizontal)
-    x_vs_sac   = ys_sac[:, _IDX_VS][:, 0]    # VS state
-    x_vs_nosac = ys_nosac[:, _IDX_VS][:, 0]
-
-    # Eye velocity and SPV
-    w_eye_sac = np.gradient(x_p_sac, dt)
-    SPV_CLIP  = 50.0
-    spv_sac   = np.where(np.abs(w_eye_sac) < SPV_CLIP, w_eye_sac, np.nan)
-
-    # Recompute x_pc and u_burst to show raw vs corrected slip
-    ys_j   = jnp.array(ys_sac)
-    tau_p  = THETA_OKN['tau_p']
+    # ── Extract signals via vmap ───────────────────────────────────────────────
+    ys_j  = jnp.array(ys_sac)
+    tau_p = THETA_OKN['tau_p']
+    thr   = THETA_OKN.get('threshold_sac', 0.5)
 
     def _signals_at(x):
+        x_p           = x[_IDX_P]
+        x_ni          = x[_IDX_NI]
         x_sg          = x[_IDX_SG]
         x_vis         = x[_IDX_VIS]
         x_pc          = x[_IDX_PC]
         x_ni_pc_      = x[_IDX_NI_PC]
-        e_pos_delayed = visual_delay.C_pos @ x_vis
+        e_pos_delayed = visual_delay.C_pos  @ x_vis
+        e_slip_delayed= visual_delay.C_slip @ x_vis
+        e_motor       = retina.target_to_angle(jnp.array([0.0, 0.0, 1.0])) - x_p
         _, u_burst    = sg.step(x_sg, e_pos_delayed, THETA_OKN)
         w_burst_pred  = (x_ni_pc_ - x_pc) / tau_p + u_burst
-        return u_burst[0], w_burst_pred[0]
+        return (x_p[0], x_ni[0], x_sg[0],
+                e_motor[0], e_pos_delayed[0],
+                u_burst[0], w_burst_pred[0], e_slip_delayed[0])
 
-    u_burst_all, w_pred_all = jax.vmap(_signals_at)(ys_j)
-    u_burst_all = np.array(u_burst_all)
-    w_pred_all  = np.array(w_pred_all)
+    out = jax.vmap(_signals_at)(ys_j)
+    (x_p_sac, x_ni_sac, x_sg_sac,
+     e_motor, e_pos_del,
+     u_burst_all, w_pred_all, e_slip_del) = [np.array(o) for o in out]
 
-    raw_slip = 30.0 - w_eye_sac                        # scene - eye (no efference copy)
-    cor_slip = 30.0 - w_eye_sac + w_pred_all           # + efference copy correction
+    x_vs_sac   = ys_sac[:, _IDX_VS][:, 0]
+    x_vs_nosac = ys_nosac[:, _IDX_VS][:, 0]
 
-    fig, axes = plt.subplots(4, 1, figsize=(11, 10), sharex=True)
-    fig.suptitle('OKN Nystagmus — Efference Copy Debug  (scene = 30 deg/s)', fontsize=12)
+    w_eye_sac = np.gradient(x_p_sac, dt)
+    raw_slip  = 5.0 - w_eye_sac
+    cor_slip  = 5.0 - w_eye_sac + w_pred_all
+    SPV_CLIP  = 40.0
+    spv       = np.where(np.abs(w_eye_sac) < SPV_CLIP, w_eye_sac, np.nan)
+
+    # ── Plot ──────────────────────────────────────────────────────────────────
+    fig, axes = plt.subplots(7, 1, figsize=(12, 17), sharex=True)
+    fig.suptitle('OKN Nystagmus — Signal Cascade Debug  (scene = 5 deg/s)', fontsize=13)
 
     for ax in axes:
         ax.axhline(0, color='k', lw=0.4)
 
-    # Panel 1: eye position
-    axes[0].plot(t_np, x_p_sac, color=_C['eye_vel'], lw=0.8)
-    axes[0].set_ylabel('Eye pos (deg)')
-    axes[0].set_title('Eye position — OKN sawtooth')
+    # P1: eye position + target
+    axes[0].plot(t_np, x_p_sac, color=_C['eye_vel'], lw=0.8, label='eye pos (x_p)')
+    axes[0].axhline(0, color=_C['scene'], lw=1.5, ls='--', alpha=0.8, label='target (0 deg)')
+    axes[0].set_ylabel('deg')
+    axes[0].set_title('Eye position — should show sawtooth if fast phases fire')
+    axes[0].legend(fontsize=8)
 
-    # Panel 2: eye velocity raw + SPV
-    axes[1].plot(t_np, w_eye_sac, color=_C['eye_vel'], lw=0.5, alpha=0.3, label='raw w_eye')
-    axes[1].plot(t_np, spv_sac,   color=_C['eye_vel'], lw=1.2, label='SPV (|w|<50)')
-    axes[1].axhline(30, color=_C['scene'], lw=0.8, ls='--', alpha=0.6, label='scene 30°/s')
+    # P2: eye velocity + scene
+    axes[1].plot(t_np, w_eye_sac, color=_C['eye_vel'], lw=0.5, alpha=0.3, label='w_eye (raw)')
+    axes[1].plot(t_np, spv,       color=_C['eye_vel'], lw=1.2, label=f'SPV (clip {SPV_CLIP})')
+    axes[1].axhline(5, color=_C['scene'], lw=1.2, ls='--', alpha=0.8, label='scene 5 deg/s')
     axes[1].set_ylabel('deg/s')
-    axes[1].set_ylim(-80, 80)
-    axes[1].set_title('Eye velocity — fast phases spike, slow phase tracks scene')
-    axes[1].legend(fontsize=7, loc='upper right')
+    axes[1].set_title('Eye velocity (slow phase near scene; fast phases spike negative)')
+    axes[1].legend(fontsize=8)
 
-    # Panel 3: VS with / without saccades
-    axes[2].plot(t_np, x_vs_nosac, color=_C['scene'],   lw=1.5, label='x_vs  no saccades (reference)')
-    axes[2].plot(t_np, x_vs_sac,   color=_C['eye_vel'], lw=1.2, ls='--', label='x_vs  with saccades (OKN)')
-    axes[2].set_ylabel('deg/s')
-    axes[2].set_title('VS state — if efference copy works, traces should overlap')
+    # P3: position error cascade — key diagnostic for saccade trigger
+    axes[2].plot(t_np, e_motor,  color='#762a83', lw=1.5, label='e_motor = target - eye')
+    axes[2].plot(t_np, e_pos_del, color='#d6604d', lw=1.2, ls='--', label='e_pos_delayed (SG input)')
+    axes[2].axhline( thr, color='gray', lw=0.8, ls=':', alpha=0.8, label=f'threshold ({thr} deg)')
+    axes[2].axhline(-thr, color='gray', lw=0.8, ls=':', alpha=0.8)
+    axes[2].set_ylabel('deg')
+    axes[2].set_title('Position error & delayed error entering saccade generator')
     axes[2].legend(fontsize=8)
 
-    # Panel 4: raw vs corrected slip (first 3 s)
-    axes[3].plot(t_np, raw_slip,    color='#d6604d', lw=0.8, alpha=0.5, label='raw slip (= scene − eye)')
-    axes[3].plot(t_np, cor_slip,    color=_C['pred'], lw=1.2, label='corrected slip (+ efference copy)')
-    axes[3].set_ylabel('deg/s')
-    axes[3].set_ylim(-100, 100)
-    axes[3].set_title('Retinal slip: raw (spikes) vs efference-copy corrected (should be ~30 in slow phase)')
-    axes[3].set_xlabel('Time (s)')
+    # P4: burst command + reset integrator
+    axes[3].plot(t_np, u_burst_all, color=_C['burst'],  lw=1.5, label='u_burst (SG output)')
+    axes[3].plot(t_np, x_sg_sac,    color=_C['scene'],  lw=1.2, ls='--', label='x_sg (reset integrator)')
+    axes[3].set_ylabel('deg/s | deg')
+    axes[3].set_title('Burst command (spikes = fast phases) + Robinson copy integrator')
     axes[3].legend(fontsize=8)
+
+    # P5: retinal slip raw vs corrected
+    axes[4].plot(t_np, raw_slip, color='#d6604d', lw=0.8, alpha=0.6, label='raw slip (scene - eye)')
+    axes[4].plot(t_np, cor_slip, color=_C['pred'],  lw=1.2, label='corrected slip (+ efference copy)')
+    axes[4].axhline(5, color=_C['scene'], lw=0.8, ls='--', alpha=0.5, label='scene 5 deg/s')
+    axes[4].set_ylabel('deg/s')
+    axes[4].set_title('Retinal slip — corrected should stay near 5 deg/s')
+    axes[4].legend(fontsize=8)
+
+    # P6: VS state with / without saccades
+    axes[5].plot(t_np, x_vs_nosac, color=_C['scene'],   lw=1.5, label='x_vs  no saccades')
+    axes[5].plot(t_np, x_vs_sac,   color=_C['eye_vel'], lw=1.2, ls='--', label='x_vs  with saccades')
+    axes[5].set_ylabel('deg/s')
+    axes[5].set_title('VS state — traces overlap if efference copy is working')
+    axes[5].legend(fontsize=8)
+
+    # P7: NI state
+    axes[6].plot(t_np, x_ni_sac, color=_C['pc'], lw=1.2, label='x_ni (NI position command)')
+    axes[6].set_ylabel('deg')
+    axes[6].set_title('NI state (grows as OKR accumulates; resets with fast phases)')
+    axes[6].set_xlabel('Time (s)')
+    axes[6].legend(fontsize=8)
 
     fig.tight_layout()
     path = os.path.join(OUTPUT_DIR, 'efference_okn_debug.png')

@@ -7,8 +7,8 @@ a long-TC adaptation LP (cupula stiffness) cascades with a short-TC inertia LP
 
 Per-canal signal (scalar — projection onto canal axis):
     h_i     = n_i · ω_head              projected 3-D head angular velocity
-    dx1_i   = (h_i − x1_i) / τ_c       adaptation LP state (cupula)
-    y_hp_i  = h_i − x1_i               HP intermediate (long time constant)
+    dx1_i   = (h_i - x1_i) / τ_c       adaptation LP state (cupula)
+    y_hp_i  = h_i - x1_i               HP intermediate (long time constant)
     dx2_i   = (y_hp_i - x2_i) / τ_s   inertia LP state
     y_i     = (nl(x2_i) + floor) · g_i   absolute firing rate; rest = floor
 
@@ -18,9 +18,9 @@ Transfer function per canal (ω_head → y):
     High-cut at 1/(2π·τ_s) ≈ 32  Hz    (τ_s ≈ 0.005 s)
 
 Canal nonlinearity nl(y, floor) — smooth, differentiable everywhere:
-    y < −floor  →  −floor              inhibitory saturation (Ewald's 2nd law, 1892)
+    y < -floor  →  -floor              inhibitory saturation (Ewald's 2nd law, 1892)
     |y| ≤ floor →  y                   linear regime
-    y >  floor  →  2y − floor          excitatory gain doubles past threshold
+    y >  floor  →  2y - floor          excitatory gain doubles past threshold
 
 For a push-pull pair the excitatory doubling exactly compensates the
 inhibitory loss, keeping combined VOR gain = 1 for all amplitudes.
@@ -37,10 +37,10 @@ Canal geometry (semi-anatomical, 45° vertical canals):
 
     RALP pair (Right Anterior + Left Posterior):
         RAC excited by pitch-up + CW roll (right ear down) → [0, +s, +s]
-        LPC opposite                                        → [0, −s, −s]
+        LPC opposite                                        → [0, -s, -s]
     LARP pair (Left Anterior + Right Posterior):
-        LAC excited by pitch-up + CCW roll (left ear down) → [0, +s, −s]
-        RPC opposite                                        → [0, −s, +s]
+        LAC excited by pitch-up + CCW roll (left ear down) → [0, +s, -s]
+        RPC opposite                                        → [0, -s, +s]
 
     Because ORIENTATIONS^T @ ORIENTATIONS = 2·I₃, the pseudo-inverse is
     exactly PINV_SENS = (1/2)·ORIENTATIONS^T — no numerical ambiguity.
@@ -72,7 +72,7 @@ N_CANALS           = ORIENTATIONS.shape[0]          # 6
 N_STATES_PER_CANAL = 2                              # x1 (adaptation LP) + x2 (inertia LP)
 N_STATES           = N_CANALS * N_STATES_PER_CANAL  # 12
 FLOOR              = 80.0   # deg/s — physiological resting discharge; ~70–100 sp/s in primate
-                             # (Goldberg & Fernandez 1971 J Neurophysiol)
+                            # (Goldberg & Fernandez 1971 J Neurophysiol)
 
 # Pseudo-inverse: maps (N_CANALS,) canal outputs → (3,) angular velocity estimate.
 # For orthogonal push-pull pairs PINV_SENS = (1/2) ORIENTATIONS^T, shape (3, 6).

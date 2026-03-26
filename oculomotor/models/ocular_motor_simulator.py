@@ -123,7 +123,7 @@ THETA_DEFAULT = {
     'g_burst':        0.0,    # burst ceiling (deg/s); 0 = saccades disabled
     'threshold_sac':  0.5,    # trigger threshold (deg); dead-zone ~0.5°
                               # (Steinman et al. 1967 Science)
-    'k_sac':         15.0,    # sigmoid steepness (1/deg)
+    'k_sac':         50.0,    # sigmoid steepness (1/deg)
     'e_sat_sac':      7.0,    # tanh saturation amplitude (deg)
     'tau_reset_sac':  1.0,    # reset TC (s) — slow when error is large
     'tau_reset_fast': 0.1,    # reset TC (s) — fast once eye is on target
@@ -222,7 +222,7 @@ def vor_vector_field(t, x, args):
     tau_i        = theta['tau_i']
     dx_ni_pc     = -(1.0 / tau_i) * x_ni_pc + u_burst              # NI copy
     dx_pc        = (x_ni_pc - x_pc) / tau_p + u_burst              # plant copy
-    w_burst_pred = dx_pc                                            # predicted burst velocity
+    w_burst_pred = dx_pc                                           # predicted burst velocity
 
     # ── Retinal signals (position error + velocity slip) → visual delay ──────
     w_eye  = dx_p

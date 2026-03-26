@@ -2,7 +2,9 @@
   "permissions": {
     "allow": [
       "Bash(.venv/Scripts/python scripts/run_recovery.py)",
-      "Bash(.venv/Scripts/python.exe scripts/demo_saccade.py)"
+      "Bash(.venv/Scripts/python.exe scripts/demo_saccade.py)",
+      "Bash(conda run:*)",
+      "Bash(~/miniconda3/bin/conda run:*)"
     ]
   }
 }

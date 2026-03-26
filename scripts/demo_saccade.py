@@ -51,7 +51,7 @@ THETA_SAC = {**THETA_DEFAULT,
              'g_vis':          0.0,
              'g_burst':      600.0,   # burst ceiling (deg/s); peak vel → g_burst as amp → ∞
              'threshold_sac':  0.5,   # trigger threshold (deg)
-             'k_sac':         15.0,   # sigmoid steepness (1/deg)
+             'k_sac':         50.0,   # sigmoid steepness (1/deg)
              'e_sat_sac':      7.0,   # tanh saturation amplitude (deg)
              'tau_reset_sac':  1.0,   # slow reset TC (s) — active when target present
              'tau_reset_fast': 0.1,   # fast reset TC (s) — kicks in after error < threshold
