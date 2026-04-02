@@ -61,9 +61,7 @@ _C = {
     'scene':   '#e08214',
 }
 
-THETA_SAC = {**THETA_DEFAULT,
-             'canal_gains': jnp.zeros(6),   # no VOR — head is still
-             'g_burst': 600.0}
+THETA_SAC = {**THETA_DEFAULT, 'g_burst': 600.0}   # head is still → VOR/OKR inactive naturally
 
 THETA_NO_SAC = {**THETA_SAC, 'g_burst': 0.0}
 

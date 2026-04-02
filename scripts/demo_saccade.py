@@ -43,13 +43,12 @@ _C = {
     'reset':  '#e08214',
 }
 
-# ── Saccade theta (VOR disabled — head still) ─────────────────────────────────
+# ── Saccade theta ─────────────────────────────────────────────────────────────
+# Head is still in all saccade demos → VOR/OKR produce no output regardless.
+# Only override parameters that genuinely differ from the default.
 
 THETA_SAC = {**THETA_DEFAULT,
-             'canal_gains': jnp.zeros(6),   # no VOR — head is still
-             'K_vis':       0.0,             # dark — no visual drive
-             'g_vis':       0.0,
-             'g_burst':     600.0,           # burst ceiling (deg/s)
+             'g_burst': 1000.0,    # higher burst ceiling for cleaner demo saccades
              }
 
 

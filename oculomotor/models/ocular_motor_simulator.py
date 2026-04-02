@@ -115,17 +115,22 @@ THETA_DEFAULT = {
     # Miles, Kawano & Optican 1986 J Neurophysiol)
     'tau_vis':        0.08,   # visual delay TC (s)
 
-    # ── Saccade generator (disabled by default; set g_burst > 0 to enable) ───
+    # ── Saccade generator — enabled by default ───────────────────────────────
     # Local-feedback burst model: Robinson (1975); burst neurons: Fuchs,
     # Scudder & Kaneko (1988 J Neurophysiol); main sequence: Bahill,
     # Clark & Stark (1975 Math Biosci)
-    'g_burst':        0.0,    # burst ceiling (deg/s); 0 = saccades disabled
+    'g_burst':      700.0,    # burst ceiling (deg/s); set to 0 to disable saccades
     'threshold_sac':  0.5,    # trigger threshold (deg); dead-zone ~0.5°
                               # (Steinman et al. 1967 Science)
+    'threshold_stop': 0.1,    # stopping threshold (deg); endpoint accuracy ~0.1–0.2°
+                              # Smaller than threshold_sac → gate_res≈1 at onset
     'k_sac':         50.0,    # sigmoid steepness (1/deg)
     'e_sat_sac':      7.0,    # tanh saturation amplitude (deg)
-    'tau_reset_sac':  1.0,    # reset TC (s) — slow when error is large
-    'tau_reset_fast': 0.1,    # reset TC (s) — fast once eye is on target
+    'tau_reset_sac':  1.0,    # reset TC (s) — slow during active burst
+    'tau_reset_fast': 0.1,    # reset TC (s) — fast once burst ends
+    'tau_ref':        0.15,   # refractory period (s) — inter-saccadic interval
+                              # ~150–200 ms (Fischer & Ramsperger 1984 Exp Brain Res)
+    'tau_ref_charge': 0.005,  # refractory charge TC (s) — rise time after burst (~5 ms)
 }
 
 # ── State vector layout ────────────────────────────────────────────────────────

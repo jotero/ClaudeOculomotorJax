@@ -46,12 +46,7 @@ _C = {
     'reset':  '#e08214',
 }
 
-THETA_SAC = {**THETA_DEFAULT,
-             'canal_gains': jnp.zeros(6),
-             'K_vis':       0.0,
-             'g_vis':       0.0,
-             'g_burst':     600.0,
-             }
+THETA_SAC = THETA_DEFAULT   # head is still and no scene motion → VOR/OKR inactive naturally
 
 VELOCITIES = [1.0, 2.0, 5.0, 10.0]   # deg/s
 T_END   = 3.0
