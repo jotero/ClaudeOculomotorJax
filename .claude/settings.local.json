@@ -4,7 +4,20 @@
       "Bash(.venv/Scripts/python scripts/run_recovery.py)",
       "Bash(.venv/Scripts/python.exe scripts/demo_saccade.py)",
       "Bash(conda run:*)",
-      "Bash(~/miniconda3/bin/conda run:*)"
+      "Bash(~/miniconda3/bin/conda run:*)",
+      "Bash(.venv/Scripts/python scripts/demo_vor.py)",
+      "Bash(\"d:/OneDrive/UC Berkeley/OMlab - JOM/Code/ClaudeOculomotorJax/.venv/Scripts/python.exe\" scripts/demo_vor.py)",
+      "Bash(\"d:/OneDrive/UC Berkeley/OMlab - JOM/Code/ClaudeOculomotorJax/.venv/Scripts/python.exe\" -X utf8 scripts/demo_vor.py)",
+      "Bash(\"d:/OneDrive/UC Berkeley/OMlab - JOM/Code/ClaudeOculomotorJax/.venv/Scripts/python.exe\" -X utf8 scripts/demo_saccade.py)",
+      "Bash(\"d:/OneDrive/UC Berkeley/OMlab - JOM/Code/ClaudeOculomotorJax/.venv/Scripts/python.exe\" -X utf8 scripts/demo_efference_copy.py)",
+      "Bash(\"d:/OneDrive/UC Berkeley/OMlab - JOM/Code/ClaudeOculomotorJax/.venv/Scripts/python.exe\" -X utf8 scripts/demo_smooth_pursuit.py)",
+      "Bash('d:/OneDrive/UC Berkeley/OMlab - JOM/Code/ClaudeOculomotorJax/.venv/Scripts/python.exe' -X utf8 -c ':*)",
+      "Bash(\"d:/OneDrive/UC Berkeley/OMlab - JOM/Code/ClaudeOculomotorJax/.venv/Scripts/python.exe\" -X utf8 scripts/demo_efference.py)",
+      "Bash(\"d:/OneDrive/UC Berkeley/OMlab - JOM/Code/ClaudeOculomotorJax/.venv/Scripts/python.exe\" -X utf8 scripts/demo_pursuit.py)",
+      "Bash(grep -v \"^$\")"
+    ],
+    "additionalDirectories": [
+      "d:\\OneDrive\\UC Berkeley\\OMlab - JOM\\Code\\ClaudeOculomotorJax\\outputs"
     ]
   }
 }

@@ -1,5 +1,30 @@
 # ClaudeOculomotorJax — Project Context for Claude
 
+## Running scripts
+
+Always use `-X utf8` to avoid Windows cp1252 encoding errors (Greek letters in print statements crash otherwise):
+
+```bash
+"d:/OneDrive/UC Berkeley/OMlab - JOM/Code/ClaudeOculomotorJax/.venv/Scripts/python.exe" -X utf8 scripts/demo_vor.py
+```
+
+Or from PowerShell:
+
+```powershell
+& "d:\OneDrive\UC Berkeley\OMlab - JOM\Code\ClaudeOculomotorJax\.venv\Scripts\python.exe" -X utf8 scripts\demo_vor.py
+```
+
+## Stimulus conventions
+
+Keep all pathways active by default. Only disable a pathway (e.g. `g_burst=0`, `K_vis=0`, `scene_present=0`) when the demo is explicitly testing what happens *without* that pathway — and add a comment explaining why.
+
+In particular:
+- **Saccade demos**: keep `scene_present=1` (the animal sees the target in a lit room). Do not zero out OKR gains.
+- **VOR demos**: keep saccades on (`g_burst=700`) unless the demo is specifically about the canal→VS cascade without fast phases.
+- **OKR demos**: keep saccades on so the nystagmus sawtooth is visible.
+
+When a panel looks wrong, diagnose via simulation before disabling pathways. Autoscale artifacts (matplotlib scaling noise to a salient-looking signal) are a common false alarm — enforce a minimum y-axis range for velocity panels.
+
 ## What this is
 
 A JAX-based simulation of the primate oculomotor system. The goal is a differentiable, biophysically grounded model of how the brain controls eye movements — suitable for fitting to experimental data.
@@ -70,15 +95,6 @@ Each behavior has a corresponding demo script and output figure.
 ## Current status
 
 Saccades to static targets work well. Saccades to moving targets / during pursuit are broken (as of 2026-04-02). The saccade trigger/refractory logic is the active area of work.
-
-## Key parameters to know
-
-```python
-'g_burst':       700.0   # burst ceiling (deg/s)
-'threshold_sac':   0.5   # saccade dead-zone (deg)
-'tau_ref':         0.15  # refractory period (s)
-'tau_reset_fast':  0.1   # reset TC after burst (s)
-```
 
 ## SSM module convention
 
@@ -153,29 +169,19 @@ def step(x_ni, u_vel, theta):
 - **Optax** — gradient-based optimization
 - **Matplotlib** — diagnostics and plotting
 
-## Fitting approach
+## Fitting approach (future work)
 
+**Current priority: get the fixed-parameter model to simulate correct behavior across all paradigms. Fitting comes later.**
+
+The long-term goal is to fit this model to patient eye movement data — recovering parameters like `tau_vs`, `K_vs`, `canal_gains`, `tau_i` that characterize specific vestibular or cerebellar pathologies.
+
+Planned approach when ready:
+- Validate parameter recovery on synthetic data first (simulate with known θ, fit from perturbed init, check recovery)
 - **Loss**: MSE between model-predicted and observed eye position/velocity, summed over stimulus conditions
 - **Optimizer**: `optax.adam`, typical lr ~1e-3
-- **Reparameterization**: use `softplus` for positive TCs (`tau_c`, `tau_i`, `tau_p`, `tau_vs`), `sigmoid` for bounded gains — ensures constraints without clamping
-- **Gradients**: flow through `diffrax.diffeqsolve` via reverse-mode autodiff
-
-## Standard stimulus protocols
-
-- **Sinusoidal rotation** (0.05–2.0 Hz, amplitude ~30 deg/s) — probes canal TC at low freq, VOR gain at mid freq, plant at high freq; use for Bode plots
-- **Velocity step / head impulse** — exposes integrator leak; eye drifts back after head stops if NI is leaky
-- **Constant velocity in dark** — exposes velocity storage TC (~20 s decay)
-- **OKN**: constant-velocity scene, then lights out — measures OKN gain and OKAN TC
-- **Saccade to static target** — main sequence, latency, endpoint accuracy
-- **Saccade to moving target** — staircase behavior, intersaccadic interval
-
-## Diagnostic plots to generate
-
-1. Loss curve vs. optimization step
-2. Parameter trajectories vs. step (with ground truth as dashed line)
-3. Bode plot — gain and phase vs. frequency, model vs. data overlaid
-4. Time-domain overlay — predicted vs. observed eye position per condition
-5. Residuals — predicted minus observed, check for systematic misfit
+- **Reparameterization**: `softplus` for positive TCs, `sigmoid` for bounded gains — ensures constraints without clamping
+- **Gradients**: flow through `diffrax.diffeqsolve` via reverse-mode autodiff (already differentiable by construction)
+- **Diagnostic plots**: loss curve, parameter trajectories vs. step, Bode plot (gain + phase vs. frequency), time-domain overlay (predicted vs. observed), residuals
 
 ## Conventions
 

@@ -52,7 +52,8 @@ Target position input:
     Pass a fixed (3,) array for a constant target (replicated across time).
 
 Output:
-    simulate() returns eye rotation vector, shape (T, 3).
+    simulate() returns eye rotation vector, shape (T, 3), or the full state
+    trajectory, shape (T, 270), when return_states=True.
     Use readout module to convert to Fick angles, Listing deviation, etc.
 """
 
@@ -116,21 +117,36 @@ THETA_DEFAULT = {
     'tau_vis':        0.08,   # visual delay TC (s)
 
     # ── Saccade generator — enabled by default ───────────────────────────────
-    # Local-feedback burst model: Robinson (1975); burst neurons: Fuchs,
-    # Scudder & Kaneko (1988 J Neurophysiol); main sequence: Bahill,
-    # Clark & Stark (1975 Math Biosci)
-    'g_burst':      700.0,    # burst ceiling (deg/s); set to 0 to disable saccades
-    'threshold_sac':  0.5,    # trigger threshold (deg); dead-zone ~0.5°
+    # Ballistic local-feedback burst model: Robinson (1975); burst neurons:
+    # Fuchs, Scudder & Kaneko (1988 J Neurophysiol); main sequence: Bahill,
+    # Clark & Stark (1975 Math Biosci).
+    # Saccades are ballistic: error is latched at onset (sample-and-hold),
+    # burst runs against the held target, not live visual feedback.
+    'g_burst':        700.0,  # burst ceiling (deg/s); set to 0 to disable saccades
+    'threshold_sac':    0.5,  # trigger threshold (deg); dead-zone ~0.5°
                               # (Steinman et al. 1967 Science)
-    'threshold_stop': 0.1,    # stopping threshold (deg); endpoint accuracy ~0.1–0.2°
-                              # Smaller than threshold_sac → gate_res≈1 at onset
-    'k_sac':         50.0,    # sigmoid steepness (1/deg)
-    'e_sat_sac':      7.0,    # tanh saturation amplitude (deg)
-    'tau_reset_sac':  1.0,    # reset TC (s) — slow during active burst
-    'tau_reset_fast': 0.1,    # reset TC (s) — fast once burst ends
-    'tau_ref':        0.15,   # refractory period (s) — inter-saccadic interval
-                              # ~150–200 ms (Fischer & Ramsperger 1984 Exp Brain Res)
-    'tau_ref_charge': 0.005,  # refractory charge TC (s) — rise time after burst (~5 ms)
+    'threshold_stop':   0.1,  # stopping threshold (deg); endpoint accuracy ~0.1–0.2°
+                              # (Becker 1989). Against HELD residual → always clean stop.
+    'k_sac':          200.0,  # sigmoid steepness (1/deg)
+    'e_sat_sac':        7.0,  # main-sequence saturation (deg); Bahill et al. (1975)
+    'tau_reset_fast':   0.05, # x_copy reset TC between bursts (s)
+    'tau_ref':          0.15, # refractory decay TC (s); ISI ~150–200 ms
+                              # (Fischer & Ramsperger 1984 Exp Brain Res)
+    'tau_ref_charge':   0.001,# OPN charge TC (s); z_ref rises in ~1 ms at burst end
+    'k_ref':           50.0,  # bistable OPN gate steepness (1/z_ref)
+    'threshold_ref':    0.1,  # OPN threshold: z_ref < 0.1 → burst allowed, > 0.1 → blocked
+                              # z_ref decays from ~0.7 to 0.1 in ~240 ms = refractory period
+    'tau_hold':         0.005,# sample-and-hold tracking TC (s) between saccades (5 ms)
+    'tau_sac':              0.001,# saccade latch TC (s): z_sac rise/fall time (1 ms)
+    'threshold_sac_release': 0.4, # z_ref level that releases z_sac (must be >> threshold_ref)
+                                  # In the continuous-burst fixed point, z_ref only reaches
+                                  # ~0.08–0.10, so z_sac stays locked (e_held frozen) until
+                                  # the burst truly stops and z_ref charges past 0.4.
+    # Rise-to-bound accumulator (z_acc) — delays z_sac to let visual cascade settle
+    'tau_acc':       0.080,  # accumulator rise TC (s): ~80 ms to fill (cascade ~99% settled)
+    'tau_drain':     0.120,  # accumulator drain TC (s) when gate off or burst active
+    'threshold_acc': 0.5,    # accumulator threshold to fire z_sac
+    'k_acc':         50.0,   # accumulator sigmoid steepness
 }
 
 # ── State vector layout ────────────────────────────────────────────────────────
@@ -233,7 +249,8 @@ def simulate(theta, t_array_or_stimulus, head_vel_array=None,
              v_scene_array=None,
              p_target_array=None,
              scene_present_array=None,
-             max_steps=10000, dt_solve=None):
+             max_steps=10000, dt_solve=None,
+             return_states=False):
     """Integrate the oculomotor ODE and return eye rotation vector.
 
     Args:
@@ -257,11 +274,19 @@ def simulate(theta, t_array_or_stimulus, head_vel_array=None,
                               (v_scene=zeros) or a scene that turns on/off mid-trial.
         max_steps:            ODE solver step budget (≥ duration / dt_solve).
         dt_solve:             Heun fixed step size (s). Default: _DT_SOLVE (0.001).
+        return_states:        if True, return full state trajectory (T, 270) instead
+                              of just eye rotation (T, 3).  Use _IDX_* slices to
+                              extract individual subsystem states.
 
     Returns:
-        eye_rot: eye rotation vector (deg), shape (T, 3)
-                 columns: [yaw, pitch, roll]
-                 Use oculomotor.models.readout for Fick/Helmholtz/etc.
+        If return_states=False (default):
+            eye_rot: eye rotation vector (deg), shape (T, 3)
+                     columns: [yaw, pitch, roll]
+                     Use oculomotor.models.readout for Fick/Helmholtz/etc.
+        If return_states=True:
+            states: full global state trajectory, shape (T, 270)
+                    Use _IDX_C, _IDX_VS, _IDX_NI, _IDX_P, _IDX_VIS,
+                    _IDX_SG, _IDX_EC to slice subsystem states.
     """
     dt = _DT_SOLVE if dt_solve is None else dt_solve
 
@@ -275,6 +300,9 @@ def simulate(theta, t_array_or_stimulus, head_vel_array=None,
         t_array = t_array_or_stimulus
 
     T = len(t_array)
+
+    if head_vel_array is None:
+        head_vel_array = jnp.zeros(T)
 
     # ── Pad 1-D head velocity to 3-D ─────────────────────────────────────────
     if jnp.ndim(head_vel_array) == 1:
@@ -340,4 +368,6 @@ def simulate(theta, t_array_or_stimulus, head_vel_array=None,
         max_steps=max_steps,
     )
 
+    if return_states:
+        return solution.ys           # (T, 270) full state trajectory
     return solution.ys[:, _IDX_P]   # (T, 3) eye rotation vector
