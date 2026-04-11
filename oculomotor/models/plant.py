@@ -35,6 +35,21 @@ Future levels:
 import jax.numpy as jnp
 
 N_STATES  = 3
+
+
+def soft_limit(x_p, theta):
+    """Soft (differentiable) saturation of eye position to ±orbital_limit (deg).
+
+    Applied to the plant OUTPUT only — the internal state x_p is left unbounded
+    so the ODE integrator remains unconstrained.
+
+    Formula:  q_sat = L * tanh(x_p / L)
+        - identity near origin: error < 1% for |x_p| < 30 deg
+        - saturates monotonically to ±L
+        - gradient = sech²(x_p / L) > 0 always (no gradient saturation)
+    """
+    L = theta.get('orbital_limit', 50.0)
+    return L * jnp.tanh(x_p / L)
 N_INPUTS  = 3
 N_OUTPUTS = 3
 
@@ -75,5 +90,5 @@ def step(x_p, u_p, theta):
         q_eye: (3,)  eye rotation vector C@x_p  (= x_p for this plant)
     """
     dx    = get_A(theta) @ x_p + get_B(theta) @ u_p
-    q_eye = C @ x_p
+    q_eye = soft_limit(x_p, theta)
     return dx, q_eye

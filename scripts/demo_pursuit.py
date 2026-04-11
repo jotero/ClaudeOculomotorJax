@@ -112,7 +112,7 @@ def _ax_fmt(ax):
 
 def demo_pursuit_cascade():
     """6 rows × 4 ramp velocities — catch-up saccades to moving target."""
-    velocities = [1.0, 2.0, 5.0, 10.0]   # deg/s
+    velocities = [1.0, 10.0, 20.0, 60.0]   # deg/s
     T_end  = 3.0
     T_jump = 0.2
     dt     = 0.001
@@ -148,6 +148,7 @@ def demo_pursuit_cascade():
 
         states = simulate(THETA_SAC, t, p_target_array=pt3,
                           scene_present_array=jnp.ones(T),
+                          target_present_array=jnp.ones(T),   # target visible
                           max_steps=max_s, return_states=True)
         s = _extract(states, THETA_SAC, t_np)
 
@@ -239,7 +240,7 @@ def demo_vor_saccade():
     T     = len(t)
     t_np  = np.array(t)
 
-    head_vel_np = np.where(t_np < 1.5, 60.0, 0.0).astype(np.float32)
+    head_vel_np = np.where(t_np < 1.5, 30.0, 0.0).astype(np.float32)
     hv = jnp.stack([jnp.array(head_vel_np), jnp.zeros(T), jnp.zeros(T)], axis=1)
 
     theta_sac = {**THETA_DEFAULT,
@@ -253,8 +254,10 @@ def demo_vor_saccade():
     max_s = int(T_end / dt) + 500
 
     states_sac = simulate(theta_sac,    t, head_vel_array=hv,
+                          target_present_array=jnp.ones(T),   # fixation target visible
                           max_steps=max_s, return_states=True)
     states_ns  = simulate(theta_no_sac, t, head_vel_array=hv,
+                          target_present_array=jnp.ones(T),
                           max_steps=max_s, return_states=True)
 
     s    = _extract(states_sac, theta_sac, t_np)
@@ -263,7 +266,7 @@ def demo_vor_saccade():
     head_pos = np.cumsum(head_vel_np) * dt
 
     fig, axes = plt.subplots(4, 1, figsize=(11, 10), sharex=True)
-    fig.suptitle('VOR + Corrective Saccades  (head 60°/s for 1.5 s, target straight-ahead)',
+    fig.suptitle('VOR + Corrective Saccades  (head 30°/s for 1.5 s, target straight-ahead)',
                  fontsize=11)
 
     vline_kw = dict(color='k', lw=0.8, ls='--', alpha=0.4)

@@ -26,9 +26,11 @@ Signal flow (3-D):
         u_p  = C·x_ni + τ_p·u_vel              pulse-step to plant
         u_p  → [Plant] → q (3,)                eye rotation vector (deg)
 
-Global state vector (270 states):
-    x = [x_c (12) | x_vs (3) | x_ni (3) | x_p (3) | x_vis (240) | x_sg (3) | x_pc (3) | x_ni_pc (3)]
-         ─ canal ─   ─ VS ─   ─  NI  ─   plant      vis delay      sacc gen   plant copy   NI copy
+Global state vector (276 states):
+    x = [x_c (12) | x_vs (3) | x_ni (3) | x_p (3) | x_vis (240) | x_sg (9) | x_ec (6)]
+         ─ canal ─   ─ VS ─   ─  NI  ─   plant      vis delay      sacc gen   efference copy
+    x_sg = [x_copy(3) | z_ref(1) | e_held(3) | z_sac(1) | z_acc(1)]
+    x_ec = [x_ni_pc(3) | x_pc(3)]
                                            (120 slip + 120 pos error, 40 stages × 3 axes × 2 sig)
 
     x_pc    — efference-copy plant position (burst-driven): follows x_ni_pc with tau_p lag.
@@ -68,6 +70,7 @@ from oculomotor.models import retina
 from oculomotor.models import visual_delay
 from oculomotor.models import saccade_generator as sg
 from oculomotor.models import efference_copy as ec
+from oculomotor.models import target_selector as ts
 
 # ── Canonical model parameters ─────────────────────────────────────────────────
 
@@ -147,6 +150,15 @@ THETA_DEFAULT = {
     'tau_drain':     0.120,  # accumulator drain TC (s) when gate off or burst active
     'threshold_acc': 0.5,    # accumulator threshold to fire z_sac
     'k_acc':         50.0,   # accumulator sigmoid steepness
+
+    # ── Orbital limits + target selector ─────────────────────────────────────
+    # target_selector.select() blends visual error with orbital reset signal and
+    # clips to prevent saccade commands that exceed the orbital range.
+    # plant.soft_limit() saturates eye position to ±orbital_limit via tanh.
+    # Ref: Goldberg & Fernandez (1971); Robinson (1975) motor range.
+    'orbital_limit':  50.0,  # half-range of orbital limit (deg); typical ±50° in monkey
+    'k_orbital':       0.1,  # sigmoid steepness for reset gate (1/deg)
+    'alpha_reset':     1.0,  # orbital reset gain; e_reset = -alpha_reset * x_p
 }
 
 # ── State vector layout ────────────────────────────────────────────────────────
@@ -156,9 +168,9 @@ _NVS     = vs.N_STATES              #  3
 _NNI     = ni.N_STATES              #  3
 _NP      = plant.N_STATES           #  3
 _NVis    = visual_delay.N_STATES    # 240 visual delay (120 slip + 120 pos error)
-_NSG     = sg.N_STATES              #   3 saccade generator (x_reset_int)
+_NSG     = sg.N_STATES              #   9 saccade generator [x_copy(3)|z_ref|e_held(3)|z_sac|z_acc]
 _NEC     = ec.N_STATES              #   6 efference copy [x_ni_pc(3) | x_pc(3)]
-_N_TOTAL = _NC + _NVS + _NNI + _NP + _NVis + _NSG + _NEC              # 270
+_N_TOTAL = _NC + _NVS + _NNI + _NP + _NVis + _NSG + _NEC              # 276
 
 _IDX_C     = slice(0,                                          _NC)
 _IDX_VS    = slice(_NC,                                        _NC + _NVS)
@@ -185,17 +197,20 @@ def ODE_ocular_motor(t, x, args):
         t:    scalar time (s)
         x:    global state vector, shape (_N_TOTAL,)
         args: (theta, hv_interp, hp_interp, vs_interp, target_interp,
-               scene_gain_interp)
+               scene_gain_interp, target_gain_interp)
 
-              scene_gain_interp — LinearInterpolation of a (T,) scalar array,
+              scene_gain_interp  — LinearInterpolation of a (T,) scalar array,
               values in [0, 1].  0 = dark (no retinal image), 1 = full scene.
               Gates the retinal slip entering the visual delay cascade.
-              Position error (saccade target) is NOT gated — saccades work in dark.
+
+              target_gain_interp — LinearInterpolation of a (T,) scalar array,
+              values in [0, 1].  0 = no visible target, 1 = target present.
+              Gates e_pos_delayed inside target_selector before driving saccades.
 
     Returns:
         dx_dt: shape (_N_TOTAL,)
     """
-    theta, hv_interp, hp_interp, vs_interp, target_interp, scene_gain_interp = args
+    theta, hv_interp, hp_interp, vs_interp, target_interp, scene_gain_interp, target_gain_interp = args
 
     x_c     = x[_IDX_C]
     x_vs    = x[_IDX_VS]
@@ -205,11 +220,12 @@ def ODE_ocular_motor(t, x, args):
     x_sg    = x[_IDX_SG]
     x_ec    = x[_IDX_EC]
 
-    w_head     = hv_interp.evaluate(t)           # (3,) head angular velocity (deg/s)
-    q_head     = hp_interp.evaluate(t)           # (3,) head angular position (deg)
-    w_scene    = vs_interp.evaluate(t)           # (3,) scene angular velocity (deg/s)
-    p_target   = target_interp.evaluate(t)       # (3,) Cartesian target position
-    scene_gain = scene_gain_interp.evaluate(t)   # scalar: 0=dark, 1=full scene
+    w_head      = hv_interp.evaluate(t)           # (3,) head angular velocity (deg/s)
+    q_head      = hp_interp.evaluate(t)           # (3,) head angular position (deg)
+    w_scene     = vs_interp.evaluate(t)           # (3,) scene angular velocity (deg/s)
+    p_target    = target_interp.evaluate(t)       # (3,) Cartesian target position
+    scene_gain  = scene_gain_interp.evaluate(t)   # scalar: 0=dark, 1=full scene
+    target_gain = target_gain_interp.evaluate(t)  # scalar: 0=no target, 1=target present
 
     # ── Read delayed signals from visual delay state ─────────────────────────
     e_slip_delayed = visual_delay.C_slip @ x_vis   # (3,) delayed retinal slip
@@ -223,8 +239,13 @@ def ODE_ocular_motor(t, x, args):
     # w_est is the velocity estimate: positive = head/scene moving rightward.
     dx_vs, w_est = vs.step(x_vs, jnp.concatenate([y_canals, e_slip_delayed]), theta)
 
-    # ── Saccade generator (delayed motor error → Robinson local feedback) ─────
-    dx_sg, u_burst = sg.step(x_sg, e_pos_delayed, theta)
+    # ── Target selector: blend visual error + orbital reset, anti-windup clip ──
+    # Produces e_cmd for the SG.  Within ±orbital_limit → pure visual mode.
+    # At/past limit → smooth transition to orbital reset (drives eye back to center).
+    e_cmd = ts.select(e_pos_delayed, x_p, theta, target_gain)
+
+    # ── Saccade generator (motor error command → Robinson local feedback) ─────
+    dx_sg, u_burst = sg.step(x_sg, e_cmd, theta)
 
     # ── Neural integrator + plant ─────────────────────────────────────────────
     # VOR: sign flip (eyes oppose head). Gain lives in canal_gains (theta).
@@ -249,6 +270,7 @@ def simulate(theta, t_array_or_stimulus, head_vel_array=None,
              v_scene_array=None,
              p_target_array=None,
              scene_present_array=None,
+             target_present_array=None,
              max_steps=10000, dt_solve=None,
              return_states=False):
     """Integrate the oculomotor ODE and return eye rotation vector.
@@ -272,6 +294,11 @@ def simulate(theta, t_array_or_stimulus, head_vel_array=None,
                               provided, 0.0 (dark) if v_scene_array is None.
                               Pass explicitly to simulate a stationary lit scene
                               (v_scene=zeros) or a scene that turns on/off mid-trial.
+        target_present_array: target visibility gain, shape (T,), values in [0, 1].
+                              None (default) = 1.0 (target always present).
+                              Pass zeros for dark conditions where no target is visible
+                              — gates e_pos_delayed inside target_selector so no
+                              visually-driven saccades fire in the dark.
         max_steps:            ODE solver step budget (≥ duration / dt_solve).
         dt_solve:             Heun fixed step size (s). Default: _DT_SOLVE (0.001).
         return_states:        if True, return full state trajectory (T, 270) instead
@@ -347,12 +374,21 @@ def simulate(theta, t_array_or_stimulus, head_vel_array=None,
     else:
         sg1 = jnp.zeros(T, dtype=jnp.float32)   # dark
 
-    hv_interp         = diffrax.LinearInterpolation(ts=t_array, ys=hv3)
-    hp_interp         = diffrax.LinearInterpolation(ts=t_array, ys=hp3)
-    vs_interp         = diffrax.LinearInterpolation(ts=t_array, ys=vs3)
-    target_interp     = diffrax.LinearInterpolation(ts=t_array, ys=pt3)
-    scene_gain_interp = diffrax.LinearInterpolation(ts=t_array, ys=sg1)
-    x0                = jnp.zeros(_N_TOTAL)
+    # ── Target presence gain (time-varying, [0,1]) ────────────────────────────
+    # None → infer: 1 if p_target_array was provided explicitly, else 1 by default.
+    # Pass target_present_array=zeros to suppress saccades in dark (no visible target).
+    if target_present_array is not None:
+        tg1 = jnp.asarray(target_present_array, dtype=jnp.float32)
+    else:
+        tg1 = jnp.ones(T, dtype=jnp.float32)    # target present by default
+
+    hv_interp          = diffrax.LinearInterpolation(ts=t_array, ys=hv3)
+    hp_interp          = diffrax.LinearInterpolation(ts=t_array, ys=hp3)
+    vs_interp          = diffrax.LinearInterpolation(ts=t_array, ys=vs3)
+    target_interp      = diffrax.LinearInterpolation(ts=t_array, ys=pt3)
+    scene_gain_interp  = diffrax.LinearInterpolation(ts=t_array, ys=sg1)
+    target_gain_interp = diffrax.LinearInterpolation(ts=t_array, ys=tg1)
+    x0                 = jnp.zeros(_N_TOTAL)
 
     solution = diffrax.diffeqsolve(
         diffrax.ODETerm(ODE_ocular_motor),
@@ -362,7 +398,7 @@ def simulate(theta, t_array_or_stimulus, head_vel_array=None,
         dt0=dt,
         y0=x0,
         args=(theta, hv_interp, hp_interp, vs_interp, target_interp,
-              scene_gain_interp),
+              scene_gain_interp, target_gain_interp),
         stepsize_controller=diffrax.ConstantStepSize(),
         saveat=diffrax.SaveAt(ts=t_array),
         max_steps=max_steps,

@@ -73,6 +73,13 @@ def step(x_ec, u_burst, theta):
     Returns:
         dx_ec:        state derivative (6,)
         w_burst_pred: predicted burst-driven eye velocity (3,)
+
+    DEFERRED — Option 2 anti-windup:
+        If orbital saturation occurs despite target_selector.select() clipping,
+        x_pc may exceed ±orbital_limit while the real plant output is soft-limited.
+        Fix: apply plant.soft_limit() to x_pc before computing w_burst_pred here.
+        Implement only if e_slip artifacts appear during orbital saturation.
+        See target_selector module docstring for full description.
     """
     dx_ec        = get_A(theta) @ x_ec + get_B(theta) @ u_burst
     w_burst_pred = get_C(theta) @ x_ec + get_D(theta) @ u_burst
