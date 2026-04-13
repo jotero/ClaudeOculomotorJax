@@ -25,12 +25,9 @@ State structure — SimState NamedTuple with three groups:
                       canal       retinal-delay cascade
                       _IDX_C      _IDX_VIS          (indices into sensory)
 
-    brain     (21):  [x_vs (3) | x_ni (3) | x_sg (9) | x_ec (6)]
-                      vel-store   NI          sacc-gen   efference-copy
-                      _IDX_VS     _IDX_NI     _IDX_SG    _IDX_EC       (indices into brain)
-
-                      x_ec sub-layout:  [x_ni_pc (3) | x_pc (3)]
-                                         _IDX_NI_PC    _IDX_PC   (indices into x_brain[_IDX_EC])
+    brain    (135):  [x_vs (3) | x_ni (3) | x_sg (9) | x_ec (120)]
+                      vel-store   NI          sacc-gen   EC delay cascade
+                      _IDX_VS     _IDX_NI     _IDX_SG    _IDX_EC          (indices into brain)
 
     plant      (3):  x_p — eye rotation vector (deg); directly observable
 
@@ -57,11 +54,11 @@ import diffrax
 
 from oculomotor.models import retina
 from oculomotor.models import target_selector as ts
-from oculomotor.sensory_model import _IDX_C, _IDX_VIS, C_slip, C_pos
-from oculomotor.brain_model   import _IDX_VS, _IDX_NI, _IDX_SG, _IDX_EC, _IDX_NI_PC, _IDX_PC
-import oculomotor.sensory_model as sensory_model
-import oculomotor.brain_model   as brain_model
-import oculomotor.plant_model   as plant_model
+from oculomotor.models.sensory_model import _IDX_C, _IDX_VIS
+from oculomotor.models.brain_model   import _IDX_VS, _IDX_NI, _IDX_SG, _IDX_EC
+import oculomotor.models.sensory_model as sensory_model
+import oculomotor.models.brain_model   as brain_model
+import oculomotor.models.plant_model_first_order as plant_model
 
 # ── Canonical model parameters ─────────────────────────────────────────────────
 
@@ -168,37 +165,27 @@ def ODE_ocular_motor(t, state, args):
     scene_gain = scene_gain_interp.evaluate(t)   # scalar: 0=dark, 1=full scene
     target_gain_interp.evaluate(t)               # unused; reserved for future target gating
 
-    # ── Read delayed signals from sensory state (pure state readouts) ─────────
-    e_slip_delayed = C_slip @ state.sensory[_IDX_VIS]
-    e_pos_delayed  = C_pos  @ state.sensory[_IDX_VIS]
-
-    # ── Sensory: canal afferents (output only — derivative handled in full step)
-    # y_canals is a nonlinear function of x_c state only; dx_c handled below.
-    # We call the full sensory step at the end, once e_slip is known.
-    x_c      = state.sensory[_IDX_C]
-    gains    = theta.get('canal_gains', jnp.ones(sensory_model.N_CANALS))
-    y_canals = sensory_model.canal_nonlinearity(x_c, gains)
+    # ── Sensory: read current outputs from state (no derivative needed yet) ──
+    raw_slip_delayed, e_pos_delayed = sensory_model.read_delayed(state.sensory)
+    y_canals                        = sensory_model.read_canals(state.sensory, theta)
 
     # ── Target selector: retinal error + orbital state → motor command ───────
     e_cmd = ts.select(e_pos_delayed, state.plant, theta)
 
     # ── Brain: VS + NI + SG + EC ──────────────────────────────────────────────
     dx_brain, u_p, u_burst = brain_model.step(
-        state.brain, y_canals, e_slip_delayed, e_cmd, theta
+        state.brain, y_canals, raw_slip_delayed, e_cmd, scene_gain, theta
     )
 
     # ── Plant ─────────────────────────────────────────────────────────────────
     dx_plant, _ = plant_model.step(state.plant, u_p, theta)
 
     # ── Retinal signals → visual delay cascade ────────────────────────────────
-    # e_pos: retinal position error from current target, head position, eye position
-    e_pos  = retina.target_to_angle(p_target) - q_head - state.plant
-    # e_slip: efference-corrected retinal velocity slip
-    # u_burst feedthrough into dx_plant is cancelled by u_burst term here.
-    e_slip = scene_gain * (w_scene - w_head - dx_plant + u_burst)
+    e_pos     = retina.target_to_angle(p_target) - q_head - state.plant
+    raw_slip  = scene_gain * (w_scene - w_head - dx_plant)
 
     # ── Sensory: full step (canal derivative + visual delay derivative) ────────
-    dx_sensory, _, _, _ = sensory_model.step(state.sensory, w_head, e_slip, e_pos, theta)
+    dx_sensory, _, _, _ = sensory_model.step(state.sensory, w_head, raw_slip, e_pos, theta)
 
     return SimState(
         sensory = dx_sensory,

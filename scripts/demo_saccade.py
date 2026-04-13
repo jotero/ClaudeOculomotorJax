@@ -28,7 +28,7 @@ from oculomotor.sim.simulator import (
     _IDX_NI, _IDX_SG, _IDX_VIS,
 )
 from oculomotor.models import saccade_generator as sg_mod
-from oculomotor.models import visual_delay
+from oculomotor.models.sensory_model import C_slip, C_pos
 from oculomotor.models import retina
 
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), '..', 'outputs')
@@ -76,10 +76,10 @@ def _extract(states, pt3_np, theta, t_np):
     z_acc  = x_sg[:, 8]
     e_res  = e_held - x_copy   # ballistic residual
 
-    e_pos_delayed = (x_vis @ np.array(visual_delay.C_pos).T)  # (T, 3)
+    e_pos_delayed = (x_vis @ np.array(C_pos).T)  # (T, 3)
 
     def _burst_at(state):
-        e_pd = visual_delay.C_pos @ state.sensory[_IDX_VIS]
+        e_pd = C_pos @ state.sensory[_IDX_VIS]
         _, u = sg_mod.step(state.brain[_IDX_SG], e_pd, theta)
         return u
     u_burst = np.array(jax.vmap(_burst_at)(states))

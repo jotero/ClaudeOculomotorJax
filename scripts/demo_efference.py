@@ -37,11 +37,11 @@ import matplotlib.pyplot as plt
 
 from oculomotor.sim.simulator import (
     THETA_DEFAULT, simulate,
-    _IDX_C, _IDX_NI, _IDX_SG, _IDX_VIS, _IDX_VS, _IDX_EC, _IDX_PC, _IDX_NI_PC,
+    _IDX_C, _IDX_NI, _IDX_SG, _IDX_VIS, _IDX_VS, _IDX_EC,
 )
 from oculomotor.models import saccade_generator as sg_mod
-from oculomotor.models import visual_delay
-from oculomotor.models import canal
+from oculomotor.models.sensory_model import C_slip, C_pos
+from oculomotor.models.sensory_model import N_CANALS, canal_nonlinearity
 from oculomotor.models import velocity_storage as vs_mod
 
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), '..', 'outputs')
@@ -73,7 +73,7 @@ def _extract(states, theta, t_np):
     x_vs    = np.array(states.brain[:, _IDX_VS])
 
     def _at(state):
-        e_pd    = visual_delay.C_pos @ state.sensory[_IDX_VIS]
+        e_pd    = C_pos @ state.sensory[_IDX_VIS]
         _, u_b  = sg_mod.step(state.brain[_IDX_SG], e_pd, theta)
         return u_b
     u_burst = np.array(jax.vmap(_at)(states))  # (T, 3)
@@ -81,13 +81,13 @@ def _extract(states, theta, t_np):
     w_burst_pred = (x_ni_pc - x_pc) / tau_p + u_burst  # (T, 3)
 
     # w_est from canal + VS state (needed for exact w_eye)
-    cg = jnp.array(theta.get('canal_gains', jnp.ones(canal.N_CANALS)))
+    cg = jnp.array(theta.get('canal_gains', jnp.ones(N_CANALS)))
     x_c_j   = states.sensory[:, _IDX_C]
     x_vs_j  = states.brain[:, _IDX_VS]
     x_vis_j = states.sensory[:, _IDX_VIS]
     def _w_est_at(xc, xvs, xvis):
-        y_c   = canal.canal_nonlinearity(xc, cg)
-        e_sl  = visual_delay.C_slip @ xvis
+        y_c   = canal_nonlinearity(xc, cg)
+        e_sl  = C_slip @ xvis
         _, w  = vs_mod.step(xvs, jnp.concatenate([y_c, e_sl]), theta)
         return w
     w_est = np.array(jax.vmap(_w_est_at)(x_c_j, x_vs_j, x_vis_j))  # (T, 3)
@@ -230,7 +230,7 @@ def demo_okn_debug():
     SPV_CLIP = 40.0
     spv      = np.where(np.abs(w_eye) < SPV_CLIP, w_eye, np.nan)
 
-    e_pos_del = (np.array(states_sac.sensory[:, _IDX_VIS]) @ np.array(visual_delay.C_pos).T)[:, 0]
+    e_pos_del = (np.array(states_sac.sensory[:, _IDX_VIS]) @ np.array(C_pos).T)[:, 0]
     e_motor   = -x_p_sac   # target at 0°, head stationary
 
     fig, axes = plt.subplots(7, 1, figsize=(12, 17), sharex=True)

@@ -132,6 +132,77 @@ C_slip = jnp.zeros((3, _N_VIS_STATES)).at[:, _N_PER_SIG - 3 : _N_PER_SIG].set(jn
 C_pos  = jnp.zeros((3, _N_VIS_STATES)).at[:, _N_VIS_STATES - 3 :          ].set(jnp.eye(3))
 
 
+# ── Shared delay cascade utilities (used by efference_copy and sensory_model) ─
+
+def delay_cascade_step(x_cascade, signal, theta):
+    """Advance one (N_STAGES × 3 = 120) delay cascade by one ODE step.
+
+    Shared utility — called by sensory_model and efference_copy so both use
+    an identical gamma-distributed delay with the same tau_vis parameter.
+
+    Args:
+        x_cascade: (120,)  cascade state
+        signal:    (3,)    input signal to delay
+        theta:     dict    model parameters (reads 'tau_vis')
+
+    Returns:
+        dx_cascade: (120,)  state derivative
+    """
+    k = N_STAGES / theta.get('tau_vis', 0.08)
+    return k * _A_STRUCT @ x_cascade + k * _B_STRUCT_SIG @ signal
+
+
+def delay_cascade_read(x_cascade):
+    """Read the delayed output (last stage) of a cascade.
+
+    Args:
+        x_cascade: (120,)  cascade state
+
+    Returns:
+        delayed: (3,)  signal delayed by tau_vis seconds
+    """
+    return x_cascade[_N_PER_SIG - 3 : _N_PER_SIG]   # last 3 states
+
+
+# ── Delayed signal readout ────────────────────────────────────────────────────
+
+def read_delayed(x_sensory):
+    """Read delayed retinal signals from the visual cascade state.
+
+    Pure state readout — no derivative computation.  Returns signals as they
+    were tau_vis seconds ago, independent of the current e_slip / e_pos inputs.
+
+    Args:
+        x_sensory: (252,)  sensory state [x_c (12) | x_vis (240)]
+
+    Returns:
+        e_slip_delayed: (3,)  delayed retinal slip   (for VS / OKR)
+        e_pos_delayed:  (3,)  delayed position error (for saccade generator)
+    """
+    x_vis = x_sensory[_IDX_VIS]
+    return C_slip @ x_vis, C_pos @ x_vis
+
+
+# ── Canal afferent readout ────────────────────────────────────────────────────
+
+def read_canals(x_sensory, theta):
+    """Read canal afferent firing rates from the current sensory state.
+
+    Pure state readout — no derivative computation.  y_canals is a nonlinear
+    function of x_c (the inertia state) only; it does not depend on w_head.
+
+    Args:
+        x_sensory: (252,)  sensory state [x_c (12) | x_vis (240)]
+        theta:     dict    model parameters (reads 'canal_gains')
+
+    Returns:
+        y_canals: (N_CANALS,)  canal afferent firing rates
+    """
+    x_c   = x_sensory[_IDX_C]
+    gains = theta.get('canal_gains', jnp.ones(N_CANALS))
+    return canal_nonlinearity(x_c, gains)
+
+
 # ── Canal nonlinearity ─────────────────────────────────────────────────────────
 
 def canal_nonlinearity(x_c, gains):

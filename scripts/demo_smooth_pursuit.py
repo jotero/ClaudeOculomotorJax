@@ -30,7 +30,7 @@ from oculomotor.sim.simulator import (
 )
 from oculomotor.models import retina
 from oculomotor.models import saccade_generator as sg
-from oculomotor.models import visual_delay
+from oculomotor.models.sensory_model import C_slip, C_pos
 
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), '..', 'outputs')
 
@@ -72,7 +72,7 @@ def _extract_all(theta, t_array, pt3, max_steps=10000):
         x_reset_int   = state.brain[_IDX_SG]
         p_t           = target_interp.evaluate(t)
         e_motor       = retina.target_to_angle(p_t) - x_p
-        e_pos_delayed = visual_delay.C_pos @ x_vis
+        e_pos_delayed = C_pos @ x_vis
         _, u_burst    = sg.step(x_reset_int, e_pos_delayed, theta)
         return {'q_eye': x_p, 'x_ni': x_ni, 'e_motor': e_motor,
                 'e_pos_delayed': e_pos_delayed,

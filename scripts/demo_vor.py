@@ -28,8 +28,8 @@ from oculomotor.sim.simulator import (
     THETA_DEFAULT, simulate,
     _IDX_C, _IDX_VS, _IDX_NI, _IDX_VIS, _IDX_SG,
 )
-from oculomotor.models import canal as canal_ssm
-from oculomotor.models import visual_delay
+from oculomotor.models.sensory_model import N_CANALS, FLOOR, _SOFTNESS, PINV_SENS
+from oculomotor.models.sensory_model import C_slip, C_pos
 from oculomotor.models import saccade_generator as sg_mod
 from oculomotor.sim.stimulus import rotation_step, Stimulus
 
@@ -64,14 +64,14 @@ def _extract_signals(theta, t_array, head_vel_1d, states):
     x_ni = np.array(states.brain[:, _IDX_NI])
     x_p  = np.array(states.plant)
 
-    nc  = canal_ssm.N_CANALS
+    nc  = N_CANALS
     x1  = x_c[:, :nc]
     x2  = x_c[:, nc:]
-    k   = canal_ssm._SOFTNESS
-    f   = float(canal_ssm.FLOOR)
+    k   = _SOFTNESS
+    f   = float(FLOOR)
     y_c = -f + sp_softplus(k * (x2 + f)) / k + sp_softplus(k * (x2 - f)) / k
 
-    pinv    = np.array(canal_ssm.PINV_SENS)
+    pinv    = np.array(PINV_SENS)
     u_canal = (pinv @ y_c.T).T
     w_est   = x_vs + u_canal
     u_p     = x_ni - theta['tau_p'] * w_est
@@ -93,7 +93,7 @@ def _extract_signals(theta, t_array, head_vel_1d, states):
 def _extract_burst(states, theta):
     """Recompute u_burst (T, 3) from full state trajectory via vmap."""
     def _at(state):
-        e_pos_delayed = visual_delay.C_pos @ state.sensory[_IDX_VIS]
+        e_pos_delayed = C_pos @ state.sensory[_IDX_VIS]
         _, u_burst = sg_mod.step(state.brain[_IDX_SG], e_pos_delayed, theta)
         return u_burst
     return np.array(jax.vmap(_at)(states))
@@ -127,7 +127,7 @@ def demo_vor_cascade():
     sigs_nv     = _extract_signals(theta_no_vs, t, hv, states_nv)
 
     tau_eff = THETA['tau_vs']
-    FLOOR   = float(canal_ssm.FLOOR)
+    FLOOR   = float(FLOOR)
 
     fig, axes = plt.subplots(10, 1, figsize=(24, 27), sharex=True)
     fig.suptitle(f'VOR in the dark — step rotation  ({rotate_dur:.0f} s @ 30 deg/s)\n'
@@ -255,7 +255,7 @@ def demo_okr_cascade():
 
     w_scene_np   = np.where(t_np < on_dur, scene_vel, 0.0)
     eye_vel      = np.gradient(x_p[:, 0], dt)
-    e_delayed    = (x_vis @ np.array(visual_delay.C_slip).T)[:, 0]
+    e_delayed    = (x_vis @ np.array(C_slip).T)[:, 0]
     u_vis_direct = THETA['g_vis'] * e_delayed
     SPV_CLIP     = 80.0   # deg/s; clips fast-phase peaks (>80), shows slow phase between
     spv          = np.where(np.abs(eye_vel) < SPV_CLIP, eye_vel, np.nan)
@@ -401,8 +401,8 @@ def demo_vvor():
 
     x_vis_dark = np.array(states_dark.sensory[:, _IDX_VIS])
     x_vis_lit  = np.array(states_lit.sensory[:,  _IDX_VIS])
-    e_delayed_dark = (x_vis_dark @ np.array(visual_delay.C_pos).T)[:, 0]
-    e_delayed_lit  = (x_vis_lit  @ np.array(visual_delay.C_pos).T)[:, 0]
+    e_delayed_dark = (x_vis_dark @ np.array(C_pos).T)[:, 0]
+    e_delayed_lit  = (x_vis_lit  @ np.array(C_pos).T)[:, 0]
 
     burst_dark = _extract_burst(states_dark, theta_dark)
     burst_lit  = _extract_burst(states_lit,  theta_lit)

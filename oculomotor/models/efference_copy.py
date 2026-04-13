@@ -1,64 +1,67 @@
-"""Efference copy: NI + plant copy driven by saccade burst command.
+"""Efference copy — delays u_burst by tau_vis to match the visual delay cascade.
 
-State-space model (SSM) that mirrors the NI and plant response to u_burst alone,
-so that the predicted burst-driven eye velocity cancels exactly in the retinal
-slip signal:
+Architecture
+────────────
+The saccade burst command (u_burst) drives eye movement AND contaminates the
+retinal slip signal.  To cancel this contamination, u_burst must be subtracted
+from the delayed retinal slip — but AFTER the visual delay, not before it.
 
-    e_slip = scene_gain * (w_scene - w_head - w_eye + w_burst_pred)
+Correct signal flow:
+    raw_slip = w_scene − w_head − dx_plant          (no correction here)
+    raw_slip  → [visual delay, tau_vis] → raw_slip_delayed
+    u_burst   → [EC delay,    tau_vis] → u_burst_delayed     (this module)
 
-State vector  x_ec = [x_ni_pc (3) | x_pc (3)]   (N_STATES = 6)
+    e_slip_corrected = raw_slip_delayed − u_burst_delayed     (in brain_model)
+    e_slip_corrected → VS
 
-    x_ni_pc — efference-copy NI: integrates u_burst with tau_i leak.
-    x_pc    — efference-copy plant: follows x_ni_pc with tau_p lag.
+The EC delay uses the same gamma-distributed cascade (N_STAGES first-order LP
+filters, tau_vis total delay) as the visual pathway — ensuring that the
+subtraction cancels at the same temporal phase.
 
-Equations:
-    dx_ni_pc = -1/tau_i * x_ni_pc + u_burst
-    dx_pc    =  1/tau_p * x_ni_pc - 1/tau_p * x_pc + u_burst
+State: x_ec = (N_STAGES × 3,) = (120,) delay cascade for u_burst (3-D).
 
-Output:
-    w_burst_pred = (x_ni_pc - x_pc) / tau_p + u_burst  ≡  dx_pc
-
-Matrices (see get_A, get_B, get_C, get_D):
-    A (6×6): block diagonal [ -1/tau_i · I₃  |  0           ]
-                             [  1/tau_p · I₃  | -1/tau_p · I₃]
-    B (6×3): [I₃ ; I₃]
-    C (3×6): [1/tau_p · I₃ | -1/tau_p · I₃]
-    D (3×3): I₃   (u_burst feedthrough to w_burst_pred)
+Parameters:
+    tau_vis — total delay (s).  Must match the visual delay parameter.
+              Default: 0.08 s.  Shared via THETA_DEFAULT.
 """
 
-import jax.numpy as jnp
+from oculomotor.models.sensory_model import delay_cascade_step, delay_cascade_read
+from oculomotor.models.sensory_model import _N_PER_SIG
 
-N_STATES  = 6   # [x_ni_pc (3) | x_pc (3)]
-N_INPUTS  = 3   # u_burst
-N_OUTPUTS = 3   # w_burst_pred
+N_STATES  = _N_PER_SIG   # 120  — one delay cascade for 3-D u_burst
+N_INPUTS  = 3             # u_burst
+N_OUTPUTS = 3             # u_burst_delayed
+
+
+def read_delayed(x_ec):
+    """Read the current delayed burst output from the EC state.
+
+    Pure state readout — no derivative computation.  Returns u_burst as it was
+    tau_vis seconds ago.  Called at the top of the brain step (before dx_ec is
+    computed) so the subtraction uses the same-time delayed signal.
+
+    Args:
+        x_ec: (120,)  efference copy cascade state
+
+    Returns:
+        u_burst_delayed: (3,)  burst command delayed by tau_vis
+    """
+    return delay_cascade_read(x_ec)
 
 
 def step(x_ec, u_burst, theta):
-    """Advance efference copy one ODE step.
+    """Advance the efference copy delay cascade by one ODE step.
 
     Args:
-        x_ec:    state vector (6,): [x_ni_pc (3) | x_pc (3)]
-        u_burst: saccade burst command (3,)
-        theta:   parameter dict with keys tau_i, tau_p
+        x_ec:    (120,)  EC cascade state
+        u_burst: (3,)    saccade burst velocity command (deg/s)
+        theta:   dict    model parameters (reads 'tau_vis')
 
     Returns:
-        dx_ec:        state derivative (6,)
-        w_burst_pred: predicted burst-driven eye velocity (3,)
+        dx_ec:           (120,)  dx_ec/dt
+        u_burst_delayed: (3,)    burst command delayed by tau_vis (from current state)
     """
-    # ── System matrices ───────────────────────────────────────────────────────
-    tau_i = theta['tau_i']
-    tau_p = theta['tau_p']
-    I3 = jnp.eye(3)
-    Z3 = jnp.zeros((3, 3))
-    A = jnp.concatenate([
-        jnp.concatenate([(-1/tau_i) * I3,  Z3          ], axis=1),  # NI copy row
-        jnp.concatenate([( 1/tau_p) * I3, (-1/tau_p)*I3], axis=1),  # plant copy row
-    ], axis=0)                                           # (6, 6)
-    B = jnp.concatenate([I3, I3], axis=0)               # (6, 3) — burst drives both
-    C = jnp.concatenate([(1/tau_p)*I3, (-1/tau_p)*I3], axis=1)  # (3, 6) velocity readout
-    # D = I (identity feedthrough — omitted)
-
     # ── Dynamics ──────────────────────────────────────────────────────────────
-    dx_ec        = A @ x_ec + B @ u_burst
-    w_burst_pred = C @ x_ec + u_burst
-    return dx_ec, w_burst_pred
+    dx_ec           = delay_cascade_step(x_ec, u_burst, theta)
+    u_burst_delayed = delay_cascade_read(x_ec)   # pure state read — no lag vs dx_ec
+    return dx_ec, u_burst_delayed

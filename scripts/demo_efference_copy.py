@@ -39,11 +39,11 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from oculomotor.sim.simulator import (
     simulate, THETA_DEFAULT,
-    _IDX_C, _IDX_NI, _IDX_SG, _IDX_VIS, _IDX_VS, _IDX_EC, _IDX_PC, _IDX_NI_PC,
+    _IDX_C, _IDX_NI, _IDX_SG, _IDX_VIS, _IDX_VS, _IDX_EC,
 )
 from oculomotor.models import saccade_generator as sg
-from oculomotor.models import visual_delay
-from oculomotor.models import canal
+from oculomotor.models.sensory_model import C_slip, C_pos
+from oculomotor.models.sensory_model import N_CANALS, canal_nonlinearity
 from oculomotor.models import velocity_storage as vs_mod
 from oculomotor.models import retina
 
@@ -108,7 +108,7 @@ def _extract_signals(theta, t, hv3, vs3, pt3, scene_present=True, max_steps=200_
     tau_p = theta['tau_p']
 
     def _burst_at(state):
-        e_pos_delayed = visual_delay.C_pos @ state.sensory[_IDX_VIS]
+        e_pos_delayed = C_pos @ state.sensory[_IDX_VIS]
         _, u_burst    = sg.step(state.brain[_IDX_SG], e_pos_delayed, theta)
         return u_burst
 
@@ -118,10 +118,10 @@ def _extract_signals(theta, t, hv3, vs3, pt3, scene_present=True, max_steps=200_
 
     # Exact w_eye from plant ODE: w_eye = (x_ni - x_p)/tau_p + u_vel
     # where u_vel = -w_est + u_burst and w_est = VS output.
-    cg = jnp.array(theta.get('canal_gains', jnp.ones(canal.N_CANALS)))
+    cg = jnp.array(theta.get('canal_gains', jnp.ones(N_CANALS)))
     def _w_est_at(x_c_t, x_vs_t, x_vis_t):
-        y_canals       = canal.canal_nonlinearity(x_c_t, cg)
-        e_slip_delayed = visual_delay.C_slip @ x_vis_t
+        y_canals       = canal_nonlinearity(x_c_t, cg)
+        e_slip_delayed = C_slip @ x_vis_t
         u_vs           = jnp.concatenate([y_canals, e_slip_delayed])
         _, w_est_t     = vs_mod.step(x_vs_t, u_vs, theta)
         return w_est_t
@@ -437,8 +437,8 @@ def demo_okn_nystagmus():
         x_vis         = state.sensory[_IDX_VIS]
         x_pc          = state.brain[_IDX_EC][_IDX_PC]
         x_ni_pc_      = state.brain[_IDX_EC][_IDX_NI_PC]
-        e_pos_delayed = visual_delay.C_pos  @ x_vis
-        e_slip_delayed= visual_delay.C_slip @ x_vis
+        e_pos_delayed = C_pos  @ x_vis
+        e_slip_delayed= C_slip @ x_vis
         e_motor       = retina.target_to_angle(jnp.array([0.0, 0.0, 1.0])) - x_p
         _, u_burst    = sg.step(x_sg, e_pos_delayed, THETA_OKN)
         w_burst_pred  = (x_ni_pc_ - x_pc) / tau_p + u_burst
