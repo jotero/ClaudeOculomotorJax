@@ -230,18 +230,23 @@ def demo_okr_cascade():
     t_arr    = jnp.arange(0.0, total_dur, 1.0 / sr)
     v_sc     = jnp.where(t_arr < on_dur, scene_vel, 0.0)
     v_scene  = jnp.zeros((len(t_arr), 3)).at[:, 0].set(v_sc)
-    stim_okn = Stimulus(t_arr, omega=jnp.zeros(len(t_arr)), v_scene=v_scene)
+    # scene_present: 1 while scene moves, 0 after scene off (darkness → pure OKAN at tau_vs).
+    # Without this, scene_gain=1 with v_scene=0 creates retinal slip from OKAN eye motion,
+    # causing visual suppression of OKAN (TC ≈ 3 s instead of 20 s).
+    scene_present = jnp.where(t_arr < on_dur, 1.0, 0.0)
     max_s    = int(total_dur / 0.001) + 500
 
     T_okn  = len(t_arr)
-    states = simulate(theta_okn, stim_okn,
+    states = simulate(theta_okn, t_arr,
+                      v_scene_array=v_scene,
+                      scene_present_array=scene_present,
                       # No explicit fixation target (OKN: distributed scene, no single target).
                       # Fast phases are still driven by the implicit straight-ahead target:
                       # e_pos_delayed ≈ −x_p, so the saccade generator fires whenever the
                       # eye drifts from center — classic OKN nystagmus sawtooth.
                       max_steps=max_s, return_states=True)
-    t_np   = np.array(stim_okn.t)
-    dt     = float(stim_okn.dt)
+    t_np   = np.array(t_arr)
+    dt     = 1.0 / sr
     burst  = _extract_burst(states, theta_okn)
 
     x_vis = np.array(states[:, _IDX_VIS])
@@ -256,7 +261,9 @@ def demo_okr_cascade():
     SPV_CLIP     = 80.0   # deg/s; clips fast-phase peaks (>80), shows slow phase between
     spv          = np.where(np.abs(eye_vel) < SPV_CLIP, eye_vel, np.nan)
 
-    eye_no_vis = simulate(theta_no_vis, stim_okn,
+    eye_no_vis = simulate(theta_no_vis, t_arr,
+                          v_scene_array=v_scene,
+                          scene_present_array=scene_present,
                           target_present_array=jnp.zeros(T_okn),
                           max_steps=max_s)[:, 0]
     ev_no_vis  = np.gradient(np.array(eye_no_vis), dt)

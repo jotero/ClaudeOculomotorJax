@@ -261,14 +261,16 @@ def ODE_ocular_motor(t, x, args):
     dx_p,  _   = plant.step(x_p, u_p, theta)
 
     # ── Efference copy: NI+plant copy driven by burst only ───────────────────
-    dx_ec, w_burst_pred = ec.step(x_ec, u_burst, theta)
+    dx_ec, _ = ec.step(x_ec, u_burst, theta)   # integrate state; output replaced below
 
     # ── Retinal signals (position error + velocity slip) → visual delay ──────
     e_pos  = retina.target_to_angle(p_target) - q_head - x_p          # position error (deg)
-    # Retinal slip: gated by scene_gain only (0 = dark, 1 = full scene).
-    # Efference copy w_burst_pred cancels burst-driven eye velocity from dx_p,
-    # so VS receives only scene-driven slip regardless of saccade activity.
-    e_slip = scene_gain * (w_scene - w_head - dx_p + w_burst_pred)
+    # Retinal slip: the burst enters dx_p as a direct feedthrough (via the NI
+    # tau_p correction: u_p = x_ni + tau_p*u_vel).  Cancelling with w_burst_pred = u_burst
+    # removes exactly this contribution, leaving only scene-driven and slow-phase slip.
+    # The full state-based efference copy (ec module) creates a spurious post-burst
+    # residual from x_pc overshoot, so we use only the direct feedthrough here.
+    e_slip = scene_gain * (w_scene - w_head - dx_p + u_burst)
     dx_vis, _, _ = visual_delay.step(x_vis, e_slip, e_pos, theta)
 
     return jnp.concatenate([dx_c, dx_vs, dx_ni, dx_p, dx_vis, dx_sg, dx_ec])
