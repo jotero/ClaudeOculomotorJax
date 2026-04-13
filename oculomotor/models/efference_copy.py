@@ -33,35 +33,6 @@ N_INPUTS  = 3   # u_burst
 N_OUTPUTS = 3   # w_burst_pred
 
 
-def get_A(theta):
-    """State transition matrix A (6×6)."""
-    tau_i = theta['tau_i']
-    tau_p = theta['tau_p']
-    I3 = jnp.eye(3)
-    Z3 = jnp.zeros((3, 3))
-    top = jnp.concatenate([(-1.0 / tau_i) * I3,  Z3              ], axis=1)
-    bot = jnp.concatenate([( 1.0 / tau_p) * I3, (-1.0 / tau_p) * I3], axis=1)
-    return jnp.concatenate([top, bot], axis=0)
-
-
-def get_B(theta):   # noqa: ARG001
-    """Input matrix B (6×3)."""
-    I3 = jnp.eye(3)
-    return jnp.concatenate([I3, I3], axis=0)
-
-
-def get_C(theta):
-    """Output matrix C (3×6)."""
-    tau_p = theta['tau_p']
-    I3 = jnp.eye(3)
-    return jnp.concatenate([(1.0 / tau_p) * I3, (-1.0 / tau_p) * I3], axis=1)
-
-
-def get_D(theta):   # noqa: ARG001
-    """Direct feedthrough matrix D (3×3)."""
-    return jnp.eye(3)
-
-
 def step(x_ec, u_burst, theta):
     """Advance efference copy one ODE step.
 
@@ -73,14 +44,21 @@ def step(x_ec, u_burst, theta):
     Returns:
         dx_ec:        state derivative (6,)
         w_burst_pred: predicted burst-driven eye velocity (3,)
-
-    DEFERRED — Option 2 anti-windup:
-        If orbital saturation occurs despite target_selector.select() clipping,
-        x_pc may exceed ±orbital_limit while the real plant output is soft-limited.
-        Fix: apply plant.soft_limit() to x_pc before computing w_burst_pred here.
-        Implement only if e_slip artifacts appear during orbital saturation.
-        See target_selector module docstring for full description.
     """
-    dx_ec        = get_A(theta) @ x_ec + get_B(theta) @ u_burst
-    w_burst_pred = get_C(theta) @ x_ec + get_D(theta) @ u_burst
+    # ── System matrices ───────────────────────────────────────────────────────
+    tau_i = theta['tau_i']
+    tau_p = theta['tau_p']
+    I3 = jnp.eye(3)
+    Z3 = jnp.zeros((3, 3))
+    A = jnp.concatenate([
+        jnp.concatenate([(-1/tau_i) * I3,  Z3          ], axis=1),  # NI copy row
+        jnp.concatenate([( 1/tau_p) * I3, (-1/tau_p)*I3], axis=1),  # plant copy row
+    ], axis=0)                                           # (6, 6)
+    B = jnp.concatenate([I3, I3], axis=0)               # (6, 3) — burst drives both
+    C = jnp.concatenate([(1/tau_p)*I3, (-1/tau_p)*I3], axis=1)  # (3, 6) velocity readout
+    # D = I (identity feedthrough — omitted)
+
+    # ── Dynamics ──────────────────────────────────────────────────────────────
+    dx_ec        = A @ x_ec + B @ u_burst
+    w_burst_pred = C @ x_ec + u_burst
     return dx_ec, w_burst_pred

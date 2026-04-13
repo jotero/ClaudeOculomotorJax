@@ -35,9 +35,9 @@ if not SHOW:
     matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
-from oculomotor.models.ocular_motor_simulator import (
+from oculomotor.sim.simulator import (
     THETA_DEFAULT, simulate,
-    _IDX_C, _IDX_P, _IDX_NI, _IDX_SG, _IDX_VIS, _IDX_VS, _IDX_PC, _IDX_NI_PC,
+    _IDX_C, _IDX_NI, _IDX_SG, _IDX_VIS, _IDX_VS, _IDX_EC, _IDX_PC, _IDX_NI_PC,
 )
 from oculomotor.models import saccade_generator as sg_mod
 from oculomotor.models import visual_delay
@@ -66,26 +66,25 @@ THETA_OKN_OFF = {**THETA_DEFAULT, 'g_burst': 0.0}
 def _extract(states, theta, t_np):
     """Extract efference-copy signals from full state trajectory."""
     tau_p   = theta['tau_p']
-    x_p     = np.array(states[:, _IDX_P])
-    x_ni    = np.array(states[:, _IDX_NI])
-    x_pc    = np.array(states[:, _IDX_PC])
-    x_ni_pc = np.array(states[:, _IDX_NI_PC])
-    x_vs    = np.array(states[:, _IDX_VS])
+    x_p     = np.array(states.plant)
+    x_ni    = np.array(states.brain[:, _IDX_NI])
+    x_pc    = np.array(states.brain[:, _IDX_EC][:, _IDX_PC])
+    x_ni_pc = np.array(states.brain[:, _IDX_EC][:, _IDX_NI_PC])
+    x_vs    = np.array(states.brain[:, _IDX_VS])
 
-    ys_j = jnp.array(states)
-    def _at(x):
-        e_pd    = visual_delay.C_pos @ x[_IDX_VIS]
-        _, u_b  = sg_mod.step(x[_IDX_SG], e_pd, theta)
+    def _at(state):
+        e_pd    = visual_delay.C_pos @ state.sensory[_IDX_VIS]
+        _, u_b  = sg_mod.step(state.brain[_IDX_SG], e_pd, theta)
         return u_b
-    u_burst = np.array(jax.vmap(_at)(ys_j))  # (T, 3)
+    u_burst = np.array(jax.vmap(_at)(states))  # (T, 3)
 
     w_burst_pred = (x_ni_pc - x_pc) / tau_p + u_burst  # (T, 3)
 
     # w_est from canal + VS state (needed for exact w_eye)
     cg = jnp.array(theta.get('canal_gains', jnp.ones(canal.N_CANALS)))
-    x_c_j   = jnp.array(states[:, _IDX_C])
-    x_vs_j  = jnp.array(states[:, _IDX_VS])
-    x_vis_j = jnp.array(states[:, _IDX_VIS])
+    x_c_j   = states.sensory[:, _IDX_C]
+    x_vs_j  = states.brain[:, _IDX_VS]
+    x_vis_j = states.sensory[:, _IDX_VIS]
     def _w_est_at(xc, xvs, xvis):
         y_c   = canal.canal_nonlinearity(xc, cg)
         e_sl  = visual_delay.C_slip @ xvis
@@ -221,8 +220,8 @@ def demo_okn_debug():
     x_vs_sac   = s['x_vs'][:, 0]
     x_vs_nosac = s_ns['x_vs'][:, 0]
     x_p_sac    = s['x_p'][:, 0]
-    x_ni_sac   = np.array(states_sac[:, _IDX_NI])[:, 0]
-    x_sg_sac   = np.array(states_sac[:, _IDX_SG])[:, 3]   # z_ref
+    x_ni_sac   = np.array(states_sac.brain[:, _IDX_NI])[:, 0]
+    x_sg_sac   = np.array(states_sac.brain[:, _IDX_SG])[:, 3]   # z_ref
 
     thr     = THETA_OKN.get('threshold_sac', 0.5)
     w_eye   = np.gradient(x_p_sac, dt)
@@ -231,7 +230,7 @@ def demo_okn_debug():
     SPV_CLIP = 40.0
     spv      = np.where(np.abs(w_eye) < SPV_CLIP, w_eye, np.nan)
 
-    e_pos_del = (np.array(states_sac[:, _IDX_VIS]) @ np.array(visual_delay.C_pos).T)[:, 0]
+    e_pos_del = (np.array(states_sac.sensory[:, _IDX_VIS]) @ np.array(visual_delay.C_pos).T)[:, 0]
     e_motor   = -x_p_sac   # target at 0°, head stationary
 
     fig, axes = plt.subplots(7, 1, figsize=(12, 17), sharex=True)
@@ -296,7 +295,7 @@ def _run_tests():
     # ── Test 1: x_pc stays zero without burst ─────────────────────────────
     t = jnp.arange(0.0, 0.5, dt); T = len(t)
     states = simulate(THETA_NO_SAC, t, max_steps=int(0.5/dt)+200, return_states=True)
-    x_pc = np.array(states[:, _IDX_PC])
+    x_pc = np.array(states.brain[:, _IDX_EC][:, _IDX_PC])
     assert np.allclose(x_pc, 0.0, atol=1e-6), \
         f'FAIL: x_pc non-zero without burst; max={np.abs(x_pc).max():.2e}'
     print('  1. x_pc zero without burst                   PASS')
@@ -310,8 +309,8 @@ def _run_tests():
     states = simulate(THETA_SAC, t, p_target_array=pt3,
                       scene_present_array=jnp.zeros(T),
                       max_steps=int(0.8/dt)+200, return_states=True)
-    x_ni_pc = np.array(states[:, _IDX_NI_PC])[:, 0]
-    x_pc    = np.array(states[:, _IDX_PC])[:, 0]
+    x_ni_pc = np.array(states.brain[:, _IDX_EC][:, _IDX_NI_PC])[:, 0]
+    x_pc    = np.array(states.brain[:, _IDX_EC][:, _IDX_PC])[:, 0]
     mask_after   = t_np > 0.2
     mask_settled = t_np > 0.6
     assert np.abs(x_ni_pc[mask_after]).max() > 1.0, \
@@ -330,7 +329,7 @@ def _run_tests():
     states = simulate(THETA_SAC, t, p_target_array=pt3,
                       scene_present_array=jnp.ones(T),
                       max_steps=int(0.6/dt)+200, return_states=True)
-    x_vs = np.array(states[:, _IDX_VS])
+    x_vs = np.array(states.brain[:, _IDX_VS])
     mask = (t_np > 0.3) & (t_np < 0.55)
     contamination = np.abs(x_vs[mask]).max()
     assert contamination < 5.0, \
@@ -344,7 +343,7 @@ def _run_tests():
                       head_vel_array=jnp.zeros(T), v_scene_array=vs3,
                       scene_present_array=jnp.ones(T),
                       max_steps=int(2.0/dt)+200, return_states=True)
-    x_vs = np.array(states[:, _IDX_VS])
+    x_vs = np.array(states.brain[:, _IDX_VS])
     vs_late = np.abs(x_vs[t_np > 1.0, 0]).mean()
     assert vs_late > 1.0, \
         f'FAIL: VS not driven by scene; mean={vs_late:.2f}'
@@ -363,8 +362,8 @@ def _run_tests():
                              head_vel_array=jnp.zeros(T), v_scene_array=vs3,
                              scene_present_array=sp, max_steps=max_s, return_states=True)
 
-    x_vs_sac   = np.array(states_sac[:, _IDX_VS])[:, 0]
-    x_vs_nosac = np.array(states_nosac[:, _IDX_VS])[:, 0]
+    x_vs_sac   = np.array(states_sac.brain[:, _IDX_VS])[:, 0]
+    x_vs_nosac = np.array(states_nosac.brain[:, _IDX_VS])[:, 0]
     mask5    = t_np > 7.0
     vs_diff  = np.abs(x_vs_sac[mask5] - x_vs_nosac[mask5]).max()
     assert vs_diff < 5.0, \

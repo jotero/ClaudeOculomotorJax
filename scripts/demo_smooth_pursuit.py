@@ -24,11 +24,9 @@ import numpy as np
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-import diffrax
-
-from oculomotor.models.ocular_motor_simulator import (
-    THETA_DEFAULT, ODE_ocular_motor, _N_TOTAL,
-    _IDX_NI, _IDX_P, _IDX_SG, _IDX_VIS,
+from oculomotor.sim.simulator import (
+    THETA_DEFAULT, simulate,
+    _IDX_NI, _IDX_SG, _IDX_VIS,
 )
 from oculomotor.models import retina
 from oculomotor.models import saccade_generator as sg
@@ -55,35 +53,23 @@ DT      = 0.001
 
 
 def _extract_all(theta, t_array, pt3, max_steps=10000):
-    T      = len(t_array)
-    hv3    = jnp.zeros((T, 3))
-    vs3    = jnp.zeros((T, 3))
-    hp3    = jnp.zeros((T, 3))
-    sg1    = jnp.ones(T, dtype=jnp.float32)
+    T   = len(t_array)
+    sg1 = jnp.ones(T, dtype=jnp.float32)
 
-    target_interp     = diffrax.LinearInterpolation(ts=t_array, ys=pt3)
-    solution = diffrax.diffeqsolve(
-        diffrax.ODETerm(ODE_ocular_motor),
-        diffrax.Heun(),
-        t0=t_array[0], t1=t_array[-1], dt0=DT,
-        y0=jnp.zeros(_N_TOTAL),
-        args=(theta,
-              diffrax.LinearInterpolation(ts=t_array, ys=hv3),
-              diffrax.LinearInterpolation(ts=t_array, ys=hp3),
-              diffrax.LinearInterpolation(ts=t_array, ys=vs3),
-              target_interp,
-              diffrax.LinearInterpolation(ts=t_array, ys=sg1)),
-        stepsize_controller=diffrax.ConstantStepSize(),
-        saveat=diffrax.SaveAt(ts=t_array),
-        max_steps=max_steps,
-    )
-    ys = solution.ys
+    states = simulate(theta, t_array,
+                      p_target_array=pt3,
+                      scene_present_array=sg1,
+                      max_steps=max_steps,
+                      return_states=True)
 
-    def _signals_at(x, t):
-        x_p           = x[_IDX_P]
-        x_ni          = x[_IDX_NI]
-        x_vis         = x[_IDX_VIS]
-        x_reset_int   = x[_IDX_SG]
+    import diffrax
+    target_interp = diffrax.LinearInterpolation(ts=t_array, ys=pt3)
+
+    def _signals_at(state, t):
+        x_p           = state.plant
+        x_ni          = state.brain[_IDX_NI]
+        x_vis         = state.sensory[_IDX_VIS]
+        x_reset_int   = state.brain[_IDX_SG]
         p_t           = target_interp.evaluate(t)
         e_motor       = retina.target_to_angle(p_t) - x_p
         e_pos_delayed = visual_delay.C_pos @ x_vis
@@ -92,7 +78,7 @@ def _extract_all(theta, t_array, pt3, max_steps=10000):
                 'e_pos_delayed': e_pos_delayed,
                 'x_reset_int': x_reset_int, 'u_burst': u_burst}
 
-    raw = jax.vmap(lambda x, t: _signals_at(x, t))(ys, t_array)
+    raw = jax.vmap(_signals_at)(states, t_array)
     return {k: np.array(v) for k, v in raw.items()}
 
 

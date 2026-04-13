@@ -24,9 +24,9 @@ if not SHOW:
     matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
-from oculomotor.models.ocular_motor_simulator import (
+from oculomotor.sim.simulator import (
     THETA_DEFAULT, simulate,
-    _IDX_C, _IDX_VS, _IDX_NI, _IDX_P, _IDX_VIS, _IDX_SG,
+    _IDX_C, _IDX_VS, _IDX_NI, _IDX_VIS, _IDX_SG,
 )
 from oculomotor.models import canal as canal_ssm
 from oculomotor.models import visual_delay
@@ -59,10 +59,10 @@ def _extract_signals(theta, t_array, head_vel_1d, states):
     """Reconstruct intermediate signals from saved state trajectory."""
     from scipy.special import softplus as sp_softplus
     hv   = np.array(head_vel_1d)
-    x_c  = np.array(states[:, _IDX_C])
-    x_vs = np.array(states[:, _IDX_VS])
-    x_ni = np.array(states[:, _IDX_NI])
-    x_p  = np.array(states[:, _IDX_P])
+    x_c  = np.array(states.sensory[:, _IDX_C])
+    x_vs = np.array(states.brain[:, _IDX_VS])
+    x_ni = np.array(states.brain[:, _IDX_NI])
+    x_p  = np.array(states.plant)
 
     nc  = canal_ssm.N_CANALS
     x1  = x_c[:, :nc]
@@ -92,12 +92,11 @@ def _extract_signals(theta, t_array, head_vel_1d, states):
 
 def _extract_burst(states, theta):
     """Recompute u_burst (T, 3) from full state trajectory via vmap."""
-    ys_j = jnp.array(states)
-    def _at(x):
-        e_pos_delayed = visual_delay.C_pos @ x[_IDX_VIS]
-        _, u_burst = sg_mod.step(x[_IDX_SG], e_pos_delayed, theta)
+    def _at(state):
+        e_pos_delayed = visual_delay.C_pos @ state.sensory[_IDX_VIS]
+        _, u_burst = sg_mod.step(state.brain[_IDX_SG], e_pos_delayed, theta)
         return u_burst
-    return np.array(jax.vmap(_at)(ys_j))
+    return np.array(jax.vmap(_at)(states))
 
 
 def _ax_fmt(ax):
@@ -249,10 +248,10 @@ def demo_okr_cascade():
     dt     = 1.0 / sr
     burst  = _extract_burst(states, theta_okn)
 
-    x_vis = np.array(states[:, _IDX_VIS])
-    x_vs  = np.array(states[:, _IDX_VS])
-    x_ni  = np.array(states[:, _IDX_NI])
-    x_p   = np.array(states[:, _IDX_P])
+    x_vis = np.array(states.sensory[:, _IDX_VIS])
+    x_vs  = np.array(states.brain[:, _IDX_VS])
+    x_ni  = np.array(states.brain[:, _IDX_NI])
+    x_p   = np.array(states.plant)
 
     w_scene_np   = np.where(t_np < on_dur, scene_vel, 0.0)
     eye_vel      = np.gradient(x_p[:, 0], dt)
@@ -395,21 +394,21 @@ def demo_vvor():
     dt_vv    = float(stim_vor.dt)
     head_pos = np.cumsum(hv_vv) * dt_vv
 
-    eye_dark = np.array(states_dark[:, _IDX_P])[:, 0]
-    eye_lit  = np.array(states_lit[:,  _IDX_P])[:, 0]
+    eye_dark = np.array(states_dark.plant)[:, 0]
+    eye_lit  = np.array(states_lit.plant)[:, 0]
     ev_dark  = np.gradient(eye_dark, dt_vv)
     ev_lit   = np.gradient(eye_lit,  dt_vv)
 
-    x_vis_dark = np.array(states_dark[:, _IDX_VIS])
-    x_vis_lit  = np.array(states_lit[:,  _IDX_VIS])
+    x_vis_dark = np.array(states_dark.sensory[:, _IDX_VIS])
+    x_vis_lit  = np.array(states_lit.sensory[:,  _IDX_VIS])
     e_delayed_dark = (x_vis_dark @ np.array(visual_delay.C_pos).T)[:, 0]
     e_delayed_lit  = (x_vis_lit  @ np.array(visual_delay.C_pos).T)[:, 0]
 
     burst_dark = _extract_burst(states_dark, theta_dark)
     burst_lit  = _extract_burst(states_lit,  theta_lit)
 
-    sg_dark = np.array(states_dark[:, _IDX_SG])
-    sg_lit  = np.array(states_lit[:,  _IDX_SG])
+    sg_dark = np.array(states_dark.brain[:, _IDX_SG])
+    sg_lit  = np.array(states_lit.brain[:,  _IDX_SG])
     z_sac_dark = sg_dark[:, 7]
     z_sac_lit  = sg_lit[:,  7]
 

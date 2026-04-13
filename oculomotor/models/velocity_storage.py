@@ -104,37 +104,6 @@ N_STATES  = 3
 N_INPUTS  = N_CANALS + 3    # 6 canal afferents + 3 delayed retinal slip axes
 N_OUTPUTS = 3
 
-C = jnp.eye(3)     # (3, 3) state output
-
-
-def get_A(theta):
-    """(3, 3) state matrix — storage leak only; K_vs drives only B, not A."""
-    a = -(1.0 / theta['tau_vs'])
-    return a * jnp.eye(3)
-
-
-def get_B(theta):
-    """(3, 9) input matrix — [K_vs·PINV_SENS | −K_vis·I₃].
-
-    Canal block drives VS state with Kalman gain K_vs.
-    Visual block charges VS state negatively with gain K_vis.
-    Maps stacked input u = [y_canals | e_slip_delayed] to state derivative.
-    """
-    k_vis = theta.get('K_vis', 0.3)
-    return jnp.concatenate([theta['K_vs'] * PINV_SENS,
-                             -k_vis * jnp.eye(3)], axis=1)
-
-
-def get_D(theta):
-    """(3, 9) direct feedthrough — [PINV_SENS | −g_vis·I₃].
-
-    Canal block: passes head vel estimate to NI instantly (fast VOR).
-    Visual block: instantaneous OKR contribution from delayed slip.
-    """
-    g_vis = theta.get('g_vis', 0.3)
-    return jnp.concatenate([PINV_SENS, -g_vis * jnp.eye(3)], axis=1)
-
-
 def step(x_vs, u, theta):
     """Single ODE step: state derivative + velocity command output.
 
@@ -147,6 +116,15 @@ def step(x_vs, u, theta):
         dx:    (3,)  dx_vs/dt
         w_est: (3,)  angular velocity estimate (deg/s)
     """
-    dx    = get_A(theta) @ x_vs + get_B(theta) @ u
-    w_est = C @ x_vs + get_D(theta) @ u
+    # ── System matrices ───────────────────────────────────────────────────────
+    k_vis = theta.get('K_vis', 0.3)
+    g_vis = theta.get('g_vis', 0.3)
+    A = -(1.0 / theta['tau_vs']) * jnp.eye(3)
+    B = jnp.concatenate([theta['K_vs'] * PINV_SENS, -k_vis * jnp.eye(3)], axis=1)
+    D = jnp.concatenate([PINV_SENS,                 -g_vis * jnp.eye(3)], axis=1)
+    # C = I (identity — omitted)
+
+    # ── Dynamics ──────────────────────────────────────────────────────────────
+    dx    = A @ x_vs + B @ u
+    w_est = x_vs     + D @ u
     return dx, w_est

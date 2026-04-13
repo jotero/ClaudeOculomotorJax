@@ -37,12 +37,9 @@ import jax.numpy as jnp
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-import diffrax
-
-from oculomotor.models.ocular_motor_simulator import (
+from oculomotor.sim.simulator import (
     simulate, THETA_DEFAULT,
-    ODE_ocular_motor, _N_TOTAL,
-    _IDX_C, _IDX_P, _IDX_NI, _IDX_SG, _IDX_VIS, _IDX_VS, _IDX_PC, _IDX_NI_PC,
+    _IDX_C, _IDX_NI, _IDX_SG, _IDX_VIS, _IDX_VS, _IDX_EC, _IDX_PC, _IDX_NI_PC,
 )
 from oculomotor.models import saccade_generator as sg
 from oculomotor.models import visual_delay
@@ -73,18 +70,13 @@ THETA_OKN_OFF = {**THETA_DEFAULT, 'g_burst': 0.0}   # no saccades — reference
 # ── Shared runner ──────────────────────────────────────────────────────────────
 
 def _run_full(theta, t, hv3, vs3, pt3, scene_present=True, max_steps=200_000):
-    """Run ODE and return full state trajectory (T, _N_TOTAL).
+    """Run ODE and return full SimState trajectory.
 
     scene_present: True  → scene always visible (sg=1, default).
                    False → dark (sg=0, OKR/visual pathways suppressed).
                    (T,) array → time-varying gain.
     """
-    T      = len(t)
-    dt_arr = jnp.diff(t)
-    hp3    = jnp.concatenate([
-        jnp.zeros((1, 3)),
-        jnp.cumsum(0.5 * (hv3[:-1] + hv3[1:]) * dt_arr[:, None], axis=0),
-    ])
+    T = len(t)
     if scene_present is True:
         sg1 = jnp.ones(T, dtype=jnp.float32)
     elif scene_present is False:
@@ -92,23 +84,13 @@ def _run_full(theta, t, hv3, vs3, pt3, scene_present=True, max_steps=200_000):
     else:
         sg1 = jnp.asarray(scene_present, dtype=jnp.float32)
 
-    hv_i  = diffrax.LinearInterpolation(ts=t, ys=hv3)
-    hp_i  = diffrax.LinearInterpolation(ts=t, ys=hp3)
-    vs_i  = diffrax.LinearInterpolation(ts=t, ys=vs3)
-    pt_i  = diffrax.LinearInterpolation(ts=t, ys=pt3)
-    sg_i  = diffrax.LinearInterpolation(ts=t, ys=sg1)
-
-    sol = diffrax.diffeqsolve(
-        diffrax.ODETerm(ODE_ocular_motor),
-        diffrax.Heun(),
-        t0=t[0], t1=t[-1], dt0=0.001,
-        y0=jnp.zeros(_N_TOTAL),
-        args=(theta, hv_i, hp_i, vs_i, pt_i, sg_i),
-        stepsize_controller=diffrax.ConstantStepSize(),
-        saveat=diffrax.SaveAt(ts=t),
-        max_steps=max_steps,
-    )
-    return np.array(sol.ys)   # (T, _N_TOTAL)
+    return simulate(theta, t,
+                    head_vel_array=hv3,
+                    v_scene_array=vs3,
+                    p_target_array=pt3,
+                    scene_present_array=sg1,
+                    max_steps=max_steps,
+                    return_states=True)
 
 
 def _extract_signals(theta, t, hv3, vs3, pt3, scene_present=True, max_steps=200_000):
@@ -117,50 +99,41 @@ def _extract_signals(theta, t, hv3, vs3, pt3, scene_present=True, max_steps=200_
     t_np = np.array(t)
     dt   = float(t[1] - t[0])
 
-    x_p     = ys[:, _IDX_P]
-    x_pc    = ys[:, _IDX_PC]
-    x_ni_pc = ys[:, _IDX_NI_PC]
-    x_vs    = ys[:, _IDX_VS]
+    x_p     = np.array(ys.plant)
+    x_pc    = np.array(ys.brain[:, _IDX_EC][:, _IDX_PC])
+    x_ni_pc = np.array(ys.brain[:, _IDX_EC][:, _IDX_NI_PC])
+    x_vs    = np.array(ys.brain[:, _IDX_VS])
+    x_ni    = np.array(ys.brain[:, _IDX_NI])
 
-    # Plant copy state → predicted saccade velocity (2-state: NI copy + plant copy)
     tau_p = theta['tau_p']
-    # Recompute u_burst from state via vmap
-    target_interp = diffrax.LinearInterpolation(ts=t, ys=pt3)
 
-    # Extract x_ni so we can compute w_eye analytically (avoids gradient artifacts)
-    x_ni = ys[:, _IDX_NI]
-
-    def _burst_at(x, t_):
-        x_sg          = x[_IDX_SG]
-        x_vis         = x[_IDX_VIS]
-        e_pos_delayed = visual_delay.C_pos @ x_vis
-        _, u_burst    = sg.step(x_sg, e_pos_delayed, theta)
+    def _burst_at(state):
+        e_pos_delayed = visual_delay.C_pos @ state.sensory[_IDX_VIS]
+        _, u_burst    = sg.step(state.brain[_IDX_SG], e_pos_delayed, theta)
         return u_burst
 
-    ys_j    = jnp.array(ys)
-    u_burst = np.array(jax.vmap(_burst_at)(ys_j, t))   # (T, 3)
+    u_burst = np.array(jax.vmap(_burst_at)(ys))   # (T, 3)
 
     w_burst_pred = (x_ni_pc - x_pc) / tau_p + u_burst  # 2-state efference copy velocity
 
     # Exact w_eye from plant ODE: w_eye = (x_ni - x_p)/tau_p + u_vel
     # where u_vel = -w_est + u_burst and w_est = VS output.
-    # Recompute w_est analytically from stored state (no numerical gradient needed).
-    x_c_j   = jnp.array(ys[:, _IDX_C])
-    x_vs_j  = jnp.array(ys[:, _IDX_VS])
-    x_vis_j = jnp.array(ys[:, _IDX_VIS])
-    cg      = jnp.array(theta.get('canal_gains', jnp.ones(canal.N_CANALS)))
+    cg = jnp.array(theta.get('canal_gains', jnp.ones(canal.N_CANALS)))
     def _w_est_at(x_c_t, x_vs_t, x_vis_t):
         y_canals       = canal.canal_nonlinearity(x_c_t, cg)
         e_slip_delayed = visual_delay.C_slip @ x_vis_t
         u_vs           = jnp.concatenate([y_canals, e_slip_delayed])
         _, w_est_t     = vs_mod.step(x_vs_t, u_vs, theta)
         return w_est_t
-    w_est = np.array(jax.vmap(_w_est_at)(x_c_j, x_vs_j, x_vis_j))   # (T, 3)
-    w_eye = (x_ni - x_p) / tau_p + (-w_est + u_burst)                # exact eye velocity
+    w_est = np.array(jax.vmap(_w_est_at)(
+        ys.sensory[:, _IDX_C], ys.brain[:, _IDX_VS], ys.sensory[:, _IDX_VIS],
+    ))   # (T, 3)
+    w_eye = (x_ni - x_p) / tau_p + (-w_est + u_burst)   # exact eye velocity
 
     return {
         'x_p':          x_p,
         'x_pc':         x_pc,
+        'x_ni_pc':      x_ni_pc,
         'x_vs':         x_vs,
         'u_burst':      u_burst,
         'w_burst_pred': w_burst_pred,
@@ -204,19 +177,8 @@ def demo_plant_copy_dynamics():
     axes[1].set_title('Residual after efference copy subtraction (enters visual delay as slip)')
     axes[1].legend(fontsize=8)
 
-    x_ni_pc_sig = np.array(sig['x_pc'])  # (T,3) placeholder — extract from ys
-    # Re-extract x_ni_pc directly
-    t_j = jnp.arange(0.0, 0.6, 0.001)
-    T_j = len(t_j)
-    hv3_j = jnp.zeros((T_j, 3))
-    vs3_j = jnp.zeros((T_j, 3))
-    pt3_j = jnp.zeros((T_j, 3)); pt3_j = pt3_j.at[:, 2].set(1.0)
-    pt3_j = pt3_j.at[t_j >= t_jump, 0].set(jnp.tan(jnp.radians(10.0)))
-    ys_j2    = _run_full(THETA_SAC, t_j, hv3_j, vs3_j, pt3_j)
-    x_ni_pc2 = ys_j2[:, _IDX_NI_PC][:, 0]
-    x_pc2    = ys_j2[:, _IDX_PC][:, 0]
-    axes[2].plot(t_np, x_pc2,    color=_C['pc'],    lw=1.5, label='x_pc  (plant copy)')
-    axes[2].plot(t_np, x_ni_pc2, color='#1b7837', lw=1.2, ls='--', label='x_ni_pc  (NI copy)')
+    axes[2].plot(t_np, sig['x_pc'][:, 0],    color=_C['pc'],    lw=1.5, label='x_pc  (plant copy)')
+    axes[2].plot(t_np, sig['x_ni_pc'][:, 0], color='#1b7837', lw=1.2, ls='--', label='x_ni_pc  (NI copy)')
     axes[2].set_ylabel('deg')
     axes[2].set_title('2-state plant copy — x_ni_pc holds position, x_pc follows with τ_p')
     axes[2].set_xlabel('Time (s)')
@@ -346,7 +308,7 @@ def _run_tests():
     hv3 = jnp.zeros((T, 3)); vs3 = jnp.zeros((T, 3))
     pt3 = jnp.zeros((T, 3)); pt3 = pt3.at[:, 2].set(1.0)
     ys  = _run_full(THETA_NO_SAC, t, hv3, vs3, pt3)
-    x_pc = ys[:, _IDX_PC]
+    x_pc = np.array(ys.brain[:, _IDX_EC][:, _IDX_PC])
     assert np.allclose(x_pc, 0.0, atol=1e-6), \
         f'FAIL: x_pc non-zero without burst; max={np.abs(x_pc).max():.2e}'
     print('  1. x_pc zero without burst               PASS')
@@ -361,8 +323,8 @@ def _run_tests():
     pt3 = jnp.zeros((T, 3)); pt3 = pt3.at[:, 2].set(1.0)
     pt3 = pt3.at[t >= t_jump, 0].set(jnp.tan(jnp.radians(10.0)))
     ys          = _run_full(THETA_SAC, t, hv3, vs3, pt3)
-    x_ni_pc_tr  = ys[:, _IDX_NI_PC][:, 0]
-    x_pc_tr     = ys[:, _IDX_PC][:, 0]
+    x_ni_pc_tr  = np.array(ys.brain[:, _IDX_EC][:, _IDX_NI_PC])[:, 0]
+    x_pc_tr     = np.array(ys.brain[:, _IDX_EC][:, _IDX_PC])[:, 0]
     # NI copy should hold a meaningful position after saccade
     mask_after   = t_np > t_jump + 0.1
     assert np.abs(x_ni_pc_tr[mask_after]).max() > 1.0, \
@@ -387,7 +349,7 @@ def _run_tests():
     pt3 = jnp.zeros((T, 3)); pt3 = pt3.at[:, 2].set(1.0)
     pt3 = pt3.at[t >= t_jump, 0].set(jnp.tan(jnp.radians(10.0)))
     ys    = _run_full(THETA_SAC, t, hv3, vs3, pt3, scene_present=True)
-    x_vs  = ys[:, _IDX_VS]
+    x_vs  = np.array(ys.brain[:, _IDX_VS])
     mask  = (t_np > t_jump + 0.2) & (t_np < t_jump + 0.5)
     contamination = np.abs(x_vs[mask]).max()
     assert contamination < 5.0, \
@@ -400,7 +362,7 @@ def _run_tests():
     vs3 = jnp.zeros((T, 3)); vs3 = vs3.at[:, 0].set(30.0)
     pt3 = jnp.zeros((T, 3)); pt3 = pt3.at[:, 2].set(1.0)
     ys    = _run_full(THETA_NO_SAC, t, hv3, vs3, pt3)
-    x_vs  = ys[:, _IDX_VS]
+    x_vs  = np.array(ys.brain[:, _IDX_VS])
     vs_late = np.abs(x_vs[t_np > 1.0, 0]).mean()
     assert vs_late > 1.0, \
         f'FAIL: VS not driven by scene; mean={vs_late:.2f} deg/s'
@@ -423,8 +385,8 @@ def _run_tests():
     ys_nosac = _run_full(THETA_OKN_OFF, t_okn, hv_okn, vs_okn, pt_okn,
                          scene_present=True, max_steps=1_200_000)
 
-    xvs_sac   = ys_sac[:, _IDX_VS]
-    xvs_nosac = ys_nosac[:, _IDX_VS]
+    xvs_sac   = np.array(ys_sac.brain[:, _IDX_VS])
+    xvs_nosac = np.array(ys_nosac.brain[:, _IDX_VS])
     # Compare in the last 3 s (after transient)
     mask5    = t_okn_np > 7.0
     vs_diff  = np.abs(xvs_sac[mask5, 0] - xvs_nosac[mask5, 0]).max()
@@ -465,17 +427,16 @@ def demo_okn_nystagmus():
     ys_nosac = _run_full(THETA_OKN_OFF, t, hv3, vs3, pt3, scene_present=True, max_steps=1_200_000)
 
     # ── Extract signals via vmap ───────────────────────────────────────────────
-    ys_j  = jnp.array(ys_sac)
     tau_p = THETA_OKN['tau_p']
     thr   = THETA_OKN.get('threshold_sac', 0.5)
 
-    def _signals_at(x):
-        x_p           = x[_IDX_P]
-        x_ni          = x[_IDX_NI]
-        x_sg          = x[_IDX_SG]
-        x_vis         = x[_IDX_VIS]
-        x_pc          = x[_IDX_PC]
-        x_ni_pc_      = x[_IDX_NI_PC]
+    def _signals_at(state):
+        x_p           = state.plant
+        x_ni          = state.brain[_IDX_NI]
+        x_sg          = state.brain[_IDX_SG]
+        x_vis         = state.sensory[_IDX_VIS]
+        x_pc          = state.brain[_IDX_EC][_IDX_PC]
+        x_ni_pc_      = state.brain[_IDX_EC][_IDX_NI_PC]
         e_pos_delayed = visual_delay.C_pos  @ x_vis
         e_slip_delayed= visual_delay.C_slip @ x_vis
         e_motor       = retina.target_to_angle(jnp.array([0.0, 0.0, 1.0])) - x_p
@@ -485,13 +446,13 @@ def demo_okn_nystagmus():
                 e_motor[0], e_pos_delayed[0],
                 u_burst[0], w_burst_pred[0], e_slip_delayed[0])
 
-    out = jax.vmap(_signals_at)(ys_j)
+    out = jax.vmap(_signals_at)(ys_sac)
     (x_p_sac, x_ni_sac, x_sg_sac,
      e_motor, e_pos_del,
      u_burst_all, w_pred_all, e_slip_del) = [np.array(o) for o in out]
 
-    x_vs_sac   = ys_sac[:, _IDX_VS][:, 0]
-    x_vs_nosac = ys_nosac[:, _IDX_VS][:, 0]
+    x_vs_sac   = np.array(ys_sac.brain[:, _IDX_VS])[:, 0]
+    x_vs_nosac = np.array(ys_nosac.brain[:, _IDX_VS])[:, 0]
 
     w_eye_sac = np.gradient(x_p_sac, dt)
     raw_slip  = 5.0 - w_eye_sac

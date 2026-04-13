@@ -24,10 +24,10 @@ import matplotlib.pyplot as plt
 import jax.numpy as jnp
 
 from oculomotor.sim.synthetic import generate_dataset
-from oculomotor.models.ocular_motor_simulator import THETA_DEFAULT
+from oculomotor.sim.simulator import THETA_DEFAULT
 from oculomotor.sim.stimulus import FREQUENCIES_HZ, AMPLITUDE_DEG_S
 from oculomotor.fitting.optimize import fit
-from oculomotor.models.ocular_motor_simulator import simulate
+from oculomotor.sim.simulator import simulate
 
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), '..', 'outputs')
 

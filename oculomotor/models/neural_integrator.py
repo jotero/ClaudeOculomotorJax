@@ -46,20 +46,6 @@ N_INPUTS  = 3
 N_OUTPUTS = 3
 
 
-def get_A(theta):
-    """(3, 3) state matrix — leaky integrator, diagonal."""
-    return (-1.0 / theta['tau_i']) * jnp.eye(3)
-
-
-B = jnp.eye(3)   # (3, 3) — unit input gain (constant)
-C = jnp.eye(3)   # (3, 3) — identity output (constant)
-
-
-def get_D(theta):
-    """(3, 3) feedthrough — tau_p · I, cancels plant LP lag."""
-    return theta['tau_p'] * jnp.eye(3)
-
-
 def step(x_ni, u_vel, theta):
     """Single ODE step: state derivative + motor command output.
 
@@ -73,6 +59,12 @@ def step(x_ni, u_vel, theta):
         dx:  (3,)  dx_ni/dt
         u_p: (3,)  pulse-step motor command to plant
     """
-    dx  = get_A(theta) @ x_ni + u_vel
-    u_p = C @ x_ni + get_D(theta) @ u_vel
+    # ── System matrices ───────────────────────────────────────────────────────
+    A = (-1.0 / theta['tau_i']) * jnp.eye(3)
+    D = theta['tau_p'] * jnp.eye(3)
+    # B = C = I (identity — omitted)
+
+    # ── Dynamics ──────────────────────────────────────────────────────────────
+    dx  = A @ x_ni + u_vel
+    u_p = x_ni + D @ u_vel
     return dx, u_p

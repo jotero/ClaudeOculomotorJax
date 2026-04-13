@@ -114,47 +114,47 @@ Each module exposes:
 | Symbol | Type | When θ-dependent |
 |--------|------|-----------------|
 | `N_STATES`, `N_INPUTS`, `N_OUTPUTS` | `int` constants | never |
-| `get_A(theta)` | function → `(N_STATES, N_STATES)` | always (at minimum leaks are θ-dependent) |
-| `get_B(theta)` or `B` | function or module constant | if θ-dependent: function; if fixed: `B = jnp.eye(...)` |
-| `C` | module constant `(N_OUTPUTS, N_STATES)` | almost never — usually identity |
-| `get_D(theta)` or absent | function → `(N_OUTPUTS, N_INPUTS)` | if θ-dependent: function; if no feedthrough: omit |
 | `step(x, u, theta)` → `(dx, y)` | pure function | — |
+| Module-level constants (e.g. `C_slip`, `PINV_SENS`) | only when used externally | — |
 
 ### `step()` contract
 
 ```python
 def step(x, u, theta):
-    dx = get_A(theta) @ x + get_B(theta) @ u   # or B @ u if fixed
-    y  = C @ x + get_D(theta) @ u              # or C @ x if no feedthrough
+    A = ...   # build from theta inside step
+    B = ...
+    dx = A @ x + B @ u
+    y  = C @ x + D @ u   # C, D omitted if identity or zero
     return dx, y
 ```
 
+- **A, B, C, D are local variables inside `step()`** — not separate module-level functions. This keeps all the ODE logic in one place without sacrificing readability.
+- Identity matrices (B=I, C=I, D=I) are omitted rather than written as `I @ x` — just use `x` directly and note `# B = I`.
 - **Pure function** — no side effects, no global state. Compatible with `jax.jit` and `jax.grad`.
 - Returns `(dx, y)` always — the ODE integrator uses `dx`; the simulator uses `y` to wire modules together.
 - Input/output shapes and units must be documented in the module docstring.
 - `theta` is always a `dict`; use `.get('key', default)` for optional parameters.
+- Module-level constants are kept only when used by external code (e.g. `visual_delay.C_slip`, `canal.PINV_SENS`).
 
 ### Nonlinear extensions
 
 Some modules have nonlinearities that wrap the linear ABCD core:
 
-- **Canal**: `canal_nonlinearity(x_c, gains)` applies the smooth half-wave rectification to `x2` (inertia state) to get afferent firing rates. The linear `A @ x + B @ u` still drives the state derivative; only the *output* is nonlinear.
-- **Saccade generator**: gates (`gate_err`, `gate_res`, `gate_dir`) and an adaptive reset TC are layered on top. The ABCD structure is still present — `A_ni` (saccade mode) and `A_reset` (inter-saccade mode) are separate matrices; gating blends between them via a differentiable soft switch.
-- **Visual delay**: uses a fixed companion-form `A` (40-stage cascade) with a fixed `C_slip` / `C_pos` readout; `B` is identity (input drives the first stage directly).
+- **Canal**: `canal_nonlinearity(x_c, gains)` applies smooth half-wave rectification to the `x2` (inertia state) to get afferent firing rates. The linear `A @ x + B @ u` still drives the state derivative; only the *output* is nonlinear.
+- **Saccade generator**: gates (`gate_err`, `gate_res`, `gate_dir`) and an adaptive reset TC are layered on top. `A_ni` is computed locally in `step()` for the copy integrator NI mode.
+- **Visual delay**: uses a fixed companion-form `A` (40-stage cascade) with module-level `C_slip` / `C_pos` readout (kept at module level because external code reads them directly).
 
 ### Example: Neural Integrator (simplest case)
 
 ```python
 N_STATES = N_INPUTS = N_OUTPUTS = 3
 
-def get_A(theta): return (-1/theta['tau_i']) * jnp.eye(3)
-B = jnp.eye(3)
-C = jnp.eye(3)
-def get_D(theta): return theta['tau_p'] * jnp.eye(3)
-
 def step(x_ni, u_vel, theta):
-    dx  = get_A(theta) @ x_ni + u_vel          # B = I, omitted
-    u_p = C @ x_ni + get_D(theta) @ u_vel
+    A = (-1/theta['tau_i']) * jnp.eye(3)
+    D = theta['tau_p'] * jnp.eye(3)
+    # B = C = I (identity — omitted)
+    dx  = A @ x_ni + u_vel
+    u_p = x_ni + D @ u_vel
     return dx, u_p
 ```
 

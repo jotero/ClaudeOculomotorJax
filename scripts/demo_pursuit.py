@@ -26,9 +26,9 @@ if not SHOW:
     matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
-from oculomotor.models.ocular_motor_simulator import (
+from oculomotor.sim.simulator import (
     THETA_DEFAULT, simulate,
-    _IDX_NI, _IDX_P, _IDX_SG, _IDX_VIS,
+    _IDX_NI, _IDX_SG, _IDX_VIS,
 )
 from oculomotor.models import saccade_generator as sg_mod
 from oculomotor.models import visual_delay
@@ -54,10 +54,10 @@ THETA_SAC = THETA_DEFAULT
 
 def _extract(states, theta, t_np):
     """Extract saccade-relevant signals from full state trajectory."""
-    x_p   = np.array(states[:, _IDX_P])
-    x_ni  = np.array(states[:, _IDX_NI])
-    x_vis = np.array(states[:, _IDX_VIS])
-    x_sg  = np.array(states[:, _IDX_SG])
+    x_p   = np.array(states.plant)
+    x_ni  = np.array(states.brain[:, _IDX_NI])
+    x_vis = np.array(states.sensory[:, _IDX_VIS])
+    x_sg  = np.array(states.brain[:, _IDX_SG])
 
     # SG state layout: [x_copy(3) | z_ref(1) | e_held(3) | z_sac(1) | z_acc(1)]
     x_copy = x_sg[:, :3]
@@ -69,12 +69,11 @@ def _extract(states, theta, t_np):
 
     e_pos_delayed = (x_vis @ np.array(visual_delay.C_pos).T)
 
-    ys_j = jnp.array(states)
-    def _burst_at(x):
-        e_pd = visual_delay.C_pos @ x[_IDX_VIS]
-        _, u = sg_mod.step(x[_IDX_SG], e_pd, theta)
+    def _burst_at(state):
+        e_pd = visual_delay.C_pos @ state.sensory[_IDX_VIS]
+        _, u = sg_mod.step(state.brain[_IDX_SG], e_pd, theta)
         return u
-    u_burst = np.array(jax.vmap(_burst_at)(ys_j))
+    u_burst = np.array(jax.vmap(_burst_at)(states))
 
     dt = float(t_np[1] - t_np[0])
     return dict(

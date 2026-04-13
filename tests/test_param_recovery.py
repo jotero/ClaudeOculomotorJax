@@ -7,7 +7,7 @@ starting from perturbed initial conditions.
 import pytest
 
 from oculomotor.sim.synthetic import generate_dataset
-from oculomotor.models.ocular_motor_simulator import THETA_DEFAULT
+from oculomotor.sim.simulator import THETA_DEFAULT
 from oculomotor.fitting.optimize import fit
 
 THETA_INIT = {

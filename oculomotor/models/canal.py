@@ -83,39 +83,6 @@ PINV_SENS = jnp.linalg.pinv(ORIENTATIONS)   # (3, 6)
 _SOFTNESS = 0.5
 
 
-# ── SSM matrices ───────────────────────────────────────────────────────────────
-
-def get_A(theta):
-    """(N_STATES, N_STATES) state matrix — block structure.
-
-    State ordering [x1_c0..x1_c5 | x2_c0..x2_c5]:
-
-        d/dt [x1]   =  [−I/τc    0  ] [x1]   +  [ORIENTATIONS/τc] · ω
-             [x2]      [ I/τs  −I/τs] [x2]      [ORIENTATIONS/τs]
-
-    where I = identity(N_CANALS).
-    """
-    I   = jnp.eye(N_CANALS)
-    Z   = jnp.zeros((N_CANALS, N_CANALS))
-    ac  = -1.0 / theta['tau_c']
-    as_ = -1.0 / theta['tau_s']
-    top = jnp.concatenate([ac * I  ,  Z       ], axis=1)
-    bot = jnp.concatenate([as_ * I ,  as_ * I ], axis=1)
-    return jnp.concatenate([top, bot], axis=0)   # (N_STATES, N_STATES)
-
-
-def get_B(theta):
-    """(N_STATES, 3) input matrix — maps 3-D head angular velocity to all states.
-
-    B = [ORIENTATIONS/τc]   each row i: canal i's response per unit head vel
-        [ORIENTATIONS/τs]
-    """
-    return jnp.concatenate([
-        ORIENTATIONS / theta['tau_c'],
-        ORIENTATIONS / theta['tau_s'],
-    ], axis=0)   # (N_STATES, 3)
-
-
 # ── Canal output (nonlinear) ───────────────────────────────────────────────────
 
 def canal_nonlinearity(x_c, gains):
@@ -151,7 +118,21 @@ def step(x_c, w_head, theta):
         dx:       (N_STATES,)  dx_c/dt
         y_canals: (N_CANALS,)  afferent firing rates
     """
+    # ── System matrices ───────────────────────────────────────────────────────
+    tau_c = theta['tau_c']
+    tau_s = theta['tau_s']
+    I = jnp.eye(N_CANALS)
+    Z = jnp.zeros((N_CANALS, N_CANALS))
+    A = jnp.concatenate([
+        jnp.concatenate([-I/tau_c,  Z       ], axis=1),   # x1: adaptation LP
+        jnp.concatenate([ I/tau_s, -I/tau_s  ], axis=1),  # x2: inertia LP
+    ], axis=0)                                              # (12, 12)
+    B = jnp.concatenate([ORIENTATIONS/tau_c,
+                         ORIENTATIONS/tau_s], axis=0)      # (12, 3)
+    # C is the nonlinear canal_nonlinearity below (not a linear readout)
+
+    # ── Dynamics ──────────────────────────────────────────────────────────────
     gains = theta.get('canal_gains', jnp.ones(N_CANALS))
-    dx = get_A(theta) @ x_c + get_B(theta) @ w_head
+    dx = A @ x_c + B @ w_head
     y  = canal_nonlinearity(x_c, gains)
     return dx, y
