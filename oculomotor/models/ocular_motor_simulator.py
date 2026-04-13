@@ -156,9 +156,11 @@ THETA_DEFAULT = {
     # clips to prevent saccade commands that exceed the orbital range.
     # plant.soft_limit() saturates eye position to ±orbital_limit via tanh.
     # Ref: Goldberg & Fernandez (1971); Robinson (1975) motor range.
-    'orbital_limit':  50.0,  # half-range of orbital limit (deg); typical ±50° in monkey
-    'k_orbital':       0.1,  # sigmoid steepness for reset gate (1/deg)
-    'alpha_reset':     1.0,  # orbital reset gain; e_reset = -alpha_reset * x_p
+    'orbital_limit':      50.0,  # mechanical half-range (deg); plant output saturates here
+    'k_orbital':           1.0,  # sigmoid steepness for orbital + visual-field gates (1/deg)
+    'alpha_reset':         1.0,  # orbital reset gain; e_reset = -alpha_reset*x_p
+    'visual_field_limit': 90.0,  # retinal eccentricity beyond which target is out of field (deg)
+                                  # beyond this, saccade suppressed same as target_gain=0
 }
 
 # ── State vector layout ────────────────────────────────────────────────────────
@@ -242,15 +244,20 @@ def ODE_ocular_motor(t, x, args):
     # ── Target selector: blend visual error + orbital reset, anti-windup clip ──
     # Produces e_cmd for the SG.  Within ±orbital_limit → pure visual mode.
     # At/past limit → smooth transition to orbital reset (drives eye back to center).
-    e_cmd = ts.select(e_pos_delayed, x_p, theta, target_gain)
+    # No target_gain gate: implicit target is always straight-ahead (e_pos_delayed
+    # ≈ −x_p with default p_target=[0,0,1]), giving reflexive centration saccades
+    # for VOR nystagmus and OKN fast phases without needing an explicit target.
+    e_cmd = ts.select(e_pos_delayed, x_p, theta)
 
     # ── Saccade generator (motor error command → Robinson local feedback) ─────
     dx_sg, u_burst = sg.step(x_sg, e_cmd, theta)
 
     # ── Neural integrator + plant ─────────────────────────────────────────────
-    # VOR: sign flip (eyes oppose head). Gain lives in canal_gains (theta).
-    # Burst already in eye coordinates — unit gain, no sign flip needed.
-    dx_ni, u_p = ni.step(x_ni, -w_est + u_burst, theta)
+    # Combined velocity command: VOR/OKR from VS (−w_est) plus saccade burst.
+    # w_est = x_vs + PINV_SENS@y_canals − g_vis·e_slip_delayed  (VS output).
+    # Visual drive runs continuously — no burst-based gating here.
+    u_vel      = -w_est + u_burst
+    dx_ni, u_p = ni.step(x_ni, u_vel, theta)
     dx_p,  _   = plant.step(x_p, u_p, theta)
 
     # ── Efference copy: NI+plant copy driven by burst only ───────────────────
@@ -258,7 +265,10 @@ def ODE_ocular_motor(t, x, args):
 
     # ── Retinal signals (position error + velocity slip) → visual delay ──────
     e_pos  = retina.target_to_angle(p_target) - q_head - x_p          # position error (deg)
-    e_slip = scene_gain * (w_scene - w_head - dx_p + w_burst_pred)    # gated by scene: 0 in dark
+    # Retinal slip: gated by scene_gain only (0 = dark, 1 = full scene).
+    # Efference copy w_burst_pred cancels burst-driven eye velocity from dx_p,
+    # so VS receives only scene-driven slip regardless of saccade activity.
+    e_slip = scene_gain * (w_scene - w_head - dx_p + w_burst_pred)
     dx_vis, _, _ = visual_delay.step(x_vis, e_slip, e_pos, theta)
 
     return jnp.concatenate([dx_c, dx_vs, dx_ni, dx_p, dx_vis, dx_sg, dx_ec])

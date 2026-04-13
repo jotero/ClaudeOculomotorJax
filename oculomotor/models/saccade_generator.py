@@ -239,9 +239,15 @@ def step(x_sg, u_sg, theta):
     # ── Sample-and-hold ───────────────────────────────────────────────────────
     # z_sac=1 (burst active):   de_held ≈ 0  → e_held frozen at onset value
     # z_sac=0 (idle/refractory): e_held tracks e_cur with τ_hold → samples next target
+    #
+    # (1 - z_sac)² instead of (1 - z_sac): z_sac never numerically reaches 1.0
+    # (settles at ~0.955 due to ODE step size), so (1-z_sac)=0.045 allows 9/s
+    # leakthrough with tau_hold=0.005 — enough to chase a 60 deg/s target.
+    # Squaring drives leakthrough to (0.045)²/0.005 = 0.4/s: effectively frozen.
+    # Between saccades z_sac≈0 so (1-0)²=1: tracking rate unchanged.
 
     tau_hold = theta.get('tau_hold', 0.005)
-    de_held  = (1.0 - z_sac) * (e_cur - e_held) / tau_hold
+    de_held  = (1.0 - z_sac)**2 * (e_cur - e_held) / tau_hold
 
     # ── Refractory (OPN) dynamics ─────────────────────────────────────────────
     # charge = z_sac · (1 − gate_res)

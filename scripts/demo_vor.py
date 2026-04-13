@@ -235,7 +235,10 @@ def demo_okr_cascade():
 
     T_okn  = len(t_arr)
     states = simulate(theta_okn, stim_okn,
-                      target_present_array=jnp.zeros(T_okn),  # OKN: no discrete fixation target
+                      # No explicit fixation target (OKN: distributed scene, no single target).
+                      # Fast phases are still driven by the implicit straight-ahead target:
+                      # e_pos_delayed ≈ −x_p, so the saccade generator fires whenever the
+                      # eye drifts from center — classic OKN nystagmus sawtooth.
                       max_steps=max_s, return_states=True)
     t_np   = np.array(stim_okn.t)
     dt     = float(stim_okn.dt)
@@ -243,13 +246,14 @@ def demo_okr_cascade():
 
     x_vis = np.array(states[:, _IDX_VIS])
     x_vs  = np.array(states[:, _IDX_VS])
+    x_ni  = np.array(states[:, _IDX_NI])
     x_p   = np.array(states[:, _IDX_P])
 
     w_scene_np   = np.where(t_np < on_dur, scene_vel, 0.0)
     eye_vel      = np.gradient(x_p[:, 0], dt)
     e_delayed    = (x_vis @ np.array(visual_delay.C_slip).T)[:, 0]
     u_vis_direct = THETA['g_vis'] * e_delayed
-    SPV_CLIP     = 50.0
+    SPV_CLIP     = 80.0   # deg/s; clips fast-phase peaks (>80), shows slow phase between
     spv          = np.where(np.abs(eye_vel) < SPV_CLIP, eye_vel, np.nan)
 
     eye_no_vis = simulate(theta_no_vis, stim_okn,
@@ -257,7 +261,7 @@ def demo_okr_cascade():
                           max_steps=max_s)[:, 0]
     ev_no_vis  = np.gradient(np.array(eye_no_vis), dt)
 
-    fig, axes = plt.subplots(7, 1, figsize=(12, 20), sharex=True)
+    fig, axes = plt.subplots(8, 1, figsize=(12, 22), sharex=True)
     fig.suptitle(f'OKN nystagmus — scene on {on_dur:.0f} s then off  (OKAN)\n'
                  f'K_vis={THETA["K_vis"]},  g_vis={THETA["g_vis"]},  '
                  f'tau_vs={THETA["tau_vs"]} s,  tau_vis={THETA["tau_vis"]} s',
@@ -301,14 +305,27 @@ def demo_okr_cascade():
     axes[4].set_title('Eye velocity — OKN nystagmus + OKAN  [clipped]')
     axes[4].legend(fontsize=8)
 
-    axes[5].plot(t_np, x_p[:, 0], color=_C['eye'], lw=0.8)
+    orbital_limit_okn = THETA.get('orbital_limit', 50.0)
+    axes[5].plot(t_np, x_p[:, 0], color=_C['eye'], lw=0.8, label='x_p (eye pos)')
+    axes[5].axhline( orbital_limit_okn, color='tomato', lw=0.8, ls='--', alpha=0.7,
+                     label=f'±orbital limit ({orbital_limit_okn:.0f}°)')
+    axes[5].axhline(-orbital_limit_okn, color='tomato', lw=0.8, ls='--', alpha=0.7)
     axes[5].set_ylabel('Eye pos\n(deg)')
     axes[5].set_title('Eye position  (sawtooth = nystagmus slow + fast phases)')
+    axes[5].legend(fontsize=8)
 
-    axes[6].plot(t_np, burst[:, 0], color=_C['burst'], lw=1.0)
-    axes[6].set_ylabel('Burst\n(deg/s)')
-    axes[6].set_xlabel('Time (s)')
-    axes[6].set_title('Saccade burst u_burst  (fast-phase resets)')
+    axes[6].plot(t_np, x_ni[:, 0], color='darkorchid', lw=1.0, label='x_ni  (NI position command)')
+    axes[6].plot(t_np, x_p[:, 0],  color=_C['eye'],    lw=0.8, ls='--', alpha=0.6, label='x_p  (eye pos)')
+    axes[6].axhline( orbital_limit_okn, color='tomato', lw=0.8, ls='--', alpha=0.5)
+    axes[6].axhline(-orbital_limit_okn, color='tomato', lw=0.8, ls='--', alpha=0.5)
+    axes[6].set_ylabel('NI / pos\n(deg)')
+    axes[6].set_title('Neural integrator state x_ni vs eye position  (x_ni exceeding ±limit → drift)')
+    axes[6].legend(fontsize=8)
+
+    axes[7].plot(t_np, burst[:, 0], color=_C['burst'], lw=1.0)
+    axes[7].set_ylabel('Burst\n(deg/s)')
+    axes[7].set_xlabel('Time (s)')
+    axes[7].set_title('Saccade burst u_burst  (fast-phase resets)')
 
     fig.tight_layout()
     path = os.path.join(OUTPUT_DIR, 'okr_cascade.png')
