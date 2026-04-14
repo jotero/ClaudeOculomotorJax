@@ -69,7 +69,7 @@ import jax
 import jax.numpy as jnp
 import diffrax
 
-from oculomotor.models.readout import rotation_matrix
+from oculomotor.models.plant_models.readout import rotation_matrix
 
 # ── Sensor geometry ────────────────────────────────────────────────────────────
 

@@ -98,7 +98,7 @@ Parameters:
 """
 
 import jax.numpy as jnp
-from oculomotor.models.sensory_model import PINV_SENS, N_CANALS
+from oculomotor.models.sensory_models.sensory_model import PINV_SENS, N_CANALS
 
 N_STATES  = 3
 N_INPUTS  = N_CANALS + 3    # 6 canal afferents + 3 delayed retinal slip axes

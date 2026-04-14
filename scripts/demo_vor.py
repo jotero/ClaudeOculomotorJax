@@ -28,9 +28,9 @@ from oculomotor.sim.simulator import (
     PARAMS_DEFAULT, with_brain, simulate,
     _IDX_C, _IDX_VS, _IDX_NI, _IDX_VIS, _IDX_SG,
 )
-from oculomotor.models.sensory_model import N_CANALS, FLOOR, _SOFTNESS, PINV_SENS
-from oculomotor.models.sensory_model import C_slip, C_pos
-from oculomotor.models import saccade_generator as sg_mod
+from oculomotor.models.sensory_models.sensory_model import N_CANALS, FLOOR, _SOFTNESS, PINV_SENS
+from oculomotor.models.sensory_models.sensory_model import C_slip, C_pos
+from oculomotor.models.brain_models import saccade_generator as sg_mod
 from oculomotor.sim.stimulus import rotation_step, Stimulus
 
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), '..', 'outputs')

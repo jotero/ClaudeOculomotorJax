@@ -52,13 +52,13 @@ from typing import NamedTuple
 import jax.numpy as jnp
 import diffrax
 
-from oculomotor.models import retina
-from oculomotor.models import target_selector as ts
-from oculomotor.models.sensory_model import _IDX_C, _IDX_VIS
-from oculomotor.models.brain_model   import _IDX_VS, _IDX_NI, _IDX_SG, _IDX_EC
-import oculomotor.models.sensory_model as sensory_model
-import oculomotor.models.brain_model   as brain_model
-import oculomotor.models.plant_model_first_order as plant_model
+from oculomotor.models.sensory_models import retina
+from oculomotor.models.brain_models   import target_selector as ts
+from oculomotor.models.sensory_models.sensory_model import _IDX_C, _IDX_VIS
+from oculomotor.models.brain_models.brain_model    import _IDX_VS, _IDX_NI, _IDX_SG, _IDX_EC
+from oculomotor.models.sensory_models import sensory_model
+from oculomotor.models.brain_models   import brain_model
+from oculomotor.models.plant_models   import plant_model_first_order as plant_model
 from oculomotor.params import (
     Params, SimConfig, PhysParams, BrainParams,
     default_params, with_brain, with_phys,

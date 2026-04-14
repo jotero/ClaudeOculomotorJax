@@ -34,11 +34,11 @@ Outputs of step():
 
 import jax.numpy as jnp
 
-from oculomotor.models import velocity_storage as vs
-from oculomotor.models import neural_integrator as ni
-from oculomotor.models import saccade_generator as sg
-from oculomotor.models import efference_copy as ec
-from oculomotor.models.sensory_model import SensoryOutput  # noqa: F401 (re-exported)
+from oculomotor.models.brain_models import velocity_storage as vs
+from oculomotor.models.brain_models import neural_integrator as ni
+from oculomotor.models.brain_models import saccade_generator as sg
+from oculomotor.models.brain_models import efference_copy as ec
+from oculomotor.models.sensory_models.sensory_model import SensoryOutput  # noqa: F401 (re-exported)
 
 # ── State layout ───────────────────────────────────────────────────────────────
 
