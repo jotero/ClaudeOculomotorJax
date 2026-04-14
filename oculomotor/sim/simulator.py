@@ -54,24 +54,87 @@ import diffrax
 
 from oculomotor.models.sensory_models import retina
 from oculomotor.models.brain_models   import target_selector as ts
-from oculomotor.models.sensory_models.sensory_model import _IDX_C, _IDX_VIS
-from oculomotor.models.brain_models.brain_model    import _IDX_VS, _IDX_NI, _IDX_SG, _IDX_EC
+from oculomotor.models.sensory_models.sensory_model import _IDX_C, _IDX_VIS, SensoryParams
+from oculomotor.models.brain_models.brain_model    import _IDX_VS, _IDX_NI, _IDX_SG, _IDX_EC, BrainParams
+from oculomotor.models.plant_models.plant_model_first_order import PlantParams
 from oculomotor.models.sensory_models import sensory_model
 from oculomotor.models.brain_models   import brain_model
 from oculomotor.models.plant_models   import plant_model_first_order as plant_model
-from oculomotor.params import (
-    Params, SimConfig, PhysParams, BrainParams,
-    default_params, with_brain, with_phys,
-    PARAMS_DEFAULT, SIM_CONFIG_DEFAULT,
-)
+
+
+# ── Simulation config ───────────────────────────────────────────────────────────
+
+class SimConfig(NamedTuple):
+    """Solver / run settings — not model parameters, not learnable.
+
+    dt_solve: Heun fixed step (s).  Must satisfy dt < 2 * tau_stage_vis.
+              With N_STAGES=40 and tau_vis=0.08 s → tau_stage = 0.002 s
+              → dt_max = 0.004 s.  Default 0.001 s gives 4× safety margin.
+    """
+    dt_solve: float = 0.001
+
+
+# ── Top-level parameter container ──────────────────────────────────────────────
+
+class Params(NamedTuple):
+    """Top-level parameter container — a JAX pytree.
+
+    Each field is a NamedTuple defined in the corresponding model module.
+    This separation allows swapping one component (e.g. plant) without
+    touching the others, and keeps parameter documentation co-located
+    with the code that uses it.
+
+    jax.tree_util.tree_leaves(params) returns all float/array leaves from
+    all three sub-containers.  For partial-parameter optimisation, pass
+    only params.brain to optax.
+    """
+    sensory: SensoryParams = SensoryParams()
+    plant:   PlantParams   = PlantParams()
+    brain:   BrainParams   = BrainParams()
+
+
+def default_params() -> Params:
+    """Healthy primate default parameters."""
+    return Params()
+
+
+def with_brain(params: Params, **kwargs) -> Params:
+    """Return a new Params with brain fields updated.
+
+    Example:
+        p = with_brain(default_params(), g_burst=0.0)  # disable saccades
+    """
+    return params._replace(brain=params.brain._replace(**kwargs))
+
+
+def with_sensory(params: Params, **kwargs) -> Params:
+    """Return a new Params with sensory fields updated.
+
+    Example:
+        p = with_sensory(default_params(), canal_gains=jnp.array([0,0,1,1,1,1.]))
+    """
+    return params._replace(sensory=params.sensory._replace(**kwargs))
+
+
+def with_plant(params: Params, **kwargs) -> Params:
+    """Return a new Params with plant fields updated.
+
+    Example:
+        p = with_plant(default_params(), tau_p=0.20)
+    """
+    return params._replace(plant=params.plant._replace(**kwargs))
+
+
+SIM_CONFIG_DEFAULT = SimConfig()
+PARAMS_DEFAULT     = default_params()
 
 # Re-export params API so callers can import everything from simulator
 __all__ = [
     'SimState', 'ODE_ocular_motor', 'simulate',
     '_IDX_C', '_IDX_VIS', '_IDX_VS', '_IDX_NI', '_IDX_SG', '_IDX_EC',
     # params
-    'Params', 'SimConfig', 'PhysParams', 'BrainParams',
-    'default_params', 'with_brain', 'with_phys',
+    'Params', 'SimConfig', 'SensoryParams', 'PlantParams', 'BrainParams',
+    'default_params', 'with_brain', 'with_sensory', 'with_plant',
     'PARAMS_DEFAULT', 'SIM_CONFIG_DEFAULT',
 ]
 

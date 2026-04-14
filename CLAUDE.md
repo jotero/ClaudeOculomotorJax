@@ -137,30 +137,19 @@ Each behavior has a corresponding demo script and output figure.
 
 The simulator is designed so that `plant_models/` and `brain_models/` can be swapped without touching sensory machinery. The integration point is the **motor command interface** between brain and plant.
 
-**Motor command format (current and future):**
+**Motor command format (current):**
 
-The brain should output a `MotorCommand` NamedTuple:
+The brain outputs `u_p: (3,)` — the Robinson pulse-step sum in rotation-vector space (yaw/pitch/roll, deg/s equivalent). This is the NI output `x_ni + tau_p * u_vel`, which combines the tonic position hold and phasic burst feedthrough into a single vector. The plant does not need to know the decomposition.
 
-```python
-class MotorCommand(NamedTuple):
-    step:  jnp.ndarray   # (3,) tonic NI drive  — eye position hold
-    pulse: jnp.ndarray   # (3,) phasic burst    — saccade acceleration
-```
-
-Units: motoneuron firing rate equivalent (normalized or deg/s). The plant converts these to forces/torques internally — the brain does not need to know muscle geometry.
-
-**Why separate step and pulse?**
-- Robinson's first-order plant combines them as `u_p = step + pulse` — valid because inertia is negligible (overdamped, I→0 means force ∝ velocity directly).
-- A second-order plant (MJX/muscle-level) applies them to different motoneuron pools with different dynamics — tonic vs phasic muscle fibers.
-- Keeping them split in the interface costs nothing for the first-order plant and enables the upgrade.
+Units: motoneuron firing rate equivalent. The plant converts to forces/torques internally.
 
 **Plant interface contract:**
 
 ```python
-def step(x_p, cmd: MotorCommand, theta) -> (dx_p, q_eye):
-    # x_p:  (N,)    plant state (eye rotation or muscle activations)
-    # cmd:  MotorCommand  — step + pulse, both (3,) in rotation-vector space
-    # q_eye: (3,)   observed eye rotation (output to retina / feedback)
+def step(x_p, u_p, theta) -> (dx_p, q_eye):
+    # x_p:  (3,)  plant state (eye rotation vector, deg)
+    # u_p:  (3,)  pulse-step motor command from NI
+    # q_eye: (3,) observed eye rotation → retina / feedback
 ```
 
 Any plant implementing this contract (first-order, second-order, MJX-backed) is a drop-in replacement in `simulator.py`.

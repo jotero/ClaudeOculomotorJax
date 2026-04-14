@@ -32,6 +32,8 @@ Outputs of step():
     u_burst   (3,)    saccade burst velocity command
 """
 
+from typing import NamedTuple
+
 import jax.numpy as jnp
 
 from oculomotor.models.brain_models import velocity_storage as vs
@@ -39,6 +41,47 @@ from oculomotor.models.brain_models import neural_integrator as ni
 from oculomotor.models.brain_models import saccade_generator as sg
 from oculomotor.models.brain_models import efference_copy as ec
 from oculomotor.models.sensory_models.sensory_model import SensoryOutput  # noqa: F401 (re-exported)
+
+
+# ── Brain parameters ────────────────────────────────────────────────────────────
+
+class BrainParams(NamedTuple):
+    """Learnable central parameters — fit to patient eye-movement data."""
+
+    # Velocity storage — Raphan, Matsuo & Cohen (1979)
+    tau_vs:                float = 20.0   # storage / OKAN TC (s); ~20 s monkey (Cohen 1977)
+    K_vs:                  float = 0.1    # canal-to-VS gain (1/s); controls charging speed
+    K_vis:                 float = 0.3    # visual-to-VS gain (1/s); OKR / OKAN charging
+    g_vis:                 float = 0.3    # visual feedthrough (unitless); fast OKR onset
+
+    # Neural integrator — Robinson (1975)
+    tau_i:                 float = 25.0   # leak TC (s); healthy >20 s (Cannon & Robinson 1985)
+    tau_p:                 float = 0.15   # plant TC copy — NI feedthrough for lag cancellation
+                                          # should match PlantParams.tau_p in healthy subjects;
+                                          # may differ in pathology (imperfect internal model)
+
+    # Saccade generator — Robinson (1975) local-feedback burst model
+    g_burst:               float = 700.0  # burst ceiling (deg/s); 0 disables saccades
+    e_sat_sac:             float = 7.0    # main-sequence saturation (deg)
+    k_sac:                 float = 200.0  # trigger sigmoid steepness (1/deg)
+    threshold_sac:         float = 0.5    # retinal error trigger threshold (deg)
+    threshold_stop:        float = 0.1    # burst-stop threshold (deg)
+    threshold_sac_release: float = 0.4    # OPN latch release threshold
+    tau_reset_fast:        float = 0.05   # inter-saccade x_copy reset TC (s)
+    tau_ref:               float = 0.15   # refractory (OPN) decay TC (s); ~150 ms ISI
+    tau_ref_charge:        float = 0.001  # OPN charge TC (s)
+    k_ref:                 float = 50.0   # bistable OPN gate steepness (1/z_ref)
+    threshold_ref:         float = 0.1    # OPN threshold
+    tau_hold:              float = 0.005  # sample-and-hold tracking TC (s)
+    tau_sac:               float = 0.001  # saccade latch TC (s)
+    tau_acc:               float = 0.080  # accumulator rise TC (s)
+    tau_drain:             float = 0.120  # accumulator drain TC (s)
+    threshold_acc:         float = 0.5    # accumulator trigger threshold
+    k_acc:                 float = 50.0   # accumulator sigmoid steepness
+
+    # Orbital reset — centering saccade policy at orbital limit
+    alpha_reset:           float = 1.0    # centering-saccade gain; 0=suppress, 1=active centering
+
 
 # ── State layout ───────────────────────────────────────────────────────────────
 

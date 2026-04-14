@@ -61,7 +61,7 @@ def step(x_ni, u_vel, theta):
     """
     # ── System matrices ───────────────────────────────────────────────────────
     A = (-1.0 / theta.brain.tau_i) * jnp.eye(3)
-    D = theta.phys.tau_p * jnp.eye(3)
+    D = theta.brain.tau_p * jnp.eye(3)
     # B = C = I (identity — omitted)
 
     # ── Dynamics ──────────────────────────────────────────────────────────────

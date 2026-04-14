@@ -91,8 +91,8 @@ def step(x_c, w_head, theta):
         dx_c:     (12,)        dx_c/dt
         y_canals: (N_CANALS,)  afferent firing rates
     """
-    tau_c = theta.phys.tau_c
-    tau_s = theta.phys.tau_s
+    tau_c = theta.sensory.tau_c
+    tau_s = theta.sensory.tau_s
     I     = jnp.eye(N_CANALS)
     Z     = jnp.zeros((N_CANALS, N_CANALS))
 
@@ -105,5 +105,5 @@ def step(x_c, w_head, theta):
                          ORIENTATIONS/tau_s], axis=0)       # (12, 3)
 
     dx_c     = A @ x_c + B @ w_head
-    y_canals = nonlinearity(x_c, theta.phys.canal_gains)
+    y_canals = nonlinearity(x_c, theta.sensory.canal_gains)
     return dx_c, y_canals

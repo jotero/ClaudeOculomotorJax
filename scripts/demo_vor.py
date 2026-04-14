@@ -74,7 +74,7 @@ def _extract_signals(theta, t_array, head_vel_1d, states):
     pinv    = np.array(PINV_SENS)
     u_canal = (pinv @ y_c.T).T
     w_est   = x_vs + u_canal
-    u_p     = x_ni - theta.phys.tau_p * w_est
+    u_p     = x_ni - theta.brain.tau_p * w_est
 
     eye_pos = x_p[:, 0]
     dt      = float(t_array[1] - t_array[0])
@@ -146,13 +146,13 @@ def demo_vor_cascade():
     axes[1].plot(t_np, sigs['x1_c0'], color='steelblue', lw=1.2, label='RHC (c0)')
     axes[1].plot(t_np, sigs['x1_c1'], color='tomato',    lw=1.2, label='LHC (c1)')
     axes[1].set_ylabel('x1 (deg/s)')
-    axes[1].set_title(f'Canal — adaptation LP  (tau_c = {THETA.phys.tau_c} s)')
+    axes[1].set_title(f'Canal — adaptation LP  (tau_c = {THETA.sensory.tau_c} s)')
     axes[1].legend(fontsize=8, loc='upper right')
 
     axes[2].plot(t_np, sigs['x2_c0'], color='steelblue', lw=1.2, label='RHC (c0)')
     axes[2].plot(t_np, sigs['x2_c1'], color='tomato',    lw=1.2, label='LHC (c1)')
     axes[2].set_ylabel('x2 (deg/s)')
-    axes[2].set_title(f'Canal — inertia LP / bandpass  (tau_s = {THETA.phys.tau_s} s)')
+    axes[2].set_title(f'Canal — inertia LP / bandpass  (tau_s = {THETA.sensory.tau_s} s)')
     axes[2].legend(fontsize=8, loc='upper right')
 
     axes[3].plot(t_np, sigs['y_c0'] + FLOOR, color='steelblue', lw=1.5, label='RHC (c0)')
@@ -189,7 +189,7 @@ def demo_vor_cascade():
     axes[7].set_title('Plant output  (eye velocity)')
     axes[7].legend(fontsize=8)
 
-    orbital_limit = THETA.brain.orbital_limit
+    orbital_limit = THETA.plant.orbital_limit
     axes[8].plot(t_np, sigs['eye_pos'], color='steelblue', lw=1.5, label='eye pos')
     axes[8].axhline( orbital_limit, color='tomato', lw=1.0, ls='--', alpha=0.8,
                      label=f'±orbital limit ({orbital_limit:.0f}°)')
@@ -270,7 +270,7 @@ def demo_okr_cascade():
     fig, axes = plt.subplots(8, 1, figsize=(12, 22), sharex=True)
     fig.suptitle(f'OKN nystagmus — scene on {on_dur:.0f} s then off  (OKAN)\n'
                  f'K_vis={THETA.brain.K_vis},  g_vis={THETA.brain.g_vis},  '
-                 f'tau_vs={THETA.brain.tau_vs} s,  tau_vis={THETA.phys.tau_vis} s',
+                 f'tau_vs={THETA.brain.tau_vs} s,  tau_vis={THETA.sensory.tau_vis} s',
                  fontsize=10)
 
     vline_kw = dict(color='k', lw=0.8, ls='--', alpha=0.4)
@@ -283,7 +283,7 @@ def demo_okr_cascade():
     axes[0].set_title('Input: visual scene velocity')
 
     axes[1].plot(t_np, e_delayed, color='darkorange', lw=1.5,
-                 label=f'e_delayed  (efference-copy corrected, tau_vis={THETA.phys.tau_vis} s)')
+                 label=f'e_delayed  (efference-copy corrected, tau_vis={THETA.sensory.tau_vis} s)')
     axes[1].set_ylabel('Delayed slip\n(deg/s)')
     axes[1].set_title('Visual delay cascade output  (efference copy suppresses saccade artefacts)')
     axes[1].legend(fontsize=8)
@@ -311,7 +311,7 @@ def demo_okr_cascade():
     axes[4].set_title('Eye velocity — OKN nystagmus + OKAN  [clipped]')
     axes[4].legend(fontsize=8)
 
-    orbital_limit_okn = THETA.brain.orbital_limit
+    orbital_limit_okn = THETA.plant.orbital_limit
     axes[5].plot(t_np, x_p[:, 0], color=_C['eye'], lw=0.8, label='x_p (eye pos)')
     axes[5].axhline( orbital_limit_okn, color='tomato', lw=0.8, ls='--', alpha=0.7,
                      label=f'±orbital limit ({orbital_limit_okn:.0f}°)')
@@ -412,7 +412,7 @@ def demo_vvor():
     z_sac_dark = sg_dark[:, 7]
     z_sac_lit  = sg_lit[:,  7]
 
-    orbital_limit = THETA.brain.orbital_limit
+    orbital_limit = THETA.plant.orbital_limit
 
     fig, axes = plt.subplots(6, 1, figsize=(14, 18), sharex=True)
     fig.suptitle(
@@ -506,8 +506,8 @@ def demo_vvor():
 def main():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     print('=== VOR Demo Suite ===')
-    print(f'  tau_c={THETA.phys.tau_c} s  tau_i={THETA.brain.tau_i} s  '
-          f'tau_p={THETA.phys.tau_p} s  tau_vs={THETA.brain.tau_vs} s')
+    print(f'  tau_c={THETA.sensory.tau_c} s  tau_i={THETA.brain.tau_i} s  '
+          f'tau_p={THETA.brain.tau_p} s  tau_vs={THETA.brain.tau_vs} s')
 
     print('\n1. VOR cascade (dark)')
     demo_vor_cascade()

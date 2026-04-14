@@ -71,7 +71,7 @@ THETA_OKN_OFF = with_brain(PARAMS_DEFAULT, g_burst=0.0)
 
 def _extract(states, theta, t_np):
     """Extract efference-copy signals from full state trajectory."""
-    tau_p = theta.phys.tau_p
+    tau_p = theta.brain.tau_p
     x_p   = np.array(states.plant)
     x_ni  = np.array(states.brain[:, _IDX_NI])
     x_vs  = np.array(states.brain[:, _IDX_VS])
@@ -95,7 +95,7 @@ def _extract(states, theta, t_np):
     cor_slip = raw_slip_delayed + u_burst_delayed              # (T, 3)
 
     # w_eye approximation from NI + VS state
-    cg = jnp.array(theta.phys.canal_gains)
+    cg = jnp.array(theta.sensory.canal_gains)
     x_c_j   = states.sensory[:, _IDX_C]
     x_vs_j  = states.brain[:, _IDX_VS]
     x_vis_j = states.sensory[:, _IDX_VIS]
@@ -160,7 +160,7 @@ def demo_efference_copy():
                          max_steps=max_s, return_states=True)
     s_sc = _extract(states_sc, THETA_NO_SAC, t2_np)
 
-    tau_vis = THETA_SAC.phys.tau_vis
+    tau_vis = THETA_SAC.sensory.tau_vis
 
     fig, axes = plt.subplots(4, 1, figsize=(10, 10), sharex=True)
     fig.suptitle(
@@ -369,7 +369,7 @@ def _run_tests():
     peak_burst = t_np[np.argmax(u_burst)]
     peak_bd    = t_np[np.argmax(u_bd)]
     delay_measured = peak_bd - peak_burst
-    tau_vis = THETA_SAC.phys.tau_vis
+    tau_vis = THETA_SAC.sensory.tau_vis
     assert abs(delay_measured - tau_vis) < 0.02, \
         f'FAIL: EC delay mismatch; expected ~{tau_vis:.3f} s, got {delay_measured:.3f} s'
     # Both should have a meaningful peak

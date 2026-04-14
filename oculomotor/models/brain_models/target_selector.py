@@ -114,8 +114,8 @@ def select(pos_visible, x_p, theta):
     Returns:
         e_cmd : (3,)  motor error command (deg), clipped to ±orbital_limit.
     """
-    orbital_limit = theta.brain.orbital_limit
-    k             = theta.brain.k_orbital
+    orbital_limit = theta.plant.orbital_limit
+    k             = theta.plant.k_orbital
     alpha_reset   = theta.brain.alpha_reset
 
     # ── Orbital gate (head-centered) ─────────────────────────────────────────

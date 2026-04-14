@@ -81,7 +81,7 @@ def delay_cascade_step(x_cascade, signal, theta):
     Returns:
         dx_cascade: (120,)  state derivative
     """
-    k = N_STAGES / theta.phys.tau_vis
+    k = N_STAGES / theta.sensory.tau_vis
     return k * _A_STRUCT @ x_cascade + k * _B_STRUCT_SIG @ signal
 
 
@@ -113,7 +113,7 @@ def step(x_vis, e_slip, e_pos, theta):
         e_slip_delayed: (3,)    delayed retinal slip   (for VS / OKR)
         e_pos_delayed:  (3,)    delayed position error (for saccade generator)
     """
-    k     = N_STAGES / theta.phys.tau_vis
+    k     = N_STAGES / theta.sensory.tau_vis
     A_blk = k * _A_STRUCT                              # (120, 120)
     B_blk = k * _B_STRUCT_SIG                          # (120, 3)
     Z_sq  = jnp.zeros((_N_PER_SIG, _N_PER_SIG))

@@ -25,7 +25,23 @@ Parameters:
   orbital_limit — mechanical half-range (deg). Default: 50 deg.
 """
 
+from typing import NamedTuple
+
 import jax.numpy as jnp
+
+
+# ── Plant parameters ────────────────────────────────────────────────────────────
+
+class PlantParams(NamedTuple):
+    """Extraocular plant parameters — orbital mechanics.
+
+    Determined by orbital anatomy and muscle physiology.  Varies with
+    strabismus surgery, orbital inflammation, thyroid eye disease, etc.
+    """
+    tau_p:         float = 0.15   # plant TC (s); Robinson 1981, Goldstein 1983 Biol Cybern
+    orbital_limit: float = 50.0   # mechanical half-range of the orbit (deg); anatomical
+    k_orbital:     float = 1.0    # sigmoid steepness for orbital gate (1/deg)
+
 
 N_STATES  = 3
 N_INPUTS  = 3
@@ -43,7 +59,7 @@ def soft_limit(x_p, theta):
         - saturates monotonically to ±L
         - gradient = sech²(x_p / L) > 0 always (no gradient saturation)
     """
-    L = theta.brain.orbital_limit
+    L = theta.plant.orbital_limit
     return L * jnp.tanh(x_p / L)
 
 
@@ -51,8 +67,8 @@ def step(x_p, u_p, theta):
     """Single ODE step: state derivative + eye position output.
 
     Args:
-        x_p:   (3,)  plant state (eye rotation vector, deg)
-        u_p:   (3,)  pulse-step motor command from NI
+        x_p:   (3,)    plant state (eye rotation vector, deg)
+        u_p:   (3,)    pulse-step motor command from NI
         theta: Params  model parameters
 
     Returns:
@@ -60,8 +76,8 @@ def step(x_p, u_p, theta):
         q_eye: (3,)  eye rotation vector, soft-limited to ±orbital_limit
     """
     # ── System matrices ───────────────────────────────────────────────────────
-    A = (-1.0 / theta.phys.tau_p) * jnp.eye(3)
-    B = ( 1.0 / theta.phys.tau_p) * jnp.eye(3)
+    A = (-1.0 / theta.plant.tau_p) * jnp.eye(3)
+    B = ( 1.0 / theta.plant.tau_p) * jnp.eye(3)
     # C = I (identity — omitted); output is soft_limit(x_p) not C @ x_p
 
     # ── Dynamics ──────────────────────────────────────────────────────────────

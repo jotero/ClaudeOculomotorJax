@@ -33,6 +33,25 @@ import jax.numpy as jnp
 from oculomotor.models.sensory_models import canal  as _canal
 from oculomotor.models.sensory_models import retina as _retina
 
+
+# ── Sensory parameters ──────────────────────────────────────────────────────────
+
+class SensoryParams(NamedTuple):
+    """Sensory parameters — canal mechanics + visual pathway.
+
+    These are determined by peripheral anatomy/physiology.  Fixed during
+    typical patient fitting but freed for known peripheral pathology
+    (e.g. canal paresis → canal_gains, drug effects → tau_vis).
+    """
+    # Semicircular canals — Steinhausen torsion-pendulum (Fernandez & Goldberg 1971)
+    tau_c:              float       = 5.0    # cupula adaptation TC (s); HP corner ≈ 0.03 Hz
+    tau_s:              float       = 0.005  # endolymph inertia TC (s); LP corner ≈ 32 Hz
+    canal_gains:        jnp.ndarray = jnp.ones(6)  # (6,) per-canal scale; 1=intact, 0=paresis
+
+    # Visual pathway
+    tau_vis:            float       = 0.08   # gamma-cascade mean delay (s); Lisberger & Movshon 1999
+    visual_field_limit: float       = 90.0   # retinal eccentricity limit (deg); ~90° monocular field
+
 # ── Re-exports for external callers ────────────────────────────────────────────
 
 # Canal
@@ -99,13 +118,13 @@ def read_outputs(x_sensory, theta):
     x_c   = x_sensory[_IDX_C]
     x_vis = x_sensory[_IDX_VIS]
 
-    canal_out    = _canal.nonlinearity(x_c, theta.phys.canal_gains)
+    canal_out    = _canal.nonlinearity(x_c, theta.sensory.canal_gains)
     slip_delayed = _retina.C_slip @ x_vis
     pos_delayed  = _retina.C_pos  @ x_vis
 
     # Visual-field gate — suppresses pos error when target is outside ~vf_limit deg
-    vf_limit    = theta.brain.visual_field_limit
-    k           = theta.brain.k_orbital
+    vf_limit    = theta.sensory.visual_field_limit
+    k           = theta.plant.k_orbital
     e_mag       = jnp.linalg.norm(pos_delayed) + 1e-9
     gate_vf     = 1.0 - jax.nn.sigmoid(k * (e_mag - vf_limit))   # ≈1 in-field, ≈0 out
     pos_visible = gate_vf * pos_delayed
