@@ -25,8 +25,8 @@ Parameters:
               Default: 0.08 s.  Shared via THETA_DEFAULT.
 """
 
-from oculomotor.models.sensory_models.sensory_model import delay_cascade_step, delay_cascade_read
-from oculomotor.models.sensory_models.sensory_model import _N_PER_SIG
+from oculomotor.models.sensory_models.retina import delay_cascade_step, delay_cascade_read
+from oculomotor.models.sensory_models.retina import _N_PER_SIG
 
 N_STATES  = _N_PER_SIG   # 120  — one delay cascade for 3-D u_burst
 N_INPUTS  = 3             # u_burst

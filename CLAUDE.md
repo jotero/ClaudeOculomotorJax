@@ -37,23 +37,63 @@ Visual loop: `Retinal slip → Visual delay cascade → Velocity Storage (OKR/OK
 
 Saccade loop: `Retinal position error → Visual delay → Saccade Generator (Robinson local-feedback) → NI + Plant`
 
-### Key modules (`oculomotor/models/`)
+### Folder structure (`oculomotor/`)
 
-| Module | Role |
-|--------|------|
-| `canal.py` | Semicircular canal array (Steinhausen torsion-pendulum, 6 canals) |
-| `velocity_storage.py` | VS leaky integrator; owns canal PINV_SENS mixing + visual gains |
-| `neural_integrator.py` | NI leaky integrator (Robinson 1975) |
-| `plant.py` | First-order ocular plant (Robinson 1964) |
-| `retina.py` | Converts Cartesian target → retinal angle |
-| `visual_delay.py` | 40-stage cascade delay (120 slip + 120 pos states) |
-| `saccade_generator.py` | Robinson local-feedback burst model + refractory OPN gate |
-| `efference_copy.py` | NI+plant copy driven by burst only (for e_slip cancellation) |
-| `ocular_motor_simulator.py` | Top-level ODE + `simulate()` entry point |
+```
+oculomotor/
+├── params.py                          Params NamedTuple (PhysParams + BrainParams)
+├── models/
+│   ├── sensory_models/
+│   │   ├── canal.py                   Canal array SSM (Steinhausen, 6 canals, 12 states)
+│   │   ├── retina.py                  Retinal geometry + visual delay cascade (240 states)
+│   │   └── sensory_model.py           Connector: canal + retina → SensoryOutput (252 states)
+│   ├── brain_models/
+│   │   ├── velocity_storage.py        VS leaky integrator; PINV_SENS mixing + OKR (3 states)
+│   │   ├── neural_integrator.py       NI leaky integrator (Robinson 1975) (3 states)
+│   │   ├── saccade_generator.py       Robinson local-feedback burst + OPN gate (9 states)
+│   │   ├── efference_copy.py          Burst delay cascade for slip cancellation (120 states)
+│   │   ├── target_selector.py         Orbital gate → motor error command e_cmd
+│   │   └── brain_model.py             Connector: VS + NI + SG + EC → u_p (135 states)
+│   └── plant_models/
+│       ├── plant_model_first_order.py First-order plant (Robinson 1964) (3 states)
+│       └── readout.py                 Eye position readout utilities
+└── sim/
+    └── simulator.py                   ODE wiring + simulate() entry point
+```
 
-### State vector (270 total)
+### State structure (390 total)
 
-`[x_c (12) | x_vs (3) | x_ni (3) | x_p (3) | x_vis (240) | x_sg (4) | x_ec (6)]`
+The ODE state is a `SimState` NamedTuple with three groups:
+
+```
+SimState(
+    sensory (252):  [x_c (12) | x_vis (240)]
+                     canal       visual delay cascade
+    brain   (135):  [x_vs (3) | x_ni (3) | x_sg (9) | x_ec (120)]
+                     vel-store   NI          sacc-gen   EC delay
+    plant     (3):  x_p — eye rotation vector (deg); directly observable
+)
+```
+
+`x_sg` sub-layout: `[x_copy(3) | z_ref(1) | e_held(3) | z_sac(1) | z_acc(1)]`
+
+### Params structure
+
+Parameters are nested NamedTuples — not dicts. Access via attribute path:
+
+```python
+class PhysParams(NamedTuple):
+    tau_c, tau_s, canal_gains, tau_p, tau_vis, ...
+
+class BrainParams(NamedTuple):
+    tau_vs, K_vs, K_vis, g_vis, tau_i, ...
+
+class Params(NamedTuple):
+    phys: PhysParams
+    brain: BrainParams
+```
+
+Use `with_phys(params, tau_p=0.2)` / `with_brain(params, tau_vs=15.0)` to create modified copies.
 
 ### Solver
 
@@ -64,37 +104,79 @@ Saccade loop: `Retinal position error → Visual delay → Saccade Generator (Ro
 Each behavior has a corresponding demo script and output figure.
 
 1. **VOR in the dark** — eye velocity ≈ −head velocity; gain ~0.9–1.0. Canal adaptation TC (~5 s) causes the VOR to decay during sustained rotation; velocity storage extends the effective TC to ~15–20 s.
-   - Demo: `scripts/demo_vor.py` → `outputs/vor_dark.png` (8-panel signal cascade: head → canal → VS → NI → plant; overlays with/without VS)
+   - Demo: `scripts/demo_vor.py` → `outputs/vor_dark.png`
 
-2. **Velocity storage / TC extension** — during constant-velocity rotation in the dark, eye velocity decays with TC ~15–20 s (not the canal TC of ~5 s). VS charges from canal input and sustains the response beyond cupula adaptation. VVOR: in a stationary lit world, OKR corrects the VOR slip that accumulates as the canal adapts — gaze stays stable throughout.
-   - Demo: `scripts/demo_vor.py` → `outputs/vor_dark.png` (VS state panel), `outputs/vvor.png` (dark vs lit gaze error)
+2. **Velocity storage / TC extension** — during constant-velocity rotation in the dark, eye velocity decays with TC ~15–20 s (not the canal TC of ~5 s). VVOR: in a stationary lit world, OKR corrects VOR slip as the canal adapts — gaze stays stable throughout.
+   - Demo: `scripts/demo_vor.py` → `outputs/vor_dark.png` (VS state panel), `outputs/vvor.png`
 
-3. **OKN + OKAN** — during full-field visual motion, steady-state OKN gain ≈ 1 (eyes track scene velocity). After scene off, OKAN persists with TC ~20 s (`tau_vs`). Fast OKR onset via `g_vis` feedthrough; sustained OKAN via `K_vis` charging `x_vs`. With saccades on, eye shows sawtooth nystagmus (slow phase + resetting fast phases).
-   - Demo: `scripts/demo_vor.py` → `outputs/okr.png` (6-panel cascade: scene vel → retinal slip → delayed slip → VS state → visual drive → eye vel)
+3. **OKN + OKAN** — during full-field visual motion, steady-state OKN gain ≈ 1. After scene off, OKAN persists with TC ~20 s (`tau_vs`). With saccades on, eye shows sawtooth nystagmus.
+   - Demo: `scripts/demo_vor.py` → `outputs/okr.png`
 
-4. **Saccades — main sequence + refractory period** — peak velocity vs. amplitude follows the nonlinear main sequence: `v_peak ≈ 700 · (1 − exp(−A/7))`, saturating ~600–700 deg/s for large saccades. Critically: robust intersaccadic interval (~150–200 ms) — the system must not re-trigger immediately after a saccade even if a large error remains. Oblique saccades should be straight (not curved) with synchronized H and V components.
-   - Demo: `scripts/demo_saccade.py` → `outputs/saccade_main_sequence.png`, `outputs/saccade_sequence.png`, `outputs/saccade_oblique.png`
+4. **Saccades — main sequence + refractory period** — peak velocity follows `v_peak ≈ 700·(1−exp(−A/7))`, saturating ~600–700 deg/s. Robust intersaccadic interval (~150–200 ms). Oblique saccades straight with synchronized components.
+   - Demo: `scripts/demo_saccade.py` → `outputs/saccade_summary.png`
 
-5. **Saccades during pursuit / ramp target (staircase)** — when target moves continuously, saccades should form a staircase: each saccade lands on or near the moving target, then the system waits out the refractory period (~150 ms), then saccades again as error grows. No smooth pursuit pathway exists yet, so catch-up saccades are the only mechanism. This is the **current problem**.
-   - Demo: `scripts/demo_smooth_pursuit.py` → `outputs/smooth_pursuit.png`
+5. **Saccades during pursuit / ramp target (staircase)** — catch-up saccade staircase as target moves continuously. No smooth pursuit pathway yet.
+   - Demo: `scripts/demo_pursuit.py` → `outputs/smooth_pursuit.png`
 
-6. **Saccades during head movement** — same staircase requirement as pursuit, but driven by VOR failure to perfectly compensate head velocity. As head rotates, residual retinal error accumulates; corrective saccades should fire periodically (respecting the refractory period) and bring gaze back toward the target each time. Between saccades, VOR provides partial compensation. This is closely related to the pursuit problem and likely shares the same root cause.
-   - Demo: `scripts/demo_saccade.py` → `outputs/saccade_vor.png` (head 60°/s step, corrective saccades to straight-ahead target)
+6. **Saccades during head movement** — corrective saccades fire periodically as VOR slip accumulates; staircase toward target.
+   - Demo: `scripts/demo_saccade.py` → `outputs/vor_saccade_cascade.png`
 
-7. **Efference copy** — saccade bursts must NOT contaminate the OKR/VS pathway. The plant copy (`x_pc`) should: (a) stay at zero when there is no burst, (b) track burst-driven eye velocity during a saccade and decay back with TC = `tau_p` after the burst ends, (c) keep the delayed slip (`e_slip_delayed`) clean during OKN nystagmus — VS state should be the same whether saccades are on or off (only scene motion drives it). Without efference copy, each fast phase of OKN would spuriously charge VS.
-   - Demo: `scripts/demo_efference_copy.py` → `outputs/efference_plant_copy.png`, `outputs/efference_cancellation.png`, `outputs/efference_okn_debug.png`
+7. **Efference copy** — burst commands must not contaminate VS/OKR. VS state identical with/without saccades during OKN.
+   - Demo: `scripts/demo_efference.py` → `outputs/efference_*.png`
 
 ## Not yet implemented (future work)
 
-- **Smooth pursuit** — foveal target tracking driven by retinal slip of a *small* target (distinct from full-field OKN). Requires a separate pursuit pathway (MT/MST → pursuit motor command) that is not yet in the model.
-- **Binocularity / vergence** — currently monocular. Vergence angle, ACA ratio (accommodative convergence), and binocular disparity not modeled.
-- **Listing's law** — torsional constraints on 3D eye position not enforced.
-- **More complex plant** — current plant is first-order (Robinson 1964). Future: two-muscle-group plant, orbital mechanics, pulley mechanics (Demer et al.).
-- **Otolith + head orientation estimation** — `otolith.py` is partially implemented but not connected to the main simulator. Full integration requires: otolith linear acceleration sensing, internal estimate of head orientation (gravity vector), somatogravic feedback (tilt-translation ambiguity resolution), and rotational-translational interaction (centripetal terms). This feeds into VS and the overall spatial orientation estimate.
+- **Smooth pursuit** — foveal target tracking (MT/MST pathway). Requires a separate pursuit drive distinct from full-field OKN.
+- **Binocularity / vergence** — currently monocular.
+- **Listing's law** — torsional constraints not enforced.
+- **Otolith + head orientation** — `otolith.py` partially implemented but not connected. Requires gravity estimation, somatogravic feedback, tilt-translation disambiguation.
+- **Multiple plant models** — see design note below.
+- **Multiple brain models** — see design note below.
+
+### Design note: swappable plants and brain models
+
+The simulator is designed so that `plant_models/` and `brain_models/` can be swapped without touching sensory machinery. The integration point is the **motor command interface** between brain and plant.
+
+**Motor command format (current and future):**
+
+The brain should output a `MotorCommand` NamedTuple:
+
+```python
+class MotorCommand(NamedTuple):
+    step:  jnp.ndarray   # (3,) tonic NI drive  — eye position hold
+    pulse: jnp.ndarray   # (3,) phasic burst    — saccade acceleration
+```
+
+Units: motoneuron firing rate equivalent (normalized or deg/s). The plant converts these to forces/torques internally — the brain does not need to know muscle geometry.
+
+**Why separate step and pulse?**
+- Robinson's first-order plant combines them as `u_p = step + pulse` — valid because inertia is negligible (overdamped, I→0 means force ∝ velocity directly).
+- A second-order plant (MJX/muscle-level) applies them to different motoneuron pools with different dynamics — tonic vs phasic muscle fibers.
+- Keeping them split in the interface costs nothing for the first-order plant and enables the upgrade.
+
+**Plant interface contract:**
+
+```python
+def step(x_p, cmd: MotorCommand, theta) -> (dx_p, q_eye):
+    # x_p:  (N,)    plant state (eye rotation or muscle activations)
+    # cmd:  MotorCommand  — step + pulse, both (3,) in rotation-vector space
+    # q_eye: (3,)   observed eye rotation (output to retina / feedback)
+```
+
+Any plant implementing this contract (first-order, second-order, MJX-backed) is a drop-in replacement in `simulator.py`.
+
+**Brain model interface contract:**
+
+```python
+def step(x_brain, sensory_out: SensoryOutput, e_cmd, scene_present, theta)
+    -> (dx_brain, motor_cmd: MotorCommand, u_burst):
+```
+
+Different brain architectures (Raphan-Cohen, Kalman, RL policy) swap in here. The sensory model and plant remain unchanged.
 
 ## Current status
 
-Saccades to static targets work well. Saccades to moving targets / during pursuit are broken (as of 2026-04-02). The saccade trigger/refractory logic is the active area of work.
+Saccades to static targets work well. Saccades to moving targets / during pursuit are the active area of work (as of 2026-04-14).
 
 ## SSM module convention
 
@@ -128,21 +210,25 @@ def step(x, u, theta):
     return dx, y
 ```
 
-- **A, B, C, D are local variables inside `step()`** — not separate module-level functions. This keeps all the ODE logic in one place without sacrificing readability.
-- Identity matrices (B=I, C=I, D=I) are omitted rather than written as `I @ x` — just use `x` directly and note `# B = I`.
+- **A, B, C, D are local variables inside `step()`** — not separate module-level functions.
+- Identity matrices (B=I, C=I, D=I) are omitted — just use `x` directly and note `# B = I`.
 - **Pure function** — no side effects, no global state. Compatible with `jax.jit` and `jax.grad`.
-- Returns `(dx, y)` always — the ODE integrator uses `dx`; the simulator uses `y` to wire modules together.
+- Returns `(dx, y)` always — ODE integrator uses `dx`; simulator uses `y` to wire modules.
 - Input/output shapes and units must be documented in the module docstring.
-- `theta` is always a `dict`; use `.get('key', default)` for optional parameters.
-- Module-level constants are kept only when used by external code (e.g. `visual_delay.C_slip`, `canal.PINV_SENS`).
+- **`theta` is a `Params` NamedTuple** — access via `theta.phys.tau_c`, `theta.brain.tau_vs`, etc. Never treat it as a dict.
+- Module-level constants are kept only when used by external code (e.g. `retina.C_slip`, `canal.PINV_SENS`).
 
 ### Nonlinear extensions
 
 Some modules have nonlinearities that wrap the linear ABCD core:
 
-- **Canal**: `canal_nonlinearity(x_c, gains)` applies smooth half-wave rectification to the `x2` (inertia state) to get afferent firing rates. The linear `A @ x + B @ u` still drives the state derivative; only the *output* is nonlinear.
-- **Saccade generator**: gates (`gate_err`, `gate_res`, `gate_dir`) and an adaptive reset TC are layered on top. `A_ni` is computed locally in `step()` for the copy integrator NI mode.
-- **Visual delay**: uses a fixed companion-form `A` (40-stage cascade) with module-level `C_slip` / `C_pos` readout (kept at module level because external code reads them directly).
+- **Canal** (`canal.py`): `nonlinearity(x_c, gains)` applies smooth push-pull rectification to the `x2` (inertia state) to get afferent firing rates. The linear `A @ x + B @ u` drives the state derivative; only the output is nonlinear. Re-exported as `canal_nonlinearity` from `sensory_model.py`.
+- **Saccade generator**: gates (`gate_err`, `gate_res`, `gate_dir`) and adaptive reset TC layered on top of linear SSM core.
+- **Visual delay** (`retina.py`): fixed companion-form `A` (40-stage cascade) with module-level `C_slip` / `C_pos` readout — kept at module level because external code reads them directly.
+
+### Connector modules
+
+`sensory_model.py` and `brain_model.py` are **connector modules** — they import their sub-SSMs, own the combined state layout and index constants, and expose a single `step()` + output-read interface. They do not implement physics themselves.
 
 ### Example: Neural Integrator (simplest case)
 
@@ -150,8 +236,8 @@ Some modules have nonlinearities that wrap the linear ABCD core:
 N_STATES = N_INPUTS = N_OUTPUTS = 3
 
 def step(x_ni, u_vel, theta):
-    A = (-1/theta['tau_i']) * jnp.eye(3)
-    D = theta['tau_p'] * jnp.eye(3)
+    A = (-1/theta.brain.tau_i) * jnp.eye(3)
+    D = theta.phys.tau_p * jnp.eye(3)
     # B = C = I (identity — omitted)
     dx  = A @ x_ni + u_vel
     u_p = x_ni + D @ u_vel
@@ -160,7 +246,7 @@ def step(x_ni, u_vel, theta):
 
 ### Wiring in the simulator
 
-`ODE_ocular_motor` calls each module's `step()` in signal-flow order, passing outputs of one as inputs to the next. The global state vector is a flat concatenation of all module states — sliced by pre-computed index constants (`_IDX_C`, `_IDX_VS`, etc.).
+`ODE_ocular_motor` in `sim/simulator.py` calls each module's `step()` in signal-flow order, passing outputs of one as inputs to the next. The global state is a `SimState` NamedTuple — each field is sliced by pre-computed index constants (`_IDX_C`, `_IDX_VIS`, `_IDX_VS`, etc.).
 
 ## Tech stack
 
@@ -189,3 +275,5 @@ Planned approach when ready:
 - Eye position = `x_p` (plant state, 3D rotation vector)
 - 3D axes: `[yaw, pitch, roll]`
 - Head velocity input can be 1D (horizontal only) or 3D
+- `scene_present`: scalar in [0,1] — is the visual scene physically on? (external input)
+- `pos_visible`: (3,) — position error after visual-field gate — target may be present but outside ~90° field
