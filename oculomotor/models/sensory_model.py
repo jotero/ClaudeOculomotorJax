@@ -76,6 +76,8 @@ Module-level readout matrices (exported for demo scripts):
     C_pos   (3, 240)  selects last stage of pos  cascade
 """
 
+from typing import NamedTuple
+
 import jax.numpy as jnp
 from jax.nn import softplus
 
@@ -148,7 +150,7 @@ def delay_cascade_step(x_cascade, signal, theta):
     Returns:
         dx_cascade: (120,)  state derivative
     """
-    k = N_STAGES / theta.get('tau_vis', 0.08)
+    k = N_STAGES / theta.phys.tau_vis
     return k * _A_STRUCT @ x_cascade + k * _B_STRUCT_SIG @ signal
 
 
@@ -199,8 +201,40 @@ def read_canals(x_sensory, theta):
         y_canals: (N_CANALS,)  canal afferent firing rates
     """
     x_c   = x_sensory[_IDX_C]
-    gains = theta.get('canal_gains', jnp.ones(N_CANALS))
-    return canal_nonlinearity(x_c, gains)
+    return canal_nonlinearity(x_c, theta.phys.canal_gains)
+
+
+# ── Bundled sensory output ─────────────────────────────────────────────────────
+
+class SensoryOutput(NamedTuple):
+    """Bundled sensory outputs — passed as a unit to brain_model.
+
+    Fields:
+        canal:        (N_CANALS,) = (6,)  canal afferent rates (deg/s equiv.)
+        slip_delayed: (3,)  delayed retinal slip  → VS / OKR (EC-corrected in brain)
+        pos_delayed:  (3,)  delayed position error → saccade generator
+    """
+    canal:        jnp.ndarray   # (6,)
+    slip_delayed: jnp.ndarray   # (3,)
+    pos_delayed:  jnp.ndarray   # (3,)
+
+
+def read_outputs(x_sensory, theta):
+    """Read all sensory outputs from the current state (pure state readout).
+
+    Combines canal afferents and delayed visual signals into a SensoryOutput
+    bundle that brain_model.step() consumes directly.
+
+    Args:
+        x_sensory: (252,)  sensory state [x_c (12) | x_vis (240)]
+        theta:     dict    model parameters
+
+    Returns:
+        SensoryOutput with fields (canal, slip_delayed, pos_delayed)
+    """
+    slip_delayed, pos_delayed = read_delayed(x_sensory)
+    canal = read_canals(x_sensory, theta)
+    return SensoryOutput(canal=canal, slip_delayed=slip_delayed, pos_delayed=pos_delayed)
 
 
 # ── Canal nonlinearity ─────────────────────────────────────────────────────────
@@ -244,8 +278,8 @@ def step(x_sensory, w_head, e_slip, e_pos, theta):
     x_vis = x_sensory[_IDX_VIS]
 
     # ── Canal: system matrices ────────────────────────────────────────────────
-    tau_c = theta['tau_c']
-    tau_s = theta['tau_s']
+    tau_c = theta.phys.tau_c
+    tau_s = theta.phys.tau_s
     I_c = jnp.eye(N_CANALS)
     Z_c = jnp.zeros((N_CANALS, N_CANALS))
     A_c = jnp.concatenate([
@@ -256,12 +290,11 @@ def step(x_sensory, w_head, e_slip, e_pos, theta):
                             ORIENTATIONS/tau_s], axis=0)  # (12, 3)
 
     # ── Canal: dynamics ───────────────────────────────────────────────────────
-    gains    = theta.get('canal_gains', jnp.ones(N_CANALS))
     dx_c     = A_c @ x_c + B_c @ w_head
-    y_canals = canal_nonlinearity(x_c, gains)
+    y_canals = canal_nonlinearity(x_c, theta.phys.canal_gains)
 
     # ── Visual delay: system matrices ─────────────────────────────────────────
-    k     = N_STAGES / theta.get('tau_vis', 0.08)
+    k     = N_STAGES / theta.phys.tau_vis
     A_blk = k * _A_STRUCT                              # (120, 120)
     B_blk = k * _B_STRUCT_SIG                          # (120, 3)
     Z_sq  = jnp.zeros((_N_PER_SIG, _N_PER_SIG))

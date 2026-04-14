@@ -38,6 +38,7 @@ from oculomotor.models import velocity_storage as vs
 from oculomotor.models import neural_integrator as ni
 from oculomotor.models import saccade_generator as sg
 from oculomotor.models import efference_copy as ec
+from oculomotor.models.sensory_model import SensoryOutput  # noqa: F401 (re-exported)
 
 # ── State layout ───────────────────────────────────────────────────────────────
 
@@ -54,17 +55,19 @@ _IDX_EC = slice(vs.N_STATES + ni.N_STATES + sg.N_STATES,
 
 # ── Step function ──────────────────────────────────────────────────────────────
 
-def step(x_brain, y_canals, raw_slip_delayed, e_cmd, scene_present, theta):
+def step(x_brain, sensory_out, e_cmd, scene_present, theta):
     """Single ODE step for the brain subsystem.
 
     Args:
-        x_brain:          (135,)  brain state [x_vs | x_ni | x_sg | x_ec]
-        y_canals:         (6,)    canal afferent firing rates
-        raw_slip_delayed: (3,)    delayed raw retinal slip (no EC correction yet)
-        e_cmd:            (3,)    motor error command for saccade generator
-                                  (computed upstream by target_selector.select())
-        scene_present:       scalar   
-        theta:            dict    model parameters
+        x_brain:      (135,)        brain state [x_vs | x_ni | x_sg | x_ec]
+        sensory_out:  SensoryOutput bundled canal afferents + delayed visual signals
+                        .canal        (6,)  canal afferent rates
+                        .slip_delayed (3,)  delayed retinal slip (no EC correction yet)
+                        .pos_delayed  (3,)  delayed position error (unused here; used by SG upstream)
+        e_cmd:        (3,)    motor error command for saccade generator
+                              (computed upstream by target_selector.select())
+        scene_present: scalar  0=dark, 1=lit — gates EC slip correction
+        theta:        dict     model parameters
 
     Returns:
         dx_brain:  (135,)  dx_brain/dt
@@ -76,16 +79,15 @@ def step(x_brain, y_canals, raw_slip_delayed, e_cmd, scene_present, theta):
     x_sg = x_brain[_IDX_SG]
     x_ec = x_brain[_IDX_EC]
 
-    # ── Efference copy correction: subtract delayed burst from delayed slip ────
-    # u_burst_delayed is a pure state read from the EC cascade.
-    # This cancels the burst-driven eye motion from the retinal slip signal,
-    # applied AFTER both the visual signal and u_burst have been delayed equally.
-    # Should only be applied if the brain knows there is a visual scene
+    # ── Efference copy correction: add delayed burst to delayed slip ──────────
+    # u_burst_delayed matches the phase of slip_delayed (both delayed by tau_vis).
+    # Cancels burst-driven eye motion from retinal slip before VS.
+    # Gated by scene_present: correction only applies when a visual scene is visible.
     u_burst_delayed  = ec.read_delayed(x_ec)
-    e_slip_corrected = raw_slip_delayed + scene_present*u_burst_delayed
+    e_slip_corrected = sensory_out.slip_delayed + scene_present * u_burst_delayed
 
     # ── Velocity storage: canal + corrected slip → velocity estimate ──────────
-    dx_vs, w_est = vs.step(x_vs, jnp.concatenate([y_canals, e_slip_corrected]), theta)
+    dx_vs, w_est = vs.step(x_vs, jnp.concatenate([sensory_out.canal, e_slip_corrected]), theta)
 
     # ── Saccade generator ─────────────────────────────────────────────────────
     dx_sg, u_burst = sg.step(x_sg, e_cmd, theta)

@@ -110,15 +110,15 @@ def select(e_pos_delayed, x_p, theta):
                                With default target [0,0,1]: ≈ −x_p − q_head.
         x_p           : (3,)   plant state (deg)
                                Head-centered: where the eye points in the head.
-        theta         : dict   model parameters
+        theta         : Params  model parameters
 
     Returns:
         e_cmd : (3,)  motor error command (deg), clipped to ±orbital_limit.
     """
-    orbital_limit = theta.get('orbital_limit',      50.0)
-    k             = theta.get('k_orbital',            1.0)
-    alpha_reset   = theta.get('alpha_reset',          1.0)
-    vf_limit      = theta.get('visual_field_limit',  90.0)
+    orbital_limit = theta.brain.orbital_limit
+    k             = theta.brain.k_orbital
+    alpha_reset   = theta.brain.alpha_reset
+    vf_limit      = theta.brain.visual_field_limit
 
     # ── 1. Visual field gate (retinal / gaze-centered) ────────────────────────
     # Suppress if target is outside the visual field.

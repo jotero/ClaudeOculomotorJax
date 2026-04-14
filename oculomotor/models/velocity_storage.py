@@ -108,20 +108,18 @@ def step(x_vs, u, theta):
     """Single ODE step: state derivative + velocity command output.
 
     Args:
-        x_vs:  (3,)  VS state (stored angular velocity estimate)
-        u:     (9,)  stacked input [y_canals (6,) | e_slip_delayed (3,)]
-        theta: dict  model parameters
+        x_vs:  (3,)    VS state (stored angular velocity estimate)
+        u:     (9,)    stacked input [y_canals (6,) | e_slip_delayed (3,)]
+        theta: Params  model parameters
 
     Returns:
         dx:    (3,)  dx_vs/dt
         w_est: (3,)  angular velocity estimate (deg/s)
     """
     # ── System matrices ───────────────────────────────────────────────────────
-    k_vis = theta.get('K_vis', 0.3)
-    g_vis = theta.get('g_vis', 0.3)
-    A = -(1.0 / theta['tau_vs']) * jnp.eye(3)
-    B = jnp.concatenate([theta['K_vs'] * PINV_SENS, -k_vis * jnp.eye(3)], axis=1)
-    D = jnp.concatenate([PINV_SENS,                 -g_vis * jnp.eye(3)], axis=1)
+    A = -(1.0 / theta.brain.tau_vs) * jnp.eye(3)
+    B = jnp.concatenate([theta.brain.K_vs  * PINV_SENS, -theta.brain.K_vis * jnp.eye(3)], axis=1)
+    D = jnp.concatenate([PINV_SENS,                     -theta.brain.g_vis  * jnp.eye(3)], axis=1)
     # C = I (identity — omitted)
 
     # ── Dynamics ──────────────────────────────────────────────────────────────

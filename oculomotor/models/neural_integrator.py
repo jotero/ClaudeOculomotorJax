@@ -53,15 +53,15 @@ def step(x_ni, u_vel, theta):
         x_ni:  (3,)  NI state (eye position command, deg)
         u_vel: (3,)  combined eye-velocity command (deg/s)
                      caller is responsible for sign flip and gain scaling
-        theta: dict  model parameters (tau_i, tau_p)
+        theta: Params  model parameters
 
     Returns:
         dx:  (3,)  dx_ni/dt
         u_p: (3,)  pulse-step motor command to plant
     """
     # ── System matrices ───────────────────────────────────────────────────────
-    A = (-1.0 / theta['tau_i']) * jnp.eye(3)
-    D = theta['tau_p'] * jnp.eye(3)
+    A = (-1.0 / theta.brain.tau_i) * jnp.eye(3)
+    D = theta.phys.tau_p * jnp.eye(3)
     # B = C = I (identity — omitted)
 
     # ── Dynamics ──────────────────────────────────────────────────────────────

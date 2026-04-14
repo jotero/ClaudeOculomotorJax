@@ -43,7 +43,7 @@ def soft_limit(x_p, theta):
         - saturates monotonically to ±L
         - gradient = sech²(x_p / L) > 0 always (no gradient saturation)
     """
-    L = theta.get('orbital_limit', 50.0)
+    L = theta.brain.orbital_limit
     return L * jnp.tanh(x_p / L)
 
 
@@ -53,15 +53,15 @@ def step(x_p, u_p, theta):
     Args:
         x_p:   (3,)  plant state (eye rotation vector, deg)
         u_p:   (3,)  pulse-step motor command from NI
-        theta: dict  model parameters
+        theta: Params  model parameters
 
     Returns:
         dx_p:  (3,)  dx_p/dt  (= eye angular velocity, deg/s)
         q_eye: (3,)  eye rotation vector, soft-limited to ±orbital_limit
     """
     # ── System matrices ───────────────────────────────────────────────────────
-    A = (-1.0 / theta['tau_p']) * jnp.eye(3)
-    B = ( 1.0 / theta['tau_p']) * jnp.eye(3)
+    A = (-1.0 / theta.phys.tau_p) * jnp.eye(3)
+    B = ( 1.0 / theta.phys.tau_p) * jnp.eye(3)
     # C = I (identity — omitted); output is soft_limit(x_p) not C @ x_p
 
     # ── Dynamics ──────────────────────────────────────────────────────────────

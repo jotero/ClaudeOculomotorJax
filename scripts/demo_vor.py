@@ -25,7 +25,7 @@ if not SHOW:
 import matplotlib.pyplot as plt
 
 from oculomotor.sim.simulator import (
-    THETA_DEFAULT, simulate,
+    PARAMS_DEFAULT, with_brain, simulate,
     _IDX_C, _IDX_VS, _IDX_NI, _IDX_VIS, _IDX_SG,
 )
 from oculomotor.models.sensory_model import N_CANALS, FLOOR, _SOFTNESS, PINV_SENS
@@ -34,7 +34,7 @@ from oculomotor.models import saccade_generator as sg_mod
 from oculomotor.sim.stimulus import rotation_step, Stimulus
 
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), '..', 'outputs')
-THETA = THETA_DEFAULT
+THETA = PARAMS_DEFAULT
 
 _C = {
     'head':   '#555555',
@@ -74,7 +74,7 @@ def _extract_signals(theta, t_array, head_vel_1d, states):
     pinv    = np.array(PINV_SENS)
     u_canal = (pinv @ y_c.T).T
     w_est   = x_vs + u_canal
-    u_p     = x_ni - theta['tau_p'] * w_est
+    u_p     = x_ni - theta.phys.tau_p * w_est
 
     eye_pos = x_p[:, 0]
     dt      = float(t_array[1] - t_array[0])
@@ -120,14 +120,14 @@ def demo_vor_cascade():
     sigs      = _extract_signals(THETA, t, hv, states)
     burst     = _extract_burst(states, THETA)
 
-    theta_no_vs = {**THETA, 'tau_vs': 0.1, 'K_vs': 0.001}
+    theta_no_vs = with_brain(THETA, tau_vs=0.1, K_vs=0.001)
     states_nv   = simulate(theta_no_vs, t, head_vel_array=hv,
                            target_present_array=jnp.zeros(T),
                            max_steps=max_s, return_states=True)
     sigs_nv     = _extract_signals(theta_no_vs, t, hv, states_nv)
 
-    tau_eff = THETA['tau_vs']
-    FLOOR   = float(FLOOR)
+    tau_eff = THETA.brain.tau_vs
+    _floor  = float(FLOOR)
 
     fig, axes = plt.subplots(10, 1, figsize=(24, 27), sharex=True)
     fig.suptitle(f'VOR in the dark — step rotation  ({rotate_dur:.0f} s @ 30 deg/s)\n'
@@ -146,13 +146,13 @@ def demo_vor_cascade():
     axes[1].plot(t_np, sigs['x1_c0'], color='steelblue', lw=1.2, label='RHC (c0)')
     axes[1].plot(t_np, sigs['x1_c1'], color='tomato',    lw=1.2, label='LHC (c1)')
     axes[1].set_ylabel('x1 (deg/s)')
-    axes[1].set_title(f'Canal — adaptation LP  (tau_c = {THETA["tau_c"]} s)')
+    axes[1].set_title(f'Canal — adaptation LP  (tau_c = {THETA.phys.tau_c} s)')
     axes[1].legend(fontsize=8, loc='upper right')
 
     axes[2].plot(t_np, sigs['x2_c0'], color='steelblue', lw=1.2, label='RHC (c0)')
     axes[2].plot(t_np, sigs['x2_c1'], color='tomato',    lw=1.2, label='LHC (c1)')
     axes[2].set_ylabel('x2 (deg/s)')
-    axes[2].set_title(f'Canal — inertia LP / bandpass  (tau_s = {THETA["tau_s"]} s)')
+    axes[2].set_title(f'Canal — inertia LP / bandpass  (tau_s = {THETA.phys.tau_s} s)')
     axes[2].legend(fontsize=8, loc='upper right')
 
     axes[3].plot(t_np, sigs['y_c0'] + FLOOR, color='steelblue', lw=1.5, label='RHC (c0)')
@@ -178,7 +178,7 @@ def demo_vor_cascade():
     axes[6].plot(t_np, sigs['w_est'], color='seagreen', lw=1.5, label='w_est (deg/s)')
     axes[6].plot(t_np, sigs['x_ni'],  color='seagreen', lw=1.5, ls='--', label='x_ni (deg)')
     axes[6].set_ylabel('deg/s | deg')
-    axes[6].set_title(f'VS output w_est and NI state  (tau_i = {THETA["tau_i"]} s)')
+    axes[6].set_title(f'VS output w_est and NI state  (tau_i = {THETA.brain.tau_i} s)')
     axes[6].legend(fontsize=8)
 
     axes[7].plot(t_np, sigs['eye_vel'],    color='steelblue', lw=1.5, label='with VS')
@@ -189,7 +189,7 @@ def demo_vor_cascade():
     axes[7].set_title('Plant output  (eye velocity)')
     axes[7].legend(fontsize=8)
 
-    orbital_limit = THETA.get('orbital_limit', 50.0)
+    orbital_limit = THETA.brain.orbital_limit
     axes[8].plot(t_np, sigs['eye_pos'], color='steelblue', lw=1.5, label='eye pos')
     axes[8].axhline( orbital_limit, color='tomato', lw=1.0, ls='--', alpha=0.8,
                      label=f'±orbital limit ({orbital_limit:.0f}°)')
@@ -223,8 +223,8 @@ def demo_okr_cascade():
     total_dur = on_dur + off_dur
     scene_vel = 30.0
 
-    theta_okn    = {**THETA, 'g_burst': 600.0}
-    theta_no_vis = {**THETA, 'K_vis': 0.0, 'g_vis': 0.0}
+    theta_okn    = with_brain(THETA, g_burst=600.0)
+    theta_no_vis = with_brain(THETA, K_vis=0.0, g_vis=0.0)
 
     t_arr    = jnp.arange(0.0, total_dur, 1.0 / sr)
     v_sc     = jnp.where(t_arr < on_dur, scene_vel, 0.0)
@@ -256,7 +256,7 @@ def demo_okr_cascade():
     w_scene_np   = np.where(t_np < on_dur, scene_vel, 0.0)
     eye_vel      = np.gradient(x_p[:, 0], dt)
     e_delayed    = (x_vis @ np.array(C_slip).T)[:, 0]
-    u_vis_direct = THETA['g_vis'] * e_delayed
+    u_vis_direct = THETA.brain.g_vis * e_delayed
     SPV_CLIP     = 80.0   # deg/s; clips fast-phase peaks (>80), shows slow phase between
     spv          = np.where(np.abs(eye_vel) < SPV_CLIP, eye_vel, np.nan)
 
@@ -269,8 +269,8 @@ def demo_okr_cascade():
 
     fig, axes = plt.subplots(8, 1, figsize=(12, 22), sharex=True)
     fig.suptitle(f'OKN nystagmus — scene on {on_dur:.0f} s then off  (OKAN)\n'
-                 f'K_vis={THETA["K_vis"]},  g_vis={THETA["g_vis"]},  '
-                 f'tau_vs={THETA["tau_vs"]} s,  tau_vis={THETA["tau_vis"]} s',
+                 f'K_vis={THETA.brain.K_vis},  g_vis={THETA.brain.g_vis},  '
+                 f'tau_vs={THETA.brain.tau_vs} s,  tau_vis={THETA.phys.tau_vis} s',
                  fontsize=10)
 
     vline_kw = dict(color='k', lw=0.8, ls='--', alpha=0.4)
@@ -283,19 +283,19 @@ def demo_okr_cascade():
     axes[0].set_title('Input: visual scene velocity')
 
     axes[1].plot(t_np, e_delayed, color='darkorange', lw=1.5,
-                 label=f'e_delayed  (efference-copy corrected, tau_vis={THETA["tau_vis"]} s)')
+                 label=f'e_delayed  (efference-copy corrected, tau_vis={THETA.phys.tau_vis} s)')
     axes[1].set_ylabel('Delayed slip\n(deg/s)')
     axes[1].set_title('Visual delay cascade output  (efference copy suppresses saccade artefacts)')
     axes[1].legend(fontsize=8)
 
     axes[2].plot(t_np, x_vs[:, 0], color='steelblue', lw=1.5,
-                 label=f'x_vs  (tau_vs = {THETA["tau_vs"]} s)')
+                 label=f'x_vs  (tau_vs = {THETA.brain.tau_vs} s)')
     axes[2].set_ylabel('VS state\n(deg/s)')
     axes[2].set_title('Velocity storage  (charges during OKN, sustains OKAN)')
     axes[2].legend(fontsize=8)
 
     axes[3].plot(t_np, u_vis_direct,  color=_C['scene'],  lw=1.5,
-                 label=f'g_vis * e_delayed  (direct, g_vis={THETA["g_vis"]})')
+                 label=f'g_vis * e_delayed  (direct, g_vis={THETA.brain.g_vis})')
     axes[3].plot(t_np, -x_vs[:, 0],  color='steelblue', lw=1.5, ls='--',
                  label='-x_vs  (VS contribution)')
     axes[3].set_ylabel('Visual drive\n(deg/s)')
@@ -311,7 +311,7 @@ def demo_okr_cascade():
     axes[4].set_title('Eye velocity — OKN nystagmus + OKAN  [clipped]')
     axes[4].legend(fontsize=8)
 
-    orbital_limit_okn = THETA.get('orbital_limit', 50.0)
+    orbital_limit_okn = THETA.brain.orbital_limit
     axes[5].plot(t_np, x_p[:, 0], color=_C['eye'], lw=0.8, label='x_p (eye pos)')
     axes[5].axhline( orbital_limit_okn, color='tomato', lw=0.8, ls='--', alpha=0.7,
                      label=f'±orbital limit ({orbital_limit_okn:.0f}°)')
@@ -377,7 +377,7 @@ def demo_vvor():
     max_sv     = int((rotate_dur + coast_dur) / 0.001) + 500
     T          = len(stim_vor.t)
 
-    theta_dark = {**THETA, 'K_vis': 0.0, 'g_vis': 0.0}   # no visual drive
+    theta_dark = with_brain(THETA, K_vis=0.0, g_vis=0.0)   # no visual drive
     theta_lit  = THETA                                      # full visual drive
 
     states_dark = simulate(theta_dark, stim_vor,
@@ -412,7 +412,7 @@ def demo_vvor():
     z_sac_dark = sg_dark[:, 7]
     z_sac_lit  = sg_lit[:,  7]
 
-    orbital_limit = THETA.get('orbital_limit', 50.0)
+    orbital_limit = THETA.brain.orbital_limit
 
     fig, axes = plt.subplots(6, 1, figsize=(14, 18), sharex=True)
     fig.suptitle(
@@ -506,8 +506,8 @@ def demo_vvor():
 def main():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     print('=== VOR Demo Suite ===')
-    print(f'  tau_c={THETA["tau_c"]} s  tau_i={THETA["tau_i"]} s  '
-          f'tau_p={THETA["tau_p"]} s  tau_vs={THETA["tau_vs"]} s')
+    print(f'  tau_c={THETA.phys.tau_c} s  tau_i={THETA.brain.tau_i} s  '
+          f'tau_p={THETA.phys.tau_p} s  tau_vs={THETA.brain.tau_vs} s')
 
     print('\n1. VOR cascade (dark)')
     demo_vor_cascade()

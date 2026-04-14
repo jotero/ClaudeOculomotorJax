@@ -24,7 +24,7 @@ if not SHOW:
 import matplotlib.pyplot as plt
 
 from oculomotor.sim.simulator import (
-    THETA_DEFAULT, simulate,
+    PARAMS_DEFAULT, with_brain, simulate,
     _IDX_NI, _IDX_SG, _IDX_VIS,
 )
 from oculomotor.models import saccade_generator as sg_mod
@@ -44,7 +44,7 @@ _C = {
     'ref':    '#aaaaaa',
 }
 
-THETA_SAC = {**THETA_DEFAULT, 'g_burst': 700.0}
+THETA_SAC = with_brain(PARAMS_DEFAULT, g_burst=700.0)
 
 
 # ── Utilities ──────────────────────────────────────────────────────────────────
@@ -187,9 +187,9 @@ def demo_saccade_cascade():
                  label='z_acc  (rise-to-bound accumulator)')
         ax2.plot(t_np, s['z_sac'], color='#1b7837', lw=1.5,
                  label='z_sac  (burst latch: 1=active)')
-        ax2.axhline(THETA_SAC.get('threshold_acc', 0.5), color='#e08214',
+        ax2.axhline(THETA_SAC.brain.threshold_acc, color='#e08214',
                     lw=0.8, ls=':', alpha=0.7,
-                    label=f'threshold_acc={THETA_SAC.get("threshold_acc", 0.5):.1f}  (z_sac fires here)')
+                    label=f'threshold_acc={THETA_SAC.brain.threshold_acc:.1f}  (z_sac fires here)')
         ax2.set_ylim(-0.05, 1.15)
         _vl(ax2); ax2.grid(True, alpha=0.2)
         if ci == 0: ax2.legend(fontsize=6.5)
@@ -218,12 +218,12 @@ def demo_saccade_cascade():
         ax5 = axes[5, ci]
         ax5.plot(t_np, s['z_ref'], color='#762a83', lw=1.5,
                  label='z_ref  (OPN refractory state)')
-        ax5.axhline(THETA_SAC.get('threshold_sac_release', 0.4), color='#762a83',
+        ax5.axhline(THETA_SAC.brain.threshold_sac_release, color='#762a83',
                     lw=0.8, ls=':', alpha=0.8,
-                    label=f'release threshold={THETA_SAC.get("threshold_sac_release", 0.4):.1f}  (z_sac drops here)')
-        ax5.axhline(THETA_SAC.get('threshold_ref', 0.1), color='#c2a5cf',
+                    label=f'release threshold={THETA_SAC.brain.threshold_sac_release:.1f}  (z_sac drops here)')
+        ax5.axhline(THETA_SAC.brain.threshold_ref, color='#c2a5cf',
                     lw=0.8, ls=':', alpha=0.8,
-                    label=f'OPN gate threshold={THETA_SAC.get("threshold_ref", 0.1):.1f}  (z_acc can charge again)')
+                    label=f'OPN gate threshold={THETA_SAC.brain.threshold_ref:.1f}  (z_acc can charge again)')
         ax5.set_ylim(-0.05, 1.15)
         _vl(ax5); ax5.grid(True, alpha=0.2)
         ax5.set_xlabel('Time (s)')

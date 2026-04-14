@@ -25,7 +25,7 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from oculomotor.sim.simulator import (
-    THETA_DEFAULT, simulate,
+    PARAMS_DEFAULT, simulate,
     _IDX_NI, _IDX_SG, _IDX_VIS,
 )
 from oculomotor.models import retina
@@ -44,7 +44,7 @@ _C = {
     'reset':  '#e08214',
 }
 
-THETA_SAC = THETA_DEFAULT   # head is still and no scene motion → VOR/OKR inactive naturally
+THETA_SAC = PARAMS_DEFAULT   # head is still and no scene motion → VOR/OKR inactive naturally
 
 VELOCITIES = [1.0, 2.0, 5.0, 10.0]   # deg/s
 T_END   = 3.0

@@ -142,8 +142,8 @@ def burst_velocity(e_residual, theta):
     Returns:
         u_burst_raw: (3,)  burst velocity vector (deg/s), gates NOT applied
     """
-    g_burst   = theta.get('g_burst',   700.0)
-    e_sat_sac = theta.get('e_sat_sac',   7.0)
+    g_burst   = theta.brain.g_burst
+    e_sat_sac = theta.brain.e_sat_sac
     e_res_mag = jnp.linalg.norm(e_residual)
     burst_mag = g_burst * (1.0 - jnp.exp(-e_res_mag / e_sat_sac))
     e_res_dir = e_residual / (e_res_mag + 1e-6)
@@ -179,11 +179,11 @@ def step(x_sg, u_sg, theta):
 
     # ── Gates ─────────────────────────────────────────────────────────────────
 
-    k_sac          = theta.get('k_sac',          200.0)
-    threshold_sac  = theta.get('threshold_sac',    0.5)
-    threshold_stop = theta.get('threshold_stop',   0.1)
-    k_ref          = theta.get('k_ref',           50.0)
-    threshold_ref  = theta.get('threshold_ref',    0.1)
+    k_sac          = theta.brain.k_sac
+    threshold_sac  = theta.brain.threshold_sac
+    threshold_stop = theta.brain.threshold_stop
+    k_ref          = theta.brain.k_ref
+    threshold_ref  = theta.brain.threshold_ref
 
     # Trigger: is current retinal error large enough to warrant a saccade?
     gate_err = jax.nn.sigmoid(k_sac * (e_cur_mag - threshold_sac))
@@ -221,8 +221,8 @@ def step(x_sg, u_sg, theta):
     #   z_sac=0 (idle / refractory):
     #       Fast reset to 0 with τ_fast → clears copy for next saccade.
 
-    tau_fast = theta.get('tau_reset_fast', 0.05)
-    A_ni     = (-1.0 / theta.get('tau_i', 25.0)) * jnp.eye(3)
+    tau_fast = theta.brain.tau_reset_fast
+    A_ni     = (-1.0 / theta.brain.tau_i) * jnp.eye(3)
     # B = I (identity — omitted)
     dx_copy  = (z_sac * (gate_active_burst * (A_ni @ x_copy + u_burst_raw)
                          + (1.0 - gate_active_burst) * (-(x_copy - e_held) / tau_fast))
@@ -238,7 +238,7 @@ def step(x_sg, u_sg, theta):
     # Squaring drives leakthrough to (0.045)²/0.005 = 0.4/s: effectively frozen.
     # Between saccades z_sac≈0 so (1-0)²=1: tracking rate unchanged.
 
-    tau_hold = theta.get('tau_hold', 0.005)
+    tau_hold = theta.brain.tau_hold
     de_held  = (1.0 - z_sac)**2 * (e_cur - e_held) / tau_hold
 
     # ── Refractory (OPN) dynamics ─────────────────────────────────────────────
@@ -255,8 +255,8 @@ def step(x_sg, u_sg, theta):
     #   During refrac:  z_sac = 0  →  charge = 0, z_ref decays with τ_ref
     #   At rest:        z_sac = 0  →  charge = 0
 
-    tau_ref_charge = theta.get('tau_ref_charge', 0.001)
-    tau_ref        = theta.get('tau_ref',         0.15)
+    tau_ref_charge = theta.brain.tau_ref_charge
+    tau_ref        = theta.brain.tau_ref
     charge         = z_sac * (1.0 - gate_res)
     dz_ref         = (1.0 - z_ref) * charge / tau_ref_charge  -  z_ref / tau_ref
 
@@ -271,10 +271,10 @@ def step(x_sg, u_sg, theta):
     #      e_held keeps tracking the still-rising visual cascade.  When z_sac
     #      finally fires, e_held holds a more accurate estimate of target angle.
 
-    tau_acc       = theta.get('tau_acc',       0.060)
-    tau_drain     = theta.get('tau_drain',     0.080)
-    threshold_acc = theta.get('threshold_acc', 0.5)
-    k_acc         = theta.get('k_acc',         50.0)
+    tau_acc       = theta.brain.tau_acc
+    tau_drain     = theta.brain.tau_drain
+    threshold_acc = theta.brain.threshold_acc
+    k_acc         = theta.brain.k_acc
 
     # Accumulate while gate is on AND burst not yet active; drain otherwise.
     gate_drive = gate_err * gate_opn * (1.0 - z_sac)
@@ -284,8 +284,8 @@ def step(x_sg, u_sg, theta):
     # z_sac fires (fast, 1ms) when accumulator crosses threshold.
     # z_sac discharges when z_ref crosses threshold_sac_release ≫ threshold_ref.
 
-    tau_sac               = theta.get('tau_sac',               0.001)
-    threshold_sac_release = theta.get('threshold_sac_release',   0.4)
+    tau_sac               = theta.brain.tau_sac
+    threshold_sac_release = theta.brain.threshold_sac_release
     charge_sac  = jax.nn.sigmoid(k_acc * (z_acc - threshold_acc))          # fires when accumulated
     release_sac = jax.nn.sigmoid(k_ref * (z_ref - threshold_sac_release))  # fires when refractory
     dz_sac      = ((1.0 - z_sac) * charge_sac  -  z_sac * release_sac) / tau_sac
