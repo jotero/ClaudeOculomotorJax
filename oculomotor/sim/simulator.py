@@ -173,12 +173,12 @@ def ODE_ocular_motor(t, state, args):
     e_cmd = ts.select(e_pos_delayed, state.plant, theta)
 
     # ── Brain: VS + NI + SG + EC ──────────────────────────────────────────────
-    dx_brain, u_p, u_burst = brain_model.step(
+    dx_brain, motor_commands, u_burst = brain_model.step(
         state.brain, y_canals, raw_slip_delayed, e_cmd, scene_gain, theta
     )
 
     # ── Plant ─────────────────────────────────────────────────────────────────
-    dx_plant, _ = plant_model.step(state.plant, u_p, theta)
+    dx_plant, _ = plant_model.step(state.plant, motor_commands, theta)
 
     # ── Retinal signals → visual delay cascade ────────────────────────────────
     e_pos     = retina.target_to_angle(p_target) - q_head - state.plant

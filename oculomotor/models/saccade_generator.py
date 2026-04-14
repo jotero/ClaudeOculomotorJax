@@ -221,12 +221,9 @@ def step(x_sg, u_sg, theta):
     #   z_sac=0 (idle / refractory):
     #       Fast reset to 0 with τ_fast → clears copy for next saccade.
 
-    # ── Copy integrator system matrix (NI mode during burst) ──────────────────
     tau_fast = theta.get('tau_reset_fast', 0.05)
     A_ni     = (-1.0 / theta.get('tau_i', 25.0)) * jnp.eye(3)
     # B = I (identity — omitted)
-
-    # ── Copy integrator dynamics ───────────────────────────────────────────────
     dx_copy  = (z_sac * (gate_active_burst * (A_ni @ x_copy + u_burst_raw)
                          + (1.0 - gate_active_burst) * (-(x_copy - e_held) / tau_fast))
                + (1.0 - z_sac) * (-x_copy / tau_fast))
