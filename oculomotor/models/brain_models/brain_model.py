@@ -57,6 +57,7 @@ class BrainParams(NamedTuple):
     # Neural integrator — Robinson (1975)
     tau_i:                 float = 25.0   # leak TC (s); healthy >20 s (Cannon & Robinson 1985)
     tau_p:                 float = 0.15   # plant TC copy — NI feedthrough for lag cancellation
+    tau_vis:               float = 0.08   # visual delay copy — EC delay must match retinal delay
                                           # should match PlantParams.tau_p in healthy subjects;
                                           # may differ in pathology (imperfect internal model)
 
@@ -98,19 +99,18 @@ _IDX_EC = slice(vs.N_STATES + ni.N_STATES + sg.N_STATES,
 
 # ── Step function ──────────────────────────────────────────────────────────────
 
-def step(x_brain, sensory_out, e_cmd, scene_present, theta):
+def step(x_brain, sensory_out, brain_params):
     """Single ODE step for the brain subsystem.
 
     Args:
-        x_brain:      (135,)        brain state [x_vs | x_ni | x_sg | x_ec]
-        sensory_out:  SensoryOutput bundled canal afferents + delayed visual signals
-                        .canal        (6,)  canal afferent rates
-                        .slip_delayed (3,)  delayed retinal slip (no EC correction yet)
-                        .pos_visible  (3,)  delayed position error, gated by visual field
-        e_cmd:        (3,)    motor error command for the saccade generator
-                              (computed in simulator: orbital gate applied to pos_visible)
-        scene_present: scalar  0=dark, 1=lit — gates EC slip correction
-        theta:        Params   model parameters
+        x_brain:     (135,)        brain state [x_vs | x_ni | x_sg | x_ec]
+        sensory_out: SensoryOutput bundled canal afferents + delayed visual signals
+                       .canal         (6,)    canal afferent rates
+                       .slip_delayed  (3,)    delayed retinal slip (no EC correction yet)
+                       .pos_visible   (3,)    delayed position error, gated by visual field
+                       .e_cmd         (3,)    motor error command for the saccade generator
+                       .scene_present scalar  0=dark, 1=lit — gates EC slip correction
+        brain_params: BrainParams   model parameters
 
     Returns:
         dx_brain:  (135,)  dx_brain/dt
@@ -127,20 +127,20 @@ def step(x_brain, sensory_out, e_cmd, scene_present, theta):
     # Cancels burst-driven eye motion from retinal slip before VS.
     # Gated by scene_present: correction only applies when a visual scene is visible.
     u_burst_delayed  = ec.read_delayed(x_ec)
-    e_slip_corrected = sensory_out.slip_delayed + scene_present * u_burst_delayed
+    e_slip_corrected = sensory_out.slip_delayed + sensory_out.scene_present * u_burst_delayed
 
     # ── Velocity storage: canal + corrected slip → velocity estimate ──────────
-    dx_vs, w_est = vs.step(x_vs, jnp.concatenate([sensory_out.canal, e_slip_corrected]), theta)
+    dx_vs, w_est = vs.step(x_vs, jnp.concatenate([sensory_out.canal, e_slip_corrected]), brain_params)
 
     # ── Saccade generator ─────────────────────────────────────────────────────
-    dx_sg, u_burst = sg.step(x_sg, e_cmd, theta)
+    dx_sg, u_burst = sg.step(x_sg, sensory_out.e_cmd, brain_params)
 
     # ── Neural integrator: combined eye-velocity command ──────────────────────
     u_vel      = -w_est + u_burst
-    dx_ni, u_p = ni.step(x_ni, u_vel, theta)
+    dx_ni, u_p = ni.step(x_ni, u_vel, brain_params)
 
     # ── Efference copy: advance delay cascade with current burst ──────────────
-    dx_ec, _ = ec.step(x_ec, u_burst, theta)
+    dx_ec, _ = ec.step(x_ec, u_burst, brain_params)
 
     # ── Pack state derivative ─────────────────────────────────────────────────
     dx_brain = jnp.concatenate([dx_vs, dx_ni, dx_sg, dx_ec])

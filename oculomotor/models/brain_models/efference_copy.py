@@ -49,19 +49,19 @@ def read_delayed(x_ec):
     return delay_cascade_read(x_ec)
 
 
-def step(x_ec, u_burst, theta):
+def step(x_ec, u_burst, brain_params):
     """Advance the efference copy delay cascade by one ODE step.
 
     Args:
-        x_ec:    (120,)  EC cascade state
-        u_burst: (3,)    saccade burst velocity command (deg/s)
-        theta:   dict    model parameters (reads 'tau_vis')
+        x_ec:         (120,)       EC cascade state
+        u_burst:      (3,)         saccade burst velocity command (deg/s)
+        brain_params: BrainParams  model parameters (reads tau_vis)
 
     Returns:
         dx_ec:           (120,)  dx_ec/dt
         u_burst_delayed: (3,)    burst command delayed by tau_vis (from current state)
     """
     # ── Dynamics ──────────────────────────────────────────────────────────────
-    dx_ec           = delay_cascade_step(x_ec, u_burst, theta)
+    dx_ec           = delay_cascade_step(x_ec, u_burst, brain_params.tau_vis)
     u_burst_delayed = delay_cascade_read(x_ec)   # pure state read — no lag vs dx_ec
     return dx_ec, u_burst_delayed

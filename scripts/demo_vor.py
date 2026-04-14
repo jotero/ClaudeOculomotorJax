@@ -94,7 +94,7 @@ def _extract_burst(states, theta):
     """Recompute u_burst (T, 3) from full state trajectory via vmap."""
     def _at(state):
         e_pos_delayed = C_pos @ state.sensory[_IDX_VIS]
-        _, u_burst = sg_mod.step(state.brain[_IDX_SG], e_pos_delayed, theta)
+        _, u_burst = sg_mod.step(state.brain[_IDX_SG], e_pos_delayed, theta.brain)
         return u_burst
     return np.array(jax.vmap(_at)(states))
 

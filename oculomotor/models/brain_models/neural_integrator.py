@@ -46,7 +46,7 @@ N_INPUTS  = 3
 N_OUTPUTS = 3
 
 
-def step(x_ni, u_vel, theta):
+def step(x_ni, u_vel, brain_params):
     """Single ODE step: state derivative + motor command output.
 
     Args:
@@ -60,8 +60,8 @@ def step(x_ni, u_vel, theta):
         u_p: (3,)  pulse-step motor command to plant
     """
     # ── System matrices ───────────────────────────────────────────────────────
-    A = (-1.0 / theta.brain.tau_i) * jnp.eye(3)
-    D = theta.brain.tau_p * jnp.eye(3)
+    A = (-1.0 / brain_params.tau_i) * jnp.eye(3)
+    D = brain_params.tau_p * jnp.eye(3)
     # B = C = I (identity — omitted)
 
     # ── Dynamics ──────────────────────────────────────────────────────────────

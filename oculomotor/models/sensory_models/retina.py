@@ -50,6 +50,32 @@ C_pos  = jnp.zeros((3, N_STATES)).at[:, N_STATES - 3 :               ].set(jnp.e
 
 # ── Geometry ────────────────────────────────────────────────────────────────────
 
+def retinal_signals(p_target, q_head, w_head, q_eye, w_eye, w_scene, scene_present):
+    """Compute instantaneous retinal position error and velocity slip.
+
+    These are the raw sensory signals before any neural processing or delay.
+    They feed directly into the visual delay cascade.
+
+    Args:
+        p_target:      (3,)    Cartesian target position
+        q_head:        (3,)    head angular position (deg)
+        w_head:        (3,)    head angular velocity (deg/s)
+        q_eye:         (3,)    eye angular position — plant state (deg)
+        w_eye:         (3,)    eye angular velocity — plant derivative (deg/s)
+        w_scene:       (3,)    scene angular velocity (deg/s)
+        scene_present: scalar  0=dark, 1=lit — gates the slip signal
+
+    Returns:
+        e_pos:    (3,)  retinal position error (deg)
+                        = target_direction − head_position − eye_position
+        raw_slip: (3,)  retinal velocity slip (deg/s), zero in the dark
+                        = scene_present · (w_scene − w_head − w_eye)
+    """
+    e_pos    = target_to_angle(p_target) - q_head - q_eye
+    raw_slip = scene_present * (w_scene - w_head - w_eye)
+    return e_pos, raw_slip
+
+
 def target_to_angle(p_target):
     """Convert Cartesian target position to angular gaze direction (deg).
 
@@ -67,21 +93,21 @@ def target_to_angle(p_target):
 
 # ── Shared cascade utilities (used by sensory_model and efference_copy) ─────────
 
-def delay_cascade_step(x_cascade, signal, theta):
+def delay_cascade_step(x_cascade, signal, tau_vis):
     """Advance one (N_STAGES × 3 = 120) delay cascade by one ODE step.
 
-    Shared utility — called by sensory_model and efference_copy so both use
-    an identical gamma-distributed delay with the same tau_vis parameter.
+    Shared utility — called by sensory_model (with SensoryParams.tau_vis) and
+    efference_copy (with BrainParams.tau_vis) so each uses its own copy.
 
     Args:
         x_cascade: (120,)  cascade state
         signal:    (3,)    input signal to delay
-        theta:     Params  model parameters (reads phys.tau_vis)
+        tau_vis:   float   total cascade delay (s)
 
     Returns:
         dx_cascade: (120,)  state derivative
     """
-    k = N_STAGES / theta.sensory.tau_vis
+    k = N_STAGES / tau_vis
     return k * _A_STRUCT @ x_cascade + k * _B_STRUCT_SIG @ signal
 
 
@@ -99,21 +125,21 @@ def delay_cascade_read(x_cascade):
 
 # ── Combined visual delay step ───────────────────────────────────────────────────
 
-def step(x_vis, e_slip, e_pos, theta):
+def step(x_vis, e_slip, e_pos, tau_vis):
     """Single ODE step for the full visual delay cascade (both signals).
 
     Args:
-        x_vis:  (240,)  visual cascade state [x_slip (120) | x_pos (120)]
-        e_slip: (3,)    instantaneous retinal slip (deg/s)
-        e_pos:  (3,)    instantaneous retinal position error (deg)
-        theta:  Params  model parameters (reads phys.tau_vis)
+        x_vis:   (240,)  visual cascade state [x_slip (120) | x_pos (120)]
+        e_slip:  (3,)    instantaneous retinal slip (deg/s)
+        e_pos:   (3,)    instantaneous retinal position error (deg)
+        tau_vis: float   total cascade delay (s)
 
     Returns:
         dx_vis:         (240,)  dx_vis/dt
         e_slip_delayed: (3,)    delayed retinal slip   (for VS / OKR)
         e_pos_delayed:  (3,)    delayed position error (for saccade generator)
     """
-    k     = N_STAGES / theta.sensory.tau_vis
+    k     = N_STAGES / tau_vis
     A_blk = k * _A_STRUCT                              # (120, 120)
     B_blk = k * _B_STRUCT_SIG                          # (120, 3)
     Z_sq  = jnp.zeros((_N_PER_SIG, _N_PER_SIG))

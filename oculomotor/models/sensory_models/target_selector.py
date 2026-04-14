@@ -97,26 +97,27 @@ import jax
 import jax.numpy as jnp
 
 
-def select(pos_visible, x_p, theta):
+def select(pos_visible, x_p, plant_params, brain_params):
     """Compute motor error command for the saccade generator.
 
     Receives pos_visible — already gated by the visual field limit in sensory_model.
     Applies the orbital gate (head-centered) and anti-windup clip.
 
     Args:
-        pos_visible : (3,)   visually-gated position error (deg)
-                             Gaze-centered; already suppressed outside visual field.
-                             With default target [0,0,1]: ≈ −x_p − q_head in-field.
-        x_p         : (3,)   plant state (deg)
-                             Head-centered: where the eye points in the head.
-        theta       : Params  model parameters
+        pos_visible  : (3,)        visually-gated position error (deg)
+                                   Gaze-centered; already suppressed outside visual field.
+                                   With default target [0,0,1]: ≈ −x_p − q_head in-field.
+        x_p          : (3,)        plant state (deg)
+                                   Head-centered: where the eye points in the head.
+        plant_params : PlantParams  orbital mechanics (orbital_limit, k_orbital)
+        brain_params : BrainParams  reset policy (alpha_reset)
 
     Returns:
         e_cmd : (3,)  motor error command (deg), clipped to ±orbital_limit.
     """
-    orbital_limit = theta.plant.orbital_limit
-    k             = theta.plant.k_orbital
-    alpha_reset   = theta.brain.alpha_reset
+    orbital_limit = plant_params.orbital_limit
+    k             = plant_params.k_orbital
+    alpha_reset   = brain_params.alpha_reset
 
     # ── Orbital gate (head-centered) ─────────────────────────────────────────
     # Blends pos_visible toward a centering command as eye approaches orbital limit.

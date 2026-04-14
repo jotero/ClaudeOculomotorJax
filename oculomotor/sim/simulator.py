@@ -52,8 +52,6 @@ from typing import NamedTuple
 import jax.numpy as jnp
 import diffrax
 
-from oculomotor.models.sensory_models import retina
-from oculomotor.models.brain_models   import target_selector as ts
 from oculomotor.models.sensory_models.sensory_model import _IDX_C, _IDX_VIS, SensoryParams
 from oculomotor.models.brain_models.brain_model    import _IDX_VS, _IDX_NI, _IDX_SG, _IDX_EC, BrainParams
 from oculomotor.models.plant_models.plant_model_first_order import PlantParams
@@ -182,28 +180,24 @@ def ODE_ocular_motor(t, state, args):
     target_present  = target_present_interp.evaluate(t)  # scalar: 0=no target, 1=target present
 
     # ── Sensory: read bundled outputs from current state ─────────────────────
-    sensory_out = sensory_model.read_outputs(state.sensory, theta)
-
-    # ── Target selector: visually-gated position error + orbital state → motor cmd
-    e_cmd = ts.select(sensory_out.pos_visible, state.plant, theta)
+    sensory_out = sensory_model.read_outputs(
+        state.sensory, state.plant, scene_present, theta.sensory, theta.plant, theta.brain)
 
     # ── Brain: VS + NI + SG + EC ──────────────────────────────────────────────
-    dx_brain, motor_commands, u_burst = brain_model.step(state.brain, sensory_out, e_cmd, scene_present, theta)
+    dx_brain, motor_commands, u_burst = brain_model.step(state.brain, sensory_out, theta.brain)
 
     # ── Plant ─────────────────────────────────────────────────────────────────
-    dx_plant, _ = plant_model.step(state.plant, motor_commands, theta)
+    w_eye, _ = plant_model.step(state.plant, motor_commands, theta.plant)
 
-    # ── Retinal signals → visual delay cascade ────────────────────────────────
-    e_pos     = retina.target_to_angle(p_target) - q_head - state.plant
-    raw_slip  = scene_present * (w_scene - w_head - dx_plant)
-
-    # ── Sensory: full step (canal derivative + visual delay derivative) ────────
-    dx_sensory, _, _, _ = sensory_model.step(state.sensory, w_head, raw_slip, e_pos, theta)
+    # ── Sensory: retinal signals + canal + visual delay ───────────────────────
+    dx_sensory, _, _, _ = sensory_model.step(
+        state.sensory, q_head, w_head, state.plant, w_eye,
+        w_scene, p_target, scene_present, theta.sensory)
 
     return SimState(
         sensory = dx_sensory,
         brain   = dx_brain,
-        plant   = dx_plant,
+        plant   = w_eye,
     )
 
 

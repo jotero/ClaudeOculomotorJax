@@ -82,7 +82,7 @@ def _extract(states, theta, t_np):
     # u_burst: recompute from SG state + delayed position error
     def _at(state):
         e_pd   = C_pos @ state.sensory[_IDX_VIS]
-        _, u_b = sg_mod.step(state.brain[_IDX_SG], e_pd, theta)
+        _, u_b = sg_mod.step(state.brain[_IDX_SG], e_pd, theta.brain)
         return u_b
     u_burst = np.array(jax.vmap(_at)(states))  # (T, 3)
 
@@ -103,7 +103,7 @@ def _extract(states, theta, t_np):
     def _w_est_at(xc, xvs, xvis):
         y_c  = canal_nonlinearity(xc, cg)
         e_sl = C_slip @ xvis
-        _, w = vs_mod.step(xvs, jnp.concatenate([y_c, e_sl]), theta)
+        _, w = vs_mod.step(xvs, jnp.concatenate([y_c, e_sl]), theta.brain)
         return w
     w_est = np.array(jax.vmap(_w_est_at)(x_c_j, x_vs_j, x_vis_j))  # (T, 3)
     w_eye = (x_ni - x_p) / tau_p + (-w_est + u_burst)               # (T, 3)
@@ -361,7 +361,7 @@ def _run_tests():
 
     def _burst_at(state):
         e_pd   = C_pos @ state.sensory[_IDX_VIS]
-        _, u_b = sg_mod.step(state.brain[_IDX_SG], e_pd, THETA_SAC)
+        _, u_b = sg_mod.step(state.brain[_IDX_SG], e_pd, THETA_SAC.brain)
         return u_b
     u_burst = np.array(jax.vmap(_burst_at)(states))[:, 0]
     u_bd    = np.array(states.brain[:, _IDX_EC])[:, -3]

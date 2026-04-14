@@ -48,7 +48,7 @@ N_INPUTS  = 3
 N_OUTPUTS = 3
 
 
-def soft_limit(x_p, theta):
+def soft_limit(x_p, plant_params):
     """Soft (differentiable) saturation of eye position to ±orbital_limit (deg).
 
     Applied to the plant OUTPUT only — the internal state x_p is left unbounded
@@ -59,11 +59,11 @@ def soft_limit(x_p, theta):
         - saturates monotonically to ±L
         - gradient = sech²(x_p / L) > 0 always (no gradient saturation)
     """
-    L = theta.plant.orbital_limit
+    L = plant_params.orbital_limit
     return L * jnp.tanh(x_p / L)
 
 
-def step(x_p, u_p, theta):
+def step(x_p, u_p, plant_params):
     """Single ODE step: state derivative + eye position output.
 
     Args:
@@ -76,11 +76,11 @@ def step(x_p, u_p, theta):
         q_eye: (3,)  eye rotation vector, soft-limited to ±orbital_limit
     """
     # ── System matrices ───────────────────────────────────────────────────────
-    A = (-1.0 / theta.plant.tau_p) * jnp.eye(3)
-    B = ( 1.0 / theta.plant.tau_p) * jnp.eye(3)
+    A = (-1.0 / plant_params.tau_p) * jnp.eye(3)
+    B = ( 1.0 / plant_params.tau_p) * jnp.eye(3)
     # C = I (identity — omitted); output is soft_limit(x_p) not C @ x_p
 
     # ── Dynamics ──────────────────────────────────────────────────────────────
     dx_p  = A @ x_p + B @ u_p
-    q_eye = soft_limit(x_p, theta)
+    q_eye = soft_limit(x_p, plant_params)
     return dx_p, q_eye

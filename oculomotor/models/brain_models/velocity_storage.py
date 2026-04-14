@@ -104,7 +104,7 @@ N_STATES  = 3
 N_INPUTS  = N_CANALS + 3    # 6 canal afferents + 3 delayed retinal slip axes
 N_OUTPUTS = 3
 
-def step(x_vs, u, theta):
+def step(x_vs, u, brain_params):
     """Single ODE step: state derivative + velocity command output.
 
     Args:
@@ -117,9 +117,9 @@ def step(x_vs, u, theta):
         w_est: (3,)  angular velocity estimate (deg/s)
     """
     # ── System matrices ───────────────────────────────────────────────────────
-    A = -(1.0 / theta.brain.tau_vs) * jnp.eye(3)
-    B = jnp.concatenate([theta.brain.K_vs  * PINV_SENS, -theta.brain.K_vis * jnp.eye(3)], axis=1)
-    D = jnp.concatenate([PINV_SENS,                     -theta.brain.g_vis  * jnp.eye(3)], axis=1)
+    A = -(1.0 / brain_params.tau_vs) * jnp.eye(3)
+    B = jnp.concatenate([brain_params.K_vs  * PINV_SENS, -brain_params.K_vis * jnp.eye(3)], axis=1)
+    D = jnp.concatenate([PINV_SENS,                     -brain_params.g_vis  * jnp.eye(3)], axis=1)
     # C = I (identity — omitted)
 
     # ── Dynamics ──────────────────────────────────────────────────────────────

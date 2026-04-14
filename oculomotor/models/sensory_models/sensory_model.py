@@ -30,8 +30,9 @@ from typing import NamedTuple
 import jax
 import jax.numpy as jnp
 
-from oculomotor.models.sensory_models import canal  as _canal
-from oculomotor.models.sensory_models import retina as _retina
+from oculomotor.models.sensory_models import canal           as _canal
+from oculomotor.models.sensory_models import retina          as _retina
+from oculomotor.models.sensory_models import target_selector as _ts
 
 
 # ── Sensory parameters ──────────────────────────────────────────────────────────
@@ -51,6 +52,7 @@ class SensoryParams(NamedTuple):
     # Visual pathway
     tau_vis:            float       = 0.08   # gamma-cascade mean delay (s); Lisberger & Movshon 1999
     visual_field_limit: float       = 90.0   # retinal eccentricity limit (deg); ~90° monocular field
+    k_visual_field:     float       = 1.0    # sigmoid steepness for visual field gate (1/deg)
 
 # ── Re-exports for external callers ────────────────────────────────────────────
 
@@ -87,67 +89,94 @@ class SensoryOutput(NamedTuple):
     """Bundled sensory outputs — passed as a unit to brain_model.
 
     Fields:
-        canal:        (N_CANALS,) = (6,)  canal afferent rates (deg/s equiv.)
-        slip_delayed: (3,)  delayed retinal slip  → VS / OKR
-        pos_delayed:  (3,)  delayed position error — raw, before visual-field gating
-        pos_visible:  (3,)  pos_delayed gated by visual field limit
-                            ≈ pos_delayed when target is in-field, → 0 when out-of-field
-                            Target may be *present* (physical stimulus on) but not
-                            *visible* (outside the ~90° visual field).
+        canal:         (N_CANALS,) = (6,)  canal afferent rates (deg/s equiv.)
+        slip_delayed:  (3,)  delayed retinal slip  → VS / OKR
+        pos_delayed:   (3,)  delayed position error — raw, before visual-field gating
+        pos_visible:   (3,)  pos_delayed gated by visual field limit
+                             ≈ pos_delayed when target is in-field, → 0 when out-of-field
+                             Target may be *present* (physical stimulus on) but not
+                             *visible* (outside the ~90° visual field).
+        e_cmd:         (3,)  motor error command for the saccade generator
+                             pos_visible after orbital gate + anti-windup clip
+                             (head-centered, clipped to ±orbital_limit)
+        scene_present: scalar  0=dark, 1=scene present — gates EC slip correction
     """
-    canal:        jnp.ndarray   # (6,)
-    slip_delayed: jnp.ndarray   # (3,)
-    pos_delayed:  jnp.ndarray   # (3,)
-    pos_visible:  jnp.ndarray   # (3,)
+    canal:         jnp.ndarray   # (6,)
+    slip_delayed:  jnp.ndarray   # (3,)
+    pos_delayed:   jnp.ndarray   # (3,)
+    pos_visible:   jnp.ndarray   # (3,)
+    e_cmd:         jnp.ndarray   # (3,)
+    scene_present: jnp.ndarray   # scalar
 
 
-def read_outputs(x_sensory, theta):
+def read_outputs(x_sensory, x_p, scene_present, sensory_params, plant_params, brain_params):
     """Read all sensory outputs from the current state (pure state readout).
 
-    Combines canal afferents and delayed visual signals into a SensoryOutput
-    bundle.  Applies the visual-field gate to produce pos_visible: a target
-    may be present (stimulus on) but not visible (eccentricity > vf_limit).
+    Combines canal afferents, delayed visual signals, motor error command, and
+    scene presence flag into a SensoryOutput bundle.
+
+    Visual-field gate: suppresses pos error when target eccentricity > vf_limit.
+    Orbital gate + anti-windup: blends pos_visible toward a centering command
+    as the eye approaches its mechanical range, then clips to ±orbital_limit.
 
     Args:
-        x_sensory: (252,)  sensory state [x_c (12) | x_vis (240)]
-        theta:     Params  model parameters
+        x_sensory:     (252,)       sensory state [x_c (12) | x_vis (240)]
+        x_p:           (3,)         plant state — eye rotation vector (deg, head-centered)
+        scene_present: scalar       0=dark, 1=scene present
+        sensory_params: SensoryParams
+        plant_params:   PlantParams  (reads orbital_limit, k_orbital)
+        brain_params:   BrainParams  (reads alpha_reset)
 
     Returns:
-        SensoryOutput with fields (canal, slip_delayed, pos_delayed, pos_visible)
+        SensoryOutput with fields (canal, slip_delayed, pos_delayed, pos_visible,
+                                   e_cmd, scene_present)
     """
     x_c   = x_sensory[_IDX_C]
     x_vis = x_sensory[_IDX_VIS]
 
-    canal_out    = _canal.nonlinearity(x_c, theta.sensory.canal_gains)
+    canal_out    = _canal.nonlinearity(x_c, sensory_params.canal_gains)
     slip_delayed = _retina.C_slip @ x_vis
     pos_delayed  = _retina.C_pos  @ x_vis
 
     # Visual-field gate — suppresses pos error when target is outside ~vf_limit deg
-    vf_limit    = theta.sensory.visual_field_limit
-    k           = theta.plant.k_orbital
+    vf_limit    = sensory_params.visual_field_limit
+    k_vf        = sensory_params.k_visual_field
     e_mag       = jnp.linalg.norm(pos_delayed) + 1e-9
-    gate_vf     = 1.0 - jax.nn.sigmoid(k * (e_mag - vf_limit))   # ≈1 in-field, ≈0 out
+    gate_vf     = 1.0 - jax.nn.sigmoid(k_vf * (e_mag - vf_limit))   # ≈1 in-field, ≈0 out
     pos_visible = gate_vf * pos_delayed
 
+    # Motor error command — orbital gate + anti-windup clip
+    e_cmd = _ts.select(pos_visible, x_p, plant_params, brain_params)
+
     return SensoryOutput(
-        canal        = canal_out,
-        slip_delayed = slip_delayed,
-        pos_delayed  = pos_delayed,
-        pos_visible  = pos_visible,
+        canal         = canal_out,
+        slip_delayed  = slip_delayed,
+        pos_delayed   = pos_delayed,
+        pos_visible   = pos_visible,
+        e_cmd         = e_cmd,
+        scene_present = scene_present,
     )
 
 
 # ── Combined step ───────────────────────────────────────────────────────────────
 
-def step(x_sensory, w_head, e_slip, e_pos, theta):
+def step(x_sensory, q_head, w_head, q_eye, w_eye,
+         w_scene, p_target, scene_present, sensory_params):
     """Single ODE step for the sensory subsystem (canal + visual delay).
 
+    Computes retinal signals internally from world/body state, then advances
+    the canal and visual delay cascades.
+
     Args:
-        x_sensory:  (252,)  sensory state [x_c (12) | x_vis (240)]
-        w_head:     (3,)    head angular velocity (deg/s)
-        e_slip:     (3,)    instantaneous retinal slip, efference-corrected (deg/s)
-        e_pos:      (3,)    instantaneous retinal position error (deg)
-        theta:      Params  model parameters
+        x_sensory:     (252,)  sensory state [x_c (12) | x_vis (240)]
+        q_head:        (3,)    head angular position (deg)
+        w_head:        (3,)    head angular velocity (deg/s)
+        q_eye:         (3,)    eye angular position — plant state (deg)
+        w_eye:         (3,)    eye angular velocity — plant derivative (deg/s)
+        w_scene:       (3,)    scene angular velocity (deg/s)
+        p_target:      (3,)    Cartesian target position
+        scene_present: scalar  0=dark, 1=lit — gates retinal slip
+        sensory_params: SensoryParams  model parameters
 
     Returns:
         dx_sensory:     (252,)  dx_sensory/dt
@@ -158,8 +187,11 @@ def step(x_sensory, w_head, e_slip, e_pos, theta):
     x_c   = x_sensory[_IDX_C]
     x_vis = x_sensory[_IDX_VIS]
 
-    dx_c,  y_canals       = _canal.step(x_c,  w_head,         theta)
-    dx_vis, e_slip_delayed, e_pos_delayed = _retina.step(x_vis, e_slip, e_pos, theta)
+    e_pos, raw_slip = _retina.retinal_signals(
+        p_target, q_head, w_head, q_eye, w_eye, w_scene, scene_present)
+
+    dx_c,  y_canals                       = _canal.step(x_c,  w_head,          sensory_params)
+    dx_vis, e_slip_delayed, e_pos_delayed = _retina.step(x_vis, raw_slip, e_pos, sensory_params.tau_vis)
 
     dx_sensory = jnp.concatenate([dx_c, dx_vis])
     return dx_sensory, y_canals, e_slip_delayed, e_pos_delayed

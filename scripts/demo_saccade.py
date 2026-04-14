@@ -80,7 +80,7 @@ def _extract(states, pt3_np, theta, t_np):
 
     def _burst_at(state):
         e_pd = C_pos @ state.sensory[_IDX_VIS]
-        _, u = sg_mod.step(state.brain[_IDX_SG], e_pd, theta)
+        _, u = sg_mod.step(state.brain[_IDX_SG], e_pd, theta.brain)
         return u
     u_burst = np.array(jax.vmap(_burst_at)(states))
 
