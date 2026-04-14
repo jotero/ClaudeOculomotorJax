@@ -97,20 +97,19 @@ import jax
 import jax.numpy as jnp
 
 
-def select(e_pos_delayed, x_p, theta):
+def select(pos_visible, x_p, theta):
     """Compute motor error command for the saccade generator.
 
-    The implicit target is always "straight ahead" (the default p_target when
-    none is specified).  e_pos_delayed already encodes the retinal error from
-    whatever target is active, so no separate target_gain gate is needed here.
+    Receives pos_visible — already gated by the visual field limit in sensory_model.
+    Applies the orbital gate (head-centered) and anti-windup clip.
 
     Args:
-        e_pos_delayed : (3,)   delayed retinal position error (deg)
-                               Gaze-centered: angle of target from fovea.
-                               With default target [0,0,1]: ≈ −x_p − q_head.
-        x_p           : (3,)   plant state (deg)
-                               Head-centered: where the eye points in the head.
-        theta         : Params  model parameters
+        pos_visible : (3,)   visually-gated position error (deg)
+                             Gaze-centered; already suppressed outside visual field.
+                             With default target [0,0,1]: ≈ −x_p − q_head in-field.
+        x_p         : (3,)   plant state (deg)
+                             Head-centered: where the eye points in the head.
+        theta       : Params  model parameters
 
     Returns:
         e_cmd : (3,)  motor error command (deg), clipped to ±orbital_limit.
@@ -118,30 +117,15 @@ def select(e_pos_delayed, x_p, theta):
     orbital_limit = theta.brain.orbital_limit
     k             = theta.brain.k_orbital
     alpha_reset   = theta.brain.alpha_reset
-    vf_limit      = theta.brain.visual_field_limit
 
-    # ── 1. Visual field gate (retinal / gaze-centered) ────────────────────────
-    # Suppress if target is outside the visual field.
-    # Uses norm of e_pos_delayed (isotropic visual field).
-    e_mag = jnp.linalg.norm(e_pos_delayed) + 1e-9
-    gate_vf  = 1.0 - jax.nn.sigmoid(k * (e_mag - vf_limit))   # scalar; ≈1 in-field, ≈0 out
-
-    # Visual error: gated by visual field only.
-    # No target_gain gate here — the implicit target (straight-ahead by default)
-    # always provides a centration drive for reflexive fast phases.
-    e_visual = gate_vf * e_pos_delayed            # (3,)
-
-    # ── 2. Orbital gate (head-centered) ──────────────────────────────────────
-    # Blends e_visual toward e_reset as the eye approaches the orbital limit.
-    # Per-axis: each axis saturates independently.
+    # ── Orbital gate (head-centered) ─────────────────────────────────────────
+    # Blends pos_visible toward a centering command as eye approaches orbital limit.
     gate_orbital = jax.nn.sigmoid(k * (jnp.abs(x_p) - orbital_limit))   # (3,)
     e_reset      = -alpha_reset * x_p                                     # (3,)
+    e_cmd        = (1.0 - gate_orbital) * pos_visible + gate_orbital * e_reset
 
-    e_cmd = (1.0 - gate_orbital) * e_visual + gate_orbital * e_reset
-
-    # ── 3. Anti-windup clip (head-centered) ───────────────────────────────────
+    # ── Anti-windup clip (head-centered) ─────────────────────────────────────
     # Hard guarantee: landing position x_p + e_cmd stays within ±orbital_limit.
-    # Handles the "visible but unreachable" case: clips to best saccade in range.
     e_cmd_clipped = jnp.clip(e_cmd, -orbital_limit - x_p, orbital_limit - x_p)
 
     return e_cmd_clipped

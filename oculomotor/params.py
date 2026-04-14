@@ -61,7 +61,7 @@ class PhysParams(NamedTuple):
     # Semicircular canals — Steinhausen torsion-pendulum (Fernandez & Goldberg 1971)
     tau_c:       float       = 5.0    # cupula adaptation TC (s); HP corner ≈ 0.03 Hz
     tau_s:       float       = 0.005  # endolymph inertia TC (s); LP corner ≈ 32 Hz
-    canal_gains: jnp.ndarray = None   # (6,) per-canal scale; 1=intact, 0=paresis; set via default_params()
+    canal_gains: jnp.ndarray = jnp.ones(6)  # (6,) per-canal scale; 1=intact, 0=paresis
     
     # Ocular plant — Robinson (1964)
     tau_p:       float       = 0.15   # plant TC (s); Robinson 1981, Goldstein 1983
@@ -123,14 +123,9 @@ class Params(NamedTuple):
     brain: BrainParams
 
 
-# ── Factory (canal_gains can't be a NamedTuple default — it's a jnp array) ────
-
 def default_params() -> Params:
     """Healthy primate default parameters."""
-    return Params(
-        phys  = PhysParams(canal_gains=jnp.ones(6)),
-        brain = BrainParams(),
-    )
+    return Params(phys=PhysParams(), brain=BrainParams())
 
 
 SIM_CONFIG_DEFAULT = SimConfig()

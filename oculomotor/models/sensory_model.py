@@ -78,6 +78,7 @@ Module-level readout matrices (exported for demo scripts):
 
 from typing import NamedTuple
 
+import jax
 import jax.numpy as jnp
 from jax.nn import softplus
 
@@ -212,29 +213,49 @@ class SensoryOutput(NamedTuple):
     Fields:
         canal:        (N_CANALS,) = (6,)  canal afferent rates (deg/s equiv.)
         slip_delayed: (3,)  delayed retinal slip  → VS / OKR (EC-corrected in brain)
-        pos_delayed:  (3,)  delayed position error → saccade generator
+        pos_delayed:  (3,)  delayed position error — raw, before visual-field gating
+        pos_visible:  (3,)  pos_delayed gated by visual field limit
+                            ≈ pos_delayed when target is in-field, → 0 when out-of-field
+                            Target may be *present* (physical stimulus on) but not
+                            *visible* (outside the ~90° visual field).
     """
     canal:        jnp.ndarray   # (6,)
     slip_delayed: jnp.ndarray   # (3,)
     pos_delayed:  jnp.ndarray   # (3,)
+    pos_visible:  jnp.ndarray   # (3,)
 
 
 def read_outputs(x_sensory, theta):
     """Read all sensory outputs from the current state (pure state readout).
 
     Combines canal afferents and delayed visual signals into a SensoryOutput
-    bundle that brain_model.step() consumes directly.
+    bundle.  Also applies the visual-field gate to produce pos_visible:
+    a target may be present (stimulus is on) but not visible (eccentricity
+    exceeds visual_field_limit).
 
     Args:
         x_sensory: (252,)  sensory state [x_c (12) | x_vis (240)]
-        theta:     dict    model parameters
+        theta:     Params  model parameters
 
     Returns:
-        SensoryOutput with fields (canal, slip_delayed, pos_delayed)
+        SensoryOutput with fields (canal, slip_delayed, pos_delayed, pos_visible)
     """
     slip_delayed, pos_delayed = read_delayed(x_sensory)
     canal = read_canals(x_sensory, theta)
-    return SensoryOutput(canal=canal, slip_delayed=slip_delayed, pos_delayed=pos_delayed)
+
+    # Visual-field gate — suppresses pos error when target is outside ~visual_field_limit
+    vf_limit    = theta.brain.visual_field_limit
+    k           = theta.brain.k_orbital
+    e_mag       = jnp.linalg.norm(pos_delayed) + 1e-9
+    gate_vf     = 1.0 - jax.nn.sigmoid(k * (e_mag - vf_limit))   # ≈1 in-field, ≈0 out
+    pos_visible = gate_vf * pos_delayed
+
+    return SensoryOutput(
+        canal        = canal,
+        slip_delayed = slip_delayed,
+        pos_delayed  = pos_delayed,
+        pos_visible  = pos_visible,
+    )
 
 
 # ── Canal nonlinearity ─────────────────────────────────────────────────────────
@@ -284,8 +305,13 @@ def step(x_sensory, w_head, e_slip, e_pos, theta):
     Z_c = jnp.zeros((N_CANALS, N_CANALS))
     A_c = jnp.concatenate([
         jnp.concatenate([-I_c/tau_c,   Z_c        ], axis=1),
-        jnp.concatenate([ I_c/tau_s,  -I_c/tau_s  ], axis=1),
+        jnp.concatenate([-I_c/tau_s,  -I_c/tau_s  ], axis=1),
     ], axis=0)                                          # (12, 12)
+    # x1: adaptation LP  dx1 = -(1/tau_c)*x1 + (1/tau_c)*ORIENTATIONS*w_head
+    # x2: inertia LP     dx2 = -(1/tau_s)*(x1 + x2) + (1/tau_s)*ORIENTATIONS*w_head
+    #                       = (1/tau_s)*(w_head - x1) - (1/tau_s)*x2
+    # H(s) = tau_c*s / [(1+tau_c*s)(1+tau_s*s)]  — bandpass, zero at DC ✓
+    # (Wrong +sign gave H(0)=2: canal never adapted, x2→2*w_head at steady state)
     B_c = jnp.concatenate([ORIENTATIONS/tau_c,
                             ORIENTATIONS/tau_s], axis=0)  # (12, 3)
 

@@ -6,7 +6,7 @@ Signal flow (3-D):
         w_head (3,) → [Sensory: Canal Array] → y_canals (6,)
 
     Visual delay (inside sensory_model):
-        e_slip (3,)  = scene_gain · (w_scene − w_head − dx_p + u_burst)
+        e_slip (3,)  = scene_present · (w_scene − w_head − dx_p + u_burst)
         e_slip → [Sensory: Visual delay, sig 0] → e_slip_delayed  (for VS / OKR)
         e_pos  → [Sensory: Visual delay, sig 1] → e_pos_delayed   (for SG)
 
@@ -103,38 +103,36 @@ def ODE_ocular_motor(t, state, args):
         t:     scalar time (s)
         state: SimState pytree with fields (sensory, brain, plant)
         args:  (theta, hv_interp, hp_interp, vs_interp, target_interp,
-                scene_gain_interp, target_gain_interp)
+                scene_present_interp, target_present_interp)
 
     Returns:
         SimState of derivatives (dsensory, dbrain, dplant)
     """
-    theta, hv_interp, hp_interp, vs_interp, target_interp, scene_gain_interp, target_gain_interp = args
+    theta, hv_interp, hp_interp, vs_interp, target_interp, scene_present_interp, target_present_interp = args
 
     # ── External inputs at time t ────────────────────────────────────────────
-    w_head     = hv_interp.evaluate(t)           # (3,) head angular velocity (deg/s)
-    q_head     = hp_interp.evaluate(t)           # (3,) head angular position (deg)
-    w_scene    = vs_interp.evaluate(t)           # (3,) scene angular velocity (deg/s)
-    p_target   = target_interp.evaluate(t)       # (3,) Cartesian target position
-    scene_gain = scene_gain_interp.evaluate(t)   # scalar: 0=dark, 1=full scene
-    target_gain_interp.evaluate(t)               # unused; reserved for future target gating
+    w_head          = hv_interp.evaluate(t)              # (3,) head angular velocity (deg/s)
+    q_head          = hp_interp.evaluate(t)              # (3,) head angular position (deg)
+    w_scene         = vs_interp.evaluate(t)              # (3,) scene angular velocity (deg/s)
+    p_target        = target_interp.evaluate(t)          # (3,) Cartesian target position
+    scene_present   = scene_present_interp.evaluate(t)   # scalar: 0=dark, 1=scene present
+    target_present  = target_present_interp.evaluate(t)  # scalar: 0=no target, 1=target present
 
     # ── Sensory: read bundled outputs from current state ─────────────────────
     sensory_out = sensory_model.read_outputs(state.sensory, theta)
 
-    # ── Target selector: delayed position error + orbital state → motor cmd ──
-    e_cmd = ts.select(sensory_out.pos_delayed, state.plant, theta)
+    # ── Target selector: visually-gated position error + orbital state → motor cmd
+    e_cmd = ts.select(sensory_out.pos_visible, state.plant, theta)
 
     # ── Brain: VS + NI + SG + EC ──────────────────────────────────────────────
-    dx_brain, motor_commands, u_burst = brain_model.step(
-        state.brain, sensory_out, e_cmd, scene_gain, theta
-    )
+    dx_brain, motor_commands, u_burst = brain_model.step(state.brain, sensory_out, e_cmd, scene_present, theta)
 
     # ── Plant ─────────────────────────────────────────────────────────────────
     dx_plant, _ = plant_model.step(state.plant, motor_commands, theta)
 
     # ── Retinal signals → visual delay cascade ────────────────────────────────
     e_pos     = retina.target_to_angle(p_target) - q_head - state.plant
-    raw_slip  = scene_gain * (w_scene - w_head - dx_plant)
+    raw_slip  = scene_present * (w_scene - w_head - dx_plant)
 
     # ── Sensory: full step (canal derivative + visual delay derivative) ────────
     dx_sensory, _, _, _ = sensory_model.step(state.sensory, w_head, raw_slip, e_pos, theta)
@@ -260,8 +258,8 @@ def simulate(params, t_array_or_stimulus, head_vel_array=None,
     hp_interp          = diffrax.LinearInterpolation(ts=t_array, ys=hp3)
     vs_interp          = diffrax.LinearInterpolation(ts=t_array, ys=vs3)
     target_interp      = diffrax.LinearInterpolation(ts=t_array, ys=pt3)
-    scene_gain_interp  = diffrax.LinearInterpolation(ts=t_array, ys=sg1)
-    target_gain_interp = diffrax.LinearInterpolation(ts=t_array, ys=tg1)
+    scene_present_interp  = diffrax.LinearInterpolation(ts=t_array, ys=sg1)
+    target_present_interp = diffrax.LinearInterpolation(ts=t_array, ys=tg1)
 
     x0 = SimState(
         sensory = jnp.zeros(sensory_model.N_STATES),   # (252,)
@@ -277,7 +275,7 @@ def simulate(params, t_array_or_stimulus, head_vel_array=None,
         dt0=dt,
         y0=x0,
         args=(params, hv_interp, hp_interp, vs_interp, target_interp,
-              scene_gain_interp, target_gain_interp),
+              scene_present_interp, target_present_interp),
         stepsize_controller=diffrax.ConstantStepSize(),
         saveat=diffrax.SaveAt(ts=t_array),
         max_steps=max_steps,

@@ -63,11 +63,11 @@ def step(x_brain, sensory_out, e_cmd, scene_present, theta):
         sensory_out:  SensoryOutput bundled canal afferents + delayed visual signals
                         .canal        (6,)  canal afferent rates
                         .slip_delayed (3,)  delayed retinal slip (no EC correction yet)
-                        .pos_delayed  (3,)  delayed position error (unused here; used by SG upstream)
-        e_cmd:        (3,)    motor error command for saccade generator
-                              (computed upstream by target_selector.select())
+                        .pos_visible  (3,)  delayed position error, gated by visual field
+        e_cmd:        (3,)    motor error command for the saccade generator
+                              (computed in simulator: orbital gate applied to pos_visible)
         scene_present: scalar  0=dark, 1=lit — gates EC slip correction
-        theta:        dict     model parameters
+        theta:        Params   model parameters
 
     Returns:
         dx_brain:  (135,)  dx_brain/dt
