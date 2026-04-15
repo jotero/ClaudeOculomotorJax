@@ -32,8 +32,9 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
-from oculomotor.runner import run_scenario, _build_params, _build_stimulus, _extract_signals
-from scripts.simulate import _call_llm
+from oculomotor.scenario import SimulationScenario, SimulationComparison
+from oculomotor.runner import run_scenario, run_comparison
+from scripts.simulate import call_llm, _call_llm, _call_llm_comparison
 
 
 # ── FastAPI app ────────────────────────────────────────────────────────────────
@@ -43,40 +44,47 @@ app = FastAPI(title='OculomotorSim')
 
 # ── Request / response models ─────────────────────────────────────────────────
 
-class SimRequest(BaseModel):
+class RunRequest(BaseModel):
     description: str
-    model: str = 'claude-sonnet-4-6'   # sonnet is fast enough for interactive use
+    model: str = 'claude-sonnet-4-6'
 
 
-class SimResponse(BaseModel):
-    image_b64: str          # PNG encoded as base64 — plug into <img src="data:image/png;base64,...">
-    scenario_json: dict     # the full scenario for display / debug
-    description: str
+class RunResponse(BaseModel):
+    image_b64: str
+    mode: str        # 'single' or 'comparison'
+    title: str
+    detail_json: dict
 
 
 # ── API endpoints ─────────────────────────────────────────────────────────────
 
-@app.post('/simulate', response_model=SimResponse)
-async def simulate_endpoint(req: SimRequest):
-    """Convert a plain-English description to a simulation plot."""
+@app.post('/run', response_model=RunResponse)
+async def run_endpoint(req: RunRequest):
+    """LLM decides single simulation or comparison; runs and returns the figure."""
     try:
-        # 1. LLM → scenario
-        scenario = _call_llm(req.description, model=req.model)
+        result = call_llm(req.description, model=req.model)
 
-        # 2. scenario → figure
-        fig = run_scenario(scenario)
+        if isinstance(result, SimulationComparison):
+            fig   = run_comparison(result)
+            title = result.title
+            mode  = 'comparison'
+            detail = result.model_dump()
+        else:
+            fig   = run_scenario(result)
+            title = result.description
+            mode  = 'single'
+            detail = result.model_dump()
 
-        # 3. figure → base64 PNG
         buf = io.BytesIO()
         fig.savefig(buf, format='png', dpi=130, bbox_inches='tight')
         plt.close(fig)
         buf.seek(0)
-        img_b64 = base64.b64encode(buf.read()).decode('utf-8')
 
-        return SimResponse(
-            image_b64    = img_b64,
-            scenario_json= scenario.model_dump(),
-            description  = scenario.description,
+        return RunResponse(
+            image_b64  = base64.b64encode(buf.read()).decode('utf-8'),
+            mode       = mode,
+            title      = title,
+            detail_json= detail,
         )
 
     except Exception as e:
@@ -96,130 +104,59 @@ HTML = """<!DOCTYPE html>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    background: #0f1117;
-    color: #e0e0e0;
-    min-height: 100vh;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    padding: 40px 20px;
+    background: #0f1117; color: #e0e0e0;
+    min-height: 100vh; display: flex; flex-direction: column;
+    align-items: center; padding: 40px 20px;
   }
-  h1 {
-    font-size: 1.6rem;
-    font-weight: 600;
-    margin-bottom: 6px;
-    color: #ffffff;
-  }
-  .subtitle {
-    font-size: 0.85rem;
-    color: #888;
-    margin-bottom: 32px;
-  }
+  h1 { font-size: 1.6rem; font-weight: 600; margin-bottom: 6px; color: #fff; }
+  .subtitle { font-size: 0.85rem; color: #888; margin-bottom: 32px; }
   .card {
-    background: #1a1d27;
-    border: 1px solid #2a2d3a;
-    border-radius: 12px;
-    padding: 28px;
-    width: 100%;
-    max-width: 780px;
+    background: #1a1d27; border: 1px solid #2a2d3a;
+    border-radius: 12px; padding: 28px; width: 100%; max-width: 820px;
   }
-  .input-row {
-    display: flex;
-    gap: 10px;
-  }
+  .input-row { display: flex; gap: 10px; }
   textarea {
-    flex: 1;
-    background: #0f1117;
-    border: 1px solid #2a2d3a;
-    border-radius: 8px;
-    color: #e0e0e0;
-    font-size: 0.95rem;
-    padding: 12px 14px;
-    resize: vertical;
-    min-height: 80px;
-    outline: none;
-    transition: border-color 0.2s;
-    font-family: inherit;
+    flex: 1; background: #0f1117; border: 1px solid #2a2d3a;
+    border-radius: 8px; color: #e0e0e0; font-size: 0.95rem;
+    padding: 12px 14px; resize: vertical; min-height: 80px;
+    outline: none; transition: border-color 0.2s; font-family: inherit;
   }
   textarea:focus { border-color: #4a6cf7; }
   button {
-    background: #4a6cf7;
-    border: none;
-    border-radius: 8px;
-    color: #fff;
-    cursor: pointer;
-    font-size: 0.95rem;
-    font-weight: 600;
-    padding: 0 22px;
-    transition: background 0.2s, opacity 0.2s;
-    white-space: nowrap;
-    align-self: flex-end;
-    height: 44px;
+    background: #4a6cf7; border: none; border-radius: 8px; color: #fff;
+    cursor: pointer; font-size: 0.95rem; font-weight: 600; padding: 0 22px;
+    transition: background 0.2s, opacity 0.2s; white-space: nowrap;
+    align-self: flex-end; height: 44px;
   }
   button:hover { background: #3a5ce0; }
   button:disabled { opacity: 0.45; cursor: not-allowed; }
-  .examples {
-    margin-top: 16px;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-  }
+  .examples { margin-top: 16px; display: flex; flex-wrap: wrap; gap: 8px; }
   .example-chip {
-    background: #22253a;
-    border: 1px solid #2a2d3a;
-    border-radius: 20px;
-    color: #aaa;
-    cursor: pointer;
-    font-size: 0.78rem;
-    padding: 5px 13px;
+    background: #22253a; border: 1px solid #2a2d3a; border-radius: 20px;
+    color: #aaa; cursor: pointer; font-size: 0.78rem; padding: 5px 13px;
     transition: all 0.15s;
   }
   .example-chip:hover { border-color: #4a6cf7; color: #ccc; background: #1e2135; }
-  .status {
-    margin-top: 18px;
-    font-size: 0.85rem;
-    color: #888;
-    min-height: 1.2em;
-  }
+  .status { margin-top: 18px; font-size: 0.85rem; color: #888; min-height: 1.2em; }
   .status.error { color: #f07070; }
-  .result { margin-top: 24px; display: none; }
-  .result img {
-    width: 100%;
-    border-radius: 8px;
-    border: 1px solid #2a2d3a;
-  }
-  details {
-    margin-top: 16px;
-    border: 1px solid #2a2d3a;
-    border-radius: 8px;
-    overflow: hidden;
-  }
-  summary {
-    cursor: pointer;
-    padding: 10px 14px;
-    font-size: 0.82rem;
-    color: #888;
-    background: #151820;
-    user-select: none;
-  }
-  summary:hover { color: #ccc; }
-  pre {
-    background: #0f1117;
-    color: #a0c0a0;
-    font-size: 0.75rem;
-    overflow-x: auto;
-    padding: 14px;
-    max-height: 320px;
-  }
-  .spinner {
-    display: inline-block;
-    width: 14px; height: 14px;
-    border: 2px solid #4a6cf7;
-    border-top-color: transparent;
-    border-radius: 50%;
-    animation: spin 0.7s linear infinite;
-    margin-right: 8px;
+  .mode-badge {
+    display: inline-block; font-size: 0.72rem; font-weight: 600;
+    padding: 2px 8px; border-radius: 10px; margin-right: 6px;
     vertical-align: middle;
+  }
+  .mode-single     { background: #1e3a6e; color: #7ab3f7; }
+  .mode-comparison { background: #1a3a28; color: #6fcf97; }
+  .result { margin-top: 24px; display: none; }
+  .result img { width: 100%; border-radius: 8px; border: 1px solid #2a2d3a; }
+  details { margin-top: 16px; border: 1px solid #2a2d3a; border-radius: 8px; overflow: hidden; }
+  summary { cursor: pointer; padding: 10px 14px; font-size: 0.82rem; color: #888; background: #151820; user-select: none; }
+  summary:hover { color: #ccc; }
+  pre { background: #0f1117; color: #a0c0a0; font-size: 0.75rem; overflow-x: auto; padding: 14px; max-height: 320px; }
+  .spinner {
+    display: inline-block; width: 14px; height: 14px;
+    border: 2px solid #4a6cf7; border-top-color: transparent;
+    border-radius: 50%; animation: spin 0.7s linear infinite;
+    margin-right: 8px; vertical-align: middle;
   }
   @keyframes spin { to { transform: rotate(360deg); } }
 </style>
@@ -227,83 +164,68 @@ HTML = """<!DOCTYPE html>
 <body>
 
 <h1>OculomotorSim</h1>
-<p class="subtitle">Describe a scenario in plain English — the model generates the simulation.</p>
+<p class="subtitle">Describe a scenario or comparison — the model figures out what to simulate.</p>
 
 <div class="card">
   <div class="input-row">
-    <textarea id="prompt" placeholder="e.g. Patient with left vestibular neuritis doing a head impulse test to the left and right"></textarea>
-    <button id="btn" onclick="runSim()">Simulate</button>
+    <textarea id="prompt" placeholder="e.g. &quot;VOR in the dark with left vestibular neuritis&quot; or &quot;compare healthy vs cerebellar deficit on a head impulse test&quot;"></textarea>
+    <button id="btn" onclick="run()">Run</button>
   </div>
 
   <div class="examples">
-    <span class="example-chip" onclick="setPrompt(this)">Healthy 20° saccade to the right</span>
-    <span class="example-chip" onclick="setPrompt(this)">Left vestibular neuritis, head impulse test</span>
-    <span class="example-chip" onclick="setPrompt(this)">OKN: 30 deg/s full-field scene motion then OKAN</span>
-    <span class="example-chip" onclick="setPrompt(this)">Smooth pursuit: 20 deg/s ramp target</span>
-    <span class="example-chip" onclick="setPrompt(this)">Cerebellar gaze-holding deficit, gaze-evoked nystagmus</span>
-    <span class="example-chip" onclick="setPrompt(this)">Bilateral vestibular loss, VOR in the dark</span>
-    <span class="example-chip" onclick="setPrompt(this)">VVOR: VOR in a lit stationary room</span>
+    <span class="example-chip" onclick="set('Healthy 20° saccade to the right')">Healthy 20° saccade</span>
+    <span class="example-chip" onclick="set('Left vestibular neuritis doing a head impulse test to the right')">Left neuritis HIT</span>
+    <span class="example-chip" onclick="set('OKN: 30 deg/s full-field scene motion for 20 s, then OKAN')">OKN + OKAN</span>
+    <span class="example-chip" onclick="set('Smooth pursuit of a 20 deg/s ramp target')">Smooth pursuit</span>
+    <span class="example-chip" onclick="set('Cerebellar gaze-holding deficit, gaze-evoked nystagmus at 15 degrees')">Cerebellar GEN</span>
+    <span class="example-chip" onclick="set('Compare healthy vs left vestibular neuritis on a rightward head impulse test')">Compare: healthy vs neuritis</span>
+    <span class="example-chip" onclick="set('Compare healthy vs cerebellar deficit vs bilateral vestibular loss on VOR in the dark')">Compare: 3-way VOR</span>
+    <span class="example-chip" onclick="set('Compare healthy vs pursuit deficit on a 20 deg/s ramp target')">Compare: pursuit deficit</span>
   </div>
 
   <div class="status" id="status"></div>
 
   <div class="result" id="result">
     <img id="plot" src="" alt="Simulation plot">
-    <details>
-      <summary>Scenario JSON</summary>
-      <pre id="json-out"></pre>
-    </details>
+    <details><summary>JSON</summary><pre id="json-out"></pre></details>
   </div>
 </div>
 
 <script>
-function setPrompt(el) {
-  document.getElementById('prompt').value = el.textContent.trim();
-}
+function set(text) { document.getElementById('prompt').value = text; }
 
-async function runSim() {
+async function run() {
   const prompt = document.getElementById('prompt').value.trim();
   if (!prompt) return;
-
   const btn    = document.getElementById('btn');
   const status = document.getElementById('status');
   const result = document.getElementById('result');
-
   btn.disabled = true;
   result.style.display = 'none';
   status.className = 'status';
-  status.innerHTML = '<span class="spinner"></span>Generating scenario and running simulation…';
-
+  status.innerHTML = '<span class="spinner"></span>Thinking…';
   try {
-    const resp = await fetch('/simulate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ description: prompt }),
+    const resp = await fetch('/run', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({description: prompt}),
     });
-
-    if (!resp.ok) {
-      const err = await resp.json();
-      throw new Error(err.error || `HTTP ${resp.status}`);
-    }
-
+    if (!resp.ok) { const e = await resp.json(); throw new Error(e.error || `HTTP ${resp.status}`); }
     const data = await resp.json();
-
     document.getElementById('plot').src = 'data:image/png;base64,' + data.image_b64;
-    document.getElementById('json-out').textContent = JSON.stringify(data.scenario_json, null, 2);
-
+    document.getElementById('json-out').textContent = JSON.stringify(data.detail_json, null, 2);
     result.style.display = 'block';
-    status.textContent = '✓ ' + data.description;
-
-  } catch (e) {
+    const badge = data.mode === 'comparison'
+      ? '<span class="mode-badge mode-comparison">comparison</span>'
+      : '<span class="mode-badge mode-single">single</span>';
+    status.innerHTML = badge + data.title;
+  } catch(e) {
     status.className = 'status error';
     status.textContent = 'Error: ' + e.message;
-  } finally {
-    btn.disabled = false;
-  }
+  } finally { btn.disabled = false; }
 }
 
 document.getElementById('prompt').addEventListener('keydown', e => {
-  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) runSim();
+  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) run();
 });
 </script>
 </body>

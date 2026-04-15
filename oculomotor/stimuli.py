@@ -306,6 +306,112 @@ def scene_stationary(duration: float, dt: float = 0.001) -> tuple[np.ndarray, np
     return t, np.zeros((T, 3), dtype=np.float32), np.ones(T, dtype=np.float32)
 
 
+# ── Segment-based builders (used by runner._build_stimulus) ───────────────────
+
+def build_head_array(
+    segments,   # list[HeadSegment]
+    total_T: int,
+    dt: float = 0.001,
+) -> np.ndarray:
+    """Convert a list of HeadSegments to a (total_T, 3) head velocity array."""
+    chunks = []
+    for seg in segments:
+        T = round(seg.duration_s / dt)
+        t = np.arange(T, dtype=np.float64) * dt
+        if seg.profile == 'sinusoid':
+            hv1d = seg.velocity_deg_s * np.sin(2 * np.pi * seg.frequency_hz * t)
+        elif seg.profile == 'impulse':
+            hv1d = np.zeros(T, dtype=np.float64)
+            rd = seg.ramp_dur_s
+            rise = t < rd
+            fall = (t >= rd) & (t < 2 * rd)
+            hv1d[rise] = seg.velocity_deg_s * t[rise] / rd
+            hv1d[fall] = seg.velocity_deg_s * (1.0 - (t[fall] - rd) / rd)
+        else:  # 'constant' (includes still = 0)
+            hv1d = np.full(T, seg.velocity_deg_s, dtype=np.float64)
+        chunks.append(_pad3(hv1d.astype(np.float32), seg.axis))
+
+    result = np.concatenate(chunks, axis=0)
+    # Pad with zeros or trim to total_T
+    if len(result) < total_T:
+        result = np.concatenate(
+            [result, np.zeros((total_T - len(result), 3), dtype=np.float32)], axis=0)
+    return result[:total_T]
+
+
+def build_target_arrays(
+    segments,   # list[TargetSegment]
+    total_T: int,
+    dt: float = 0.001,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Convert a list of TargetSegments to (p_target (T,3), v_target (T,3)) arrays."""
+    chunks_p = []
+    chunks_v = []
+    current_yaw = 0.0
+    current_pitch = 0.0
+    for seg in segments:
+        T = round(seg.duration_s / dt)
+        t = np.arange(T, dtype=np.float64) * dt
+        # Apply jump if position is explicitly set
+        if seg.position_yaw_deg is not None:
+            current_yaw = seg.position_yaw_deg
+        if seg.position_pitch_deg is not None:
+            current_pitch = seg.position_pitch_deg
+        # Integrate velocity
+        yaw_arr   = current_yaw   + seg.velocity_yaw_deg_s   * t
+        pitch_arr = current_pitch + seg.velocity_pitch_deg_s * t
+        # Update carry-forward position to end of segment
+        current_yaw   = float(yaw_arr[-1])   if T > 0 else current_yaw
+        current_pitch = float(pitch_arr[-1]) if T > 0 else current_pitch
+        # Convert to stereographic coordinates
+        p = np.zeros((T, 3), dtype=np.float32)
+        p[:, 0] = np.tan(np.radians(yaw_arr)).astype(np.float32)
+        p[:, 1] = np.tan(np.radians(pitch_arr)).astype(np.float32)
+        p[:, 2] = 1.0
+        v = np.zeros((T, 3), dtype=np.float32)
+        v[:, 0] = float(seg.velocity_yaw_deg_s)
+        v[:, 1] = float(seg.velocity_pitch_deg_s)
+        chunks_p.append(p)
+        chunks_v.append(v)
+
+    p_out = np.concatenate(chunks_p, axis=0)
+    v_out = np.concatenate(chunks_v, axis=0)
+    # Pad with last value or trim
+    if len(p_out) < total_T:
+        pad = total_T - len(p_out)
+        p_out = np.concatenate([p_out, np.tile(p_out[-1:], (pad, 1))], axis=0)
+        v_out = np.concatenate([v_out, np.tile(v_out[-1:], (pad, 1))], axis=0)
+    return p_out[:total_T], v_out[:total_T]
+
+
+def build_visual_arrays(
+    segments,   # list[VisualSegment]
+    total_T: int,
+    dt: float = 0.001,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Convert a list of VisualSegments to (v_scene (T,3), scene_present (T,), target_present (T,))."""
+    chunks_vs = []
+    chunks_sp = []
+    chunks_tp = []
+    for seg in segments:
+        T = round(seg.duration_s / dt)
+        vs = np.full(T, seg.scene_velocity_deg_s, dtype=np.float32)
+        chunks_vs.append(_pad3(vs, seg.scene_axis))
+        chunks_sp.append(np.full(T, float(seg.scene_present),  dtype=np.float32))
+        chunks_tp.append(np.full(T, float(seg.target_present), dtype=np.float32))
+
+    vs_out = np.concatenate(chunks_vs, axis=0)
+    sp_out = np.concatenate(chunks_sp, axis=0)
+    tp_out = np.concatenate(chunks_tp, axis=0)
+    # Pad with last value or trim
+    if len(vs_out) < total_T:
+        pad = total_T - len(vs_out)
+        vs_out = np.concatenate([vs_out, np.tile(vs_out[-1:], (pad, 1))], axis=0)
+        sp_out = np.concatenate([sp_out, np.full(pad, sp_out[-1], dtype=np.float32)], axis=0)
+        tp_out = np.concatenate([tp_out, np.full(pad, tp_out[-1], dtype=np.float32)], axis=0)
+    return vs_out[:total_T], sp_out[:total_T], tp_out[:total_T]
+
+
 # ── Compound builders ──────────────────────────────────────────────────────────
 
 def combine(t_ref: np.ndarray, **arrays) -> dict:

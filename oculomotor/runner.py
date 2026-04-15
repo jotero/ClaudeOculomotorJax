@@ -23,7 +23,7 @@ import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 
 from oculomotor import stimuli as stim
-from oculomotor.scenario import SimulationScenario, HeadMotion, Target, Visual, Patient
+from oculomotor.scenario import SimulationScenario, SimulationComparison, Patient
 from oculomotor.sim.simulator import (
     PARAMS_DEFAULT, with_brain, with_sensory, simulate,
     _IDX_VS, _IDX_NI, _IDX_SG, _IDX_EC, _IDX_VIS, _IDX_PURSUIT,
@@ -37,77 +37,28 @@ from oculomotor.models.sensory_models.sensory_model import C_slip, C_pos, C_vel
 def _build_stimulus(
     scenario: SimulationScenario,
 ) -> dict:
-    """Convert scenario sub-schemas to simulator keyword arrays.
+    """Convert segment lists to simulator keyword arrays.
 
     Returns a dict suitable for ``**stim_kwargs`` in ``simulate()``, plus
     a 't_array' key with the time axis.
     """
-    dur = scenario.duration_s
     dt  = 0.001
+    dur = scenario.duration_s
+    T   = int(round(dur / dt))
+    t   = np.arange(T, dtype=np.float32) * dt
 
-    # ── Head motion ────────────────────────────────────────────────────────────
-    hm = scenario.head_motion
-    if hm.type == 'none':
-        t, hv = stim.rotation_none(dur, dt)
-    elif hm.type == 'step':
-        t, hv = stim.rotation_step(
-            hm.amplitude_deg_s, hm.rotate_dur_s, hm.coast_dur_s, dt, hm.axis)
-        # Pad or trim to total duration
-        T_full = int(round(dur / dt))
-        if len(t) < T_full:
-            pad = T_full - len(t)
-            hv  = np.concatenate([hv, np.zeros((pad, 3), dtype=np.float32)], axis=0)
-            t   = np.arange(T_full, dtype=np.float32) * dt
-        else:
-            t, hv = t[:T_full], hv[:T_full]
-    elif hm.type == 'sinusoid':
-        t, hv = stim.rotation_sinusoid(
-            hm.amplitude_deg_s, hm.frequency_hz, dur, dt, hm.axis)
-    elif hm.type == 'impulse':
-        t, hv = stim.head_impulse(
-            hm.amplitude_deg_s, hm.rotate_dur_s, dur, dt, hm.axis)
-    else:
-        raise ValueError(f"Unknown head motion type: {hm.type!r}")
-
-    T = len(t)
-
-    # ── Target ─────────────────────────────────────────────────────────────────
-    tg = scenario.target
-    if tg.type == 'stationary':
-        _, pt, vt = stim.target_stationary(
-            dur, tg.initial_yaw_deg, tg.initial_pitch_deg, dt)
-    elif tg.type == 'steps':
-        jumps = [(s.t_s, s.yaw_deg, s.pitch_deg) for s in tg.steps]
-        _, pt, vt = stim.target_steps(jumps, dur, dt)
-    elif tg.type == 'ramp':
-        _, pt, vt = stim.target_ramp(
-            tg.ramp_velocity_deg_s, tg.ramp_onset_s, dur, dt, tg.ramp_axis)
-    else:
-        raise ValueError(f"Unknown target type: {tg.type!r}")
-
-    pt = pt[:T]; vt = vt[:T]
-
-    # ── Visual / scene ─────────────────────────────────────────────────────────
-    vis = scenario.visual
-    if vis.scene_velocity_deg_s != 0.0 and vis.scene_on_dur_s > 0.0:
-        _, v_scene, _ = stim.scene_motion(
-            vis.scene_velocity_deg_s, vis.scene_on_dur_s, dur, dt, vis.scene_axis)
-    else:
-        v_scene = np.zeros((T, 3), dtype=np.float32)
-
-    scene_present  = np.full(T, float(vis.scene_present),  dtype=np.float32)
-    target_present = np.full(T, float(vis.target_present), dtype=np.float32)
-
-    v_scene = v_scene[:T]
+    hv          = stim.build_head_array(scenario.head,   T, dt)
+    pt, vt      = stim.build_target_arrays(scenario.target, T, dt)
+    vs, sp, tp  = stim.build_visual_arrays(scenario.visual, T, dt)
 
     return dict(
-        t_array             = t,
-        head_vel_array      = jnp.array(hv),
-        p_target_array      = jnp.array(pt),
-        v_target_array      = jnp.array(vt),
-        v_scene_array       = jnp.array(v_scene),
-        scene_present_array = jnp.array(scene_present),
-        target_present_array= jnp.array(target_present),
+        t_array              = t,
+        head_vel_array       = jnp.array(hv),
+        p_target_array       = jnp.array(pt),
+        v_target_array       = jnp.array(vt),
+        v_scene_array        = jnp.array(vs),
+        scene_present_array  = jnp.array(sp),
+        target_present_array = jnp.array(tp),
     )
 
 
@@ -355,6 +306,133 @@ def run_scenario(scenario: SimulationScenario, output_path: str | None = None) -
 
     # Build figure
     fig = _build_figure(t_array, sig, plot_stim, scenario)
+
+    if output_path:
+        fig.savefig(output_path, dpi=150, bbox_inches='tight')
+        print(f"Saved → {output_path}")
+
+    return fig
+
+
+# ── Comparison ────────────────────────────────────────────────────────────────
+
+# Distinct colors for up to 4 compared conditions
+_COMPARE_COLORS = ['#2166ac', '#d6604d', '#1a9850', '#762a83']
+_COMPARE_STYLES = ['-', '--', '-.', ':']
+
+
+def _build_comparison_figure(
+    results: list[tuple[np.ndarray, dict, dict]],  # [(t, sig, stim_kw), ...]
+    comparison: SimulationComparison,
+) -> plt.Figure:
+    """Overlay N simulation results on the same set of panels."""
+    panels = comparison.panels
+    n = len(panels)
+    labels = [s.description for s in comparison.scenarios]
+
+    fig = plt.figure(figsize=(10, 2.2 * n))
+    gs  = gridspec.GridSpec(n, 1, hspace=0.45)
+    fig.suptitle(comparison.title, fontsize=11, fontweight='bold', y=1.0)
+
+    axes = [fig.add_subplot(gs[i]) for i in range(n)]
+
+    for ax, panel in zip(axes, panels):
+        ax.set_ylabel(_PANEL_LABELS.get(panel, panel), fontsize=8)
+        ax.tick_params(labelsize=7)
+        ax.axhline(0, color=_C['zero'], lw=0.5, ls='--')
+
+        for idx, (t, sig, stim_kw) in enumerate(results):
+            color = _COMPARE_COLORS[idx % len(_COMPARE_COLORS)]
+            ls    = _COMPARE_STYLES[idx % len(_COMPARE_STYLES)]
+            label = labels[idx]
+
+            ep  = sig['eye_pos']
+            ev  = sig['eye_vel']
+            hv  = np.array(stim_kw['head_vel_array'])
+            pt  = np.array(stim_kw['p_target_array'])
+            target_yaw = np.degrees(np.arctan(pt[:, 0]))
+
+            if panel == 'eye_position':
+                ax.plot(t, ep[:, 0], color=color, ls=ls, lw=1.5, label=label)
+                if idx == 0:  # target is the same across conditions — draw once
+                    ax.plot(t, target_yaw, color=_C['target'], lw=1.0, ls=':', label='Target')
+                ax.set_ylabel('Eye / target position (deg)', fontsize=8)
+
+            elif panel == 'eye_velocity':
+                ax.plot(t, ev[:, 0], color=color, ls=ls, lw=1.5, label=label)
+                if idx == 0:
+                    ax.plot(t, hv[:, 0], color=_C['head'], lw=1.0, ls=':', label='Head vel')
+
+            elif panel == 'head_velocity':
+                if idx == 0:  # head motion is shared — draw once
+                    ax.plot(t, hv[:, 0], color=_C['head'], lw=1.5, label='Head vel')
+
+            elif panel == 'velocity_storage':
+                ax.plot(t, sig['w_est'][:, 0], color=color, ls=ls, lw=1.5, label=label)
+
+            elif panel == 'neural_integrator':
+                ax.plot(t, sig['x_ni'][:, 0], color=color, ls=ls, lw=1.5, label=label)
+
+            elif panel == 'saccade_burst':
+                ax.plot(t, sig['u_burst'][:, 0], color=color, ls=ls, lw=1.5, label=label)
+
+            elif panel == 'pursuit_drive':
+                ax.plot(t, sig['x_pursuit'][:, 0], color=color, ls=ls, lw=1.5, label=label)
+
+            elif panel == 'refractory':
+                ax.plot(t, sig['z_ref'], color=color, ls=ls, lw=1.5, label=label)
+
+            elif panel == 'gaze_error':
+                dt = t[1] - t[0]
+                gaze = ep[:, 0] + np.cumsum(hv[:, 0]) * dt
+                ax.plot(t, gaze, color=color, ls=ls, lw=1.5, label=label)
+
+            elif panel == 'retinal_error':
+                ax.plot(t, sig['e_pos_delayed'][:, 0], color=color, ls=ls, lw=1.5, label=label)
+
+        ax.legend(fontsize=6, loc='upper right')
+
+        # Min y-range for velocity panels
+        if panel in ('eye_velocity', 'head_velocity', 'saccade_burst', 'pursuit_drive'):
+            lo, hi = ax.get_ylim()
+            if hi - lo < 5.0:
+                mid = (lo + hi) / 2
+                ax.set_ylim(mid - 5.0, mid + 5.0)
+
+        if ax is not axes[-1]:
+            ax.set_xticklabels([])
+        else:
+            ax.set_xlabel('Time (s)', fontsize=8)
+
+    return fig
+
+
+def run_comparison(
+    comparison: SimulationComparison,
+    output_path: str | None = None,
+) -> plt.Figure:
+    """Run all scenarios in a SimulationComparison and overlay them on one figure.
+
+    Args:
+        comparison:  Fully populated SimulationComparison object.
+        output_path: If given, save figure to this path.
+
+    Returns:
+        matplotlib.figure.Figure
+    """
+    results = []
+    for scenario in comparison.scenarios:
+        stim_kw = _build_stimulus(scenario)
+        t_array = stim_kw.pop('t_array')
+        params  = _build_params(scenario.patient)
+        max_steps = int(len(t_array) * 1.5) + 2000
+        states = simulate(params, t_array, return_states=True,
+                          max_steps=max_steps, **stim_kw)
+        sig = _extract_signals(states, params, t_array)
+        results.append((t_array, sig, stim_kw))
+        print(f"  ✓ {scenario.description}")
+
+    fig = _build_comparison_figure(results, comparison)
 
     if output_path:
         fig.savefig(output_path, dpi=150, bbox_inches='tight')
