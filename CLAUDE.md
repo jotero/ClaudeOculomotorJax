@@ -41,7 +41,9 @@ Saccade loop: `Retinal position error → Visual delay → Saccade Generator (Ro
 
 ```
 oculomotor/
-├── params.py                          Params NamedTuple (PhysParams + BrainParams)
+├── stimuli.py                         Centralized stimulus generators (rotation_step, head_impulse, target_ramp, …)
+├── scenario.py                        Pydantic SimulationScenario schema for LLM → params conversion
+├── runner.py                          scenario → stimulus arrays → simulate() → matplotlib Figure
 ├── models/
 │   ├── sensory_models/
 │   │   ├── canal.py                   Canal array SSM (Steinhausen, 6 canals, 12 states)
@@ -52,13 +54,24 @@ oculomotor/
 │   │   ├── neural_integrator.py       NI leaky integrator (Robinson 1975) (3 states)
 │   │   ├── saccade_generator.py       Robinson local-feedback burst + OPN gate (9 states)
 │   │   ├── efference_copy.py          Burst delay cascade for slip cancellation (120 states)
+│   │   ├── pursuit.py                 Smooth pursuit leaky integrator + Smith predictor (3 states)
 │   │   ├── target_selector.py         Orbital gate → motor error command e_cmd
-│   │   └── brain_model.py             Connector: VS + NI + SG + EC → u_p (135 states)
+│   │   └── brain_model.py             Connector: VS + NI + SG + EC + pursuit → u_p (141 states)
 │   └── plant_models/
 │       ├── plant_model_first_order.py First-order plant (Robinson 1964) (3 states)
 │       └── readout.py                 Eye position readout utilities
 └── sim/
     └── simulator.py                   ODE wiring + simulate() entry point
+```
+
+### scripts/
+
+```
+scripts/
+├── simulate.py          Natural-language → simulation CLI (uses LLM + runner)
+├── demo_vor.py          VOR / VVOR / OKN diagnostic demos
+├── demo_saccade.py      Saccade main sequence + cascade demos
+└── demo_pursuit.py      Smooth pursuit + catch-up saccade demos
 ```
 
 ### State structure (390 total)
@@ -237,12 +250,63 @@ def step(x_ni, u_vel, theta):
 
 `ODE_ocular_motor` in `sim/simulator.py` calls each module's `step()` in signal-flow order, passing outputs of one as inputs to the next. The global state is a `SimState` NamedTuple — each field is sliced by pre-computed index constants (`_IDX_C`, `_IDX_VIS`, `_IDX_VS`, etc.).
 
+## LLM simulation pipeline
+
+`scripts/simulate.py` converts a plain-English scenario description into a simulation
+and figure using the Claude API.
+
+### Usage
+
+```bash
+# Requires ANTHROPIC_API_KEY to be set in the environment
+python -X utf8 scripts/simulate.py "healthy subject making a 20 deg saccade to the right"
+python -X utf8 scripts/simulate.py "patient with left vestibular neuritis doing a head impulse test"
+python -X utf8 scripts/simulate.py --dry-run "OKN: 30 deg/s full-field scene motion for 20 s then OKAN"
+python -X utf8 scripts/simulate.py --json path/to/scenario.json   # skip LLM, load JSON directly
+python -X utf8 scripts/simulate.py --show "..."                   # display figure interactively
+```
+
+### Architecture
+
+```
+User description (str)
+    ↓  Claude API (tool_use, forced schema)
+SimulationScenario  (oculomotor/scenario.py — Pydantic)
+    ├── HeadMotion    → oculomotor/stimuli.py → head_vel_array (T, 3)
+    ├── Target        → oculomotor/stimuli.py → p_target_array, v_target_array
+    ├── Visual        → oculomotor/stimuli.py → v_scene_array, scene/target_present arrays
+    └── Patient       → with_brain() / with_sensory() → Params NamedTuple
+    ↓  oculomotor/runner.py
+simulate(params, t, **stim_kw, return_states=True)
+    ↓
+matplotlib Figure  →  outputs/<slug>.png
+```
+
+### Adding new stimulus types
+
+Add a generator to `oculomotor/stimuli.py` following the existing pattern (returns
+`t_array`, plus the relevant arrays). Then add the new `type` literal to the
+appropriate sub-schema in `oculomotor/scenario.py` and handle it in
+`oculomotor/runner.py:_build_stimulus()`.
+
+### Adding new plot panels
+
+Add a new `Literal` value to `PlotConfig.panels` in `oculomotor/scenario.py` and a
+corresponding `elif panel_name == '...'` branch in `oculomotor/runner.py:_draw_panel()`.
+
+### API key
+
+Set `ANTHROPIC_API_KEY` in your shell or `.env` before running `simulate.py`.
+The model defaults to `claude-opus-4-6`; use `--model claude-sonnet-4-6` for faster/cheaper calls.
+
 ## Tech stack
 
 - **JAX** — core framework, autodiff, `jit`, `vmap`
 - **Diffrax** — ODE integration within JAX
 - **Optax** — gradient-based optimization
 - **Matplotlib** — diagnostics and plotting
+- **Pydantic** — SimulationScenario schema and validation
+- **Anthropic Python SDK** — LLM scenario generation
 
 ## Fitting approach (future work)
 
