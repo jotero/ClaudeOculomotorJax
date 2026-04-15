@@ -101,7 +101,7 @@ import jax.numpy as jnp
 from oculomotor.models.sensory_models.sensory_model import PINV_SENS, N_CANALS
 
 N_STATES  = 3
-N_INPUTS  = N_CANALS + 3    # 6 canal afferents + 3 delayed retinal slip axes
+N_INPUTS  = N_CANALS + 3 + 3   # 6 canal afferents + 3 slip + 3 g_hat
 N_OUTPUTS = 3
 
 def step(x_vs, u, brain_params):
@@ -109,20 +109,32 @@ def step(x_vs, u, brain_params):
 
     Args:
         x_vs:  (3,)    VS state (stored angular velocity estimate)
-        u:     (9,)    stacked input [y_canals (6,) | e_slip_delayed (3,)]
-        theta: Params  model parameters
+        u:     (12,)   stacked input [y_canals (6,) | e_slip_delayed (3,) | g_hat (3,)]
+        brain_params: BrainParams  model parameters
 
     Returns:
         dx:    (3,)  dx_vs/dt
         w_est: (3,)  angular velocity estimate (deg/s)
     """
-    # ── System matrices ───────────────────────────────────────────────────────
+    canal_in   = u[:N_CANALS]       # (6,)  canal afferent rates
+    slip_in    = u[N_CANALS:N_CANALS+3]  # (3,)  corrected retinal slip
+    g_hat      = u[N_CANALS+3:]     # (3,)  gravity estimate (m/s²)
+
+    u_cs = jnp.concatenate([canal_in, slip_in])   # (9,) — original linear inputs
+
+    # ── Linear system matrices ─────────────────────────────────────────────────
     A = -(1.0 / brain_params.tau_vs) * jnp.eye(3)
     B = jnp.concatenate([brain_params.K_vs  * PINV_SENS, -brain_params.K_vis * jnp.eye(3)], axis=1)
     D = jnp.concatenate([PINV_SENS,                     -brain_params.g_vis  * jnp.eye(3)], axis=1)
     # C = I (identity — omitted)
 
+    # ── Gravity dumping: preferential decay of components ⊥ to gravity ────────
+    # cross(ĝ, cross(ĝ, x_vs)) / |ĝ|² = x_vs_parallel − x_vs = −x_vs_perp
+    # Adds −K_gd · x_vs_perp to the dynamics → horizontal storage decays faster.
+    g_norm_sq  = jnp.dot(g_hat, g_hat) + 1e-9
+    gd_term    = brain_params.K_gd * jnp.cross(g_hat, jnp.cross(g_hat, x_vs)) / g_norm_sq
+
     # ── Dynamics ──────────────────────────────────────────────────────────────
-    dx    = A @ x_vs + B @ u
-    w_est = x_vs     + D @ u
+    dx    = A @ x_vs + B @ u_cs + gd_term
+    w_est = x_vs     + D @ u_cs
     return dx, w_est

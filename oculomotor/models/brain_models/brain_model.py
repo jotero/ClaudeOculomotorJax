@@ -36,10 +36,11 @@ from typing import NamedTuple
 
 import jax.numpy as jnp
 
-from oculomotor.models.brain_models import velocity_storage as vs
-from oculomotor.models.brain_models import neural_integrator as ni
-from oculomotor.models.brain_models import saccade_generator as sg
-from oculomotor.models.brain_models import efference_copy as ec
+from oculomotor.models.brain_models import velocity_storage    as vs
+from oculomotor.models.brain_models import neural_integrator   as ni
+from oculomotor.models.brain_models import saccade_generator   as sg
+from oculomotor.models.brain_models import efference_copy      as ec
+from oculomotor.models.brain_models import gravity_estimator   as ge
 from oculomotor.models.sensory_models.sensory_model import SensoryOutput  # noqa: F401 (re-exported)
 
 
@@ -83,18 +84,31 @@ class BrainParams(NamedTuple):
     # Orbital reset — centering saccade policy at orbital limit
     alpha_reset:           float = 1.0    # centering-saccade gain; 0=suppress, 1=active centering
 
+    # Otolith / gravity estimation — Laurens & Angelaki (2011, 2017)
+    K_grav:                float = 0.5    # otolith correction gain (1/s); TC = 1/K_grav ≈ 2 s
+    K_gd:                  float = 0.0    # gravity dumping gain (1/s); 0 = disabled
+    g_ocr:                 float = 0.0    # OCR gain (dimensionless); 0 = disabled until verified
+
 
 # ── State layout ───────────────────────────────────────────────────────────────
 
-N_STATES = vs.N_STATES + ni.N_STATES + sg.N_STATES + ec.N_STATES   # 3+3+9+120 = 135
+N_STATES = vs.N_STATES + ni.N_STATES + sg.N_STATES + ec.N_STATES + ge.N_STATES   # 3+3+9+120+3 = 138
 
 # Index constants — relative to x_brain
-_IDX_VS = slice(0,             vs.N_STATES)                                   # (3,)
-_IDX_NI = slice(vs.N_STATES,   vs.N_STATES + ni.N_STATES)                    # (3,)
-_IDX_SG = slice(vs.N_STATES + ni.N_STATES,
-                vs.N_STATES + ni.N_STATES + sg.N_STATES)                      # (9,)
-_IDX_EC = slice(vs.N_STATES + ni.N_STATES + sg.N_STATES,
-                vs.N_STATES + ni.N_STATES + sg.N_STATES + ec.N_STATES)        # (120,)
+_IDX_VS   = slice(0,             vs.N_STATES)                                       # (3,)
+_IDX_NI   = slice(vs.N_STATES,   vs.N_STATES + ni.N_STATES)                        # (3,)
+_IDX_SG   = slice(vs.N_STATES + ni.N_STATES,
+                  vs.N_STATES + ni.N_STATES + sg.N_STATES)                          # (9,)
+_IDX_EC   = slice(vs.N_STATES + ni.N_STATES + sg.N_STATES,
+                  vs.N_STATES + ni.N_STATES + sg.N_STATES + ec.N_STATES)            # (120,)
+_IDX_GRAV = slice(vs.N_STATES + ni.N_STATES + sg.N_STATES + ec.N_STATES,
+                  vs.N_STATES + ni.N_STATES + sg.N_STATES + ec.N_STATES + ge.N_STATES)  # (3,)
+
+
+def make_x0():
+    """Default initial brain state — gravity estimator pointing down (upright head)."""
+    x0 = jnp.zeros(N_STATES)
+    return x0.at[_IDX_GRAV].set(ge.X0)
 
 
 # ── Step function ──────────────────────────────────────────────────────────────
@@ -103,44 +117,68 @@ def step(x_brain, sensory_out, brain_params):
     """Single ODE step for the brain subsystem.
 
     Args:
-        x_brain:     (135,)        brain state [x_vs | x_ni | x_sg | x_ec]
+        x_brain:     (138,)        brain state [x_vs | x_ni | x_sg | x_ec | x_grav]
         sensory_out: SensoryOutput bundled canal afferents + delayed visual signals
                        .canal         (6,)    canal afferent rates
                        .slip_delayed  (3,)    delayed retinal slip (no EC correction yet)
                        .pos_visible   (3,)    delayed position error, gated by visual field
                        .e_cmd         (3,)    motor error command for the saccade generator
+                       .f_otolith     (3,)    specific force in head frame (m/s²)
                        .scene_present scalar  0=dark, 1=lit — gates EC slip correction
         brain_params: BrainParams   model parameters
 
     Returns:
-        dx_brain:   (135,)  dx_brain/dt
+        dx_brain:   (138,)  dx_brain/dt
         motor_cmd:  (3,)    pulse-step motor command → plant
     """
-    x_vs = x_brain[_IDX_VS]
-    x_ni = x_brain[_IDX_NI]
-    x_sg = x_brain[_IDX_SG]
-    x_ec = x_brain[_IDX_EC]
+    x_vs   = x_brain[_IDX_VS]
+    x_ni   = x_brain[_IDX_NI]
+    x_sg   = x_brain[_IDX_SG]
+    x_ec   = x_brain[_IDX_EC]
+    x_grav = x_brain[_IDX_GRAV]
 
-    # ── Efference copy correction: add delayed burst to delayed slip ──────────
-    # saccade_ec matches the phase of slip_delayed (both delayed by tau_vis).
-    # Cancels burst-driven eye motion from retinal slip before VS.
-    # Gated by scene_present: correction only applies when a visual scene is visible.
+    # ── Efference copy correction ──────────────────────────────────────────────
     saccade_ec       = ec.read_delayed(x_ec)
     e_slip_corrected = sensory_out.slip_delayed + sensory_out.scene_present * saccade_ec
 
-    # ── Velocity storage: canal + corrected slip → velocity estimate ──────────
-    dx_vs, w_est = vs.step(x_vs, jnp.concatenate([sensory_out.canal, e_slip_corrected]), brain_params)
+    # ── Velocity storage: canal + corrected slip + gravity estimate → ω̂ ───────
+    # g_hat from the current state (one-step lag — standard in ODE evaluation)
+    dx_vs, w_est = vs.step(
+        x_vs,
+        jnp.concatenate([sensory_out.canal, e_slip_corrected, x_grav]),
+        brain_params)
+
+    # ── Gravity estimator: cross-product transport + otolith correction ────────
+    dx_grav, g_hat = ge.step(
+        x_grav,
+        jnp.concatenate([w_est, sensory_out.f_otolith]),
+        brain_params)
 
     # ── Saccade generator ─────────────────────────────────────────────────────
     dx_sg, u_burst = sg.step(x_sg, sensory_out.e_cmd, brain_params)
 
-    # ── Neural integrator: combined eye-velocity command ──────────────────────
-    dx_ni, motor_cmd = ni.step(x_ni, -w_est + u_burst, brain_params)
+    # ── OCR / somatogravic: gravity-driven eye position command ───────────────
+    # g_hat = specific force (+x upright).  Tilt signals are normalised components:
+    #   tilt_roll  = g_hat[1]/|g_hat| < 0 for CW head roll → eye rolls CCW (−z) ✓
+    #   tilt_pitch = g_hat[2]/|g_hat| > 0 for nose-up tilt → eye pitches down (−y) ✓
+    # (g_ocr = 0 by default; set to ~0.3 to enable)
+    g_norm  = jnp.linalg.norm(g_hat) + 1e-9
+    ocr_pos = brain_params.g_ocr * (180.0 / jnp.pi) * jnp.array([
+        0.0,
+        -g_hat[2] / g_norm,   # pitch: nose-up tilt → eye pitches down (−y)
+         g_hat[1] / g_norm,   # roll:  CW tilt (g_hat[1]<0) → eye CCW (−z)
+    ])
 
-    # ── Efference copy: advance delay cascade with current burst ──────────────
+    # ── Neural integrator ─────────────────────────────────────────────────────
+    dx_ni, motor_cmd_ni = ni.step(x_ni, -w_est + u_burst, brain_params)
+
+    # Add OCR position offset directly to motor command (bypasses NI leak)
+    motor_cmd = motor_cmd_ni + ocr_pos
+
+    # ── Efference copy: advance delay cascade ─────────────────────────────────
     dx_ec, _ = ec.step(x_ec, u_burst, brain_params)
 
     # ── Pack state derivative ─────────────────────────────────────────────────
-    dx_brain = jnp.concatenate([dx_vs, dx_ni, dx_sg, dx_ec])
+    dx_brain = jnp.concatenate([dx_vs, dx_ni, dx_sg, dx_ec, dx_grav])
 
     return dx_brain, motor_cmd
