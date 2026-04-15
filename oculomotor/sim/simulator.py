@@ -13,11 +13,11 @@ Signal flow (3-D):
     Brain model (VS + NI + SG + EC):
         [y_canals | e_slip_delayed] → VS  → w_est
         e_pos_delayed → target selector → SG → u_burst
-        u_vel = −w_est + u_burst → NI → u_p
+        u_vel = −w_est + u_burst → NI → motor_cmd
         u_burst → efference copy (slip cancellation)
 
     Plant model:
-        u_p → Plant → q_eye (eye rotation vector)
+        motor_cmd → Plant → q_eye (eye rotation vector)
 
 State structure — SimState NamedTuple with three groups:
 
@@ -143,12 +143,12 @@ class SimState(NamedTuple):
 
     Groups:
         sensory  (252)  Canal transducers + retinal delay cascade.
-        brain     (21)  Central computation: VS, NI, SG, efference copy.
-        plant      (3)  Extraocular plant — directly observable as eye position.
+        brain    (135)  Central computation: VS, NI, SG, efference copy.
+        plant      (3)  Extraocular plant — eye rotation vector (deg)
     """
     sensory: jnp.ndarray   # (252,)  [x_c (12) | x_vis (240)]
-    brain:   jnp.ndarray   #  (21,)  [x_vs (3) | x_ni (3) | x_sg (9) | x_ec (6)]
-    plant:   jnp.ndarray   #   (3,)  x_p — eye rotation vector (deg)
+    brain:   jnp.ndarray   # (135,)  [x_vs (3) | x_ni (3) | x_sg (9) | x_ec (120)]
+    plant:   jnp.ndarray   #   (3,)  eye rotation vector (deg)
 
 
 
@@ -160,6 +160,17 @@ def ODE_ocular_motor(t, state, args):
 
     Compatible with diffrax: signature f(t, state, args).
 
+    Evaluation order:
+        1. read_outputs  — slice delayed signals from sensory state for brain
+        2. brain_model   — VS + NI + SG + EC → motor_cmd
+        3. plant_model   — motor_cmd → dx_plant;  dx_plant[_IDX_Q] = w_true (deg/s)
+        4. sensory_model — canal + visual delay cascade driven by w_true
+
+    sensory_model.step must follow plant_model.step because it requires
+    w_eye = dx_plant[_IDX_Q] (instantaneous eye velocity, no lag).  Using the
+    tracked velocity in state.plant[_IDX_W] instead would introduce a ~5 ms
+    lag that breaks efference-copy cancellation and causes a post-saccade blip.
+
     Args:
         t:     scalar time (s)
         state: SimState pytree with fields (sensory, brain, plant)
@@ -169,35 +180,38 @@ def ODE_ocular_motor(t, state, args):
     Returns:
         SimState of derivatives (dsensory, dbrain, dplant)
     """
-    theta, hv_interp, hp_interp, vs_interp, target_interp, scene_present_interp, target_present_interp = args
+    theta, hv_interp, hp_interp, vs_interp, target_interp, scene_present_interp, _ = args
 
     # ── External inputs at time t ────────────────────────────────────────────
-    w_head          = hv_interp.evaluate(t)              # (3,) head angular velocity (deg/s)
-    q_head          = hp_interp.evaluate(t)              # (3,) head angular position (deg)
-    w_scene         = vs_interp.evaluate(t)              # (3,) scene angular velocity (deg/s)
-    p_target        = target_interp.evaluate(t)          # (3,) Cartesian target position
-    scene_present   = scene_present_interp.evaluate(t)   # scalar: 0=dark, 1=scene present
-    target_present  = target_present_interp.evaluate(t)  # scalar: 0=no target, 1=target present
+    w_head        = hv_interp.evaluate(t)              # (3,) head angular velocity (deg/s)
+    q_head        = hp_interp.evaluate(t)              # (3,) head angular position (deg)
+    w_scene       = vs_interp.evaluate(t)              # (3,) scene angular velocity (deg/s)
+    p_target      = target_interp.evaluate(t)          # (3,) Cartesian target position
+    scene_present = scene_present_interp.evaluate(t)   # scalar: 0=dark, 1=scene present
 
-    # ── Sensory: read bundled outputs from current state ─────────────────────
+    # ── Unpack plant state ────────────────────────────────────────────────────
+    q_eye = state.plant   # (3,) eye rotation vector (deg)
+
+    # ── Sensory: read bundled outputs for brain ───────────────────────────────
     sensory_out = sensory_model.read_outputs(
-        state.sensory, state.plant, scene_present, theta.sensory, theta.plant, theta.brain)
+        state.sensory, q_eye, scene_present, theta.sensory, theta.plant, theta.brain)
 
     # ── Brain: VS + NI + SG + EC ──────────────────────────────────────────────
-    dx_brain, motor_commands, u_burst = brain_model.step(state.brain, sensory_out, theta.brain)
+    dx_brain, motor_cmd = brain_model.step(state.brain, sensory_out, theta.brain)
 
     # ── Plant ─────────────────────────────────────────────────────────────────
-    w_eye, _ = plant_model.step(state.plant, motor_commands, theta.plant)
+    dx_plant, _, w_eye = plant_model.step(state.plant, motor_cmd, theta.plant)
 
     # ── Sensory: retinal signals + canal + visual delay ───────────────────────
+    # w_eye = dx_plant = w_true (algebraic, no lag) — must follow plant step.
     dx_sensory, _, _, _ = sensory_model.step(
-        state.sensory, q_head, w_head, state.plant, w_eye,
+        state.sensory, q_head, w_head, q_eye, w_eye,
         w_scene, p_target, scene_present, theta.sensory)
 
     return SimState(
         sensory = dx_sensory,
         brain   = dx_brain,
-        plant   = w_eye,
+        plant   = dx_plant,
     )
 
 
@@ -320,8 +334,8 @@ def simulate(params, t_array_or_stimulus, head_vel_array=None,
 
     x0 = SimState(
         sensory = jnp.zeros(sensory_model.N_STATES),   # (252,)
-        brain   = jnp.zeros(brain_model.N_STATES),     # (21,)
-        plant   = jnp.zeros(plant_model.N_STATES),     # (3,)
+        brain   = jnp.zeros(brain_model.N_STATES),     # (135,)
+        plant   = jnp.zeros(plant_model.N_STATES),     #   (6,)  [q_eye | w_eye]
     )
 
     solution = diffrax.diffeqsolve(
@@ -339,5 +353,5 @@ def simulate(params, t_array_or_stimulus, head_vel_array=None,
     )
 
     if return_states:
-        return solution.ys                  # SimState, each field (T, N)
-    return solution.ys.plant               # (T, 3) eye rotation vector
+        return solution.ys                          # SimState, each field (T, N)
+    return solution.ys.plant                        # (T, 3) eye rotation vector

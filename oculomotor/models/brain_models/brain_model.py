@@ -9,12 +9,12 @@ Signal flow:
     e_cmd            (3,)   motor error command      → SG
 
 Efference copy correction (inside step, before VS):
-    u_burst_delayed  = ec.read_delayed(x_ec)          from current EC state
-    e_slip_corrected = raw_slip_delayed − u_burst_delayed
+    saccade_ec       = ec.read_delayed(x_ec)           from current EC state
+    e_slip_corrected = raw_slip_delayed + scene_present * saccade_ec
     VS receives e_slip_corrected
 
 Internal flow:
-    VS  →  w_est  →  u_vel (with u_burst)  →  NI  →  u_p  →  (plant)
+    VS  →  w_est  →  u_vel (with u_burst)  →  NI  →  motor_cmd  →  (plant)
     SG  →  u_burst  (saccade velocity command → EC delay → next-step correction)
     EC  →  delays u_burst by tau_vis for next-step slip cancellation
 
@@ -27,9 +27,9 @@ Index constants (relative to x_brain):
     _IDX_EC   — efference copy states    (120,)
 
 Outputs of step():
-    dx_brain  (135,)  state derivative
-    u_p       (3,)    pulse-step motor command → plant
-    u_burst   (3,)    saccade burst velocity command
+    dx_brain   (135,)  state derivative
+    motor_cmd  (3,)    pulse-step motor command → plant
+    u_burst    (3,)    saccade burst velocity command
 """
 
 from typing import NamedTuple
@@ -113,9 +113,8 @@ def step(x_brain, sensory_out, brain_params):
         brain_params: BrainParams   model parameters
 
     Returns:
-        dx_brain:  (135,)  dx_brain/dt
-        u_p:       (3,)    pulse-step motor command → plant
-        u_burst:   (3,)    saccade burst velocity command
+        dx_brain:   (135,)  dx_brain/dt
+        motor_cmd:  (3,)    pulse-step motor command → plant
     """
     x_vs = x_brain[_IDX_VS]
     x_ni = x_brain[_IDX_NI]
@@ -123,11 +122,11 @@ def step(x_brain, sensory_out, brain_params):
     x_ec = x_brain[_IDX_EC]
 
     # ── Efference copy correction: add delayed burst to delayed slip ──────────
-    # u_burst_delayed matches the phase of slip_delayed (both delayed by tau_vis).
+    # saccade_ec matches the phase of slip_delayed (both delayed by tau_vis).
     # Cancels burst-driven eye motion from retinal slip before VS.
     # Gated by scene_present: correction only applies when a visual scene is visible.
-    u_burst_delayed  = ec.read_delayed(x_ec)
-    e_slip_corrected = sensory_out.slip_delayed + sensory_out.scene_present * u_burst_delayed
+    saccade_ec       = ec.read_delayed(x_ec)
+    e_slip_corrected = sensory_out.slip_delayed + sensory_out.scene_present * saccade_ec
 
     # ── Velocity storage: canal + corrected slip → velocity estimate ──────────
     dx_vs, w_est = vs.step(x_vs, jnp.concatenate([sensory_out.canal, e_slip_corrected]), brain_params)
@@ -136,8 +135,7 @@ def step(x_brain, sensory_out, brain_params):
     dx_sg, u_burst = sg.step(x_sg, sensory_out.e_cmd, brain_params)
 
     # ── Neural integrator: combined eye-velocity command ──────────────────────
-    u_vel      = -w_est + u_burst
-    dx_ni, u_p = ni.step(x_ni, u_vel, brain_params)
+    dx_ni, motor_cmd = ni.step(x_ni, -w_est + u_burst, brain_params)
 
     # ── Efference copy: advance delay cascade with current burst ──────────────
     dx_ec, _ = ec.step(x_ec, u_burst, brain_params)
@@ -145,4 +143,4 @@ def step(x_brain, sensory_out, brain_params):
     # ── Pack state derivative ─────────────────────────────────────────────────
     dx_brain = jnp.concatenate([dx_vs, dx_ni, dx_sg, dx_ec])
 
-    return dx_brain, u_p, u_burst
+    return dx_brain, motor_cmd
