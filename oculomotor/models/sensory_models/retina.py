@@ -2,24 +2,26 @@
 
 Two responsibilities:
 
-  1. Geometry — convert Cartesian target position to angular gaze error.
-     The actual retinal error signals (e_pos, e_slip) are subtracted
-     inline in the simulator so the signal-flow context is visible there.
+  1. Geometry — convert Cartesian target position to angular gaze error and
+     compute retinal velocity of the tracked target (pursuit drive).
 
   2. Visual delay cascade — gamma-distributed delay implemented as a
      cascade of N_STAGES first-order LP filters.  Approximates a pure
      delay of tau_vis seconds.  With N_STAGES=40 and tau_vis=0.08 s:
          Mean delay = 0.08 s,  std ≈ 0.013 s,  −3 dB BW ≈ 66 Hz
 
-     Two signals are delayed independently (interleaved in state vector):
-         Signal 0 — e_slip (3,)  retinal velocity slip   → OKR drive
+     Three signals are delayed independently (interleaved in state vector):
+         Signal 0 — e_slip (3,)  retinal velocity slip   → OKR / VS drive
          Signal 1 — e_pos  (3,)  retinal position error  → saccade motor error
+         Signal 2 — e_vel  (3,)  target velocity on retina → pursuit drive
 
-     State layout (240,): [x_slip_stage0..39 (120) | x_pos_stage0..39 (120)]
+     State layout (360,): [x_slip_stage0..39 (120) | x_pos_stage0..39 (120)
+                                                    | x_vel_stage0..39 (120)]
 
      Module-level readout matrices (exported for demo scripts / efference copy):
-         C_slip  (3, 240)  selects last stage of slip cascade
-         C_pos   (3, 240)  selects last stage of pos  cascade
+         C_slip  (3, 360)  selects last stage of slip cascade
+         C_pos   (3, 360)  selects last stage of pos  cascade
+         C_vel   (3, 360)  selects last stage of vel  cascade
 """
 
 import jax.numpy as jnp
@@ -27,8 +29,8 @@ import jax.numpy as jnp
 # ── Cascade parameters ──────────────────────────────────────────────────────────
 
 N_STAGES      = 40    # cascade depth
-_N_SIG        = 2     # number of signals (slip + position)
-N_STATES      = N_STAGES * 3 * _N_SIG   # 240  total visual delay states
+_N_SIG        = 3     # number of signals (slip + position + target velocity)
+N_STATES      = N_STAGES * 3 * _N_SIG   # 360  total visual delay states
 _N_PER_SIG    = N_STAGES * 3            # 120  states per signal
 
 # ── Structural matrices (computed once at import) ───────────────────────────────
@@ -44,14 +46,16 @@ _A_STRUCT     = _make_cascade_A_struct()                                   # (12
 _B_STRUCT_SIG = jnp.zeros((_N_PER_SIG, 3)).at[:3, :].set(jnp.eye(3))     # (120, 3)
 
 # Readout matrices — exported so demo scripts / efference_copy can use them directly
-C_slip = jnp.zeros((3, N_STATES)).at[:, _N_PER_SIG - 3 : _N_PER_SIG].set(jnp.eye(3))
-C_pos  = jnp.zeros((3, N_STATES)).at[:, N_STATES - 3 :               ].set(jnp.eye(3))
+# Each selects the last 3 states of its respective 120-state channel.
+C_slip = jnp.zeros((3, N_STATES)).at[:, 1*_N_PER_SIG-3 : 1*_N_PER_SIG].set(jnp.eye(3))
+C_pos  = jnp.zeros((3, N_STATES)).at[:, 2*_N_PER_SIG-3 : 2*_N_PER_SIG].set(jnp.eye(3))
+C_vel  = jnp.zeros((3, N_STATES)).at[:, 3*_N_PER_SIG-3 : 3*_N_PER_SIG].set(jnp.eye(3))
 
 
 # ── Geometry ────────────────────────────────────────────────────────────────────
 
-def retinal_signals(p_target, q_head, w_head, q_eye, w_eye, w_scene, scene_present):
-    """Compute instantaneous retinal position error and velocity slip.
+def retinal_signals(p_target, q_head, w_head, q_eye, w_eye, w_scene, v_target, scene_present):
+    """Compute instantaneous retinal position error, velocity slip, and target velocity.
 
     These are the raw sensory signals before any neural processing or delay.
     They feed directly into the visual delay cascade.
@@ -63,6 +67,9 @@ def retinal_signals(p_target, q_head, w_head, q_eye, w_eye, w_scene, scene_prese
         q_eye:         (3,)    eye angular position — plant state (deg)
         w_eye:         (3,)    eye angular velocity — plant derivative (deg/s)
         w_scene:       (3,)    scene angular velocity (deg/s)
+        v_target:      (3,)    target angular velocity in world frame (deg/s)
+                               Analogous to w_scene but for the foveal target.
+                               → pursuit drive via target velocity on retina
         scene_present: scalar  0=dark, 1=lit — gates the slip signal
 
     Returns:
@@ -70,10 +77,23 @@ def retinal_signals(p_target, q_head, w_head, q_eye, w_eye, w_scene, scene_prese
                         = target_direction − head_position − eye_position
         raw_slip: (3,)  retinal velocity slip (deg/s), zero in the dark
                         = scene_present · (w_scene − w_head − w_eye)
+        e_vel:    (3,)  target velocity on retina (deg/s), gated by target motion
+                        = pursuit_gate · (v_target − w_head − w_eye)
+                        → drives smooth pursuit; zero when eye tracks target perfectly
+                        The gate is ≈0 when |v_target| < 0.5 deg/s (no moving target),
+                        preventing the pursuit integrator from activating during OKN,
+                        VOR, or fixation of a stationary target.
     """
     e_pos    = target_to_angle(p_target) - q_head - q_eye
     raw_slip = scene_present * (w_scene - w_head - w_eye)
-    return e_pos, raw_slip
+
+    # Pursuit gate: suppress retinal velocity error when no target is moving.
+    # Without this, v_target=0 during OKN gives e_vel = -w_eye, and the
+    # pursuit integrator fights the OKR response.
+    v_mag         = jnp.linalg.norm(v_target)
+    pursuit_gate  = jnp.tanh(v_mag / 0.5)          # ≈0 below 0.5 deg/s, ≈1 above 2 deg/s
+    e_vel         = pursuit_gate * (v_target - w_head - w_eye)
+    return e_pos, raw_slip, e_vel
 
 
 def target_to_angle(p_target):
@@ -125,30 +145,33 @@ def delay_cascade_read(x_cascade):
 
 # ── Combined visual delay step ───────────────────────────────────────────────────
 
-def step(x_vis, e_slip, e_pos, tau_vis):
-    """Single ODE step for the full visual delay cascade (both signals).
+def step(x_vis, e_slip, e_pos, e_vel, tau_vis):
+    """Single ODE step for the full visual delay cascade (three signals).
+
+    Each of the three signals is delayed independently through its own
+    120-state cascade.  State layout: [x_slip (120) | x_pos (120) | x_vel (120)].
 
     Args:
-        x_vis:   (240,)  visual cascade state [x_slip (120) | x_pos (120)]
-        e_slip:  (3,)    instantaneous retinal slip (deg/s)
-        e_pos:   (3,)    instantaneous retinal position error (deg)
+        x_vis:   (360,)  visual cascade state
+        e_slip:  (3,)    instantaneous retinal slip (deg/s)     → OKR / VS
+        e_pos:   (3,)    instantaneous retinal position error (deg) → SG
+        e_vel:   (3,)    target velocity on retina (deg/s)      → pursuit
         tau_vis: float   total cascade delay (s)
 
     Returns:
-        dx_vis:         (240,)  dx_vis/dt
+        dx_vis:         (360,)  dx_vis/dt
         e_slip_delayed: (3,)    delayed retinal slip   (for VS / OKR)
         e_pos_delayed:  (3,)    delayed position error (for saccade generator)
     """
-    k     = N_STAGES / tau_vis
-    A_blk = k * _A_STRUCT                              # (120, 120)
-    B_blk = k * _B_STRUCT_SIG                          # (120, 3)
-    Z_sq  = jnp.zeros((_N_PER_SIG, _N_PER_SIG))
-    Z_in  = jnp.zeros((_N_PER_SIG, 3))
-    A_v   = jnp.block([[A_blk, Z_sq], [Z_sq, A_blk]]) # (240, 240) block-diagonal
-    B_v   = jnp.block([[B_blk, Z_in], [Z_in, B_blk]]) # (240, 6)
+    x_slip = x_vis[:_N_PER_SIG]
+    x_pos  = x_vis[_N_PER_SIG : 2*_N_PER_SIG]
+    x_vel  = x_vis[2*_N_PER_SIG:]
 
-    u_v            = jnp.concatenate([e_slip, e_pos])
-    dx_vis         = A_v @ x_vis + B_v @ u_v
-    e_slip_delayed = C_slip @ x_vis   # pure state readout — signals from tau_vis ago
-    e_pos_delayed  = C_pos  @ x_vis
+    dx_slip = delay_cascade_step(x_slip, e_slip, tau_vis)
+    dx_pos  = delay_cascade_step(x_pos,  e_pos,  tau_vis)
+    dx_vel  = delay_cascade_step(x_vel,  e_vel,  tau_vis)
+
+    dx_vis         = jnp.concatenate([dx_slip, dx_pos, dx_vel])
+    e_slip_delayed = delay_cascade_read(x_slip)   # pure state readout
+    e_pos_delayed  = delay_cascade_read(x_pos)
     return dx_vis, e_slip_delayed, e_pos_delayed

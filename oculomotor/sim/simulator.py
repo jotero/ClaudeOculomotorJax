@@ -53,7 +53,7 @@ import jax.numpy as jnp
 import diffrax
 
 from oculomotor.models.sensory_models.sensory_model import _IDX_C, _IDX_VIS, SensoryParams
-from oculomotor.models.brain_models.brain_model    import _IDX_VS, _IDX_NI, _IDX_SG, _IDX_EC, _IDX_GRAV, BrainParams
+from oculomotor.models.brain_models.brain_model    import _IDX_VS, _IDX_NI, _IDX_SG, _IDX_EC, _IDX_GRAV, _IDX_PURSUIT, BrainParams
 from oculomotor.models.plant_models.plant_model_first_order import PlantParams
 from oculomotor.models.sensory_models import sensory_model
 from oculomotor.models.brain_models   import brain_model
@@ -129,7 +129,7 @@ PARAMS_DEFAULT     = default_params()
 # Re-export params API so callers can import everything from simulator
 __all__ = [
     'SimState', 'ODE_ocular_motor', 'simulate',
-    '_IDX_C', '_IDX_VIS', '_IDX_VS', '_IDX_NI', '_IDX_SG', '_IDX_EC', '_IDX_GRAV',
+    '_IDX_C', '_IDX_VIS', '_IDX_VS', '_IDX_NI', '_IDX_SG', '_IDX_EC', '_IDX_GRAV', '_IDX_PURSUIT',
     # params
     'Params', 'SimConfig', 'SensoryParams', 'PlantParams', 'BrainParams',
     'default_params', 'with_brain', 'with_sensory', 'with_plant',
@@ -142,12 +142,12 @@ class SimState(NamedTuple):
     """Structured ODE state — a JAX-compatible pytree (NamedTuple).
 
     Groups:
-        sensory  (252)  Canal transducers + retinal delay cascade.
-        brain    (135)  Central computation: VS, NI, SG, efference copy.
+        sensory  (372)  Canal transducers + retinal delay cascade (slip, pos, vel).
+        brain    (141)  Central computation: VS, NI, SG, EC, gravity, pursuit.
         plant      (3)  Extraocular plant — eye rotation vector (deg)
     """
-    sensory: jnp.ndarray   # (252,)  [x_c (12) | x_vis (240)]
-    brain:   jnp.ndarray   # (135,)  [x_vs (3) | x_ni (3) | x_sg (9) | x_ec (120)]
+    sensory: jnp.ndarray   # (372,)  [x_c (12) | x_vis (360)]
+    brain:   jnp.ndarray   # (141,)  [x_vs (3) | x_ni (3) | x_sg (9) | x_ec (120) | x_grav (3) | x_pursuit (3)]
     plant:   jnp.ndarray   #   (3,)  eye rotation vector (deg)
 
 
@@ -175,12 +175,12 @@ def ODE_ocular_motor(t, state, args):
         t:     scalar time (s)
         state: SimState pytree with fields (sensory, brain, plant)
         args:  (theta, hv_interp, hp_interp, ha_interp, vs_interp, target_interp,
-                scene_present_interp, target_present_interp)
+                vt_interp, scene_present_interp, target_present_interp)
 
     Returns:
         SimState of derivatives (dsensory, dbrain, dplant)
     """
-    theta, hv_interp, hp_interp, ha_interp, vs_interp, target_interp, scene_present_interp, _ = args
+    theta, hv_interp, hp_interp, ha_interp, vs_interp, target_interp, vt_interp, scene_present_interp, _ = args
 
     # ── External inputs at time t ────────────────────────────────────────────
     w_head        = hv_interp.evaluate(t)              # (3,) head angular velocity (deg/s)
@@ -188,6 +188,7 @@ def ODE_ocular_motor(t, state, args):
     a_head        = ha_interp.evaluate(t)              # (3,) head linear acceleration (m/s²)
     w_scene       = vs_interp.evaluate(t)              # (3,) scene angular velocity (deg/s)
     p_target      = target_interp.evaluate(t)          # (3,) Cartesian target position
+    v_target      = vt_interp.evaluate(t)              # (3,) target angular velocity (deg/s)
     scene_present = scene_present_interp.evaluate(t)   # scalar: 0=dark, 1=scene present
 
     # ── Specific force in head frame (small-angle approximation) ─────────────
@@ -219,7 +220,7 @@ def ODE_ocular_motor(t, state, args):
     # w_eye = dx_plant = w_true (algebraic, no lag) — must follow plant step.
     dx_sensory, _, _, _ = sensory_model.step(
         state.sensory, q_head, w_head, q_eye, w_eye,
-        w_scene, p_target, scene_present, theta.sensory)
+        w_scene, v_target, p_target, scene_present, theta.sensory)
 
     return SimState(
         sensory = dx_sensory,
@@ -234,6 +235,7 @@ def simulate(params, t_array_or_stimulus, head_vel_array=None,
              head_accel_array=None,
              v_scene_array=None,
              p_target_array=None,
+             v_target_array=None,
              scene_present_array=None,
              target_present_array=None,
              max_steps=10000, sim_config=None,
@@ -254,6 +256,9 @@ def simulate(params, t_array_or_stimulus, head_vel_array=None,
         p_target_array:       Cartesian target position, shape (T, 3) or (3,) or None.
                               None = straight ahead [0, 0, 1].
                               Shape (3,) = constant target (replicated over time).
+        v_target_array:       target angular velocity in world frame, shape (T, 3) or (T,) or None.
+                              None (default) = stationary target (no pursuit drive).
+                              Shape (T,) = horizontal-only velocity (yaw); pitch/roll = 0.
         scene_present_array:  scene visibility gain, shape (T,), values in [0, 1].
                               None (default) = inferred: 1.0 if v_scene_array was
                               provided, 0.0 (dark) if v_scene_array is None.
@@ -269,14 +274,15 @@ def simulate(params, t_array_or_stimulus, head_vel_array=None,
             eye_rot: eye rotation vector (deg), shape (T, 3)
         If return_states=True:
             states: SimState pytree, each field has shape (T, N):
-                      states.plant                 → (T, 3)   eye rotation vector
-                      states.brain[:, _IDX_VS]    → (T, 3)   velocity storage
-                      states.brain[:, _IDX_NI]    → (T, 3)   neural integrator
-                      states.brain[:, _IDX_SG]    → (T, 9)   saccade generator
-                      states.brain[:, _IDX_EC]    → (T, 120) efference copy cascade
-                      states.brain[:, _IDX_GRAV]  → (T, 3)   gravity estimate (m/s²)
-                      states.sensory[:, _IDX_C]   → (T, 12)  canal states
-                      states.sensory[:, _IDX_VIS] → (T, 240) visual delay cascade
+                      states.plant                      → (T, 3)   eye rotation vector
+                      states.brain[:, _IDX_VS]         → (T, 3)   velocity storage
+                      states.brain[:, _IDX_NI]         → (T, 3)   neural integrator
+                      states.brain[:, _IDX_SG]         → (T, 9)   saccade generator
+                      states.brain[:, _IDX_EC]         → (T, 120) efference copy cascade
+                      states.brain[:, _IDX_GRAV]       → (T, 3)   gravity estimate (m/s²)
+                      states.brain[:, _IDX_PURSUIT]    → (T, 3)   pursuit velocity memory
+                      states.sensory[:, _IDX_C]        → (T, 12)  canal states
+                      states.sensory[:, _IDX_VIS]      → (T, 360) visual delay cascade
     """
     cfg = sim_config if sim_config is not None else SIM_CONFIG_DEFAULT
     dt  = cfg.dt_solve
@@ -327,6 +333,16 @@ def simulate(params, t_array_or_stimulus, head_vel_array=None,
     else:
         pt3 = jnp.asarray(p_target_array)
 
+    # ── Target angular velocity (zeros if stationary) ────────────────────────
+    if v_target_array is None:
+        vt3 = jnp.zeros((T, 3))
+    elif jnp.ndim(jnp.asarray(v_target_array)) == 1:
+        vt3 = jnp.stack([jnp.asarray(v_target_array),
+                          jnp.zeros_like(jnp.asarray(v_target_array)),
+                          jnp.zeros_like(jnp.asarray(v_target_array))], axis=1)
+    else:
+        vt3 = jnp.asarray(v_target_array)
+
     # ── Head position: trapezoidal integral of head velocity ──────────────────
     dt_arr = jnp.diff(t_array)                                     # (T-1,)
     hp3    = jnp.concatenate([
@@ -353,12 +369,13 @@ def simulate(params, t_array_or_stimulus, head_vel_array=None,
     ha_interp             = diffrax.LinearInterpolation(ts=t_array, ys=ha3)
     vs_interp             = diffrax.LinearInterpolation(ts=t_array, ys=vs3)
     target_interp         = diffrax.LinearInterpolation(ts=t_array, ys=pt3)
+    vt_interp             = diffrax.LinearInterpolation(ts=t_array, ys=vt3)
     scene_present_interp  = diffrax.LinearInterpolation(ts=t_array, ys=sg1)
     target_present_interp = diffrax.LinearInterpolation(ts=t_array, ys=tg1)
 
     x0 = SimState(
-        sensory = jnp.zeros(sensory_model.N_STATES),   # (252,)
-        brain   = brain_model.make_x0(),               # (138,) gravity init at [-9.81,0,0]
+        sensory = jnp.zeros(sensory_model.N_STATES),   # (372,)
+        brain   = brain_model.make_x0(),               # (141,) gravity init at [9.81,0,0]
         plant   = jnp.zeros(plant_model.N_STATES),     #   (3,)  eye rotation vector
     )
 
@@ -370,7 +387,7 @@ def simulate(params, t_array_or_stimulus, head_vel_array=None,
         dt0=dt,
         y0=x0,
         args=(params, hv_interp, hp_interp, ha_interp, vs_interp, target_interp,
-              scene_present_interp, target_present_interp),
+              vt_interp, scene_present_interp, target_present_interp),
         stepsize_controller=diffrax.ConstantStepSize(),
         saveat=diffrax.SaveAt(ts=t_array),
         max_steps=max_steps,

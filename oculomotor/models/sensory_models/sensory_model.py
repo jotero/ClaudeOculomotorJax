@@ -4,18 +4,19 @@ Imports the canal SSM (canal.py) and visual delay cascade (retina.py) and
 aggregates them into a single combined step + read_outputs interface.
 
 Signal flow:
-    w_head  → [Canal array]         → y_canals (6,)   afferent firing rates
-    e_slip  → [Visual delay, sig 0] → e_slip_delayed   (for VS / OKR)
-    e_pos   → [Visual delay, sig 1] → e_pos_delayed    (for saccade generator)
+    w_head    → [Canal array]         → y_canals (6,)   afferent firing rates
+    e_slip    → [Visual delay, sig 0] → e_slip_delayed   (for VS / OKR)
+    e_pos     → [Visual delay, sig 1] → e_pos_delayed    (for saccade generator)
+    e_vel     → [Visual delay, sig 2] → vel_delayed      (for smooth pursuit)
 
-State vector  x_sensory = [x_c (12) | x_vis (240)]  — N_STATES = 252
+State vector  x_sensory = [x_c (12) | x_vis (360)]  — N_STATES = 372
 
 Index constants (relative to x_sensory):
     _IDX_C   — canal states (12,)
-    _IDX_VIS — visual delay cascade states (240,)
+    _IDX_VIS — visual delay cascade states (360,)
 
 Outputs of step():
-    dx_sensory      (252,)  state derivative
+    dx_sensory      (372,)  state derivative
     y_canals        (6,)    canal afferent firing rates
     e_slip_delayed  (3,)    delayed retinal slip   → VS / OKR
     e_pos_delayed   (3,)    delayed position error → saccade generator
@@ -67,20 +68,21 @@ canal_nonlinearity = _canal.nonlinearity   # renamed in canal.py
 # Visual delay
 N_STAGES          = _retina.N_STAGES       # 40
 _N_PER_SIG        = _retina._N_PER_SIG     # 120
-C_slip            = _retina.C_slip         # (3, 240)
-C_pos             = _retina.C_pos          # (3, 240)
+C_slip            = _retina.C_slip         # (3, 360)
+C_pos             = _retina.C_pos          # (3, 360)
+C_vel             = _retina.C_vel          # (3, 360)  target velocity channel
 delay_cascade_step = _retina.delay_cascade_step
 delay_cascade_read = _retina.delay_cascade_read
 
 # ── State layout ───────────────────────────────────────────────────────────────
 
 _N_CANAL_STATES = _canal.N_STATES          # 12
-_N_VIS_STATES   = _retina.N_STATES         # 240
-N_STATES        = _N_CANAL_STATES + _N_VIS_STATES  # 252
+_N_VIS_STATES   = _retina.N_STATES         # 360
+N_STATES        = _N_CANAL_STATES + _N_VIS_STATES  # 372
 
 # Index constants — relative to x_sensory
 _IDX_C   = slice(0,               _N_CANAL_STATES)                     # (12,)
-_IDX_VIS = slice(_N_CANAL_STATES, _N_CANAL_STATES + _N_VIS_STATES)     # (240,)
+_IDX_VIS = slice(_N_CANAL_STATES, _N_CANAL_STATES + _N_VIS_STATES)     # (360,)
 
 
 # ── Bundled sensory output ──────────────────────────────────────────────────────
@@ -99,6 +101,9 @@ class SensoryOutput(NamedTuple):
         e_cmd:         (3,)  motor error command for the saccade generator
                              pos_visible after orbital gate + anti-windup clip
                              (head-centered, clipped to ±orbital_limit)
+        vel_delayed:   (3,)  delayed target velocity on retina → smooth pursuit
+                             = v_target − w_head − w_eye  (delayed by tau_vis)
+                             Zero when eye perfectly tracks the target.
         f_otolith:     (3,)  specific force in head frame (m/s²) → gravity estimator
                              = R_head @ (a_head − g_world);  at rest upright: [−9.81, 0, 0]
         scene_present: scalar  0=dark, 1=scene present — gates EC slip correction
@@ -108,6 +113,7 @@ class SensoryOutput(NamedTuple):
     pos_delayed:   jnp.ndarray   # (3,)
     pos_visible:   jnp.ndarray   # (3,)
     e_cmd:         jnp.ndarray   # (3,)
+    vel_delayed:   jnp.ndarray   # (3,)
     f_otolith:     jnp.ndarray   # (3,)
     scene_present: jnp.ndarray   # scalar
 
@@ -124,7 +130,7 @@ def read_outputs(x_sensory, x_p, f_otolith, scene_present,
     as the eye approaches its mechanical range, then clips to ±orbital_limit.
 
     Args:
-        x_sensory:     (252,)  sensory state [x_c (12) | x_vis (240)]
+        x_sensory:     (372,)  sensory state [x_c (12) | x_vis (360)]
         x_p:           (3,)    plant state — eye rotation vector (deg, head-centered)
         f_otolith:     (3,)    specific force in head frame (m/s²)
         scene_present: scalar  0=dark, 1=scene present
@@ -134,7 +140,7 @@ def read_outputs(x_sensory, x_p, f_otolith, scene_present,
 
     Returns:
         SensoryOutput with fields (canal, slip_delayed, pos_delayed, pos_visible,
-                                   e_cmd, f_otolith, scene_present)
+                                   e_cmd, vel_delayed, f_otolith, scene_present)
     """
     x_c   = x_sensory[_IDX_C]
     x_vis = x_sensory[_IDX_VIS]
@@ -142,6 +148,7 @@ def read_outputs(x_sensory, x_p, f_otolith, scene_present,
     canal_out    = _canal.nonlinearity(x_c, sensory_params.canal_gains)
     slip_delayed = _retina.C_slip @ x_vis
     pos_delayed  = _retina.C_pos  @ x_vis
+    vel_delayed  = _retina.C_vel  @ x_vis
 
     # Visual-field gate — suppresses pos error when target is outside ~vf_limit deg
     vf_limit    = sensory_params.visual_field_limit
@@ -159,6 +166,7 @@ def read_outputs(x_sensory, x_p, f_otolith, scene_present,
         pos_delayed   = pos_delayed,
         pos_visible   = pos_visible,
         e_cmd         = e_cmd,
+        vel_delayed   = vel_delayed,
         f_otolith     = f_otolith,
         scene_present = scene_present,
     )
@@ -167,25 +175,28 @@ def read_outputs(x_sensory, x_p, f_otolith, scene_present,
 # ── Combined step ───────────────────────────────────────────────────────────────
 
 def step(x_sensory, q_head, w_head, q_eye, w_eye,
-         w_scene, p_target, scene_present, sensory_params):
+         w_scene, v_target, p_target, scene_present, sensory_params):
     """Single ODE step for the sensory subsystem (canal + visual delay).
 
     Computes retinal signals internally from world/body state, then advances
     the canal and visual delay cascades.
 
     Args:
-        x_sensory:     (252,)  sensory state [x_c (12) | x_vis (240)]
+        x_sensory:     (372,)  sensory state [x_c (12) | x_vis (360)]
         q_head:        (3,)    head angular position (deg)
         w_head:        (3,)    head angular velocity (deg/s)
         q_eye:         (3,)    eye angular position — plant state (deg)
         w_eye:         (3,)    eye angular velocity — plant derivative (deg/s)
         w_scene:       (3,)    scene angular velocity (deg/s)
+        v_target:      (3,)    target angular velocity in world frame (deg/s)
+                               Used to compute foveal target velocity on retina.
+                               Zero for stationary targets (no pursuit drive).
         p_target:      (3,)    Cartesian target position
         scene_present: scalar  0=dark, 1=lit — gates retinal slip
         sensory_params: SensoryParams  model parameters
 
     Returns:
-        dx_sensory:     (252,)  dx_sensory/dt
+        dx_sensory:     (372,)  dx_sensory/dt
         y_canals:       (6,)    canal afferent firing rates
         e_slip_delayed: (3,)    delayed retinal slip   (for VS / OKR)
         e_pos_delayed:  (3,)    delayed position error (for saccade generator)
@@ -193,11 +204,11 @@ def step(x_sensory, q_head, w_head, q_eye, w_eye,
     x_c   = x_sensory[_IDX_C]
     x_vis = x_sensory[_IDX_VIS]
 
-    e_pos, raw_slip = _retina.retinal_signals(
-        p_target, q_head, w_head, q_eye, w_eye, w_scene, scene_present)
+    e_pos, raw_slip, e_vel = _retina.retinal_signals(
+        p_target, q_head, w_head, q_eye, w_eye, w_scene, v_target, scene_present)
 
-    dx_c,  y_canals                       = _canal.step(x_c,  w_head,          sensory_params)
-    dx_vis, e_slip_delayed, e_pos_delayed = _retina.step(x_vis, raw_slip, e_pos, sensory_params.tau_vis)
+    dx_c,  y_canals                       = _canal.step(x_c,  w_head,                    sensory_params)
+    dx_vis, e_slip_delayed, e_pos_delayed = _retina.step(x_vis, raw_slip, e_pos, e_vel,   sensory_params.tau_vis)
 
     dx_sensory = jnp.concatenate([dx_c, dx_vis])
     return dx_sensory, y_canals, e_slip_delayed, e_pos_delayed
