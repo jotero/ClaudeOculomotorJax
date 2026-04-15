@@ -77,22 +77,15 @@ def retinal_signals(p_target, q_head, w_head, q_eye, w_eye, w_scene, v_target, s
                         = target_direction − head_position − eye_position
         raw_slip: (3,)  retinal velocity slip (deg/s), zero in the dark
                         = scene_present · (w_scene − w_head − w_eye)
-        e_vel:    (3,)  target velocity on retina (deg/s), gated by target motion
-                        = pursuit_gate · (v_target − w_head − w_eye)
-                        → drives smooth pursuit; zero when eye tracks target perfectly
-                        The gate is ≈0 when |v_target| < 0.5 deg/s (no moving target),
-                        preventing the pursuit integrator from activating during OKN,
-                        VOR, or fixation of a stationary target.
+        e_vel:    (3,)  target velocity on retina (deg/s)
+                        = v_target − w_head − w_eye
+                        → drives smooth pursuit; zero when eye perfectly tracks target
+                        Gating (scene vs. target presence) is handled downstream:
+                        brain_model gates e_combined by target_present before driving pursuit.
     """
     e_pos    = target_to_angle(p_target) - q_head - q_eye
     raw_slip = scene_present * (w_scene - w_head - w_eye)
-
-    # Pursuit gate: suppress retinal velocity error when no target is moving.
-    # Without this, v_target=0 during OKN gives e_vel = -w_eye, and the
-    # pursuit integrator fights the OKR response.
-    v_mag         = jnp.linalg.norm(v_target)
-    pursuit_gate  = jnp.tanh(v_mag / 0.5)          # ≈0 below 0.5 deg/s, ≈1 above 2 deg/s
-    e_vel         = pursuit_gate * (v_target - w_head - w_eye)
+    e_vel    = v_target - w_head - w_eye
     return e_pos, raw_slip, e_vel
 
 

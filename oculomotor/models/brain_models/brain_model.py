@@ -6,29 +6,34 @@ step() function.
 
 Signal flow:
     y_canals         (6,)   canal afferents                   → VS
-    raw_slip_delayed (3,)   delayed raw retinal slip           → VS (after combined EC)
+    raw_slip_delayed (3,)   delayed raw retinal slip           → VS (after EC)
     vel_delayed      (3,)   delayed target velocity on retina  → pursuit (Smith predictor)
     e_cmd            (3,)   motor error command                → SG
 
-Combined efference copy (one cascade, serves both VS and pursuit):
-    motor_ec   = ec.read_delayed(x_ec)          # delay(u_burst + u_pursuit)
-    e_slip_corrected = slip_delayed + scene_present * motor_ec   → VS
-    e_combined       = vel_delayed  + scene_present * motor_ec   → ≈ v_target
+One efference copy cascade (120 states), two uses with different gates:
+    motor_ec = ec.read_delayed(x_ec)          # delay(u_burst + u_pursuit)
 
-Pursuit Smith predictor (reduces delay-induced oscillation):
-    e_vel_pred = (e_combined − x_pursuit) / (1 + K_phasic)
-    → at onset:   0.2 × v_target drives integrator   (vs 1.0 × without predictor)
-    → at steady state:  e_vel_pred → 0                 (integrator at rest)
-    u_pursuit = x_pursuit + K_phasic × e_vel_pred
+    OKR / VS correction  — scene-gated (full scene slip):
+        e_slip_corrected = slip_delayed + scene_present · motor_ec
+        slip_delayed ≈ −(u_burst+u_pursuit)(t−τ)  →  corrected ≈ 0  ✓
+
+    Pursuit Smith predictor — target-gated (foveal target slip only):
+        e_combined = target_present · (vel_delayed + motor_ec)   ≈ v_target when target on
+        Full signal gated by target_present → zero drive during VOR / OKN / fixation
+        e_vel_pred = (e_combined − x_pursuit) / (1 + K_phasic)
+        → at onset:        ~45 % of v_target drives integrator  (less oscillation)
+        → at steady state: e_vel_pred → 0  (integrator at rest, u_pursuit ≈ v_target)
+        u_pursuit = x_pursuit + K_phasic · e_vel_pred
 
 EC advance (end of step):
-    dx_ec = ec.step(x_ec, u_burst + u_pursuit)   # combined motor command into cascade
+    dx_ec = ec.step(x_ec, u_burst + u_pursuit)   # combined motor command
 
 Internal flow:
-    VS  →  w_est  →  u_vel (with u_burst + u_pursuit)  →  NI  →  motor_cmd
-    SG  →  u_burst  (saccade burst → EC cascade)
+    VS  →  w_est  →  −w_est + u_burst + u_pursuit  →  NI  →  motor_cmd
+    SG  →  u_burst    (saccade burst → EC cascade)
     Pursuit → u_pursuit  (→ NI + EC cascade)
-    EC  →  delays u_burst+u_pursuit by tau_vis; read used by VS and pursuit
+    EC  →  delays (u_burst + u_pursuit) by tau_vis
+           read used for: VS (scene-gated) and pursuit (target-gated)
     GE  →  g_hat (gravity estimate, cross-product dynamics)
 
 State vector  x_brain = [x_vs (3) | x_ni (3) | x_sg (9) | x_ec (120) | x_grav (3) | x_pursuit (3)]
@@ -108,8 +113,8 @@ class BrainParams(NamedTuple):
     g_ocr:                 float = 0.0    # OCR gain (dimensionless); 0 = disabled until verified
 
     # Smooth pursuit — leaky integrator + direct feedthrough (Lisberger 1988)
-    K_pursuit:             float = 2.0    # pursuit integration gain (1/s); rise TC ≈ 1/K_pursuit
-    K_phasic_pursuit:      float = 0.8    # pursuit direct feedthrough (dim'less); fast onset
+    K_pursuit:             float = 4.0    # pursuit integration gain (1/s); rise TC ≈ 1/K_pursuit
+    K_phasic_pursuit:      float = 5.0    # pursuit direct feedthrough (dim'less); fast onset
     tau_pursuit:           float = 40.0   # pursuit leak TC (s); ~40 s → ~97.5% gain at 1 Hz
 
 
@@ -165,28 +170,25 @@ def step(x_brain, sensory_out, brain_params):
     x_grav    = x_brain[_IDX_GRAV]
     x_pursuit = x_brain[_IDX_PURSUIT]
 
-    # ── Combined efference copy (delays u_burst + u_pursuit from previous step) ─
-    # motor_ec = delay(u_burst + u_pursuit) — same cascade serves both VS and pursuit.
-    motor_ec         = ec.read_delayed(x_ec)
+    # ── One EC, two corrections with separate gates ───────────────────────────
+    # motor_ec = delay(u_burst + u_pursuit) — one cascade, read once, used twice.
+    motor_ec = ec.read_delayed(x_ec)
+
+    # OKR / VS: scene-gated — cancels all self-generated motion in the visual scene
+    #   slip_delayed ≈ −(u_burst+u_pursuit)(t−τ)  →  corrected ≈ 0 during any motion ✓
     e_slip_corrected = sensory_out.slip_delayed + sensory_out.scene_present * motor_ec
 
-    # ── Pursuit Smith predictor: prediction error → pursuit command ───────────
-    # e_combined ≈ v_target (self-generated motion removed by motor_ec)
-    # Closed-form predictor — no extra states, no circular dependency:
-    #   u_pu_now   = x_pursuit + K_phasic · e_pred
-    #   e_pred     = e_combined − u_pu_now      (Smith: e = r − u)
-    #   →  e_pred  = (e_combined − x_pursuit) / (1 + K_phasic)
-    # At onset: e_pred = v_target/1.8  (~45 % of raw error → reduces oscillation)
-    # At ss:    e_pred → 0             (integrator at rest, u_pursuit ≈ v_target)
-    e_combined = sensory_out.vel_delayed + sensory_out.scene_present * motor_ec
-    K_ph       = brain_params.K_phasic_pursuit
-    e_vel_pred = (e_combined - x_pursuit) / (1.0 + K_ph)
-    dx_pursuit, u_pursuit = pu.step(x_pursuit, e_vel_pred, brain_params)
+    # Pursuit: target-gated — foveal target slip only (excludes VOR, OKN, fixation)
+    #   Gate the *entire* signal by target_present so that when there is no moving
+    #   foveal target (saccade to stationary point, VOR, OKN) the pursuit integrator
+    #   receives zero input.  EC cancellation of saccadic eye motion still works when
+    #   target_present=1: vel_delayed ≈ v_target − w_eye(t−τ), motor_ec ≈ +w_eye(t−τ)
+    #   → e_combined ≈ v_target ✓
+    #   Smith predictor lives inside pu.step(): e_pred = (e_combined − x_p)/(1+K_ph)
+    e_combined = sensory_out.target_present * (sensory_out.vel_delayed + motor_ec)
+    dx_pursuit, u_pursuit = pu.step(x_pursuit, e_combined, brain_params)
 
-    # ── Velocity storage: canal + EC-corrected slip + g_hat → ω̂ ──────────────
-    # motor_ec = delay(u_burst + u_pursuit) already cancels both saccadic and
-    # pursuit-induced components of slip_delayed, so no x_pursuit term needed.
-    #   slip + motor_ec ≈ −u_motor(t−τ) + u_motor(t−τ) = 0  during any self-motion ✓
+    # ── Velocity storage: canal + EC-corrected scene slip + g_hat → ω̂ ─────────
     dx_vs, w_est = vs.step(
         x_vs,
         jnp.concatenate([sensory_out.canal, e_slip_corrected, x_grav]),

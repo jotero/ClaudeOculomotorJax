@@ -239,6 +239,7 @@ def demo_okr_cascade():
     states = simulate(theta_okn, t_arr,
                       v_scene_array=v_scene,
                       scene_present_array=scene_present,
+                      target_present_array=jnp.zeros(T_okn),  # OKN: no foveal target
                       # No explicit fixation target (OKN: distributed scene, no single target).
                       # Fast phases are still driven by the implicit straight-ahead target:
                       # e_pos_delayed ≈ −x_p, so the saccade generator fires whenever the

@@ -180,7 +180,7 @@ def ODE_ocular_motor(t, state, args):
     Returns:
         SimState of derivatives (dsensory, dbrain, dplant)
     """
-    theta, hv_interp, hp_interp, ha_interp, vs_interp, target_interp, vt_interp, scene_present_interp, _ = args
+    theta, hv_interp, hp_interp, ha_interp, vs_interp, target_interp, vt_interp, scene_present_interp, target_present_interp = args
 
     # ── External inputs at time t ────────────────────────────────────────────
     w_head        = hv_interp.evaluate(t)              # (3,) head angular velocity (deg/s)
@@ -189,7 +189,8 @@ def ODE_ocular_motor(t, state, args):
     w_scene       = vs_interp.evaluate(t)              # (3,) scene angular velocity (deg/s)
     p_target      = target_interp.evaluate(t)          # (3,) Cartesian target position
     v_target      = vt_interp.evaluate(t)              # (3,) target angular velocity (deg/s)
-    scene_present = scene_present_interp.evaluate(t)   # scalar: 0=dark, 1=scene present
+    scene_present  = scene_present_interp.evaluate(t)         # scalar: 0=dark, 1=lit
+    target_present = target_present_interp.evaluate(t)        # scalar: 0=no target, 1=present
 
     # ── Specific force in head frame (small-angle approximation) ─────────────
     # g_hat = specific force = +x when upright (x = yaw/vertical axis, canal.py convention)
@@ -208,7 +209,8 @@ def ODE_ocular_motor(t, state, args):
 
     # ── Sensory: read bundled outputs for brain ───────────────────────────────
     sensory_out = sensory_model.read_outputs(
-        state.sensory, q_eye, f_otolith, scene_present, theta.sensory, theta.plant, theta.brain)
+        state.sensory, q_eye, f_otolith, scene_present, target_present,
+        theta.sensory, theta.plant, theta.brain)
 
     # ── Brain: VS + NI + SG + EC ──────────────────────────────────────────────
     dx_brain, motor_cmd = brain_model.step(state.brain, sensory_out, theta.brain)

@@ -101,46 +101,52 @@ class SensoryOutput(NamedTuple):
         e_cmd:         (3,)  motor error command for the saccade generator
                              pos_visible after orbital gate + anti-windup clip
                              (head-centered, clipped to ±orbital_limit)
-        vel_delayed:   (3,)  delayed target velocity on retina → smooth pursuit
-                             = v_target − w_head − w_eye  (delayed by tau_vis)
-                             Zero when eye perfectly tracks the target.
-        f_otolith:     (3,)  specific force in head frame (m/s²) → gravity estimator
-                             = R_head @ (a_head − g_world);  at rest upright: [−9.81, 0, 0]
-        scene_present: scalar  0=dark, 1=scene present — gates EC slip correction
+        vel_delayed:    (3,)  delayed target velocity on retina → smooth pursuit
+                              = v_target − w_head − w_eye  (delayed by tau_vis)
+                              Zero when eye perfectly tracks the target.
+        f_otolith:      (3,)  specific force in head frame (m/s²) → gravity estimator
+                              = R_head @ (a_head − g_world);  at rest upright: [−9.81, 0, 0]
+        scene_present:  scalar  0=dark, 1=full visual scene present — gates OKR/VS EC
+        target_present: scalar  0=no target, 1=foveal target present — gates pursuit EC
+                                Set to 0 for pure OKN (full-field motion, no foveal target)
+                                so that scene motion does not drive the pursuit integrator.
     """
-    canal:         jnp.ndarray   # (6,)
-    slip_delayed:  jnp.ndarray   # (3,)
-    pos_delayed:   jnp.ndarray   # (3,)
-    pos_visible:   jnp.ndarray   # (3,)
-    e_cmd:         jnp.ndarray   # (3,)
-    vel_delayed:   jnp.ndarray   # (3,)
-    f_otolith:     jnp.ndarray   # (3,)
-    scene_present: jnp.ndarray   # scalar
+    canal:          jnp.ndarray   # (6,)
+    slip_delayed:   jnp.ndarray   # (3,)
+    pos_delayed:    jnp.ndarray   # (3,)
+    pos_visible:    jnp.ndarray   # (3,)
+    e_cmd:          jnp.ndarray   # (3,)
+    vel_delayed:    jnp.ndarray   # (3,)
+    f_otolith:      jnp.ndarray   # (3,)
+    scene_present:  jnp.ndarray   # scalar
+    target_present: jnp.ndarray   # scalar
 
 
-def read_outputs(x_sensory, x_p, f_otolith, scene_present,
+def read_outputs(x_sensory, x_p, f_otolith, scene_present, target_present,
                  sensory_params, plant_params, brain_params):
     """Read all sensory outputs from the current state (pure state readout).
 
     Combines canal afferents, delayed visual signals, motor error command,
-    otolith specific force, and scene presence flag into a SensoryOutput bundle.
+    otolith specific force, scene/target presence flags into a SensoryOutput bundle.
 
     Visual-field gate: suppresses pos error when target eccentricity > vf_limit.
     Orbital gate + anti-windup: blends pos_visible toward a centering command
     as the eye approaches its mechanical range, then clips to ±orbital_limit.
 
     Args:
-        x_sensory:     (372,)  sensory state [x_c (12) | x_vis (360)]
-        x_p:           (3,)    plant state — eye rotation vector (deg, head-centered)
-        f_otolith:     (3,)    specific force in head frame (m/s²)
-        scene_present: scalar  0=dark, 1=scene present
+        x_sensory:      (372,)  sensory state [x_c (12) | x_vis (360)]
+        x_p:            (3,)    plant state — eye rotation vector (deg, head-centered)
+        f_otolith:      (3,)    specific force in head frame (m/s²)
+        scene_present:  scalar  0=dark, 1=full visual scene present (OKR/VS gate)
+        target_present: scalar  0=no foveal target, 1=target present (pursuit gate)
         sensory_params: SensoryParams
         plant_params:   PlantParams  (reads orbital_limit, k_orbital)
         brain_params:   BrainParams  (reads alpha_reset)
 
     Returns:
         SensoryOutput with fields (canal, slip_delayed, pos_delayed, pos_visible,
-                                   e_cmd, vel_delayed, f_otolith, scene_present)
+                                   e_cmd, vel_delayed, f_otolith, scene_present,
+                                   target_present)
     """
     x_c   = x_sensory[_IDX_C]
     x_vis = x_sensory[_IDX_VIS]
@@ -161,14 +167,15 @@ def read_outputs(x_sensory, x_p, f_otolith, scene_present,
     e_cmd = _ts.select(pos_visible, x_p, plant_params, brain_params)
 
     return SensoryOutput(
-        canal         = canal_out,
-        slip_delayed  = slip_delayed,
-        pos_delayed   = pos_delayed,
-        pos_visible   = pos_visible,
-        e_cmd         = e_cmd,
-        vel_delayed   = vel_delayed,
-        f_otolith     = f_otolith,
-        scene_present = scene_present,
+        canal          = canal_out,
+        slip_delayed   = slip_delayed,
+        pos_delayed    = pos_delayed,
+        pos_visible    = pos_visible,
+        e_cmd          = e_cmd,
+        vel_delayed    = vel_delayed,
+        f_otolith      = f_otolith,
+        scene_present  = scene_present,
+        target_present = target_present,
     )
 
 

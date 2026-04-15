@@ -1,34 +1,31 @@
-"""Efference copy — delays the combined motor command by tau_vis.
+"""Efference copy — delays a 3-D motor command by tau_vis seconds.
 
 Architecture
 ────────────
-Motor commands (u_burst + u_pursuit) drive eye movement AND contaminate the
-retinal signals.  To cancel this contamination the combined motor command must
-be added back to the delayed retinal signals — but AFTER the visual delay, not
-before it.
+A motor command (u_burst or u_pursuit) drives eye movement AND contaminates
+the retinal signals.  To cancel this contamination the command must be added
+back to the delayed retinal signals — but AFTER the visual delay, not before.
 
-Correct signal flow:
-    u_motor = u_burst + u_pursuit                    (combined motor command)
-    u_motor  → [EC delay, tau_vis] → u_motor_delayed (this module)
+This module is a reusable 120-state delay cascade.  brain_model instantiates
+it TWICE — once for u_burst (saccade EC) and once for u_pursuit (pursuit EC):
 
-    e_slip_corrected = slip_delayed + scene · u_motor_delayed    (→ VS)
-    e_combined       = vel_delayed  + scene · u_motor_delayed    (→ pursuit)
+    saccade_ec = ec.read_delayed(x_ec)        # delay(u_burst)
+    pursuit_ec = ec.read_delayed(x_pu_ec)     # delay(u_pursuit)
+
+    VS correction  (scene-gated):
+        e_slip_corrected = slip_delayed + scene · (saccade_ec + pursuit_ec)
+        slip + (saccade+pursuit)_ec ≈ 0  during any self-generated eye motion ✓
+
+    Pursuit Smith predictor (target-gated):
+        e_combined = vel_delayed + target · pursuit_ec   ≈ v_target
+        e_vel_pred = (e_combined − x_pursuit) / (1 + K_phasic)
+        → burst EC deliberately excluded: u_burst in e_combined would
+          drive the pursuit integrator spuriously after each saccade.
 
 The EC delay uses the same gamma-distributed cascade (N_STAGES first-order LP
-filters, tau_vis total delay) as the visual pathway — ensuring cancellation at
-the same temporal phase.
+filters, tau_vis total delay) as the visual pathway.
 
-VS correction (additive):
-    slip_delayed ≈ −u_motor(t−τ)  →  slip + u_motor_ec ≈ 0  (VS silent) ✓
-
-Pursuit Smith predictor (brain_model.py):
-    e_combined ≈ v_target  (self-motion removed)
-    u_pu_now   = x_pursuit + K_phasic · e_vel_pred      (current pursuit command)
-    e_vel_pred = (e_combined − x_pursuit) / (1 + K_phasic)   (closed-form, no circularity)
-    → integrator receives 1/(1+K_phasic) ≈ 45 % of the error at onset,
-      eliminating delay-induced oscillation while preserving fast onset.
-
-State: x_ec = (N_STAGES × 3,) = (120,) delay cascade (3-D).
+State: x_ec = (N_STAGES × 3,) = (120,) delay cascade for one 3-D signal.
 
 Parameters:
     tau_vis — total delay (s).  Must match the visual delay parameter.
@@ -38,40 +35,39 @@ Parameters:
 from oculomotor.models.sensory_models.retina import delay_cascade_step, delay_cascade_read
 from oculomotor.models.sensory_models.retina import _N_PER_SIG
 
-N_STATES  = _N_PER_SIG   # 120  — one delay cascade for 3-D combined motor command
-N_INPUTS  = 3             # u_motor = u_burst + u_pursuit
-N_OUTPUTS = 3             # u_motor_delayed
+N_STATES  = _N_PER_SIG   # 120  — one delay cascade for one 3-D signal
+N_INPUTS  = 3             # u  (u_burst OR u_pursuit depending on which instance)
+N_OUTPUTS = 3             # u_delayed
 
 
 def read_delayed(x_ec):
-    """Read the current delayed motor output from the EC state.
+    """Read the delayed output from an EC cascade state (pure state readout).
 
-    Pure state readout — no derivative computation.  Returns u_motor as it was
-    tau_vis seconds ago.  Called at the top of the brain step (before dx_ec is
-    computed) so the correction uses the same-time delayed signal.
+    Returns the signal as it was tau_vis seconds ago.  Called at the top of
+    the brain step (before dx_ec is computed) so the correction uses the
+    same-time delayed signal.
 
     Args:
         x_ec: (120,)  efference copy cascade state
 
     Returns:
-        u_motor_delayed: (3,)  combined motor command delayed by tau_vis
+        u_delayed: (3,)  signal delayed by tau_vis
     """
     return delay_cascade_read(x_ec)
 
 
-def step(x_ec, u_motor, brain_params):
-    """Advance the efference copy delay cascade by one ODE step.
+def step(x_ec, u, brain_params):
+    """Advance one EC delay cascade by one ODE step.
 
     Args:
         x_ec:         (120,)       EC cascade state
-        u_motor:      (3,)         combined motor command = u_burst + u_pursuit (deg/s)
+        u:            (3,)         signal to delay (u_burst OR u_pursuit)
         brain_params: BrainParams  model parameters (reads tau_vis)
 
     Returns:
-        dx_ec:           (120,)  dx_ec/dt
-        u_motor_delayed: (3,)    motor command delayed by tau_vis (from current state)
+        dx_ec:     (120,)  dx_ec/dt
+        u_delayed: (3,)    signal delayed by tau_vis (from current state)
     """
-    # ── Dynamics ──────────────────────────────────────────────────────────────
-    dx_ec            = delay_cascade_step(x_ec, u_motor, brain_params.tau_vis)
-    u_motor_delayed  = delay_cascade_read(x_ec)   # pure state read — no lag vs dx_ec
-    return dx_ec, u_motor_delayed
+    dx_ec     = delay_cascade_step(x_ec, u, brain_params.tau_vis)
+    u_delayed = delay_cascade_read(x_ec)   # pure state read — no lag vs dx_ec
+    return dx_ec, u_delayed
