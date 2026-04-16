@@ -147,7 +147,7 @@ class SimState(NamedTuple):
         brain    (141)  Central computation: VS, NI, SG, EC, gravity, pursuit.
         plant      (3)  Extraocular plant — eye rotation vector (deg)
     """
-    sensory: jnp.ndarray   # (378,)  [x_c (12) | x_oto (6) | x_vis (360)]
+    sensory: jnp.ndarray   # (418,)  [x_c (12) | x_oto (6) | x_vis (400)]
     brain:   jnp.ndarray   # (141,)  [x_vs (3) | x_ni (3) | x_sg (9) | x_ec (120) | x_grav (3) | x_pursuit (3)]
     plant:   jnp.ndarray   #   (3,)  eye rotation vector (deg)
 
@@ -197,10 +197,9 @@ def ODE_ocular_motor(t, state, args):
     q_eye = state.plant   # (3,) eye rotation vector (deg)
 
     # ── Sensory: read bundled outputs for brain ───────────────────────────────
-    # f_gia is read from the otolith LP states inside x_sensory (no inline computation)
+    # f_gia from otolith LP state; gate_vf from |pos_delayed|; target selection in SG
     sensory_out = sensory_model.read_outputs(
-        state.sensory, q_eye, scene_present, target_present,
-        theta.sensory, theta.plant, theta.brain)
+        state.sensory, scene_present, target_present, theta.sensory)
 
     # ── Brain: VS + NI + SG + EC ──────────────────────────────────────────────
     dx_brain, motor_cmd = brain_model.step(state.brain, sensory_out, theta.brain)
@@ -275,7 +274,7 @@ def simulate(params, t_array_or_stimulus, head_vel_array=None,
                       states.brain[:, _IDX_PURSUIT]    → (T, 3)   pursuit velocity memory
                       states.sensory[:, _IDX_C]        → (T, 12)  canal states
                       states.sensory[:, _IDX_OTO]      → (T, 6)   otolith LP states
-                      states.sensory[:, _IDX_VIS]      → (T, 360) visual delay cascade
+                      states.sensory[:, _IDX_VIS]      → (T, 400) visual delay cascade
     """
     cfg = sim_config if sim_config is not None else SIM_CONFIG_DEFAULT
     dt  = cfg.dt_solve
@@ -370,7 +369,7 @@ def simulate(params, t_array_or_stimulus, head_vel_array=None,
     sensory_x0 = sensory_x0.at[_IDX_OTO].set(_otolith.X0)   # otolith settled at gravity
 
     x0 = SimState(
-        sensory = sensory_x0,                          # (378,) otolith init at [9.81,0,0, ...]
+        sensory = sensory_x0,                          # (418,) otolith init at [9.81,0,0, ...]
         brain   = brain_model.make_x0(),               # (141,) gravity init at [9.81,0,0]
         plant   = jnp.zeros(plant_model.N_STATES),     #   (3,)  eye rotation vector
     )

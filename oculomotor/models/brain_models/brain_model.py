@@ -104,9 +104,9 @@ class BrainParams(NamedTuple):
     threshold_acc:         float = 0.5    # accumulator trigger threshold
     k_acc:                 float = 50.0   # accumulator sigmoid steepness
 
-    # Orbital reset — centering saccade when target leaves visual field
-    alpha_reset:           float = 1.0    # centering gain; 0=suppress, 1=full centripetal saccade
-                                          # fires only when gate_vf ≈ 0 (target out of visual field)
+    # Saccade target selection — handled inside the saccade generator
+    orbital_limit:         float = 50.0   # oculomotor range half-width (deg); clip e_cmd to ±limit
+    alpha_reset:           float = 1.0    # centering gain (0–1); e_center = −α·x_ni when out-of-field
 
     # Otolith / gravity estimation — Laurens & Angelaki (2011, 2017)
     K_grav:                float = 0.5    # otolith correction gain (1/s); TC = 1/K_grav ≈ 2 s
@@ -201,8 +201,9 @@ def step(x_brain, sensory_out, brain_params):
         jnp.concatenate([w_est, sensory_out.f_otolith]),
         brain_params)
 
-    # ── Saccade generator ─────────────────────────────────────────────────────
-    dx_sg, u_burst = sg.step(x_sg, sensory_out.e_cmd, brain_params)
+    # ── Saccade generator (target selection handled internally) ───────────────
+    # x_ni is the brain's proxy for current eye position (avoids plant state dependency)
+    dx_sg, u_burst = sg.step(x_sg, sensory_out.pos_delayed, sensory_out.gate_vf, x_ni, brain_params)
 
     # ── OCR / somatogravic: gravity-driven eye position command ───────────────
     # g_hat = specific force (+x upright).  Tilt signals are normalised components:
