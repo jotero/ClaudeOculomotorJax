@@ -66,6 +66,12 @@ class SensoryParams(NamedTuple):
     visual_field_limit: float       = 90.0   # retinal eccentricity limit (deg); ~90° monocular field
     k_visual_field:     float       = 1.0    # sigmoid steepness for visual field gate (1/deg)
 
+    # Sensory noise (std in output units; 0 = noiseless)
+    sigma_canal:        float       = 0.0    # canal afferent noise (deg/s equiv.); ~1–3 deg/s realistic
+    sigma_slip:         float       = 0.0    # retinal slip noise (deg/s); drives VS/OKR
+    sigma_pos:          float       = 0.0    # retinal position noise (deg);  drives SG → microsaccades
+    sigma_vel:          float       = 0.0    # target velocity noise (deg/s); drives pursuit
+
 # ── Re-exports for external callers ────────────────────────────────────────────
 
 # Canal

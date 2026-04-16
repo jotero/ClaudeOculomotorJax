@@ -1,2 +1,4 @@
 timestamp,run_id,version,prompt,mode,title,figure_file,looks_correct,feedback
 2026-04-16T13:53:11Z,30ce54ea-4ed0-4ccf-ae80-1b4d7dce85d2,6b1e874-dirty,Smooth pursuit of a 20 deg/s ramp target,single,Smooth pursuit of a 20 deg/s rightward ramp target,D:\OneDrive\UC Berkeley\OMlab - JOM\Code\ClaudeOculomotorJax\outputs\server_figures\30ce54ea-4ed0-4ccf-ae80-1b4d7dce85d2.png,True,
+2026-04-16T14:12:32Z,45f528fe-6e45-46ad-a695-93c9dcfbed1f,6b1e874-dirty,Healthy 20° saccade to the right,single,Healthy 20° rightward saccade,D:\OneDrive\UC Berkeley\OMlab - JOM\Code\ClaudeOculomotorJax\outputs\server_figures\45f528fe-6e45-46ad-a695-93c9dcfbed1f.png,,
+2026-04-16T14:12:51Z,9e3afd8b-e834-4756-b2cf-75d7b34fc67c,6b1e874-dirty,Left vestibular neuritis doing a head impulse test to the right,single,Left vestibular neuritis — rightward vHIT,D:\OneDrive\UC Berkeley\OMlab - JOM\Code\ClaudeOculomotorJax\outputs\server_figures\9e3afd8b-e834-4756-b2cf-75d7b34fc67c.png,,

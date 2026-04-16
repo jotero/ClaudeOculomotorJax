@@ -49,6 +49,7 @@ Output:
 
 from typing import NamedTuple
 
+import jax
 import jax.numpy as jnp
 import diffrax
 
@@ -181,7 +182,10 @@ def ODE_ocular_motor(t, state, args):
     Returns:
         SimState of derivatives (dsensory, dbrain, dplant)
     """
-    theta, hv_interp, hp_interp, ha_interp, vs_interp, target_interp, vt_interp, scene_present_interp, target_present_interp = args
+    (theta, hv_interp, hp_interp, ha_interp, vs_interp, target_interp,
+     vt_interp, scene_present_interp, target_present_interp,
+     noise_canal_interp, noise_slip_interp, noise_pos_interp,
+     noise_vel_interp) = args
 
     # ── External inputs at time t ────────────────────────────────────────────
     w_head        = hv_interp.evaluate(t)              # (3,) head angular velocity (deg/s)
@@ -200,6 +204,14 @@ def ODE_ocular_motor(t, state, args):
     # f_gia from otolith LP state; gate_vf from |pos_delayed|; target selection in SG
     sensory_out = sensory_model.read_outputs(
         state.sensory, scene_present, target_present, theta.sensory)
+
+    # ── Sensory noise ─────────────────────────────────────────────────────────
+    sensory_out = sensory_out._replace(
+        canal        = sensory_out.canal        + noise_canal_interp.evaluate(t),
+        slip_delayed = sensory_out.slip_delayed + noise_slip_interp.evaluate(t),
+        pos_delayed  = sensory_out.pos_delayed  + noise_pos_interp.evaluate(t),
+        vel_delayed  = sensory_out.vel_delayed  + noise_vel_interp.evaluate(t),
+    )
 
     # ── Brain: VS + NI + SG + EC ──────────────────────────────────────────────
     dx_brain, motor_cmd = brain_model.step(state.brain, sensory_out, theta.brain)
@@ -230,7 +242,8 @@ def simulate(params, t_array_or_stimulus, head_vel_array=None,
              scene_present_array=None,
              target_present_array=None,
              max_steps=10000, sim_config=None,
-             return_states=False):
+             return_states=False,
+             key=None):
     """Integrate the oculomotor ODE and return eye rotation vector.
 
     Args:
@@ -356,6 +369,21 @@ def simulate(params, t_array_or_stimulus, head_vel_array=None,
     else:
         tg1 = jnp.ones(T, dtype=jnp.float32)
 
+    # ── Sensory noise arrays (pre-generated; zero when sigma=0) ──────────────
+    if key is None:
+        key = jax.random.PRNGKey(0)
+    k_canal, k_slip, k_pos, k_vel = jax.random.split(key, 4)
+
+    noise_canal = jax.random.normal(k_canal, (T, 6)) * params.sensory.sigma_canal  # (T, 6) deg/s
+    noise_slip  = jax.random.normal(k_slip,  (T, 3)) * params.sensory.sigma_slip   # (T, 3) deg/s
+    noise_pos   = jax.random.normal(k_pos,   (T, 3)) * params.sensory.sigma_pos    # (T, 3) deg
+    noise_vel   = jax.random.normal(k_vel,   (T, 3)) * params.sensory.sigma_vel    # (T, 3) deg/s
+
+    noise_canal_interp = diffrax.LinearInterpolation(ts=t_array, ys=noise_canal)
+    noise_slip_interp  = diffrax.LinearInterpolation(ts=t_array, ys=noise_slip)
+    noise_pos_interp   = diffrax.LinearInterpolation(ts=t_array, ys=noise_pos)
+    noise_vel_interp   = diffrax.LinearInterpolation(ts=t_array, ys=noise_vel)
+
     hv_interp             = diffrax.LinearInterpolation(ts=t_array, ys=hv3)
     hp_interp             = diffrax.LinearInterpolation(ts=t_array, ys=hp3)
     ha_interp             = diffrax.LinearInterpolation(ts=t_array, ys=ha3)
@@ -382,7 +410,9 @@ def simulate(params, t_array_or_stimulus, head_vel_array=None,
         dt0=dt,
         y0=x0,
         args=(params, hv_interp, hp_interp, ha_interp, vs_interp, target_interp,
-              vt_interp, scene_present_interp, target_present_interp),
+              vt_interp, scene_present_interp, target_present_interp,
+              noise_canal_interp, noise_slip_interp, noise_pos_interp,
+              noise_vel_interp),
         stepsize_controller=diffrax.ConstantStepSize(),
         saveat=diffrax.SaveAt(ts=t_array),
         max_steps=max_steps,
