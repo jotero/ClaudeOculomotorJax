@@ -1,0 +1,2 @@
+timestamp,run_id,version,prompt,mode,title,figure_file,looks_correct,feedback
+2026-04-16T13:53:11Z,30ce54ea-4ed0-4ccf-ae80-1b4d7dce85d2,6b1e874-dirty,Smooth pursuit of a 20 deg/s ramp target,single,Smooth pursuit of a 20 deg/s rightward ramp target,D:\OneDrive\UC Berkeley\OMlab - JOM\Code\ClaudeOculomotorJax\outputs\server_figures\30ce54ea-4ed0-4ccf-ae80-1b4d7dce85d2.png,True,

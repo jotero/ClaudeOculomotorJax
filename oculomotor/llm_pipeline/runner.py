@@ -29,7 +29,7 @@ from oculomotor.sim.simulator import (
     _IDX_VS, _IDX_NI, _IDX_SG, _IDX_EC, _IDX_VIS, _IDX_PURSUIT,
 )
 from oculomotor.models.brain_models import saccade_generator as sg_mod
-from oculomotor.models.sensory_models.sensory_model import C_slip, C_pos, C_vel
+from oculomotor.models.sensory_models.sensory_model import C_slip, C_pos, C_vel, C_gate
 
 
 # ── Stimulus builder ──────────────────────────────────────────────────────────
@@ -223,10 +223,13 @@ def _extract_signals(states, params, t_np: np.ndarray) -> dict:
     # Retinal signals from visual delay cascade
     e_pos_delayed = x_vis @ np.array(C_pos).T    # (T, 3)
 
-    # Saccade burst (re-compute from SG state + e_pos_delayed)
+    # Saccade burst (re-compute from SG state + delayed retinal signals)
     def _burst_at(state):
-        e_pd = C_pos @ state.sensory[_IDX_VIS]
-        _, u = sg_mod.step(state.brain[_IDX_SG], e_pd, params.brain)
+        x_vis_ = state.sensory[_IDX_VIS]
+        e_pd   = C_pos  @ x_vis_
+        gate   = (C_gate @ x_vis_)[0]
+        x_ni_  = state.brain[_IDX_NI]
+        _, u   = sg_mod.step(state.brain[_IDX_SG], e_pd, gate, x_ni_, params.brain)
         return u
     u_burst = np.array(jax.vmap(_burst_at)(states))  # (T, 3)
 
@@ -382,17 +385,40 @@ def _build_figure(
     return fig
 
 
+# ── Simulation data export ────────────────────────────────────────────────────
+
+def _build_sim_data(t_array: np.ndarray, sig: dict, stim_kw: dict) -> dict:
+    """Build a flat dict of simulation arrays suitable for CSV download.
+
+    Arrays are plain numpy, shape (T, 3) for 3-D channels or (T,) for scalars.
+    All angular quantities in deg or deg/s.
+    """
+    return dict(
+        t          = np.array(t_array),
+        eye_pos    = sig['eye_pos'],                              # (T, 3) deg
+        eye_vel    = sig['eye_vel'],                              # (T, 3) deg/s
+        head_vel   = np.array(stim_kw['head_vel_array']),        # (T, 3) deg/s
+        scene_vel  = np.array(stim_kw['v_scene_array']),         # (T, 3) deg/s
+        target_vel = np.array(stim_kw['v_target_array']),        # (T, 3) deg/s
+    )
+
+
 # ── Public API ────────────────────────────────────────────────────────────────
 
-def run_scenario(scenario: SimulationScenario, output_path: str | None = None) -> plt.Figure:
+def run_scenario(scenario: SimulationScenario, output_path: str | None = None,
+                 return_data: bool = False) -> plt.Figure | tuple[plt.Figure, dict]:
     """Run a SimulationScenario end-to-end and return a matplotlib Figure.
 
     Args:
         scenario:    Fully populated SimulationScenario object.
         output_path: If given, save figure to this path (PNG/SVG/PDF).
+        return_data: If True, return (fig, sim_data_dict) instead of just fig.
+                     sim_data_dict keys: t, eye_pos, eye_vel, head_vel,
+                     scene_vel, target_vel — all numpy arrays.
 
     Returns:
-        matplotlib.figure.Figure
+        fig                      when return_data=False (default)
+        (fig, sim_data_dict)     when return_data=True
     """
     # Build stimulus and params
     stim_kw = _build_stimulus(scenario)
@@ -423,6 +449,8 @@ def run_scenario(scenario: SimulationScenario, output_path: str | None = None) -
         fig.savefig(output_path, dpi=150, bbox_inches='tight')
         print(f"Saved → {output_path}")
 
+    if return_data:
+        return fig, _build_sim_data(t_array, sig, stim_kw)
     return fig
 
 
