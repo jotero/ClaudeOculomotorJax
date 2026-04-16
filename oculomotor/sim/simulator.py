@@ -376,8 +376,22 @@ def simulate(params, t_array_or_stimulus, head_vel_array=None,
 
     noise_canal = jax.random.normal(k_canal, (T, 6)) * params.sensory.sigma_canal  # (T, 6) deg/s
     noise_slip  = jax.random.normal(k_slip,  (T, 3)) * params.sensory.sigma_slip   # (T, 3) deg/s
-    noise_pos   = jax.random.normal(k_pos,   (T, 3)) * params.sensory.sigma_pos    # (T, 3) deg
     noise_vel   = jax.random.normal(k_vel,   (T, 3)) * params.sensory.sigma_vel    # (T, 3) deg/s
+
+    # Retinal position drift — OU process so error wanders slowly (not white noise).
+    # White noise crosses threshold every ms → continuous firing.
+    # OU with tau_pos_drift ~300ms accumulates slowly → sparse microsaccades.
+    sigma_pos      = params.sensory.sigma_pos
+    tau_pos_drift  = params.sensory.tau_pos_drift
+    alpha_ou       = jnp.exp(-dt / tau_pos_drift)
+    ou_drive       = jnp.sqrt(1.0 - alpha_ou ** 2) * sigma_pos
+    white_pos      = jax.random.normal(k_pos, (T, 3))
+
+    def _ou_step(carry, w):
+        x = alpha_ou * carry + ou_drive * w
+        return x, x
+
+    _, noise_pos = jax.lax.scan(_ou_step, jnp.zeros(3), white_pos)  # (T, 3) deg
 
     noise_canal_interp = diffrax.LinearInterpolation(ts=t_array, ys=noise_canal)
     noise_slip_interp  = diffrax.LinearInterpolation(ts=t_array, ys=noise_slip)

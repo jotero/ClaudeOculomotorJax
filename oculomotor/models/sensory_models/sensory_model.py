@@ -70,6 +70,7 @@ class SensoryParams(NamedTuple):
     sigma_canal:        float       = 0.0    # canal afferent noise (deg/s equiv.); ~1–3 deg/s realistic
     sigma_slip:         float       = 0.0    # retinal slip noise (deg/s); drives VS/OKR
     sigma_pos:          float       = 0.0    # retinal position noise (deg);  drives SG → microsaccades
+    tau_pos_drift:      float       = 0.3    # OU drift TC (s); sets how slowly pos error wanders
     sigma_vel:          float       = 0.0    # target velocity noise (deg/s); drives pursuit
 
 # ── Re-exports for external callers ────────────────────────────────────────────
