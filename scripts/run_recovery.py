@@ -11,11 +11,9 @@ Outputs (saved to outputs/):
     residuals.png
 """
 
-import sys
 import os
 
 # Ensure project root is on path when run directly
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 import numpy as np
 import matplotlib

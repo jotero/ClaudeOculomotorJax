@@ -8,7 +8,6 @@ Usage
 Then open http://localhost:8000 in your browser.
 """
 
-import sys
 import os
 import io
 import csv
@@ -19,7 +18,6 @@ import traceback
 import datetime
 from pathlib import Path
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from dotenv import load_dotenv
 load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))

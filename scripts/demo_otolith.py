@@ -20,7 +20,6 @@ import matplotlib.gridspec as gridspec
 import jax.numpy as jnp
 
 import sys, os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from oculomotor.sim.simulator import (
     simulate, default_params, with_brain,

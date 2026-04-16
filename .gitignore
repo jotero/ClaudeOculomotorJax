@@ -1,2 +1,20 @@
 .venv
 .env
+
+# Python bytecode
+__pycache__/
+*.pyc
+*.pyo
+
+# Build / packaging
+*.egg-info/
+dist/
+build/
+
+# Outputs and data (generated artifacts)
+outputs/*.png
+outputs/*.csv
+data/
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
