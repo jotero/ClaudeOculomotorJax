@@ -32,9 +32,9 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
-from oculomotor.scenario import SimulationScenario, SimulationComparison
-from oculomotor.runner import run_scenario, run_comparison
-from scripts.simulate import call_llm, _call_llm, _call_llm_comparison
+from oculomotor.llm_pipeline.scenario import SimulationScenario, SimulationComparison
+from oculomotor.llm_pipeline.runner import run_scenario, run_comparison
+from oculomotor.llm_pipeline.simulate import call_llm, _call_llm, _call_llm_comparison
 
 
 # ── FastAPI app ────────────────────────────────────────────────────────────────

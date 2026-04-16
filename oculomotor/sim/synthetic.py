@@ -4,7 +4,7 @@ import jax
 import jax.numpy as jnp
 
 from oculomotor.sim.simulator import simulate, THETA_DEFAULT
-from oculomotor.sim.stimulus import make_all_stimuli
+from oculomotor.sim.stimuli import make_all_stimuli
 
 SIGMA_OBS = 0.3  # deg, observation noise std
 

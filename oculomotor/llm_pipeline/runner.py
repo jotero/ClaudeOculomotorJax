@@ -2,13 +2,13 @@
 
 Entry point::
 
-    from oculomotor.runner import run_scenario
+    from oculomotor.llm_pipeline.runner import run_scenario
     fig = run_scenario(scenario)      # returns matplotlib Figure
     fig.savefig('output.png', dpi=150, bbox_inches='tight')
 
 The runner does three things:
     1. Build stimulus arrays from ``scenario.head_motion``, ``scenario.target``,
-       and ``scenario.visual`` using ``oculomotor.stimuli``.
+       and ``scenario.visual`` using ``oculomotor.sim.stimuli``.
     2. Build model parameters from ``scenario.patient`` overrides.
     3. Run ``simulate()`` and plot the requested panels.
 """
@@ -22,8 +22,8 @@ import matplotlib
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 
-from oculomotor import stimuli as stim
-from oculomotor.scenario import SimulationScenario, SimulationComparison, Patient
+from oculomotor.sim import stimuli as stim
+from oculomotor.llm_pipeline.scenario import SimulationScenario, SimulationComparison, Patient
 from oculomotor.sim.simulator import (
     PARAMS_DEFAULT, with_brain, with_sensory, simulate,
     _IDX_VS, _IDX_NI, _IDX_SG, _IDX_EC, _IDX_VIS, _IDX_PURSUIT,

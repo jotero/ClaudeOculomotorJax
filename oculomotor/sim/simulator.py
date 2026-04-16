@@ -36,7 +36,7 @@ State structure — SimState NamedTuple with three groups:
 Head velocity input:
     Accepts 1-D (T,) horizontal-only array — padded to (T, 3) internally.
     Accepts 3-D (T, 3) array directly for full 3-D stimulation.
-    Accepts a Stimulus object (oculomotor.sim.stimulus) for full 6-DOF + visual input.
+    Accepts a Stimulus object (oculomotor.sim.stimuli) for full 6-DOF + visual input.
 
 Output:
     simulate() returns eye rotation vector, shape (T, 3), or a SimState trajectory
@@ -247,7 +247,7 @@ def simulate(params, t_array_or_stimulus, head_vel_array=None,
     Args:
         params:               Params — model parameters (see default_params()).
         t_array_or_stimulus:  1-D time array (s), shape (T,)  — OR —
-                              a Stimulus object (oculomotor.sim.stimulus).
+                              a Stimulus object (oculomotor.sim.stimuli).
         head_vel_array:       head angular velocity, shape (T,) or (T, 3).
                               If 1-D, treated as horizontal (yaw); pitch/roll = 0.
         head_accel_array:     head linear acceleration, shape (T, 3) or None (m/s²).

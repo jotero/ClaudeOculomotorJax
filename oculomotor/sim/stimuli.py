@@ -612,3 +612,82 @@ def combine(t_ref: np.ndarray, **arrays) -> dict:
         )
         out[k] = jnp.array(arr)
     return out
+
+
+# ── Stimulus container (for fitting battery / synthetic data) ──────────────────
+
+class Stimulus:
+    """Thin container wrapping (t, omega, a_lin, v_scene) arrays.
+
+    Used by the parameter-fitting pipeline (synthetic.py, run_recovery.py)
+    and accepted by simulate() as a convenience shorthand.
+
+    Attributes:
+        t:       (T,) time (s)
+        omega:   (T, 3) head angular velocity (deg/s)  [yaw, pitch, roll]
+        a_lin:   (T, 3) head linear acceleration (m/s²)
+        v_scene: (T, 3) visual scene angular velocity (deg/s); zeros = dark
+    """
+
+    def __init__(self, t, omega, a_lin=None, v_scene=None):
+        self.t = jnp.asarray(t)
+        T = len(self.t)
+
+        if jnp.ndim(omega) == 1:
+            self.omega = jnp.stack([omega, jnp.zeros(T), jnp.zeros(T)], axis=1)
+        else:
+            self.omega = jnp.asarray(omega)
+
+        self.a_lin   = jnp.zeros((T, 3)) if a_lin   is None else jnp.asarray(a_lin)
+        self.v_scene = jnp.zeros((T, 3)) if v_scene is None else jnp.asarray(v_scene)
+
+    @property
+    def duration(self):
+        return float(self.t[-1] - self.t[0])
+
+    @property
+    def dt(self):
+        return float(self.t[1] - self.t[0])
+
+    @property
+    def n_samples(self):
+        return len(self.t)
+
+    def __repr__(self):
+        return (f"Stimulus(T={self.n_samples}, dt={self.dt:.4f}s, "
+                f"dur={self.duration:.1f}s, "
+                f"dark={jnp.all(self.v_scene == 0).item()})")
+
+
+# ── Standard fitting battery ───────────────────────────────────────────────────
+
+FREQUENCIES_HZ  = [0.05, 0.1, 0.2, 0.5, 1.0, 2.0]
+AMPLITUDE_DEG_S = 30.0
+DURATION_S      = 20.0
+SAMPLE_RATE_HZ  = 100.0
+
+
+def make_all_stimuli(frequencies=None, amplitude=AMPLITUDE_DEG_S,
+                     duration=DURATION_S, sample_rate=SAMPLE_RATE_HZ):
+    """Standard fitting battery: sinusoidal rotations at each frequency + a step.
+
+    Returns a list of Stimulus objects (sinusoids first, step last).
+    Each can be passed directly to simulate() as the second argument.
+
+    Args:
+        frequencies:  list of frequencies in Hz (default FREQUENCIES_HZ)
+        amplitude:    peak head velocity (deg/s)
+        duration:     sinusoid duration (s)
+        sample_rate:  samples per second (Hz)
+    """
+    if frequencies is None:
+        frequencies = FREQUENCIES_HZ
+    dt = 1.0 / sample_rate
+    stims = [
+        Stimulus(t, omega)
+        for f in frequencies
+        for t, omega in [rotation_sinusoid(amplitude, f, duration=duration, dt=dt)]
+    ]
+    t, omega = rotation_step(amplitude, rotate_dur=1.0, coast_dur=39.0, dt=dt)
+    stims.append(Stimulus(t, omega))
+    return stims

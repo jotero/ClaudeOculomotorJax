@@ -31,7 +31,7 @@ from oculomotor.sim.simulator import (
 from oculomotor.models.sensory_models.sensory_model import N_CANALS, FLOOR, _SOFTNESS, PINV_SENS
 from oculomotor.models.sensory_models.sensory_model import C_slip, C_pos
 from oculomotor.models.brain_models import saccade_generator as sg_mod
-from oculomotor.sim.stimulus import rotation_step, Stimulus
+from oculomotor.sim import stimuli as stim_mod
 
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), '..', 'outputs')
 THETA = PARAMS_DEFAULT
@@ -373,26 +373,26 @@ def demo_vvor():
     v_head     = 30.0    # deg/s  — fast enough to build up orbital pressure
     rotate_dur = 30.0    # s      — long enough to reach orbital limit
     coast_dur  = 20.0    # s      — observe decay after rotation stops
-    stim_vor   = rotation_step(v_deg_s=v_head, rotate_dur=rotate_dur,
-                               coast_dur=coast_dur, sample_rate=sr)
+    dt_vv      = 1.0 / sr
+    t_vv, hv_3d = stim_mod.rotation_step(v_head, rotate_dur=rotate_dur,
+                                         coast_dur=coast_dur, dt=dt_vv)
     max_sv     = int((rotate_dur + coast_dur) / 0.001) + 500
-    T          = len(stim_vor.t)
+    T          = len(t_vv)
+    hv_vv      = hv_3d[:, 0]
 
     theta_dark = with_brain(THETA, K_vis=0.0, g_vis=0.0)   # no visual drive
     theta_lit  = THETA                                      # full visual drive
 
-    states_dark = simulate(theta_dark, stim_vor,
+    states_dark = simulate(theta_dark, t_vv, head_vel_array=hv_3d,
                            scene_present_array=jnp.zeros(T),
                            target_present_array=jnp.zeros(T),  # dark — no visible target
                            max_steps=max_sv, return_states=True)
-    states_lit  = simulate(theta_lit, stim_vor,
+    states_lit  = simulate(theta_lit, t_vv, head_vel_array=hv_3d,
                            scene_present_array=jnp.ones(T),
                            target_present_array=jnp.ones(T),   # lit — target visible
                            max_steps=max_sv, return_states=True)
 
-    t_vv     = np.array(stim_vor.t)
-    hv_vv    = np.array(stim_vor.omega[:, 0])
-    dt_vv    = float(stim_vor.dt)
+    t_vv     = np.array(t_vv)
     head_pos = np.cumsum(hv_vv) * dt_vv
 
     eye_dark = np.array(states_dark.plant)[:, 0]

@@ -25,7 +25,7 @@ import jax.numpy as jnp
 
 from oculomotor.sim.synthetic import generate_dataset
 from oculomotor.sim.simulator import THETA_DEFAULT
-from oculomotor.sim.stimulus import FREQUENCIES_HZ, AMPLITUDE_DEG_S
+from oculomotor.sim.stimuli import FREQUENCIES_HZ, AMPLITUDE_DEG_S
 from oculomotor.fitting.optimize import fit
 from oculomotor.sim.simulator import simulate
 

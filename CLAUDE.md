@@ -57,9 +57,13 @@ oculomotor/
 │   │   ├── pursuit.py                 Smooth pursuit leaky integrator + Smith predictor (3 states)
 │   │   ├── target_selector.py         Orbital gate → motor error command e_cmd
 │   │   └── brain_model.py             Connector: VS + NI + SG + EC + pursuit → u_p (141 states)
-│   └── plant_models/
-│       ├── plant_model_first_order.py First-order plant (Robinson 1964) (3 states)
-│       └── readout.py                 Eye position readout utilities
+│   ├── plant_models/
+│   │   ├── plant_model_first_order.py First-order plant (Robinson 1964) (3 states)
+│   │   └── readout.py                 Eye position readout utilities
+│   └── llm_pipeline/                  Natural-language → simulation pipeline
+│       ├── scenario.py                Pydantic schema (SimulationScenario, Patient, …)
+│       ├── runner.py                  Stimulus builder + simulator wiring + figure generator
+│       └── simulate.py                CLI entry point + Claude API call (call_llm / main)
 └── sim/
     └── simulator.py                   ODE wiring + simulate() entry point
 ```
@@ -68,7 +72,8 @@ oculomotor/
 
 ```
 scripts/
-├── simulate.py          Natural-language → simulation CLI (uses LLM + runner)
+├── simulate.py          Thin shim → oculomotor.llm_pipeline.simulate.main()
+├── server.py            FastAPI web server (calls llm_pipeline)
 ├── demo_vor.py          VOR / VVOR / OKN diagnostic demos
 ├── demo_saccade.py      Saccade main sequence + cascade demos
 └── demo_pursuit.py      Smooth pursuit + catch-up saccade demos
@@ -252,8 +257,8 @@ def step(x_ni, u_vel, theta):
 
 ## LLM simulation pipeline
 
-`scripts/simulate.py` converts a plain-English scenario description into a simulation
-and figure using the Claude API.
+`oculomotor/llm_pipeline/simulate.py` converts a plain-English scenario description into a simulation
+and figure using the Claude API.  `scripts/simulate.py` is a thin shim that calls into it.
 
 ### Usage
 
@@ -271,12 +276,12 @@ python -X utf8 scripts/simulate.py --show "..."                   # display figu
 ```
 User description (str)
     ↓  Claude API (tool_use, forced schema)
-SimulationScenario  (oculomotor/scenario.py — Pydantic)
+SimulationScenario  (oculomotor/llm_pipeline/scenario.py — Pydantic)
     ├── HeadMotion    → oculomotor/stimuli.py → head_vel_array (T, 3)
     ├── Target        → oculomotor/stimuli.py → p_target_array, v_target_array
     ├── Visual        → oculomotor/stimuli.py → v_scene_array, scene/target_present arrays
     └── Patient       → with_brain() / with_sensory() → Params NamedTuple
-    ↓  oculomotor/runner.py
+    ↓  oculomotor/llm_pipeline/runner.py
 simulate(params, t, **stim_kw, return_states=True)
     ↓
 matplotlib Figure  →  outputs/<slug>.png
