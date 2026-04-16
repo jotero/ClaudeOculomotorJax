@@ -34,31 +34,144 @@ from oculomotor.models.sensory_models.sensory_model import C_slip, C_pos, C_vel
 
 # ── Stimulus builder ──────────────────────────────────────────────────────────
 
-def _build_stimulus(
-    scenario: SimulationScenario,
-) -> dict:
-    """Convert segment lists to simulator keyword arrays.
+def _resolve_target_angular_shorthand(segments):
+    """Convert rot_* angular shorthand on target segments to Cartesian lin_*.
 
-    Returns a dict suitable for ``**stim_kwargs`` in ``simulate()``, plus
-    a 't_array' key with the time axis.
+    For each target segment: if rot_yaw_0 / rot_pitch_0 is set but the
+    corresponding lin_x_0 / lin_y_0 is not, compute the Cartesian equivalent
+    at the segment's viewing distance (lin_z_0 or carry-forward z, default 1 m).
+    Same for velocity: rot_yaw_vel → lin_x_vel.
+    """
+    import math
+    resolved = []
+    carry_z = 1.0   # default viewing distance
+
+    for seg in segments:
+        z = seg.lin_z_0 if seg.lin_z_0 is not None else carry_z
+        carry_z = z
+
+        updates = {}
+
+        # Position shorthand: rot_yaw_0 / rot_pitch_0 → lin_x_0 / lin_y_0
+        if seg.rot_yaw_0 is not None and seg.lin_x_0 is None:
+            updates['lin_x_0'] = math.tan(math.radians(seg.rot_yaw_0)) * z
+        if seg.rot_pitch_0 is not None and seg.lin_y_0 is None:
+            updates['lin_y_0'] = math.tan(math.radians(seg.rot_pitch_0)) * z
+
+        # Velocity shorthand: rot_*_vel (deg/s) → lin_*_vel (m/s)
+        # Use small-angle approximation: Δ(tan θ)/Δt ≈ (dθ/dt)·(π/180) for small θ
+        if seg.rot_yaw_vel is not None and seg.lin_x_vel is None:
+            updates['lin_x_vel'] = seg.rot_yaw_vel * (math.pi / 180.0) * z
+        if seg.rot_pitch_vel is not None and seg.lin_y_vel is None:
+            updates['lin_y_vel'] = seg.rot_pitch_vel * (math.pi / 180.0) * z
+
+        resolved.append(seg.model_copy(update=updates) if updates else seg)
+
+    return resolved
+
+
+def _project_target_to_retina(
+    target_arrays: dict,
+    head_arrays: dict,
+    T: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Project 3-D world-frame target position to retinal stereographic coordinates.
+
+    Both arrays are in metres (world frame).  The eye is assumed to be at the
+    head origin for now; this function is the single place to add inter-ocular
+    baseline offsets when binocular support is added.
+
+    Returns
+    -------
+    p_target : (T, 3) float32
+        Stereographic target position [tan(yaw), tan(pitch), 1].
+    v_target : (T, 3) float32
+        Target angular velocity as seen from the head (deg/s).
+        Accounts for head translation: d/dt(arctan(rel_x / rel_z)).
+    """
+    target_pos = target_arrays['lin_pos']          # (T, 3) m
+    target_vel = target_arrays['lin_vel']          # (T, 3) m/s
+    head_pos   = head_arrays['lin_pos']            # (T, 3) m
+    head_vel   = head_arrays['lin_vel']            # (T, 3) m/s
+
+    # Vector from head/eye origin to target in world frame
+    rel_pos = target_pos - head_pos                # (T, 3) m
+    rel_vel = target_vel - head_vel                # (T, 3) m/s
+
+    # Depth (z), clipped to a physiological minimum (5 cm)
+    depth = np.maximum(rel_pos[:, 2], 0.05)       # (T,)
+
+    # Stereographic projection  p = [x/z, y/z, 1]
+    p_target = np.zeros((T, 3), dtype=np.float32)
+    p_target[:, 0] = (rel_pos[:, 0] / depth).astype(np.float32)
+    p_target[:, 1] = (rel_pos[:, 1] / depth).astype(np.float32)
+    p_target[:, 2] = 1.0
+
+    # Angular velocity of target as seen from head (deg/s)
+    # d/dt(arctan(x/z)) = (vx·z − x·vz) / (z² + x²)  [rad/s] × (180/π)
+    denom_x = depth ** 2 + rel_pos[:, 0] ** 2
+    denom_y = depth ** 2 + rel_pos[:, 1] ** 2
+    v_target = np.zeros((T, 3), dtype=np.float32)
+    v_target[:, 0] = (
+        (rel_vel[:, 0] * depth - rel_pos[:, 0] * rel_vel[:, 2]) / denom_x * (180.0 / np.pi)
+    ).astype(np.float32)
+    v_target[:, 1] = (
+        (rel_vel[:, 1] * depth - rel_pos[:, 1] * rel_vel[:, 2]) / denom_y * (180.0 / np.pi)
+    ).astype(np.float32)
+
+    return p_target, v_target
+
+
+def _build_stimulus(scenario: SimulationScenario) -> dict:
+    """Convert BodySegment lists to simulator keyword arrays.
+
+    Returns a dict for ``**stim_kwargs`` in ``simulate()``, plus 't_array'.
+    All three body channels are integrated to consistent 6-DOF trajectories;
+    the target is projected to retinal coordinates via full 3-D geometry.
     """
     dt  = 0.001
-    dur = scenario.duration_s
-    T   = int(round(dur / dt))
+    T   = int(round(scenario.duration_s / dt))
     t   = np.arange(T, dtype=np.float32) * dt
 
-    hv          = stim.build_head_array(scenario.head,   T, dt)
-    pt, vt      = stim.build_target_arrays(scenario.target, T, dt)
-    vs, sp, tp  = stim.build_visual_arrays(scenario.visual, T, dt)
+    # ── Build 6-DOF arrays for each body ──────────────────────────────────────
+    head_arr   = stim.build_body_arrays(scenario.head,  T, dt, default_lin_pos=(0.0, 0.0, 0.0))
+    scene_arr  = stim.build_body_arrays(scenario.scene, T, dt, default_lin_pos=(0.0, 0.0, 5.0))
+
+    # Resolve angular shorthand on target before building
+    target_segs_resolved = _resolve_target_angular_shorthand(scenario.target)
+    target_arr = stim.build_body_arrays(target_segs_resolved, T, dt, default_lin_pos=(0.0, 0.0, 1.0))
+
+    # ── Simulator inputs ───────────────────────────────────────────────────────
+
+    # Head angular velocity → semicircular canals
+    head_vel = head_arr['rot_vel']                 # (T, 3) deg/s
+
+    # Target 3-D projection → retinal position + angular velocity
+    p_target, v_target = _project_target_to_retina(target_arr, head_arr, T)
+
+    # Scene angular velocity → OKR / velocity storage
+    v_scene = scene_arr['rot_vel']                 # (T, 3) deg/s
+
+    # Visual flags
+    sp, tp = stim.build_visual_flags(scenario.visual, T, dt)
+
+    # Head linear acceleration in world frame → simulator adds gravity rotation to get
+    # specific force in head frame (already done inside ODE_ocular_motor)
+    head_lin_acc = head_arr['lin_acc']   # (T, 3) m/s²
 
     return dict(
         t_array              = t,
-        head_vel_array       = jnp.array(hv),
-        p_target_array       = jnp.array(pt),
-        v_target_array       = jnp.array(vt),
-        v_scene_array        = jnp.array(vs),
+        head_vel_array       = jnp.array(head_vel),
+        head_accel_array     = jnp.array(head_lin_acc),
+        p_target_array       = jnp.array(p_target),
+        v_target_array       = jnp.array(v_target),
+        v_scene_array        = jnp.array(v_scene),
         scene_present_array  = jnp.array(sp),
         target_present_array = jnp.array(tp),
+        # 6-DOF arrays stored for plotting (stripped before passing to ODE)
+        _head_lin_pos        = head_arr['lin_pos'],
+        _head_lin_vel        = head_arr['lin_vel'],
+        _target_world_pos    = target_arr['lin_pos'],
     )
 
 
@@ -284,6 +397,8 @@ def run_scenario(scenario: SimulationScenario, output_path: str | None = None) -
     # Build stimulus and params
     stim_kw = _build_stimulus(scenario)
     t_array = stim_kw.pop('t_array')
+    # Strip private keys (6-DOF arrays stored for plotting but not passed to ODE)
+    plot_extra = {k: stim_kw.pop(k) for k in list(stim_kw) if k.startswith('_')}
     params  = _build_params(scenario.patient)
 
     # max_steps must cover all ODE steps: duration_s / dt_solve = T
@@ -301,11 +416,8 @@ def run_scenario(scenario: SimulationScenario, output_path: str | None = None) -
     # Extract signals
     sig = _extract_signals(states, params, t_array)
 
-    # Reconstruct stim_kw with t for plotting (without t_array key)
-    plot_stim = {k: v for k, v in stim_kw.items()}
-
     # Build figure
-    fig = _build_figure(t_array, sig, plot_stim, scenario)
+    fig = _build_figure(t_array, sig, stim_kw, scenario)
 
     if output_path:
         fig.savefig(output_path, dpi=150, bbox_inches='tight')
@@ -424,6 +536,10 @@ def run_comparison(
     for scenario in comparison.scenarios:
         stim_kw = _build_stimulus(scenario)
         t_array = stim_kw.pop('t_array')
+        # Strip private 6-DOF arrays before passing to ODE solver
+        for k in list(stim_kw):
+            if k.startswith('_'):
+                stim_kw.pop(k)
         params  = _build_params(scenario.patient)
         max_steps = int(len(t_array) * 1.5) + 2000
         states = simulate(params, t_array, return_states=True,

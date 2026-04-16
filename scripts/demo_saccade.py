@@ -126,7 +126,7 @@ def _ax_fmt(ax):
 
 def demo_saccade_cascade():
     """6 rows × 5 amplitudes: full signal-flow cascade."""
-    amplitudes = [0.6, 2.0, 5.0, 10.0, 70.0]
+    amplitudes = [0.6, 2.0, 5.0, 10.0, 30.0]
     dt     = 0.001
     T_end  = 1.0
     t_jump = 0.2

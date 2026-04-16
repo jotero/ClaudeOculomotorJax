@@ -306,7 +306,181 @@ def scene_stationary(duration: float, dt: float = 0.001) -> tuple[np.ndarray, np
     return t, np.zeros((T, 3), dtype=np.float32), np.ones(T, dtype=np.float32)
 
 
-# ── Segment-based builders (used by runner._build_stimulus) ───────────────────
+# ── 6-DOF body segment builder ────────────────────────────────────────────────
+
+def build_body_arrays(
+    segments,           # list[BodySegment]
+    total_T: int,
+    dt: float = 0.001,
+    default_lin_pos: tuple[float, float, float] = (0.0, 0.0, 0.0),
+) -> dict:
+    """Convert a list of BodySegments into 6-DOF time arrays.
+
+    Args:
+        segments:        list of BodySegment objects.
+        total_T:         number of time steps (derived from max channel duration).
+        dt:              time step (s).
+        default_lin_pos: initial (x, y, z) carry-forward position in metres.
+                         Use (0,0,1) for targets (1 m default viewing distance).
+
+    Returns dict with keys:
+        'rot_pos': (T, 3) float32  — angular position  [yaw, pitch, roll] deg
+        'rot_vel': (T, 3) float32  — angular velocity  deg/s
+        'lin_pos': (T, 3) float32  — linear position   [x, y, z] m
+        'lin_vel': (T, 3) float32  — linear velocity   m/s
+        'lin_acc': (T, 3) float32  — linear acceleration m/s²  (instantaneous)
+    """
+    # Carry-forward state: [pos, vel] per DOF
+    rot_carry = {ax: [0.0, 0.0] for ax in ('yaw', 'pitch', 'roll')}
+    lin_carry = {
+        'x': [default_lin_pos[0], 0.0],
+        'y': [default_lin_pos[1], 0.0],
+        'z': [default_lin_pos[2], 0.0],
+    }
+
+    # One list of chunks per DOF (3 rot + 3 lin)
+    rot_pos_c = [[], [], []]  # [yaw, pitch, roll]
+    rot_vel_c = [[], [], []]
+    lin_pos_c = [[], [], []]  # [x, y, z]
+    lin_vel_c = [[], [], []]
+    lin_acc_c = [[], [], []]
+
+    _ROT_FIELDS = [
+        ('yaw',   'rot_yaw_0',   'rot_yaw_vel',   'rot_yaw_acc'),
+        ('pitch', 'rot_pitch_0', 'rot_pitch_vel', 'rot_pitch_acc'),
+        ('roll',  'rot_roll_0',  'rot_roll_vel',  'rot_roll_acc'),
+    ]
+    _LIN_FIELDS = [
+        ('x', 'lin_x_0', 'lin_x_vel', 'lin_x_acc'),
+        ('y', 'lin_y_0', 'lin_y_vel', 'lin_y_acc'),
+        ('z', 'lin_z_0', 'lin_z_vel', 'lin_z_acc'),
+    ]
+
+    for seg in segments:
+        T = max(1, round(seg.duration_s / dt))
+        t = np.arange(T, dtype=np.float64) * dt
+
+        # ── Rotational DOF ──────────────────────────────────────────────────
+        for i, (ax, p0f, v0f, accf) in enumerate(_ROT_FIELDS):
+            carry_pos, carry_vel = rot_carry[ax]
+            p0  = getattr(seg, p0f)   # None or float
+            v0  = getattr(seg, v0f)   # None or float
+            acc = getattr(seg, accf)  # float
+
+            if p0  is not None: carry_pos = p0
+            if v0  is not None: carry_vel = v0
+
+            if seg.rot_profile == 'sinusoid':
+                A = carry_vel
+                w = 2.0 * np.pi * seg.frequency_hz
+                vel = A * np.sin(w * t)
+                pos = carry_pos + (A / w * (1.0 - np.cos(w * t)) if w > 0 else np.zeros(T))
+                carry_pos = float(pos[-1])
+                carry_vel = float(vel[-1])
+
+            elif seg.rot_profile == 'impulse':
+                A  = carry_vel          # peak velocity
+                rd = seg.ramp_dur_s     # rise/fall duration
+                vel = np.zeros(T)
+                pos = np.zeros(T)
+                rise  = t < rd
+                fall  = (t >= rd) & (t < 2.0 * rd)
+                coast = t >= 2.0 * rd
+
+                # Velocity
+                vel[rise]  = A * t[rise] / rd
+                vel[fall]  = A * (1.0 - (t[fall] - rd) / rd)
+                # vel[coast] = 0  (already zero)
+
+                # Analytical position integral
+                pos[rise]  = carry_pos + A * t[rise] ** 2 / (2.0 * rd)
+                pos_at_rd  = carry_pos + A * rd / 2.0
+                tf         = t[fall] - rd
+                pos[fall]  = pos_at_rd + A * tf - A * tf ** 2 / (2.0 * rd)
+                pos_at_end = carry_pos + A * rd   # = pos at t=2*rd
+                pos[coast] = pos_at_end
+
+                carry_pos = float(pos_at_end)
+                carry_vel = 0.0
+
+            else:  # 'constant' — polynomial
+                pos = carry_pos + carry_vel * t + 0.5 * acc * t ** 2
+                vel = carry_vel + acc * t
+                carry_pos = float(pos[-1])
+                carry_vel = float(vel[-1])
+
+            rot_carry[ax] = [carry_pos, carry_vel]
+            rot_pos_c[i].append(pos.astype(np.float32))
+            rot_vel_c[i].append(vel.astype(np.float32))
+
+        # ── Translational DOF (always polynomial) ───────────────────────────
+        for i, (ax, p0f, v0f, accf) in enumerate(_LIN_FIELDS):
+            carry_pos, carry_vel = lin_carry[ax]
+            p0  = getattr(seg, p0f)
+            v0  = getattr(seg, v0f)
+            acc = getattr(seg, accf)
+
+            if p0  is not None: carry_pos = p0
+            if v0  is not None: carry_vel = v0
+
+            pos = carry_pos + carry_vel * t + 0.5 * acc * t ** 2
+            vel = carry_vel + acc * t
+            acc_arr = np.full(T, acc, dtype=np.float32)
+
+            lin_carry[ax] = [float(pos[-1]), float(vel[-1])]
+            lin_pos_c[i].append(pos.astype(np.float32))
+            lin_vel_c[i].append(vel.astype(np.float32))
+            lin_acc_c[i].append(acc_arr)
+
+    # Concatenate DOFs → (total_segment_T, 3)
+    def _cat(chunks_per_dof):
+        cols = [np.concatenate(c) for c in chunks_per_dof]
+        return np.stack(cols, axis=1)           # (T, 3)
+
+    rot_pos = _cat(rot_pos_c)
+    rot_vel = _cat(rot_vel_c)
+    lin_pos = _cat(lin_pos_c)
+    lin_vel = _cat(lin_vel_c)
+    lin_acc = _cat(lin_acc_c)
+
+    # Pad (hold last value) or trim to total_T
+    def _fit(arr, T):
+        n = len(arr)
+        if n >= T:
+            return arr[:T]
+        return np.concatenate([arr, np.tile(arr[-1:], (T - n, 1))], axis=0)
+
+    return {
+        'rot_pos': _fit(rot_pos, total_T),
+        'rot_vel': _fit(rot_vel, total_T),
+        'lin_pos': _fit(lin_pos, total_T),
+        'lin_vel': _fit(lin_vel, total_T),
+        'lin_acc': _fit(lin_acc, total_T),
+    }
+
+
+def build_visual_flags(
+    segments,   # list[VisualFlagsSegment]
+    total_T: int,
+    dt: float = 0.001,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Convert VisualFlagsSegments to (scene_present, target_present) arrays."""
+    sp_chunks, tp_chunks = [], []
+    for seg in segments:
+        T = max(1, round(seg.duration_s / dt))
+        sp_chunks.append(np.full(T, float(seg.scene_present),  dtype=np.float32))
+        tp_chunks.append(np.full(T, float(seg.target_present), dtype=np.float32))
+    sp = np.concatenate(sp_chunks)
+    tp = np.concatenate(tp_chunks)
+
+    def _fit1d(arr, T):
+        if len(arr) >= T: return arr[:T]
+        return np.concatenate([arr, np.full(T - len(arr), arr[-1], dtype=np.float32)])
+
+    return _fit1d(sp, total_T), _fit1d(tp, total_T)
+
+
+# ── Legacy segment-based builders (kept for backward compat) ───────────────────
 
 def build_head_array(
     segments,   # list[HeadSegment]
