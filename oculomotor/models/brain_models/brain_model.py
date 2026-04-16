@@ -104,8 +104,9 @@ class BrainParams(NamedTuple):
     threshold_acc:         float = 0.5    # accumulator trigger threshold
     k_acc:                 float = 50.0   # accumulator sigmoid steepness
 
-    # Orbital reset — centering saccade policy at orbital limit
-    alpha_reset:           float = 1.0    # centering-saccade gain; 0=suppress, 1=active centering
+    # Orbital reset — centering saccade when target leaves visual field
+    alpha_reset:           float = 1.0    # centering gain; 0=suppress, 1=full centripetal saccade
+                                          # fires only when gate_vf ≈ 0 (target out of visual field)
 
     # Otolith / gravity estimation — Laurens & Angelaki (2011, 2017)
     K_grav:                float = 0.5    # otolith correction gain (1/s); TC = 1/K_grav ≈ 2 s

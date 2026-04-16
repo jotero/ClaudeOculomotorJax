@@ -18,13 +18,24 @@ Anatomy summary
 
 ──────────────────────────────────────────────────────────────────────────
 Physical signal
-    GIA in head frame:  f(t) = a_head(t) + g_head(t)
-        a_head  — linear acceleration of head (m/s²)
-        g_head  — gravity vector expressed in the instantaneous head frame
-                  = R(q_head)ᵀ · g_world
-                  rotates as the head tilts / rotates
+    GIA in head frame:  f(t) = g_head(t) + a_head(t)
+        g_head  — gravity resolved into head frame = R(q_head)ᵀ · g_world
+        a_head  — head linear acceleration (m/s²)
 
-    At rest, upright: f = g_world = [0, 0, −9.81] m/s²
+    Axis convention (matching canal.py and gravity_estimator.py):
+        x = vertical/yaw axis — specific force is +x when head is upright
+        g_world = [+9.81, 0, 0] m/s²
+
+    At rest, upright: f = g_world = [+9.81, 0, 0] m/s²
+
+──────────────────────────────────────────────────────────────────────────
+SSM interface (follows canal.py convention)
+    State layout (6,): [x_L (3) | x_R (3)]  — LP adaptation states only.
+    Head orientation q_head is passed as input (already integrated externally).
+
+    step(x_oto, u, sensory_params) → (dx_oto, f_gia)
+        u = [a_head (3) | q_head (3)]  — 6-D input
+        f_gia  (3,)  — LP-filtered GIA estimate passed to gravity_estimator
 
 ──────────────────────────────────────────────────────────────────────────
 Dynamics  (first-order adaptation, Fernandez & Goldberg 1976)
@@ -37,222 +48,77 @@ Dynamics  (first-order adaptation, Fernandez & Goldberg 1976)
 
     For the Laurens tilt-translation model, large τ_oto is preferred so
     that the DC gravity component is preserved.
-
-──────────────────────────────────────────────────────────────────────────
-Head orientation integration
-    The orientation of the head relative to the world is needed to resolve
-    gravity into the head frame.  A rotation vector q_head (deg) is
-    integrated from the angular velocity input:
-
-        dq_head/dt ≈ ω_head          (small-angle; valid for |q| ≲ 30°)
-
-    Initial orientation set by initial_q_head parameter (default: upright).
-
-──────────────────────────────────────────────────────────────────────────
-State layout  (9 states)
-    x_oto = [q_head (3) | x_L (3) | x_R (3)]
-              head orient   left LP   right LP
-
-Input  (6-DOF)
-    omega_array : (T, 3) or (T,)   head angular velocity (deg/s)
-    a_array     : (T, 3)            head linear acceleration (m/s²)
-                  default zeros (pure rotation / tilt)
-
-Parameters
-    tau_oto   — adaptation time constant (s). Default: 100 s (near-static).
-    g_world   — gravity vector in world frame (m/s²). Default: [0, 0, −9.81].
-    initial_q_head — initial head orientation rotation vector (deg).
-                     Default: [0, 0, 0] (upright).
 """
 
-import jax
 import jax.numpy as jnp
-import diffrax
 
 from oculomotor.models.plant_models.readout import rotation_matrix
 
 # ── Sensor geometry ────────────────────────────────────────────────────────────
 
-N_SIDES   = 2   # left, right
-N_AXES    = 3   # x (lateral), y (fore-aft), z (vertical) per side
-N_SENSORS = N_SIDES * N_AXES   # 6
+G0        = 9.81   # standard gravity (m/s²)
+G_WORLD   = jnp.array([G0, 0., 0.])   # gravity in world frame, x=up (canal.py convention)
 
-G_MAGNITUDE = 9.81   # m/s²
-
-# Sensitivity matrices (per side): full 3-D, no preferred axis
+# Sensitivity matrices (per side): full 3-D, identity (all axes equally sensitive)
 SENS_LEFT  = jnp.eye(3)   # (3, 3)
 SENS_RIGHT = jnp.eye(3)   # (3, 3)
 
-# Mixing: GIA estimate = average of left and right outputs
-# y shape (6,): [y_L (0:3) | y_R (3:6)]
+# Mixing: GIA estimate = average of left and right LP states
+# y shape (6,): [x_L (0:3) | x_R (3:6)]
 PINV_SENS = 0.5 * jnp.array([
     [1., 0., 0., 1., 0., 0.],
     [0., 1., 0., 0., 1., 0.],
     [0., 0., 1., 0., 0., 1.],
 ])   # (3, 6): averages left and right per axis
 
-# ── State indexing ─────────────────────────────────────────────────────────────
+# ── SSM constants ──────────────────────────────────────────────────────────────
 
-N_STATES = 9
-_IDX_Q = slice(0, 3)   # head orientation (rotation vector, deg)
-_IDX_L = slice(3, 6)   # left  otolith adaptation state (m/s²)
-_IDX_R = slice(6, 9)   # right otolith adaptation state (m/s²)
+N_STATES  = 6    # [x_L (3) | x_R (3)] — LP adaptation states; q_head is an input
+N_INPUTS  = 6    # [a_head (3) | q_head (3)]
+N_OUTPUTS = 3    # f_gia (3,) — GIA estimate
 
+_IDX_L = slice(0, 3)   # left  otolith adaptation state (m/s²)
+_IDX_R = slice(3, 6)   # right otolith adaptation state (m/s²)
 
-# ── Initial state ──────────────────────────────────────────────────────────────
-
-def get_initial_state(g_world, initial_q_head=None):
-    """Compute the settled initial state.
-
-    Otolith LP states initialised to gravity in the initial head frame
-    (i.e. the system starts fully adapted — no transient at t = 0).
-
-    Args:
-        g_world:        (3,) gravity in world frame (m/s²)
-        initial_q_head: (3,) initial head orientation rotation vector (deg).
-                        Default: [0, 0, 0] (upright, g_head = g_world).
-
-    Returns:
-        x0: (9,) initial state
-    """
-    if initial_q_head is None:
-        initial_q_head = jnp.zeros(3)
-    R      = rotation_matrix(initial_q_head)        # head-to-world rotation
-    g_head = R.T @ g_world                          # gravity in initial head frame
-    return jnp.concatenate([initial_q_head,
-                             SENS_LEFT  @ g_head,   # left  settled to gravity
-                             SENS_RIGHT @ g_head])  # right settled to gravity
+# Default initial state: both sides settled to gravity at rest, upright head
+X0 = jnp.concatenate([SENS_LEFT @ G_WORLD, SENS_RIGHT @ G_WORLD])   # [9.81,0,0, 9.81,0,0]
 
 
-# ── ODE vector field ───────────────────────────────────────────────────────────
+# ── SSM step ───────────────────────────────────────────────────────────────────
 
-def otolith_vector_field(t, x_oto, args):
-    """ODE right-hand side for otolith dynamics.
+def step(x_oto, u, sensory_params):
+    """Single ODE step: otolith LP derivative + GIA estimate output.
 
     Args:
-        t:     scalar time (s)
-        x_oto: (N_STATES,) = [q_head | x_L | x_R]
-        args:  (motion_interp, theta_oto, g_world)
-               motion_interp evaluates (6,) = [omega (3) | a_lin (3)] at time t
+        x_oto:          (6,)  otolith state [x_L (3) | x_R (3)]  (m/s²)
+        u:              (6,)  [a_head (3) | q_head (3)]
+                              a_head — head linear acceleration (m/s²)
+                              q_head — head orientation rotation vector (deg)
+        sensory_params: SensoryParams  (reads tau_oto)
 
     Returns:
-        dx_oto: (N_STATES,)
+        dx_oto: (6,)  dx_oto/dt  (m/s³)
+        f_gia:  (3,)  LP-filtered GIA estimate → gravity_estimator (m/s²)
     """
-    motion_interp, theta_oto, g_world = args
+    a_head = u[:3]   # (3,) head linear acceleration (m/s²)
+    q_head = u[3:]   # (3,) head orientation rotation vector (deg)
 
-    q_head = x_oto[_IDX_Q]   # (3,) head orientation (rotation vector, deg)
-    x_L    = x_oto[_IDX_L]   # (3,) left  adaptation state
-    x_R    = x_oto[_IDX_R]   # (3,) right adaptation state
+    x_L = x_oto[_IDX_L]   # (3,) left  adaptation state
+    x_R = x_oto[_IDX_R]   # (3,) right adaptation state
 
-    motion = motion_interp.evaluate(t)   # (6,)
-    omega  = motion[:3]                  # (3,) head angular velocity (deg/s)
-    a_lin  = motion[3:]                  # (3,) head linear acceleration (m/s²)
+    # Gravity resolved into the current head frame
+    R      = rotation_matrix(q_head)   # (3, 3) head-to-world rotation matrix
+    g_head = R.T @ G_WORLD             # (3,) gravity in head frame
 
-    # ── Head orientation ─────────────────────────────────────────────────────
-    # Small-angle integration: dq/dt ≈ ω  (valid for |q| ≲ 30°).
-    dq_head = omega
+    # Gravitoinertial acceleration (GIA) = gravity component + linear acceleration
+    f = g_head + a_head
 
-    # ── Gravity in current head frame ─────────────────────────────────────────
-    R      = rotation_matrix(q_head)    # (3, 3) head-to-world rotation
-    g_head = R.T @ g_world              # gravity resolved into head frame
-
-    # ── Gravitoinertial acceleration (GIA) in head frame ──────────────────────
-    f = a_lin + g_head                  # GIA = linear accel + gravity component
-
-    # ── Adaptation LP dynamics ─────────────────────────────────────────────────
-    tau  = theta_oto['tau_oto']
+    # LP adaptation dynamics: low-pass filter the raw GIA
+    tau  = sensory_params.tau_oto
     dx_L = (SENS_LEFT  @ f - x_L) / tau
     dx_R = (SENS_RIGHT @ f - x_R) / tau
 
-    return jnp.concatenate([dq_head, dx_L, dx_R])
+    dx_oto = jnp.concatenate([dx_L, dx_R])
+    f_gia  = PINV_SENS @ x_oto   # average of LP-filtered outputs (current state)
 
-
-# ── Output extraction ──────────────────────────────────────────────────────────
-
-def otolith_outputs(x_oto):
-    """Extract sensor outputs from state vector.
-
-    Returns:
-        y: (N_SENSORS,) = [y_L (3) | y_R (3)]   LP-filtered GIA per side (m/s²)
-    """
-    return jnp.concatenate([x_oto[_IDX_L], x_oto[_IDX_R]])
-
-
-def gia_estimate(y_oto):
-    """3-D GIA estimate by averaging left and right outputs.
-
-    Args:
-        y_oto: (N_SENSORS,) or (T, N_SENSORS)
-
-    Returns:
-        f_hat: (3,) or (T, 3)   best GIA estimate (m/s²)
-    """
-    return (PINV_SENS @ y_oto.T).T if y_oto.ndim == 2 else PINV_SENS @ y_oto
-
-
-# ── Simulation entry point ─────────────────────────────────────────────────────
-
-def simulate(theta_oto, t_array, omega_array, a_array=None,
-             g_world=None, initial_q_head=None,
-             dt_solve=0.005, max_steps=10000):
-    """Integrate otolith ODE for 6-DOF head motion.
-
-    Args:
-        theta_oto:      dict with key 'tau_oto' (s, adaptation time constant)
-        t_array:        (T,) time array (s)
-        omega_array:    (T, 3) or (T,) head angular velocity (deg/s).
-                        If 1-D, treated as yaw only; pitch and roll = 0.
-        a_array:        (T, 3) head linear acceleration (m/s²).
-                        Default: zeros (pure rotation/tilt, no translation).
-        g_world:        (3,) gravity vector in world frame (m/s²).
-                        Default: [0, 0, −9.81] (z-down convention).
-        initial_q_head: (3,) initial head orientation rotation vector (deg).
-                        Default: [0, 0, 0] (upright).
-        dt_solve:       Heun fixed step (s). Default 0.005 s.
-        max_steps:      ODE solver step budget.
-
-    Returns:
-        y_oto:        (T, 6) sensor outputs [y_L (3) | y_R (3)] — LP-filtered GIA
-        head_orient:  (T, 3) head orientation rotation vector (deg) over time
-    """
-    # ── Defaults ──────────────────────────────────────────────────────────────
-    if g_world is None:
-        g_world = jnp.array([0., 0., -G_MAGNITUDE])
-
-    if jnp.ndim(omega_array) == 1:
-        omega_3d = jnp.stack([omega_array,
-                               jnp.zeros_like(omega_array),
-                               jnp.zeros_like(omega_array)], axis=1)
-    else:
-        omega_3d = jnp.asarray(omega_array)
-
-    if a_array is None:
-        a_3d = jnp.zeros_like(omega_3d)
-    else:
-        a_3d = jnp.asarray(a_array)
-
-    # ── Interpolant for 6-DOF motion ──────────────────────────────────────────
-    motion_6d     = jnp.concatenate([omega_3d, a_3d], axis=1)   # (T, 6)
-    motion_interp = diffrax.LinearInterpolation(ts=t_array, ys=motion_6d)
-
-    # ── Initial state ──────────────────────────────────────────────────────────
-    x0 = get_initial_state(g_world, initial_q_head)
-
-    # ── Integrate ──────────────────────────────────────────────────────────────
-    solution = diffrax.diffeqsolve(
-        diffrax.ODETerm(otolith_vector_field),
-        diffrax.Heun(),
-        t0=t_array[0],
-        t1=t_array[-1],
-        dt0=dt_solve,
-        y0=x0,
-        args=(motion_interp, theta_oto, g_world),
-        stepsize_controller=diffrax.ConstantStepSize(),
-        saveat=diffrax.SaveAt(ts=t_array),
-        max_steps=max_steps,
-    )
-
-    states = solution.ys                                    # (T, 9)
-    y_oto  = jax.vmap(otolith_outputs)(states)             # (T, 6)
-
-    return y_oto, states[:, _IDX_Q]                        # outputs, head orientation
+    return dx_oto, f_gia

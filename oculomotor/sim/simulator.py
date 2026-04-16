@@ -52,7 +52,8 @@ from typing import NamedTuple
 import jax.numpy as jnp
 import diffrax
 
-from oculomotor.models.sensory_models.sensory_model import _IDX_C, _IDX_VIS, SensoryParams
+from oculomotor.models.sensory_models.sensory_model import _IDX_C, _IDX_OTO, _IDX_VIS, SensoryParams
+from oculomotor.models.sensory_models               import otolith as _otolith
 from oculomotor.models.brain_models.brain_model    import _IDX_VS, _IDX_NI, _IDX_SG, _IDX_EC, _IDX_GRAV, _IDX_PURSUIT, BrainParams
 from oculomotor.models.plant_models.plant_model_first_order import PlantParams
 from oculomotor.models.sensory_models import sensory_model
@@ -129,7 +130,7 @@ PARAMS_DEFAULT     = default_params()
 # Re-export params API so callers can import everything from simulator
 __all__ = [
     'SimState', 'ODE_ocular_motor', 'simulate',
-    '_IDX_C', '_IDX_VIS', '_IDX_VS', '_IDX_NI', '_IDX_SG', '_IDX_EC', '_IDX_GRAV', '_IDX_PURSUIT',
+    '_IDX_C', '_IDX_OTO', '_IDX_VIS', '_IDX_VS', '_IDX_NI', '_IDX_SG', '_IDX_EC', '_IDX_GRAV', '_IDX_PURSUIT',
     # params
     'Params', 'SimConfig', 'SensoryParams', 'PlantParams', 'BrainParams',
     'default_params', 'with_brain', 'with_sensory', 'with_plant',
@@ -142,11 +143,11 @@ class SimState(NamedTuple):
     """Structured ODE state — a JAX-compatible pytree (NamedTuple).
 
     Groups:
-        sensory  (372)  Canal transducers + retinal delay cascade (slip, pos, vel).
+        sensory  (378)  Canal + otolith + retinal delay cascade (slip, pos, vel).
         brain    (141)  Central computation: VS, NI, SG, EC, gravity, pursuit.
         plant      (3)  Extraocular plant — eye rotation vector (deg)
     """
-    sensory: jnp.ndarray   # (372,)  [x_c (12) | x_vis (360)]
+    sensory: jnp.ndarray   # (378,)  [x_c (12) | x_oto (6) | x_vis (360)]
     brain:   jnp.ndarray   # (141,)  [x_vs (3) | x_ni (3) | x_sg (9) | x_ec (120) | x_grav (3) | x_pursuit (3)]
     plant:   jnp.ndarray   #   (3,)  eye rotation vector (deg)
 
@@ -192,24 +193,13 @@ def ODE_ocular_motor(t, state, args):
     scene_present  = scene_present_interp.evaluate(t)         # scalar: 0=dark, 1=lit
     target_present = target_present_interp.evaluate(t)        # scalar: 0=no target, 1=present
 
-    # ── Specific force in head frame (small-angle approximation) ─────────────
-    # g_hat = specific force = +x when upright (x = yaw/vertical axis, canal.py convention)
-    # After rotation q_head (small angle):
-    #   CW roll  (z+, q[2]>0): g_hat = [G0,  -G0·sin(q_r),  0]  → y-component negative
-    #   Pitch-up (y+, q[1]>0): g_hat = [G0,   0,            +G0·sin(q_p)] → z-component positive
-    G0        = 9.81
-    q_rad     = q_head * (jnp.pi / 180.0)
-    f_otolith = jnp.array([G0,
-                            -q_rad[2] * G0,   # CW roll → g_hat[1] negative
-                             q_rad[1] * G0    # pitch-up → g_hat[2] positive
-                           ]) + a_head
-
     # ── Unpack plant state ────────────────────────────────────────────────────
     q_eye = state.plant   # (3,) eye rotation vector (deg)
 
     # ── Sensory: read bundled outputs for brain ───────────────────────────────
+    # f_gia is read from the otolith LP states inside x_sensory (no inline computation)
     sensory_out = sensory_model.read_outputs(
-        state.sensory, q_eye, f_otolith, scene_present, target_present,
+        state.sensory, q_eye, scene_present, target_present,
         theta.sensory, theta.plant, theta.brain)
 
     # ── Brain: VS + NI + SG + EC ──────────────────────────────────────────────
@@ -218,10 +208,10 @@ def ODE_ocular_motor(t, state, args):
     # ── Plant ─────────────────────────────────────────────────────────────────
     dx_plant, _, w_eye = plant_model.step(state.plant, motor_cmd, theta.plant)
 
-    # ── Sensory: retinal signals + canal + visual delay ───────────────────────
+    # ── Sensory: retinal signals + canal + otolith + visual delay ────────────
     # w_eye = dx_plant = w_true (algebraic, no lag) — must follow plant step.
     dx_sensory, _, _, _ = sensory_model.step(
-        state.sensory, q_head, w_head, q_eye, w_eye,
+        state.sensory, q_head, w_head, a_head, q_eye, w_eye,
         w_scene, v_target, p_target, scene_present, theta.sensory)
 
     return SimState(
@@ -284,6 +274,7 @@ def simulate(params, t_array_or_stimulus, head_vel_array=None,
                       states.brain[:, _IDX_GRAV]       → (T, 3)   gravity estimate (m/s²)
                       states.brain[:, _IDX_PURSUIT]    → (T, 3)   pursuit velocity memory
                       states.sensory[:, _IDX_C]        → (T, 12)  canal states
+                      states.sensory[:, _IDX_OTO]      → (T, 6)   otolith LP states
                       states.sensory[:, _IDX_VIS]      → (T, 360) visual delay cascade
     """
     cfg = sim_config if sim_config is not None else SIM_CONFIG_DEFAULT
@@ -375,8 +366,11 @@ def simulate(params, t_array_or_stimulus, head_vel_array=None,
     scene_present_interp  = diffrax.LinearInterpolation(ts=t_array, ys=sg1)
     target_present_interp = diffrax.LinearInterpolation(ts=t_array, ys=tg1)
 
+    sensory_x0 = jnp.zeros(sensory_model.N_STATES)
+    sensory_x0 = sensory_x0.at[_IDX_OTO].set(_otolith.X0)   # otolith settled at gravity
+
     x0 = SimState(
-        sensory = jnp.zeros(sensory_model.N_STATES),   # (372,)
+        sensory = sensory_x0,                          # (378,) otolith init at [9.81,0,0, ...]
         brain   = brain_model.make_x0(),               # (141,) gravity init at [9.81,0,0]
         plant   = jnp.zeros(plant_model.N_STATES),     #   (3,)  eye rotation vector
     )
