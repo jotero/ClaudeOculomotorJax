@@ -220,13 +220,21 @@ def step(x_sg, u_sg, brain_params):
     #
     #   z_sac=0 (idle / refractory):
     #       Fast reset to 0 with τ_fast → clears copy for next saccade.
+    #
+    # Note: (1 − z_sac)² not (1 − z_sac) for the idle reset — same reason as de_held.
+    # z_sac settles at ~0.955 (not 1.0) due to ODE step size, so (1−z_sac)=0.045 lets
+    # the idle-reset term bleed at 4.5%.  For large x_copy the reset force 0.045·x/τ_fast
+    # exceeds the burst force, preventing convergence to e_held:
+    #     equilibrium e_res = 0.9·x_copy / (95.5·tau_fast) = 0.009·x_copy
+    # For a 30° saccade (x_copy≈26°): e_res* = 0.24° > threshold_stop = 0.1°  → burst stuck.
+    # Squaring drives bleedthrough to (0.045)² = 0.002 → e_res* = 0.011°  ✓
 
     tau_fast = brain_params.tau_reset_fast
     A_ni     = (-1.0 / brain_params.tau_i) * jnp.eye(3)
     # B = I (identity — omitted)
     dx_copy  = (z_sac * (gate_active_burst * (A_ni @ x_copy + u_burst_raw)
                          + (1.0 - gate_active_burst) * (-(x_copy - e_held) / tau_fast))
-               + (1.0 - z_sac) * (-x_copy / tau_fast))
+               + (1.0 - z_sac)**2 * (-x_copy / tau_fast))
 
     # ── Sample-and-hold ───────────────────────────────────────────────────────
     # z_sac=1 (burst active):   de_held ≈ 0  → e_held frozen at onset value
