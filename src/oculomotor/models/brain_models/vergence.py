@@ -55,6 +55,10 @@ Parameters:
   K_verg         — integration gain (1/s).
   K_phasic_verg  — direct feedthrough (dim'less); sets Smith attenuation.
   tau_verg       — leak TC (s); healthy long (>20 s) → stable vergence hold.
+  phoria         — (3,) resting vergence angle (deg) when fusion is absent.
+                   phoria[0] > 0 = esophoria (over-convergence tendency).
+                   phoria[0] < 0 = exophoria (divergence tendency).
+                   Orthophoria = [0, 0, 0] (default).
 """
 
 import jax.numpy as jnp
@@ -84,6 +88,6 @@ def step(x_verg, e_disp, brain_params):
     e_pred = (e_disp - x_verg) / (1.0 + K_ph)
 
     A       = -(1.0 / brain_params.tau_verg) * jnp.eye(3)
-    dx_verg = A @ x_verg + brain_params.K_verg * e_pred
+    dx_verg = A @ (x_verg - brain_params.phoria) + brain_params.K_verg * e_pred
     u_verg  = x_verg + K_ph * e_pred
     return dx_verg, u_verg

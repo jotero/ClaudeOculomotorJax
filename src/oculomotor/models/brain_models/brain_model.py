@@ -133,9 +133,11 @@ class BrainParams(NamedTuple):
     tau_pursuit:           float = 40.0   # pursuit leak TC (s); ~40 s → ~97.5% gain at 1 Hz
 
     # Vergence — disparity-driven position integrator + Smith predictor (Patel et al. 1997)
-    K_verg:                float = 4.0    # integration gain (1/s)
-    K_phasic_verg:         float = 1.0    # direct feedthrough (dim'less); Smith predictor
-    tau_verg:              float = 25.0   # vergence position leak TC (s); stable hold
+    K_verg:                float        = 4.0             # integration gain (1/s)
+    K_phasic_verg:         float        = 1.0             # direct feedthrough (dim'less)
+    tau_verg:              float        = 25.0            # vergence position leak TC (s)
+    phoria:                jnp.ndarray  = jnp.zeros(3)    # resting vergence (deg); 0=orthophoria
+                                                           # phoria[0]>0 esophoria, <0 exophoria
 
 
 # ── State layout ───────────────────────────────────────────────────────────────
@@ -250,12 +252,14 @@ def step(x_brain, sensory_out, brain_params):
     motor_cmd_version = motor_cmd_ni + ocr_pos
 
     # ── Vergence: binocular disparity → disconjugate eye commands ─────────────
-    # e_disp = pos_delayed_L − pos_delayed_R; gated by target_present upstream.
-    # EC correction: add x_verg to cancel the eye's own convergence contribution,
-    # analogous to motor_ec correcting vel_delayed for pursuit.
-    # Without: e_disp = ψ_d − ψ → closed-loop gain ≈ 0.5
-    # With:    e_disp + x_verg ≈ ψ_d → gain ≈ 0.99
-    e_disp = sensory_out.pos_delayed_L - sensory_out.pos_delayed_R
+    # Binocularity gate: vergence drive requires both eyes to see the target.
+    #   bino = gate_vf_L * gate_vf_R ≈ 1 when both eyes fuse, 0 when either covered.
+    # When bino = 0: e_disp = 0 → e_pred = (0 + x_verg − x_verg)/(1+K_ph) = 0
+    #   → dx_verg = −(x_verg − phoria)/τ_verg  (vergence leaks toward phoria) ✓
+    # EC correction: add x_verg so that, when bino>0, e_pred = e_disp/(1+K_ph).
+    #   Without: closed-loop gain ≈ 0.5;  With: gain ≈ 0.99
+    bino   = sensory_out.gate_vf_L * sensory_out.gate_vf_R
+    e_disp = bino * (sensory_out.pos_delayed_L - sensory_out.pos_delayed_R)
     dx_verg, u_verg = vg.step(x_verg, e_disp + x_verg, brain_params)
 
     # Split vergence ±½ around the version command

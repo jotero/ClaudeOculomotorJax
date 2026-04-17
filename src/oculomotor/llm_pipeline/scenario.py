@@ -150,6 +150,10 @@ class VisualFlagsSegment(BaseModel):
 
     scene_present  = is the room lit?  True → OKR and visual stabilisation active.
     target_present = is there a discrete foveal target?  True → pursuit and saccades active.
+                     Shorthand: sets BOTH eyes simultaneously.
+    target_present_L / target_present_R = per-eye override (cover test).
+                     None (default) = inherit from target_present.
+                     False = that eye is covered (eye patch) → vergence leaks toward phoria.
 
     Scene MOTION is specified via scene BodySegment rot_yaw_vel — NOT here.
 
@@ -160,10 +164,14 @@ class VisualFlagsSegment(BaseModel):
     VVOR / saccades:       scene_present=True,  target_present=True  (default)
     OKN drum, no dot:      scene_present=True,  target_present=False
     Smooth pursuit:        scene_present=True,  target_present=True
+    Cover test (R covered):scene_present=True,  target_present=True,
+                           target_present_L=True, target_present_R=False
     """
-    duration_s:     float = Field(gt=0, le=120, description="Duration of this segment (s).")
-    scene_present:  bool  = Field(default=True,  description="True = lit room → OKR active.")
-    target_present: bool  = Field(default=True,  description="True = discrete target visible → pursuit/saccades active.")
+    duration_s:       float          = Field(gt=0, le=120, description="Duration of this segment (s).")
+    scene_present:    bool           = Field(default=True,  description="True = lit room → OKR active.")
+    target_present:   bool           = Field(default=True,  description="Both-eye shorthand: True = target visible for both eyes.")
+    target_present_L: Optional[bool] = Field(default=None,  description="L-eye override. None = inherit target_present. False = cover L eye.")
+    target_present_R: Optional[bool] = Field(default=None,  description="R-eye override. None = inherit target_present. False = cover R eye.")
 
 
 # ── Patient (unchanged) ────────────────────────────────────────────────────────
@@ -173,6 +181,24 @@ class Patient(BaseModel):
 
     Only specify parameters that differ from the healthy default.
     Leave all others at their defaults.
+
+    Gaze-evoked nystagmus (GEN) — IMPORTANT
+    ----------------------------------------
+    GEN requires a leaky neural integrator (tau_i small) so gaze positions
+    drift centripetally.  But in a lit room with a target, smooth pursuit
+    compensates that drift → no nystagmus is visible.
+
+    To simulate GEN you must therefore impair BOTH:
+        tau_i    = 3–8 s    (leaky NI; cerebellar/brainstem lesion)
+        K_pursuit = 0.1–0.3  (severely impaired pursuit; cerebellar)
+    With K_pursuit ≥ 1 pursuit compensates the NI drift and GEN disappears,
+    even when tau_i is very short.
+
+    In the dark (scene_present=False, target_present=False) pursuit and OKR
+    are absent, so GEN is always visible with a leaky NI regardless of K_pursuit.
+
+    Quick reference — typical cerebellar patient for GEN:
+        tau_i=4, K_pursuit=0.2, tau_vs=5, K_vs=0.05
     """
 
     canal_gains: Annotated[list[float], Field(min_length=6, max_length=6)] = Field(
@@ -188,12 +214,41 @@ class Patient(BaseModel):
     K_vs:   float = Field(default=0.1,  description="Canal→VS gain (1/s). Healthy ~0.1. Reduce with tau_vs for nodulus lesions.")
     K_vis:  float = Field(default=1.0,  description="Visual (OKR) gain into VS (1/s). Healthy ~1.0. 0 = no OKR.")
     g_vis:  float = Field(default=0.3,  description="Visual feedthrough gain. Healthy ~0.3. Fast OKR onset.")
-    tau_i:  float = Field(default=25.0, description="Neural integrator TC (s). Healthy ≥20 s. Short (2–8 s) → gaze-evoked nystagmus. Cerebellar lesions.")
+    tau_i:  float = Field(default=25.0,
+        description=(
+            "Neural integrator TC (s). Healthy ≥20 s. "
+            "Short (2–8 s) → centripetal drift. "
+            "GEN visible only if pursuit is also impaired (K_pursuit ≤ 0.3) OR in the dark. "
+            "Cerebellar lesion: pair with K_pursuit=0.1–0.3."
+        ))
     g_burst: float = Field(default=700.0, description="Saccade burst ceiling (deg/s). Healthy ~700. 0 = complete palsy. 200–400 = slow saccades (PSP, SCA).")
-    K_pursuit:        float = Field(default=2.0,  description="Pursuit integrator gain (1/s). Reduce for pursuit deficit (MT/MST, Parkinson's → 0.2–0.5).")
+    K_pursuit:        float = Field(default=2.0,
+        description=(
+            "Pursuit integrator gain (1/s). Healthy ~4; default 2 (mild reduction). "
+            "Cerebellar lesion → 0.1–0.3 (severe pursuit deficit). "
+            "Must be reduced alongside tau_i to see GEN in a lit room."
+        ))
     K_phasic_pursuit: float = Field(default=5.0,  description="Pursuit direct feedthrough gain. Healthy ~5. Provides fast pursuit onset.")
     tau_pursuit:      float = Field(default=40.0, description="Pursuit integrator TC (s). Healthy ~40 s. Short (5–15 s) → poor pursuit maintenance.")
     K_grav: float = Field(default=0.5, description="Otolith gravity estimation gain. Relevant for tilt / OVAR.")
+
+    # Vergence — binocular disparity-driven convergence / divergence
+    K_verg:        float              = Field(default=4.0,
+        description="Vergence integrator gain (1/s). Healthy ~4. Reduce for convergence insufficiency.")
+    K_phasic_verg: float              = Field(default=1.0,
+        description="Vergence direct feedthrough (dim'less). Healthy ~1. Controls fast vergence onset.")
+    tau_verg:      float              = Field(default=25.0,
+        description="Vergence position leak TC (s). Healthy >20 s. Short → vergence doesn't hold.")
+    phoria: Annotated[list[float], Field(min_length=3, max_length=3)] = Field(
+        default=[0.0, 0.0, 0.0],
+        description=(
+            "Resting vergence angle [H, V, torsion] (deg) when binocular fusion is absent. "
+            "phoria[0] > 0 = esophoria (over-convergence tendency); "
+            "phoria[0] < 0 = exophoria (divergence tendency). "
+            "Healthy = [0,0,0] (orthophoria). "
+            "Cover test reveals phoria: cover one eye, vergence leaks toward phoria."
+        )
+    )
 
     @field_validator('canal_gains')
     @classmethod
@@ -203,7 +258,7 @@ class Patient(BaseModel):
                 raise ValueError(f'canal_gains[{i}]={g} out of range [0, 1]')
         return v
 
-    @field_validator('tau_vs', 'tau_i', 'tau_pursuit')
+    @field_validator('tau_vs', 'tau_i', 'tau_pursuit', 'tau_verg')
     @classmethod
     def _check_positive_tc(cls, v, info):
         if v <= 0:
@@ -219,11 +274,20 @@ class Patient(BaseModel):
             raise ValueError(f'g_burst={v} is physiologically unrealistic (max ~700)')
         return v
 
-    @field_validator('K_vs', 'K_vis', 'K_pursuit', 'K_phasic_pursuit', 'K_grav')
+    @field_validator('K_vs', 'K_vis', 'K_pursuit', 'K_phasic_pursuit', 'K_grav',
+                     'K_verg', 'K_phasic_verg')
     @classmethod
     def _check_nonneg_gains(cls, v, info):
         if v < 0:
             raise ValueError(f'{info.field_name} must be ≥ 0')
+        return v
+
+    @field_validator('phoria')
+    @classmethod
+    def _check_phoria(cls, v):
+        for i, p in enumerate(v):
+            if abs(p) > 30:
+                raise ValueError(f'phoria[{i}]={p} deg is extreme (>30 deg); typical range ±15 deg')
         return v
 
 
@@ -237,6 +301,7 @@ class PlotConfig(BaseModel):
         'gaze_error', 'retinal_error', 'canal_afferents',
         'velocity_storage', 'neural_integrator',
         'saccade_burst', 'pursuit_drive', 'refractory',
+        'vergence',
     ]] = Field(
         description=(
             "Ordered list of panels. Minimal sets:\n"
@@ -244,6 +309,7 @@ class PlotConfig(BaseModel):
             "  OKN / OKAN:   ['head_velocity', 'eye_velocity', 'eye_position', 'velocity_storage']\n"
             "  Saccades:     ['eye_position', 'eye_velocity', 'saccade_burst', 'refractory']\n"
             "  Pursuit:      ['eye_position', 'eye_velocity', 'pursuit_drive']\n"
+            "  Vergence / cover test: ['eye_position', 'vergence', 'neural_integrator']\n"
             "  Full cascade: all panels"
         )
     )
@@ -307,6 +373,27 @@ class SimulationScenario(BaseModel):
         target: [{duration_s: 3, lin_x_0: 0.0, lin_z_0: 1.0}] ← target fixed in world
         scene:  [{duration_s: 3}]
         visual: [{duration_s: 3, scene_present: false, target_present: true}]
+
+    Cover test (esophoria patient, R eye covered 3–18 s):
+        head:   [{duration_s: 25}]
+        target: [{duration_s: 25, lin_z_0: 2.0}]             ← target at 2 m
+        scene:  [{duration_s: 25}]
+        visual: [{duration_s: 3},                             ← both eyes open
+                 {duration_s: 15, target_present_L: true, target_present_R: false},  ← cover R
+                 {duration_s: 7}]                             ← uncover, re-fusion
+        patient: {phoria: [8, 0, 0]}                          ← 8° esophoria
+        plot: {panels: ['eye_position', 'vergence']}
+
+    Gaze-evoked nystagmus (lit room — requires BOTH leaky NI AND bad pursuit):
+        head:   [{duration_s: 10}]
+        target: [{duration_s: 10, lin_z_0: 1.0}]             ← target eccentrically (e.g. 20°)
+        scene:  [{duration_s: 10}]
+        visual: [{duration_s: 10}]                            ← lit room with target
+        patient: {tau_i: 4.0, K_pursuit: 0.2}                ← BOTH must be impaired
+
+    Gaze-evoked nystagmus (dark — leaky NI alone is sufficient):
+        visual: [{duration_s: 10, scene_present: false, target_present: false}]
+        patient: {tau_i: 4.0}                                 ← pursuit irrelevant in dark
     """
 
     description: str = Field(description="One-sentence plain-English description (used as figure title).")

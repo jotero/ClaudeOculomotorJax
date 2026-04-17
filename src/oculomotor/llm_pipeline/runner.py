@@ -27,6 +27,7 @@ from oculomotor.llm_pipeline.scenario import SimulationScenario, SimulationCompa
 from oculomotor.sim.simulator import (
     PARAMS_DEFAULT, with_brain, with_sensory, simulate,
     _IDX_VS, _IDX_NI, _IDX_SG, _IDX_EC, _IDX_VIS, _IDX_VIS_L, _IDX_VIS_R, _IDX_PURSUIT,
+    _IDX_VERG,
 )
 from oculomotor.models.brain_models import saccade_generator as sg_mod
 from oculomotor.models.sensory_models.sensory_model import C_slip, C_pos, C_vel, C_gate
@@ -152,26 +153,27 @@ def _build_stimulus(scenario: SimulationScenario) -> dict:
     # Scene angular velocity → OKR / velocity storage
     v_scene = scene_arr['rot_vel']                 # (T, 3) deg/s
 
-    # Visual flags
-    sp, tp = stim.build_visual_flags(scenario.visual, T, dt)
+    # Visual flags — per-eye target_present (supports cover test)
+    sp, tpL, tpR = stim.build_visual_flags(scenario.visual, T, dt)
 
     # Head linear acceleration in world frame → simulator adds gravity rotation to get
     # specific force in head frame (already done inside ODE_ocular_motor)
     head_lin_acc = head_arr['lin_acc']   # (T, 3) m/s²
 
     return dict(
-        t_array              = t,
-        head_vel_array       = jnp.array(head_vel),
-        head_accel_array     = jnp.array(head_lin_acc),
-        p_target_array       = jnp.array(p_target),
-        v_target_array       = jnp.array(v_target),
-        v_scene_array        = jnp.array(v_scene),
-        scene_present_array  = jnp.array(sp),
-        target_present_array = jnp.array(tp),
+        t_array                 = t,
+        head_vel_array          = jnp.array(head_vel),
+        head_accel_array        = jnp.array(head_lin_acc),
+        p_target_array          = jnp.array(p_target),
+        v_target_array          = jnp.array(v_target),
+        v_scene_array           = jnp.array(v_scene),
+        scene_present_array     = jnp.array(sp),
+        target_present_L_array  = jnp.array(tpL),
+        target_present_R_array  = jnp.array(tpR),
         # 6-DOF arrays stored for plotting (stripped before passing to ODE)
-        _head_lin_pos        = head_arr['lin_pos'],
-        _head_lin_vel        = head_arr['lin_vel'],
-        _target_world_pos    = target_arr['lin_pos'],
+        _head_lin_pos           = head_arr['lin_pos'],
+        _head_lin_vel           = head_arr['lin_vel'],
+        _target_world_pos       = target_arr['lin_pos'],
     )
 
 
@@ -196,6 +198,10 @@ def _build_params(patient: Patient):
         K_phasic_pursuit= patient.K_phasic_pursuit,
         tau_pursuit     = patient.tau_pursuit,
         K_grav          = patient.K_grav,
+        K_verg          = patient.K_verg,
+        K_phasic_verg   = patient.K_phasic_verg,
+        tau_verg        = patient.tau_verg,
+        phoria          = jnp.array(patient.phoria, dtype=float),
     )
     return params
 
@@ -206,30 +212,42 @@ def _extract_signals(states, params, t_np: np.ndarray) -> dict:
     """Extract named signals from a SimState trajectory."""
     dt = t_np[1] - t_np[0]
 
-    x_p       = np.array(states.plant[:, :3])     # (T, 3) left eye (version = L ≈ R)
+    eye_pos_L = np.array(states.plant[:, :3])      # (T, 3) left  eye rotation (deg)
+    eye_pos_R = np.array(states.plant[:, 3:])       # (T, 3) right eye rotation (deg)
+    version   = 0.5 * (eye_pos_L + eye_pos_R)       # (T, 3) conjugate (version)
+    vergence  = eye_pos_L - eye_pos_R               # (T, 3) vergence angle (deg, + = converged)
+
     x_vs      = np.array(states.brain[:, _IDX_VS])
     x_ni      = np.array(states.brain[:, _IDX_NI])
     x_sg      = np.array(states.brain[:, _IDX_SG])
     x_pursuit = np.array(states.brain[:, _IDX_PURSUIT])
+    x_verg    = np.array(states.brain[:, _IDX_VERG])   # (T, 3) vergence integrator state
     x_vis_L   = np.array(states.sensory[:, _IDX_VIS_L])
     x_vis_R   = np.array(states.sensory[:, _IDX_VIS_R])
 
-    # Eye velocity (numerical derivative, smoothed)
-    w_eye = np.gradient(x_p, dt, axis=0)
+    # Eye velocity (version derivative — same as L eye vel when version ≈ L)
+    w_eye = np.gradient(version, dt, axis=0)
 
-    # Canal afferents — approximate from first-order derivative of eye position
-    # (use x_vs as proxy for head velocity estimate)
-    w_est = x_vs  # VS state ≈ w_est
+    # VS state ≈ head velocity estimate
+    w_est = x_vs
 
-    # Retinal signals — L+R average matches what brain actually received
-    e_pos_delayed = 0.5 * (x_vis_L @ np.array(C_pos).T + x_vis_R @ np.array(C_pos).T)  # (T, 3)
+    # Retinal signals — gate-weighted average consistent with sensory_model fix
+    gate_L = x_vis_L @ np.array(C_gate).T           # (T, 1)
+    gate_R = x_vis_R @ np.array(C_gate).T           # (T, 1)
+    gate_sum = gate_L + gate_R + 1e-6               # (T, 1)
+    pos_L  = x_vis_L @ np.array(C_pos).T            # (T, 3)
+    pos_R  = x_vis_R @ np.array(C_pos).T            # (T, 3)
+    e_pos_delayed = (gate_L * pos_L + gate_R * pos_R) / gate_sum  # (T, 3)
 
-    # Saccade burst (re-compute from SG state + averaged delayed retinal signals)
+    # Saccade burst (re-compute from SG state + weighted delayed retinal signals)
     def _burst_at(state):
         x_vis_L_ = state.sensory[_IDX_VIS_L]
         x_vis_R_ = state.sensory[_IDX_VIS_R]
-        e_pd = 0.5 * (C_pos  @ x_vis_L_ + C_pos  @ x_vis_R_)
-        gate = 0.5 * ((C_gate @ x_vis_L_)[0] + (C_gate @ x_vis_R_)[0])
+        gL = (C_gate @ x_vis_L_)[0]
+        gR = (C_gate @ x_vis_R_)[0]
+        norm = jnp.maximum(gL + gR, 1e-6)
+        e_pd = (gL * (C_pos @ x_vis_L_) + gR * (C_pos @ x_vis_R_)) / norm
+        gate = jnp.clip(gL + gR, 0.0, 1.0)
         x_ni_ = state.brain[_IDX_NI]
         _, u  = sg_mod.step(state.brain[_IDX_SG], e_pd, gate, x_ni_, params.brain)
         return u
@@ -243,7 +261,11 @@ def _extract_signals(states, params, t_np: np.ndarray) -> dict:
     z_acc  = x_sg[:, 8]
 
     return dict(
-        eye_pos        = x_p,
+        eye_pos        = version,          # conjugate version — used by most panels
+        eye_pos_L      = eye_pos_L,        # per-eye: left
+        eye_pos_R      = eye_pos_R,        # per-eye: right
+        vergence       = vergence,         # L − R (deg); positive = converged
+        x_verg         = x_verg,           # vergence integrator state
         eye_vel        = w_eye,
         w_est          = w_est,
         x_ni           = x_ni,
@@ -285,6 +307,7 @@ _PANEL_LABELS = {
     'saccade_burst':     'Burst u_burst (deg/s)',
     'pursuit_drive':     'Pursuit drive (deg/s)',
     'refractory':        'Refractory z_ref',
+    'vergence':          'Vergence angle (deg)',
 }
 
 
@@ -306,7 +329,15 @@ def _draw_panel(ax, panel_name: str, t: np.ndarray, sig: dict,
     target_yaw_deg = np.degrees(np.arctan(pt[:, 0]))
 
     if panel_name == 'eye_position':
-        ax.plot(t, ep[:, 0],  color=_C['eye'],    lw=1.2, label='Eye yaw')
+        # Show L and R eyes separately if they differ meaningfully (binocular scenario)
+        ep_L = sig['eye_pos_L']
+        ep_R = sig['eye_pos_R']
+        bino_spread = np.max(np.abs(ep_L[:, 0] - ep_R[:, 0]))
+        if bino_spread > 0.5:   # binocular — show L/R individually
+            ax.plot(t, ep_L[:, 0], color='#2166ac', lw=1.2, label='L eye')
+            ax.plot(t, ep_R[:, 0], color='#d6604d', lw=1.2, label='R eye')
+        else:
+            ax.plot(t, ep[:, 0], color=_C['eye'], lw=1.2, label='Eye yaw (version)')
         ax.plot(t, target_yaw_deg, color=_C['target'], lw=1.0, ls='--', label='Target')
         ax.legend(fontsize=6, loc='upper right')
         ax.set_ylabel('Eye / target position (deg)', fontsize=8)
@@ -351,6 +382,16 @@ def _draw_panel(ax, panel_name: str, t: np.ndarray, sig: dict,
         ax.plot(t, sig['z_ref'], color=_C['ref'], lw=1.2, label='z_ref (OPN)')
         ax.axhline(scenario.patient.g_burst * 0.0 + 0.5, color='k', lw=0.6, ls='--', alpha=0.4)
         ax.legend(fontsize=6, loc='upper right')
+
+    elif panel_name == 'vergence':
+        ax.plot(t, sig['vergence'][:, 0],  color='#1b7837', lw=1.5, label='Vergence (L−R)')
+        ax.plot(t, sig['x_verg'][:, 0],    color='#762a83', lw=1.0, ls=':', label='x_verg state')
+        phoria_val = scenario.patient.phoria[0]
+        if abs(phoria_val) > 0.1:
+            ax.axhline(phoria_val, color='#ff8c00', lw=1.0, ls='--',
+                       label=f'Phoria ({phoria_val:+.1f}°)')
+        ax.legend(fontsize=6, loc='upper right')
+        ax.set_ylabel('Vergence angle (deg)', fontsize=8)
 
     # Enforce a minimum visible range on velocity / derivative panels
     if panel_name in ('eye_velocity', 'head_velocity', 'saccade_burst', 'pursuit_drive'):
@@ -523,6 +564,9 @@ def _build_comparison_figure(
 
             elif panel == 'refractory':
                 ax.plot(t, sig['z_ref'], color=color, ls=ls, lw=1.5, label=label)
+
+            elif panel == 'vergence':
+                ax.plot(t, sig['vergence'][:, 0], color=color, ls=ls, lw=1.5, label=label)
 
             elif panel == 'gaze_error':
                 dt = t[1] - t[0]

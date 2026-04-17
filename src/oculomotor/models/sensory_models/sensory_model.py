@@ -190,10 +190,18 @@ def read_outputs(x_sensory, scene_present, sensory_params):
     gate_R = (_retina.C_gate @ x_vis_R)[0]
 
     # Brain-facing averages
-    slip_avg = 0.5 * (slip_L + slip_R)
-    pos_avg  = 0.5 * (pos_L  + pos_R)
-    vel_avg  = 0.5 * (vel_L  + vel_R)
-    gate_avg = 0.5 * (gate_L + gate_R)
+    # vel_delayed / pos_delayed / gate_vf: gate-weighted average so that a covered
+    # eye (gate=0) contributes nothing and the open eye delivers its full signal.
+    #   Both eyes open (gate≈1 each): weighted avg = simple avg  (unchanged)
+    #   One  eye covered (gate=0):    weighted avg = full signal from open eye
+    #   Neither visible  (both=0):    norm→0 → slip/vel/pos = 0
+    # slip_delayed is scene-based (not gated by target_present), so simple average.
+    gate_sum = gate_L + gate_R
+    norm     = jnp.maximum(gate_sum, 1e-6)   # avoid div-by-zero; result is 0 anyway when both=0
+    slip_avg = 0.5 * (slip_L + slip_R)       # scene signal — both eyes see the scene equally
+    pos_avg  = (gate_L * pos_L + gate_R * pos_R) / norm
+    vel_avg  = (gate_L * vel_L + gate_R * vel_R) / norm
+    gate_avg = jnp.clip(gate_sum, 0.0, 1.0)  # 1 if at least one eye has target in field
 
     return SensoryOutput(
         canal          = canal_out,
@@ -218,27 +226,29 @@ def read_outputs(x_sensory, scene_present, sensory_params):
 # ── Combined step ───────────────────────────────────────────────────────────────
 
 def step(x_sensory, q_head, w_head, a_head, q_eye_L, w_eye_L, q_eye_R, w_eye_R,
-         w_scene, v_target, p_target, scene_present, target_present, sensory_params):
+         w_scene, v_target, p_target, scene_present, target_present_L, target_present_R,
+         sensory_params):
     """Single ODE step for the sensory subsystem (canal + otolith + visual delay).
 
     Computes retinal signals for each eye using IPD geometry, then advances
     the canal, otolith, and two visual delay cascades (one per eye).
 
     Args:
-        x_sensory:      (818,)  sensory state [x_c(12)|x_oto(6)|x_vis_L(400)|x_vis_R(400)]
-        q_head:         (3,)    head angular position (deg)
-        w_head:         (3,)    head angular velocity (deg/s)
-        a_head:         (3,)    head linear acceleration (m/s²)
-        q_eye_L:        (3,)    left  eye angular position — plant state (deg)
-        w_eye_L:        (3,)    left  eye angular velocity — plant derivative (deg/s)
-        q_eye_R:        (3,)    right eye angular position — plant state (deg)
-        w_eye_R:        (3,)    right eye angular velocity — plant derivative (deg/s)
-        w_scene:        (3,)    scene angular velocity (deg/s)
-        v_target:       (3,)    target angular velocity in world frame (deg/s)
-        p_target:       (3,)    Cartesian target position (world frame)
-        scene_present:  scalar  0=dark, 1=lit — gates retinal slip
-        target_present: scalar  0=no target, 1=present — gates e_vel, e_pos_vis, gate_vf
-        sensory_params: SensoryParams  model parameters
+        x_sensory:        (818,)  sensory state [x_c(12)|x_oto(6)|x_vis_L(400)|x_vis_R(400)]
+        q_head:           (3,)    head angular position (deg)
+        w_head:           (3,)    head angular velocity (deg/s)
+        a_head:           (3,)    head linear acceleration (m/s²)
+        q_eye_L:          (3,)    left  eye angular position — plant state (deg)
+        w_eye_L:          (3,)    left  eye angular velocity — plant derivative (deg/s)
+        q_eye_R:          (3,)    right eye angular position — plant state (deg)
+        w_eye_R:          (3,)    right eye angular velocity — plant derivative (deg/s)
+        w_scene:          (3,)    scene angular velocity (deg/s)
+        v_target:         (3,)    target angular velocity in world frame (deg/s)
+        p_target:         (3,)    Cartesian target position (world frame)
+        scene_present:    scalar  0=dark, 1=lit — gates retinal slip
+        target_present_L: scalar  0=L eye covered, 1=L eye sees target — gates e_vel/e_pos/gate_vf L
+        target_present_R: scalar  0=R eye covered, 1=R eye sees target — gates e_vel/e_pos/gate_vf R
+        sensory_params:   SensoryParams  model parameters
 
     Returns:
         dx_sensory:     (818,)  dx_sensory/dt
@@ -270,14 +280,15 @@ def step(x_sensory, q_head, w_head, a_head, q_eye_L, w_eye_L, q_eye_R, w_eye_R,
         p_target_R, q_head, w_head, q_eye_R, w_eye_R, w_scene, v_target, scene_present,
         sensory_params.visual_field_limit, sensory_params.k_visual_field)
 
-    # Gate target-dependent signals by target_present so that when there is no
-    # foveal target, vel_delayed, pos_delayed, and gate_vf all decay to zero.
-    e_pos_vis_L = target_present * e_pos_vis_L
-    e_vel_L     = target_present * e_vel_L
-    gate_vf_L   = target_present * gate_vf_L
-    e_pos_vis_R = target_present * e_pos_vis_R
-    e_vel_R     = target_present * e_vel_R
-    gate_vf_R   = target_present * gate_vf_R
+    # Gate target-dependent signals per-eye so that when an eye is covered (or has
+    # no foveal target), vel_delayed, pos_delayed, and gate_vf all decay to zero
+    # for that eye independently.  target_present_L/R = 0 simulates a cover test.
+    e_pos_vis_L = target_present_L * e_pos_vis_L
+    e_vel_L     = target_present_L * e_vel_L
+    gate_vf_L   = target_present_L * gate_vf_L
+    e_pos_vis_R = target_present_R * e_pos_vis_R
+    e_vel_R     = target_present_R * e_vel_R
+    gate_vf_R   = target_present_R * gate_vf_R
 
     dx_c,     y_canals  = _canal.step(x_c,   w_head, sensory_params)
     dx_oto,   _         = _otolith.step(x_oto, jnp.concatenate([a_head, q_head]), sensory_params)
