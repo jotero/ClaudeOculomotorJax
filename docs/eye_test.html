@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Eye Movement Test</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #1a1a2e; color: #e0e0e0;
+         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+         display: flex; flex-direction: column; align-items: center;
+         padding: 24px; min-height: 100vh; }
+  h1 { font-size: 1.2rem; margin-bottom: 6px; color: #fff; }
+  p  { font-size: 0.8rem; color: #888; margin-bottom: 16px; }
+  #canvas-wrap { width: 640px; height: 480px; border-radius: 10px;
+                 border: 1px solid #2a2d3a; overflow: hidden; }
+  canvas { width: 100%; height: 100%; display: block; }
+  .controls { margin-top: 18px; display: flex; flex-direction: column;
+              gap: 10px; width: 640px; }
+  .row { display: flex; align-items: center; gap: 12px; }
+  label { font-size: 0.82rem; color: #aaa; width: 140px; flex-shrink: 0; }
+  input[type=range] { flex: 1; accent-color: #4a6cf7; }
+  .val { font-size: 0.82rem; color: #7ab3f7; width: 50px; text-align: right;
+         font-family: monospace; }
+  .mode-row { display: flex; gap: 10px; margin-top: 6px; }
+  button {
+    background: #22253a; border: 1px solid #2a2d3a; color: #aaa;
+    border-radius: 8px; padding: 7px 18px; cursor: pointer;
+    font-size: 0.82rem; transition: all 0.15s;
+  }
+  button:hover { background: #2a2e45; color: #ddd; border-color: #4a6cf7; }
+  button.active { background: #4a6cf7; color: #fff; border-color: #4a6cf7; }
+</style>
+</head>
+<body>
+
+<h1>Eye Movement Test — Ready Player Me Avatar</h1>
+<p>Isolated eye-bone control via Three.js · no simulation attached yet</p>
+
+<div id="canvas-wrap"><canvas id="c"></canvas></div>
+
+<div class="controls">
+  <div class="row">
+    <label>Yaw (left/right)</label>
+    <input type="range" id="yaw" min="-30" max="30" value="0" step="0.5">
+    <span class="val" id="yaw-v">0°</span>
+  </div>
+  <div class="row">
+    <label>Pitch (up/down)</label>
+    <input type="range" id="pitch" min="-20" max="20" value="0" step="0.5">
+    <span class="val" id="pitch-v">0°</span>
+  </div>
+  <div class="row">
+    <label>Conjugate / Vergence</label>
+    <input type="range" id="verg" min="-15" max="15" value="0" step="0.5">
+    <span class="val" id="verg-v">0°</span>
+  </div>
+
+  <div class="mode-row">
+    <button id="btn-still"  class="active" onclick="setMode('still')">Still</button>
+    <button id="btn-saccade"            onclick="setMode('saccade')">Saccade demo</button>
+    <button id="btn-nystagmus"          onclick="setMode('nystagmus')">Nystagmus demo</button>
+    <button id="btn-pursuit"            onclick="setMode('pursuit')">Pursuit demo</button>
+    <button id="btn-vergence"           onclick="setMode('vergence')">Vergence demo</button>
+    <button id="btn-reset"              onclick="resetCamera()" style="margin-left:auto">Reset view</button>
+  </div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three":          "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js",
+    "three/addons/":  "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE        from 'three';
+import { GLTFLoader }    from 'three/addons/loaders/GLTFLoader.js';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// ── Scene setup ──────────────────────────────────────────────────────────────
+const canvas   = document.getElementById('c');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(window.devicePixelRatio);
+renderer.setSize(640, 480);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+
+const scene  = new THREE.Scene();
+scene.background = new THREE.Color(0x111118);
+
+const camera = new THREE.PerspectiveCamera(28, 640 / 480, 0.001, 10000);
+camera.position.set(0, 0, 1);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping  = true;
+controls.dampingFactor  = 0.08;
+controls.enablePan      = true;   // right-click drag to pan
+
+// Lighting
+scene.add(new THREE.AmbientLight(0xffffff, 0.7));
+const key = new THREE.DirectionalLight(0xffffff, 1.4);
+key.position.set(1, 3, 2);
+scene.add(key);
+const fill = new THREE.DirectionalLight(0x8899ff, 0.4);
+fill.position.set(-2, 1, 1);
+scene.add(fill);
+
+// ── Load avatar ───────────────────────────────────────────────────────────────
+let leftEyeBone  = null;
+let rightEyeBone = null;
+
+// Store rest rotations (set after model loads)
+let restL = null, restR = null;
+
+const loader = new GLTFLoader();
+loader.load(
+  'ready_player_me_male_avatar__vrchatgame_ready/scene.gltf',
+  (gltf) => {
+    const model = gltf.scene;
+    scene.add(model);
+
+    // Walk the skeleton to find eye bones
+    model.traverse(obj => {
+      if (obj.isBone || obj.isObject3D) {
+        if (obj.name === 'LeftEye_08')  leftEyeBone  = obj;
+        if (obj.name === 'RightEye_09') rightEyeBone = obj;
+      }
+    });
+
+    if (leftEyeBone && rightEyeBone) {
+      restL = leftEyeBone.rotation.clone();
+      restR = rightEyeBone.rotation.clone();
+      console.log('Eye bones found. Rest L:', restL, ' Rest R:', restR);
+    } else {
+      console.warn('Eye bones not found — check node names.');
+    }
+
+    // Auto-fit camera to the model's actual bounding box
+    const box    = new THREE.Box3().setFromObject(model);
+    const size   = box.getSize(new THREE.Vector3());
+    const center = box.getCenter(new THREE.Vector3());
+    console.log('Model bounding box — size:', size, ' center:', center);
+
+    // Aim at the top 15% of the model (face area)
+    const faceY      = box.min.y + size.y * 0.93;
+    const faceTarget = new THREE.Vector3(center.x, faceY, center.z);
+
+    const dist = size.y * 0.18;
+    camera.position.set(center.x, faceY, center.z + dist);
+    camera.near = size.y * 0.001;
+    camera.far  = size.y * 20;
+    camera.updateProjectionMatrix();
+
+    controls.target.copy(faceTarget);
+    controls.update();
+  },
+  undefined,
+  (err) => console.error('GLTF load error:', err)
+);
+
+// ── Eye rotation helper ───────────────────────────────────────────────────────
+// yawL, yawR, pitch all in degrees
+// Positive yaw = eye turns LEFT in world space (rightward gaze)
+// Positive pitch = eye turns UP
+function setEyeAngles(yawL_deg, yawR_deg, pitch_deg) {
+  if (!leftEyeBone || !rightEyeBone) return;
+  const toRad = Math.PI / 180;
+  leftEyeBone.rotation.set(
+    restL.x + pitch_deg * toRad,
+    restL.y + yawL_deg  * toRad,
+    restL.z
+  );
+  rightEyeBone.rotation.set(
+    restR.x + pitch_deg * toRad,
+    restR.y + yawR_deg  * toRad,
+    restR.z
+  );
+}
+
+// ── Sliders ───────────────────────────────────────────────────────────────────
+const sliderYaw   = document.getElementById('yaw');
+const sliderPitch = document.getElementById('pitch');
+const sliderVerg  = document.getElementById('verg');
+
+function sliderUpdate() {
+  const yaw  = parseFloat(sliderYaw.value);
+  const pit  = parseFloat(sliderPitch.value);
+  const verg = parseFloat(sliderVerg.value);
+  document.getElementById('yaw-v').textContent   = yaw.toFixed(1)  + '°';
+  document.getElementById('pitch-v').textContent = pit.toFixed(1)  + '°';
+  document.getElementById('verg-v').textContent  = verg.toFixed(1) + '°';
+  // Left eye: yaw + vergence/2 (converges inward = positive for left eye)
+  // Right eye: yaw - vergence/2
+  setEyeAngles(yaw + verg / 2, yaw - verg / 2, pit);
+}
+sliderYaw.addEventListener('input', sliderUpdate);
+sliderPitch.addEventListener('input', sliderUpdate);
+sliderVerg.addEventListener('input', sliderUpdate);
+
+// ── Demo animations ───────────────────────────────────────────────────────────
+let mode = 'still';
+let t0   = null;
+
+window.resetCamera = function() {
+  const box    = new THREE.Box3().setFromObject(scene);
+  const size   = box.getSize(new THREE.Vector3());
+  const center = box.getCenter(new THREE.Vector3());
+  const faceY  = box.min.y + size.y * 0.93;
+  const target = new THREE.Vector3(center.x, faceY, center.z);
+  controls.target.copy(target);
+  camera.position.set(center.x, faceY, center.z + size.y * 0.18);
+  controls.update();
+};
+
+window.setMode = function(m) {
+  mode = m;
+  t0   = null;
+  // Update button styles
+  ['still','saccade','nystagmus','pursuit','vergence'].forEach(id => {
+    document.getElementById('btn-' + id).classList.toggle('active', id === m);
+  });
+  // Reset sliders when going manual
+  if (m === 'still') {
+    sliderYaw.value = 0; sliderPitch.value = 0; sliderVerg.value = 0;
+    sliderUpdate();
+  }
+};
+
+function runDemo(elapsed) {
+  const s = elapsed / 1000;  // seconds
+
+  if (mode === 'saccade') {
+    // Staircase saccades: step every 0.6 s through [-20, -10, 0, 10, 20]
+    const steps  = [-20, -10, 0, 10, 20, 10, 0, -10];
+    const period = 0.6;
+    const idx    = Math.floor(s / period) % steps.length;
+    const yaw    = steps[idx];
+    setEyeAngles(yaw, yaw, 0);
+    sliderYaw.value = yaw; sliderPitch.value = 0; sliderVerg.value = 0;
+    document.getElementById('yaw-v').textContent   = yaw.toFixed(1) + '°';
+    document.getElementById('pitch-v').textContent = '0.0°';
+    document.getElementById('verg-v').textContent  = '0.0°';
+
+  } else if (mode === 'nystagmus') {
+    // Sawtooth: slow phase drifts left, fast phase resets right (VOR-like)
+    const cycleDur = 1.2;
+    const phase    = (s % cycleDur) / cycleDur;
+    let yaw;
+    if (phase < 0.85) {
+      yaw = -15 + phase / 0.85 * 30;   // slow drift: -15 → +15 deg
+    } else {
+      yaw = 15 - (phase - 0.85) / 0.15 * 30;  // fast reset
+    }
+    setEyeAngles(yaw, yaw, 0);
+    sliderYaw.value = yaw;
+    document.getElementById('yaw-v').textContent = yaw.toFixed(1) + '°';
+
+  } else if (mode === 'pursuit') {
+    // Sinusoidal smooth pursuit, 0.4 Hz
+    const yaw = 18 * Math.sin(2 * Math.PI * 0.4 * s);
+    const pit = 8  * Math.sin(2 * Math.PI * 0.2 * s);
+    setEyeAngles(yaw, yaw, pit);
+    sliderYaw.value   = yaw; sliderPitch.value = pit;
+    document.getElementById('yaw-v').textContent   = yaw.toFixed(1) + '°';
+    document.getElementById('pitch-v').textContent = pit.toFixed(1) + '°';
+
+  } else if (mode === 'vergence') {
+    // Vergence oscillation: eyes converge and diverge
+    const verg = 12 * Math.sin(2 * Math.PI * 0.3 * s);
+    setEyeAngles(verg / 2, -verg / 2, 0);
+    sliderVerg.value = verg;
+    document.getElementById('verg-v').textContent = verg.toFixed(1) + '°';
+  }
+}
+
+// ── Render loop ───────────────────────────────────────────────────────────────
+function animate(timestamp) {
+  requestAnimationFrame(animate);
+  if (mode !== 'still') {
+    if (t0 === null) t0 = timestamp;
+    runDemo(timestamp - t0);
+  }
+  controls.update();
+  renderer.render(scene, camera);
+}
+requestAnimationFrame(animate);
+</script>
+</body>
+</html>

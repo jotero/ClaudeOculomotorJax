@@ -28,8 +28,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from oculomotor import __version__ as _SIM_VERSION
@@ -113,18 +114,54 @@ class RunRequest(BaseModel):
 
 
 class RunResponse(BaseModel):
-    image_b64:  str
-    mode:       str       # 'single' or 'comparison'
-    title:      str
-    detail_json: dict
-    run_id:     str
-    version:    str
+    image_b64:       str
+    mode:            str        # 'single' or 'comparison'
+    title:           str
+    detail_json:     dict
+    run_id:          str
+    version:         str
+    eye_trajectory:  dict | None = None   # downsampled L/R eye positions for 3D animation
 
 
 class FeedbackRequest(BaseModel):
     run_id:        str
     looks_correct: bool
     comment:       str = ''
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _build_eye_trajectory(sim_data: dict, fps: int = 60) -> dict | None:
+    """Downsample per-eye position arrays for web animation.
+
+    Returns a dict with 'fps', 'n_frames', 'duration_s', 'left', 'right'
+    where left/right are lists of [yaw, pitch, roll] in degrees, rounded to
+    2 decimal places.  Kept small enough to embed in the JSON response.
+    """
+    if sim_data is None:
+        return None
+    t  = np.array(sim_data['t'])
+    dt = float(t[1] - t[0]) if len(t) > 1 else 0.001
+    step = max(1, round(1.0 / (fps * dt)))
+
+    L = np.array(sim_data.get('eye_pos_L', sim_data['eye_pos']))[::step]
+    R = np.array(sim_data.get('eye_pos_R', sim_data['eye_pos']))[::step]
+    t_ds = t[::step]
+
+    # Integrate head velocity → head orientation (deg), then downsample
+    dt_orig  = float(t[1] - t[0]) if len(t) > 1 else 0.001
+    hv       = np.array(sim_data['head_vel'])            # (T, 3) deg/s
+    head_pos = np.cumsum(hv * dt_orig, axis=0)           # (T, 3) deg
+    head_ds  = head_pos[::step]
+
+    return dict(
+        fps        = fps,
+        n_frames   = int(len(t_ds)),
+        duration_s = round(float(t_ds[-1]), 3),
+        left  = [[round(float(v), 2) for v in row] for row in L.tolist()],
+        right = [[round(float(v), 2) for v in row] for row in R.tolist()],
+        head  = [[round(float(v), 2) for v in row] for row in head_ds.tolist()],
+    )
 
 
 # ── API endpoints ─────────────────────────────────────────────────────────────
@@ -178,12 +215,13 @@ async def run_endpoint(req: RunRequest):
         })
 
         return RunResponse(
-            image_b64   = img_b64,
-            mode        = mode,
-            title       = title,
-            detail_json = detail,
-            run_id      = run_id,
-            version     = _SIM_VERSION,
+            image_b64      = img_b64,
+            mode           = mode,
+            title          = title,
+            detail_json    = detail,
+            run_id         = run_id,
+            version        = _SIM_VERSION,
+            eye_trajectory = _build_eye_trajectory(sim_data) if mode == 'single' else None,
         )
 
     except Exception as e:
@@ -249,267 +287,10 @@ async def download_endpoint(run_id: str):
     )
 
 
-# ── Frontend ──────────────────────────────────────────────────────────────────
+# ── Serve docs/ as the frontend (must be last — catches all unmatched routes) ──
 
-HTML = """<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>OculomotorSim</title>
-<style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    background: #0f1117; color: #e0e0e0;
-    min-height: 100vh; display: flex; flex-direction: column;
-    align-items: center; padding: 40px 20px;
-  }
-  h1 { font-size: 1.6rem; font-weight: 600; margin-bottom: 6px; color: #fff; }
-  .subtitle { font-size: 0.85rem; color: #888; margin-bottom: 32px; }
-  .card {
-    background: #1a1d27; border: 1px solid #2a2d3a;
-    border-radius: 12px; padding: 28px; width: 100%; max-width: 820px;
-    margin-bottom: 20px;
-  }
-  .input-row { display: flex; gap: 10px; }
-  textarea {
-    flex: 1; background: #0f1117; border: 1px solid #2a2d3a;
-    border-radius: 8px; color: #e0e0e0; font-size: 0.95rem;
-    padding: 12px 14px; resize: vertical; min-height: 80px;
-    outline: none; transition: border-color 0.2s; font-family: inherit;
-  }
-  textarea:focus { border-color: #4a6cf7; }
-  button {
-    background: #4a6cf7; border: none; border-radius: 8px; color: #fff;
-    cursor: pointer; font-size: 0.95rem; font-weight: 600; padding: 0 22px;
-    transition: background 0.2s, opacity 0.2s; white-space: nowrap;
-    align-self: flex-end; height: 44px;
-  }
-  button:hover { background: #3a5ce0; }
-  button:disabled { opacity: 0.45; cursor: not-allowed; }
-  button.secondary {
-    background: #22253a; border: 1px solid #2a2d3a; color: #aaa;
-    font-weight: 500;
-  }
-  button.secondary:hover { background: #2a2e45; color: #ddd; border-color: #4a6cf7; }
-  button.success { background: #1a6e3a; }
-  button.success:hover { background: #16593a; }
-  .examples { margin-top: 16px; display: flex; flex-wrap: wrap; gap: 8px; }
-  .example-chip {
-    background: #22253a; border: 1px solid #2a2d3a; border-radius: 20px;
-    color: #aaa; cursor: pointer; font-size: 0.78rem; padding: 5px 13px;
-    transition: all 0.15s;
-  }
-  .example-chip:hover { border-color: #4a6cf7; color: #ccc; background: #1e2135; }
-  .status { margin-top: 18px; font-size: 0.85rem; color: #888; min-height: 1.2em; }
-  .status.error { color: #f07070; }
-  .mode-badge {
-    display: inline-block; font-size: 0.72rem; font-weight: 600;
-    padding: 2px 8px; border-radius: 10px; margin-right: 6px;
-    vertical-align: middle;
-  }
-  .mode-single     { background: #1e3a6e; color: #7ab3f7; }
-  .mode-comparison { background: #1a3a28; color: #6fcf97; }
-  .version-tag {
-    display: inline-block; font-size: 0.68rem; color: #555;
-    font-family: monospace; margin-left: 8px; vertical-align: middle;
-  }
-  .result { margin-top: 24px; display: none; }
-  .result img { width: 100%; border-radius: 8px; border: 1px solid #2a2d3a; }
-  details { margin-top: 16px; border: 1px solid #2a2d3a; border-radius: 8px; overflow: hidden; }
-  summary { cursor: pointer; padding: 10px 14px; font-size: 0.82rem; color: #888; background: #151820; user-select: none; }
-  summary:hover { color: #ccc; }
-  pre { background: #0f1117; color: #a0c0a0; font-size: 0.75rem; overflow-x: auto; padding: 14px; max-height: 320px; }
-
-  /* Feedback section */
-  .feedback-section {
-    margin-top: 20px; padding: 18px; background: #151820;
-    border: 1px solid #2a2d3a; border-radius: 10px; display: none;
-  }
-  .feedback-section h3 { font-size: 0.9rem; color: #ccc; margin-bottom: 12px; }
-  .feedback-row { display: flex; align-items: flex-start; gap: 16px; flex-wrap: wrap; }
-  .checkbox-label {
-    display: flex; align-items: center; gap: 7px;
-    font-size: 0.88rem; color: #aaa; cursor: pointer; user-select: none;
-    white-space: nowrap; padding-top: 6px;
-  }
-  .checkbox-label input[type=checkbox] { width: 16px; height: 16px; accent-color: #4a6cf7; cursor: pointer; }
-  .feedback-comment {
-    flex: 1; min-width: 200px;
-    background: #0f1117; border: 1px solid #2a2d3a; border-radius: 6px;
-    color: #e0e0e0; font-size: 0.85rem; padding: 8px 10px;
-    resize: vertical; min-height: 60px; outline: none; font-family: inherit;
-    transition: border-color 0.2s;
-  }
-  .feedback-comment:focus { border-color: #4a6cf7; }
-  .feedback-actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-top: 12px; }
-  .feedback-disclaimer {
-    font-size: 0.72rem; color: #555; margin-top: 8px; line-height: 1.5;
-  }
-  .feedback-confirm { font-size: 0.82rem; color: #6fcf97; display: none; margin-top: 6px; }
-
-  .spinner {
-    display: inline-block; width: 14px; height: 14px;
-    border: 2px solid #4a6cf7; border-top-color: transparent;
-    border-radius: 50%; animation: spin 0.7s linear infinite;
-    margin-right: 8px; vertical-align: middle;
-  }
-  @keyframes spin { to { transform: rotate(360deg); } }
-</style>
-</head>
-<body>
-
-<h1>OculomotorSim</h1>
-<p class="subtitle">Describe a scenario or comparison — the model figures out what to simulate.</p>
-
-<div class="card">
-  <div class="input-row">
-    <textarea id="prompt" placeholder="e.g. &quot;VOR in the dark with left vestibular neuritis&quot; or &quot;compare healthy vs cerebellar deficit on a head impulse test&quot;"></textarea>
-    <button id="btn" onclick="run()">Run</button>
-  </div>
-
-  <div class="examples">
-    <span class="example-chip" onclick="set('Healthy 20° saccade to the right')">Healthy 20° saccade</span>
-    <span class="example-chip" onclick="set('Left vestibular neuritis doing a head impulse test to the right')">Left neuritis HIT</span>
-    <span class="example-chip" onclick="set('OKN: 30 deg/s full-field scene motion for 20 s, then OKAN')">OKN + OKAN</span>
-    <span class="example-chip" onclick="set('Smooth pursuit of a 20 deg/s ramp target')">Smooth pursuit</span>
-    <span class="example-chip" onclick="set('Cerebellar gaze-holding deficit, gaze-evoked nystagmus at 15 degrees')">Cerebellar GEN</span>
-    <span class="example-chip" onclick="set('Compare healthy vs left vestibular neuritis on a rightward head impulse test')">Compare: healthy vs neuritis</span>
-    <span class="example-chip" onclick="set('Compare healthy vs cerebellar deficit vs bilateral vestibular loss on VOR in the dark')">Compare: 3-way VOR</span>
-    <span class="example-chip" onclick="set('Compare healthy vs pursuit deficit on a 20 deg/s ramp target')">Compare: pursuit deficit</span>
-  </div>
-
-  <div class="status" id="status"></div>
-
-  <div class="result" id="result">
-    <img id="plot" src="" alt="Simulation plot">
-
-    <!-- Feedback section -->
-    <div class="feedback-section" id="feedback-section">
-      <h3>Feedback</h3>
-      <div class="feedback-row">
-        <label class="checkbox-label">
-          <input type="checkbox" id="looks-correct"> Simulation looks correct
-        </label>
-        <textarea class="feedback-comment" id="feedback-comment"
-                  placeholder="Optional: notes on what looks right or wrong…"></textarea>
-      </div>
-      <div class="feedback-actions">
-        <button class="secondary" id="submit-feedback-btn" onclick="submitFeedback()">Submit feedback</button>
-        <button class="secondary" id="download-btn" onclick="downloadData()" style="display:none">
-          &#8681; Download data (CSV)
-        </button>
-      </div>
-      <p class="feedback-disclaimer">
-        Feedback is recorded anonymously (prompt, result, your notes). No IP address or personal
-        information is stored. Data is used only for research quality assessment.
-      </p>
-      <p class="feedback-confirm" id="feedback-confirm">&#10003; Feedback saved — thank you!</p>
-    </div>
-
-    <details><summary>JSON</summary><pre id="json-out"></pre></details>
-  </div>
-</div>
-
-<script>
-let _currentRunId = null;
-let _currentMode  = null;
-
-function set(text) { document.getElementById('prompt').value = text; }
-
-async function run() {
-  const prompt = document.getElementById('prompt').value.trim();
-  if (!prompt) return;
-  const btn    = document.getElementById('btn');
-  const status = document.getElementById('status');
-  const result = document.getElementById('result');
-
-  btn.disabled = true;
-  result.style.display = 'none';
-  document.getElementById('feedback-section').style.display = 'none';
-  document.getElementById('feedback-confirm').style.display = 'none';
-  document.getElementById('looks-correct').checked = false;
-  document.getElementById('feedback-comment').value = '';
-  status.className = 'status';
-  status.innerHTML = '<span class="spinner"></span>Thinking…';
-
-  try {
-    const resp = await fetch('/run', {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({description: prompt}),
-    });
-    if (!resp.ok) { const e = await resp.json(); throw new Error(e.error || 'HTTP ' + resp.status); }
-    const data = await resp.json();
-
-    _currentRunId = data.run_id;
-    _currentMode  = data.mode;
-
-    document.getElementById('plot').src = 'data:image/png;base64,' + data.image_b64;
-    document.getElementById('json-out').textContent = JSON.stringify(data.detail_json, null, 2);
-    result.style.display = 'block';
-
-    const badge = data.mode === 'comparison'
-      ? '<span class="mode-badge mode-comparison">comparison</span>'
-      : '<span class="mode-badge mode-single">single</span>';
-    const vtag = '<span class="version-tag">v' + data.version + '</span>';
-    status.innerHTML = badge + data.title + vtag;
-
-    // Show feedback section
-    document.getElementById('feedback-section').style.display = 'block';
-    // Show download button only for single runs
-    document.getElementById('download-btn').style.display =
-      (data.mode === 'single') ? 'inline-block' : 'none';
-
-  } catch(e) {
-    status.className = 'status error';
-    status.textContent = 'Error: ' + e.message;
-  } finally { btn.disabled = false; }
-}
-
-async function submitFeedback() {
-  if (!_currentRunId) return;
-  const btn     = document.getElementById('submit-feedback-btn');
-  const confirm = document.getElementById('feedback-confirm');
-  btn.disabled  = true;
-  try {
-    const resp = await fetch('/feedback', {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({
-        run_id:        _currentRunId,
-        looks_correct: document.getElementById('looks-correct').checked,
-        comment:       document.getElementById('feedback-comment').value,
-      }),
-    });
-    if (!resp.ok) throw new Error('Failed to save feedback');
-    confirm.style.display = 'block';
-    btn.textContent = 'Feedback saved';
-    btn.className   = 'secondary success';
-  } catch(e) {
-    confirm.style.display = 'block';
-    confirm.style.color   = '#f07070';
-    confirm.textContent   = 'Error saving feedback — please try again.';
-    btn.disabled = false;
-  }
-}
-
-function downloadData() {
-  if (!_currentRunId) return;
-  window.location.href = '/download/' + _currentRunId;
-}
-
-document.getElementById('prompt').addEventListener('keydown', e => {
-  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) run();
-});
-</script>
-</body>
-</html>
-"""
-
-
-@app.get('/', response_class=HTMLResponse)
-async def index():
-    return HTML
+_DOCS_DIR = Path(__file__).parent.parent / 'docs'
+app.mount('/', StaticFiles(directory=str(_DOCS_DIR), html=True), name='frontend')
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
