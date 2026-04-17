@@ -195,12 +195,13 @@ def ODE_ocular_motor(t, state, args):
     p_target      = target_interp.evaluate(t)          # (3,) Cartesian target position
     v_target      = vt_interp.evaluate(t)              # (3,) target angular velocity (deg/s)
     scene_present  = scene_present_interp.evaluate(t)         # scalar: 0=dark, 1=lit
-    target_present = target_present_interp.evaluate(t)        # scalar: 0=no target, 1=present
+    target_present = target_present_interp.evaluate(t)        # scalar: gates vel_delayed in retina
 
     # ── Sensory: read bundled outputs for brain ───────────────────────────────
     # f_gia from otolith LP state; gate_vf from |pos_delayed|; target selection in SG
+    # target_present not passed — target_visible = gate_vf (retinal geometry)
     sensory_out = sensory_model.read_outputs(
-        state.sensory, scene_present, target_present, theta.sensory)
+        state.sensory, scene_present, theta.sensory)
 
     # ── Sensory noise ─────────────────────────────────────────────────────────
     sensory_out = sensory_out._replace(
@@ -222,7 +223,7 @@ def ODE_ocular_motor(t, state, args):
     # w_eye = dx_plant = w_true (algebraic, no lag) — must follow plant step.
     dx_sensory, _, _, _ = sensory_model.step(
         state.sensory, q_head, w_head, a_head, q_eye, w_eye,
-        w_scene, v_target, p_target, scene_present, theta.sensory)
+        w_scene, v_target, p_target, scene_present, target_present, theta.sensory)
 
     return SimState(
         sensory = dx_sensory,

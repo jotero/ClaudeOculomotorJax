@@ -115,20 +115,25 @@ class SensoryOutput(NamedTuple):
     """Bundled sensory outputs — passed as a unit to brain_model.
 
     Fields:
-        canal:         (N_CANALS,) = (6,)  canal afferent rates (deg/s equiv.)
-        slip_delayed:  (3,)  delayed retinal slip → VS / OKR
-        pos_delayed:   (3,)  delayed retinal position error (raw, deg)
-                             = target_direction − head_position − eye_position, delayed by τ_vis
-        gate_vf:       scalar  visual-field gate: ≈1 when target is in-field, ≈0 when out-of-field
-                               computed from |pos_delayed| vs. visual_field_limit
-        vel_delayed:   (3,)  delayed target velocity on retina → smooth pursuit
-                             Zero when eye perfectly tracks the target.
-        f_otolith:     (3,)  LP-filtered GIA from otolith states → gravity estimator
-                             = PINV_SENS @ x_oto;  at rest upright: [+9.81, 0, 0]
-        scene_present: scalar  0=dark, 1=full visual scene present — gates OKR/VS EC
-        target_present: scalar  0=no target, 1=foveal target present — gates pursuit EC
-                                Set to 0 for pure OKN (full-field motion, no foveal target)
-                                so that scene motion does not drive the pursuit integrator.
+        canal:          (N_CANALS,) = (6,)  canal afferent rates (deg/s equiv.)
+        slip_delayed:   (3,)  delayed retinal slip → VS / OKR
+        pos_delayed:    (3,)  delayed retinal position error (raw, deg)
+                              = target_direction − head_position − eye_position, delayed by τ_vis
+        gate_vf:        scalar  visual-field gate: ≈1 when target is in-field, ≈0 when out-of-field
+                                computed from |pos_delayed| vs. visual_field_limit
+        vel_delayed:    (3,)  delayed target velocity on retina → smooth pursuit
+                              Zero when eye perfectly tracks the target.
+        f_otolith:      (3,)  LP-filtered GIA from otolith states → gravity estimator
+                              = PINV_SENS @ x_oto;  at rest upright: [+9.81, 0, 0]
+        scene_visible:  scalar  sensory estimate of scene visibility — equals the external
+                                scene_present flag (no separate delay cascade for scene gate).
+                                Gates OKR/VS EC correction in brain_model.
+        target_visible: scalar  sensory estimate of target visibility — equals gate_vf
+                                (delayed visual-field gate from retinal geometry).
+                                Gates pursuit EC correction in brain_model.
+                                Distinct from the external target_present flag: that flag
+                                controls what retinal signals are computed (→ sensory step);
+                                this is what the brain actually senses.
 
     Target selection (visual-field clip + centering saccade) is handled inside the
     saccade generator using pos_delayed, gate_vf, and the neural integrator state x_ni
@@ -140,11 +145,11 @@ class SensoryOutput(NamedTuple):
     gate_vf:        jnp.ndarray   # scalar
     vel_delayed:    jnp.ndarray   # (3,)
     f_otolith:      jnp.ndarray   # (3,)
-    scene_present:  jnp.ndarray   # scalar
-    target_present: jnp.ndarray   # scalar
+    scene_visible:  jnp.ndarray   # scalar  (= scene_present input)
+    target_visible: jnp.ndarray   # scalar  (= gate_vf)
 
 
-def read_outputs(x_sensory, scene_present, target_present, sensory_params):
+def read_outputs(x_sensory, scene_present, sensory_params):
     """Read all sensory outputs from the current state (pure state readout).
 
     Reads canal afferents, otolith GIA, delayed visual signals, and the visual-field
@@ -152,14 +157,15 @@ def read_outputs(x_sensory, scene_present, target_present, sensory_params):
     downstream in the saccade generator using the brain's x_ni estimate.
 
     Args:
-        x_sensory:      (378,)  sensory state [x_c (12) | x_oto (6) | x_vis (360)]
+        x_sensory:      (418,)  sensory state [x_c (12) | x_oto (6) | x_vis (400)]
         scene_present:  scalar  0=dark, 1=full visual scene present (OKR/VS gate)
-        target_present: scalar  0=no foveal target, 1=target present (pursuit gate)
         sensory_params: SensoryParams  (reads canal_gains, vf_limit, k_visual_field)
 
     Returns:
         SensoryOutput with fields (canal, slip_delayed, pos_delayed, gate_vf,
-                                   vel_delayed, f_otolith, scene_present, target_present)
+                                   vel_delayed, f_otolith, scene_visible, target_visible)
+        scene_visible  = scene_present (external flag passed through)
+        target_visible = gate_vf       (retinally computed in-field gate; no target_present needed)
     """
     x_c   = x_sensory[_IDX_C]
     x_oto = x_sensory[_IDX_OTO]
@@ -179,37 +185,40 @@ def read_outputs(x_sensory, scene_present, target_present, sensory_params):
         gate_vf        = gate_vf,
         vel_delayed    = vel_delayed,
         f_otolith      = f_gia,
-        scene_present  = scene_present,
-        target_present = target_present,
+        scene_visible  = scene_present,   # external flag passed through
+        target_visible = gate_vf,         # retinally computed in-field gate
     )
 
 
 # ── Combined step ───────────────────────────────────────────────────────────────
 
 def step(x_sensory, q_head, w_head, a_head, q_eye, w_eye,
-         w_scene, v_target, p_target, scene_present, sensory_params):
+         w_scene, v_target, p_target, scene_present, target_present, sensory_params):
     """Single ODE step for the sensory subsystem (canal + otolith + visual delay).
 
     Computes retinal signals internally from world/body state, then advances
     the canal, otolith, and visual delay cascades.
 
     Args:
-        x_sensory:     (378,)  sensory state [x_c (12) | x_oto (6) | x_vis (360)]
-        q_head:        (3,)    head angular position (deg)
-        w_head:        (3,)    head angular velocity (deg/s)
-        a_head:        (3,)    head linear acceleration (m/s²)
-        q_eye:         (3,)    eye angular position — plant state (deg)
-        w_eye:         (3,)    eye angular velocity — plant derivative (deg/s)
-        w_scene:       (3,)    scene angular velocity (deg/s)
-        v_target:      (3,)    target angular velocity in world frame (deg/s)
-                               Used to compute foveal target velocity on retina.
-                               Zero for stationary targets (no pursuit drive).
-        p_target:      (3,)    Cartesian target position
-        scene_present: scalar  0=dark, 1=lit — gates retinal slip
+        x_sensory:      (418,)  sensory state [x_c (12) | x_oto (6) | x_vis (400)]
+        q_head:         (3,)    head angular position (deg)
+        w_head:         (3,)    head angular velocity (deg/s)
+        a_head:         (3,)    head linear acceleration (m/s²)
+        q_eye:          (3,)    eye angular position — plant state (deg)
+        w_eye:          (3,)    eye angular velocity — plant derivative (deg/s)
+        w_scene:        (3,)    scene angular velocity (deg/s)
+        v_target:       (3,)    target angular velocity in world frame (deg/s)
+                                Used to compute foveal target velocity on retina.
+                                Zero for stationary targets (no pursuit drive).
+        p_target:       (3,)    Cartesian target position
+        scene_present:  scalar  0=dark, 1=lit — gates retinal slip
+        target_present: scalar  0=no foveal target, 1=present — gates e_vel, e_pos_vis,
+                                and gate_vf so that when there is no target, vel_delayed,
+                                pos_delayed, and gate_vf all go to zero in the delay cascade.
         sensory_params: SensoryParams  model parameters
 
     Returns:
-        dx_sensory:     (378,)  dx_sensory/dt
+        dx_sensory:     (418,)  dx_sensory/dt
         y_canals:       (6,)    canal afferent firing rates
         e_slip_delayed: (3,)    delayed retinal slip   (for VS / OKR)
         e_pos_delayed:  (3,)    delayed position error (for saccade generator)
@@ -221,6 +230,12 @@ def step(x_sensory, q_head, w_head, a_head, q_eye, w_eye,
     e_pos, e_pos_vis, raw_slip, e_vel, gate_vf = _retina.retinal_signals(
         p_target, q_head, w_head, q_eye, w_eye, w_scene, v_target, scene_present,
         sensory_params.visual_field_limit, sensory_params.k_visual_field)
+
+    # Gate target-dependent signals by target_present so that when there is no
+    # foveal target, vel_delayed, pos_delayed, and gate_vf all decay to zero.
+    e_pos_vis = target_present * e_pos_vis
+    e_vel     = target_present * e_vel
+    gate_vf   = target_present * gate_vf
 
     dx_c,   y_canals                       = _canal.step(x_c,  w_head,                               sensory_params)
     dx_oto, _                              = _otolith.step(x_oto, jnp.concatenate([a_head, q_head]),  sensory_params)

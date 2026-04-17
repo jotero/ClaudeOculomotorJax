@@ -14,12 +14,12 @@ One efference copy cascade (120 states), two uses with different gates:
     motor_ec = ec.read_delayed(x_ec)          # delay(u_burst + u_pursuit)
 
     OKR / VS correction  — scene-gated (full scene slip):
-        e_slip_corrected = slip_delayed + scene_present · motor_ec
+        e_slip_corrected = scene_visible · (slip_delayed + motor_ec)
         slip_delayed ≈ −(u_burst+u_pursuit)(t−τ)  →  corrected ≈ 0  ✓
 
     Pursuit Smith predictor — target-gated (foveal target slip only):
-        e_combined = target_present · (vel_delayed + motor_ec)   ≈ v_target when target on
-        Full signal gated by target_present → zero drive during VOR / OKN / fixation
+        e_combined = target_visible · (vel_delayed + motor_ec)   ≈ v_target when target on
+        Full signal gated by target_visible (= gate_vf) → zero drive when no target in field
         e_vel_pred = (e_combined − x_pursuit) / (1 + K_phasic)
         → at onset:        ~45 % of v_target drives integrator  (less oscillation)
         → at steady state: e_vel_pred → 0  (integrator at rest, u_pursuit ≈ v_target)
@@ -157,7 +157,8 @@ def step(x_brain, sensory_out, brain_params):
                        .e_cmd         (3,)    motor error command for the saccade generator
                        .vel_delayed   (3,)    delayed target velocity on retina → pursuit
                        .f_otolith     (3,)    specific force in head frame (m/s²)
-                       .scene_present scalar  0=dark, 1=lit — gates EC slip correction
+                       .scene_visible scalar  0=dark, 1=lit — gates EC slip correction
+                       .target_visible scalar 0=no target in field, 1=target visible (= gate_vf)
         brain_params: BrainParams   model parameters
 
     Returns:
@@ -175,20 +176,19 @@ def step(x_brain, sensory_out, brain_params):
     # motor_ec = delay(u_burst + u_pursuit) — one cascade, read once, used twice.
     motor_ec = ec.read_delayed(x_ec)
 
-    # OKR / VS: scene-gated — slip and EC correction both gated by scene_present.
-    #   Parallel to the pursuit path (target_present gates vel_delayed + motor_ec).
+    # OKR / VS: scene-gated — slip and EC correction both gated by scene_visible.
+    #   Parallel to the pursuit path (target_visible gates vel_delayed + motor_ec).
     #   When dark: zero visual input to VS; x_vs decays freely with τ_vs → clean OKAN.
     #   When lit:  slip_delayed ≈ −(u_burst+u_pursuit)(t−τ)  →  corrected ≈ 0 ✓
-    e_slip_corrected = sensory_out.scene_present * (sensory_out.slip_delayed + motor_ec)
+    e_slip_corrected = sensory_out.scene_visible * (sensory_out.slip_delayed + motor_ec)
 
     # Pursuit: target-gated — foveal target slip only (excludes VOR, OKN, fixation)
-    #   Gate the *entire* signal by target_present so that when there is no moving
-    #   foveal target (saccade to stationary point, VOR, OKN) the pursuit integrator
-    #   receives zero input.  EC cancellation of saccadic eye motion still works when
-    #   target_present=1: vel_delayed ≈ v_target − w_eye(t−τ), motor_ec ≈ +w_eye(t−τ)
-    #   → e_combined ≈ v_target ✓
+    #   Gate the *entire* signal by target_visible (= gate_vf, delayed in-field gate).
+    #   When target_present=0 in retina step, gate_vf → 0 → target_visible → 0.
+    #   EC cancellation still works: vel_delayed ≈ v_target − w_eye(t−τ),
+    #   motor_ec ≈ +w_eye(t−τ) → e_combined ≈ v_target ✓
     #   Smith predictor lives inside pu.step(): e_pred = (e_combined − x_p)/(1+K_ph)
-    e_combined = sensory_out.target_present * (sensory_out.vel_delayed + motor_ec)
+    e_combined = sensory_out.target_visible * (sensory_out.vel_delayed + motor_ec)
     dx_pursuit, u_pursuit = pu.step(x_pursuit, e_combined, brain_params)
 
     # ── Velocity storage: canal + EC-corrected scene slip + g_hat → ω̂ ─────────
