@@ -260,7 +260,11 @@ function getBackend() {
   if (param) return param.replace(/\/$/, '');
   const stored = localStorage.getItem('oculomotor_backend');
   if (stored) return stored;
-  return 'http://localhost:8000';
+  // Auto-detect: local dev vs remote (GitHub Pages / shared link)
+  const isLocal = ['localhost', '127.0.0.1'].includes(window.location.hostname);
+  return isLocal
+    ? 'http://localhost:8000'
+    : 'https://giggling-confused-thriving.ngrok-free.dev';
 }
 function saveBackend() {
   const val = document.getElementById('backend-url').value.trim().replace(/\/$/, '');
@@ -443,13 +447,15 @@ new GLTFLoader().load(AVATAR_PATH, (gltf) => {
   model.traverse(obj => {
     if (obj.name === 'LeftEye_08')  leftEyeBone  = obj;
     if (obj.name === 'RightEye_09') rightEyeBone = obj;
-    if (obj.name === 'Head_06')     headBone     = obj;
   });
+
+  // Rotate the whole model for head/body movement — avoids neck artifacts
+  headBone = model;
 
   if (leftEyeBone)  restL    = leftEyeBone.rotation.clone();
   if (rightEyeBone) restR    = rightEyeBone.rotation.clone();
-  if (headBone)     restHead = headBone.rotation.clone();
-  console.log('Bones found — head:', !!headBone, 'leftEye:', !!leftEyeBone, 'rightEye:', !!rightEyeBone);
+  restHead = model.rotation.clone();
+  console.log('Bones found — leftEye:', !!leftEyeBone, 'rightEye:', !!rightEyeBone);
   console.log('restHead:', restHead);
 
   // Use actual eye bone world positions for precise camera targeting
