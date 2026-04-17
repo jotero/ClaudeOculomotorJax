@@ -302,12 +302,13 @@ class PlotConfig(BaseModel):
         'velocity_storage', 'neural_integrator',
         'saccade_burst', 'pursuit_drive', 'refractory',
         'vergence',
+        'target_position', 'target_velocity', 'scene_velocity', 'visual_flags',
     ]] = Field(
         description=(
             "Ordered list of panels. Minimal sets:\n"
             "  VOR / HIT:    ['head_velocity', 'eye_velocity', 'eye_position']\n"
-            "  OKN / OKAN:   ['head_velocity', 'eye_velocity', 'eye_position', 'velocity_storage']\n"
-            "  Saccades:     ['eye_position', 'eye_velocity', 'saccade_burst', 'refractory']\n"
+            "  OKN / OKAN:   ['scene_velocity', 'visual_flags', 'eye_velocity', 'eye_position', 'velocity_storage']\n"
+            "  Saccades:     ['target_position', 'eye_position', 'eye_velocity', 'saccade_burst', 'refractory']\n"
             "  Pursuit:      ['eye_position', 'eye_velocity', 'pursuit_drive']\n"
             "  Vergence / cover test: ['eye_position', 'vergence', 'neural_integrator']\n"
             "  Full cascade: all panels"
@@ -463,6 +464,8 @@ class SimulationComparison(BaseModel):
         'eye_position', 'eye_velocity', 'head_velocity', 'gaze_error',
         'retinal_error', 'canal_afferents', 'velocity_storage',
         'neural_integrator', 'saccade_burst', 'pursuit_drive', 'refractory',
+        'vergence',
+        'target_position', 'target_velocity', 'scene_velocity', 'visual_flags',
     ]] = Field(description="Panels applied to all scenarios in the comparison.")
     scenarios: list[SimulationScenario] = Field(
         min_length=2, max_length=4,

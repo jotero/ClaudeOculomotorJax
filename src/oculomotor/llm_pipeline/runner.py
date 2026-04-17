@@ -308,6 +308,11 @@ _PANEL_LABELS = {
     'pursuit_drive':     'Pursuit drive (deg/s)',
     'refractory':        'Refractory z_ref',
     'vergence':          'Vergence angle (deg)',
+    # stimulus panels
+    'target_position':   'Target position (deg)',
+    'target_velocity':   'Target velocity (deg/s)',
+    'scene_velocity':    'Scene velocity (deg/s)',
+    'visual_flags':      'Visual flags',
 }
 
 
@@ -316,17 +321,25 @@ def _draw_panel(ax, panel_name: str, t: np.ndarray, sig: dict,
     """Draw one signal panel onto ax."""
     ax.set_ylabel(_PANEL_LABELS.get(panel_name, panel_name), fontsize=8)
     ax.tick_params(labelsize=7)
-    ax.axhline(0, color=_C['zero'], lw=0.5, ls='--')
 
     ep  = sig['eye_pos']
     ev  = sig['eye_vel']
     ep_d = sig['e_pos_delayed']
 
-    # Head velocity from stim
-    hv = np.array(stim_kw['head_vel_array'])
-    # Target position from stim
-    pt = np.array(stim_kw['p_target_array'])
+    # Stimulus arrays (always available)
+    hv = np.array(stim_kw['head_vel_array'])           # (T, 3) deg/s
+    pt = np.array(stim_kw['p_target_array'])           # (T, 3) Cartesian
+    vt = np.array(stim_kw['v_target_array'])           # (T, 3) deg/s
+    vs = np.array(stim_kw['v_scene_array'])            # (T, 3) deg/s
+    sp = np.array(stim_kw['scene_present_array'])      # (T,)
+    tpL = np.array(stim_kw['target_present_L_array'])  # (T,)
+    tpR = np.array(stim_kw['target_present_R_array'])  # (T,)
+
     target_yaw_deg = np.degrees(np.arctan(pt[:, 0]))
+
+    # Visual-flags panels don't need a zero line; all others do
+    if panel_name != 'visual_flags':
+        ax.axhline(0, color=_C['zero'], lw=0.5, ls='--')
 
     if panel_name == 'eye_position':
         # Show L and R eyes separately if they differ meaningfully (binocular scenario)
@@ -393,8 +406,46 @@ def _draw_panel(ax, panel_name: str, t: np.ndarray, sig: dict,
         ax.legend(fontsize=6, loc='upper right')
         ax.set_ylabel('Vergence angle (deg)', fontsize=8)
 
+    # ── Stimulus panels ───────────────────────────────────────────────────────
+
+    elif panel_name == 'target_position':
+        ax.plot(t, target_yaw_deg, color=_C['target'], lw=1.2, label='Target yaw')
+        tp_pitch = np.degrees(np.arctan(pt[:, 1]))
+        if np.any(np.abs(tp_pitch) > 0.5):
+            ax.plot(t, tp_pitch, color=_C['burst'], lw=1.0, ls='--', label='Target pitch')
+        ax.legend(fontsize=6, loc='upper right')
+        ax.set_ylabel('Target position (deg)', fontsize=8)
+
+    elif panel_name == 'target_velocity':
+        ax.plot(t, vt[:, 0], color=_C['target'], lw=1.2, label='Target vel yaw')
+        if np.any(np.abs(vt[:, 1]) > 0.5):
+            ax.plot(t, vt[:, 1], color=_C['burst'], lw=1.0, ls='--', label='Target vel pitch')
+        ax.legend(fontsize=6, loc='upper right')
+
+    elif panel_name == 'scene_velocity':
+        ax.plot(t, vs[:, 0], color='#8c510a', lw=1.2, label='Scene vel yaw')
+        if np.any(np.abs(vs[:, 1]) > 0.5):
+            ax.plot(t, vs[:, 1], color='#bf812d', lw=1.0, ls='--', label='Scene vel pitch')
+        ax.legend(fontsize=6, loc='upper right')
+
+    elif panel_name == 'visual_flags':
+        # scene_present as a filled band; target flags as step lines
+        ax.fill_between(t, 0, sp,  color='#aaaaaa', alpha=0.35, step='post', label='scene present')
+        # Only show per-eye lines if they ever differ; otherwise one combined line
+        if np.any(tpL != tpR):
+            ax.step(t, tpL * 0.9 + 0.05, color='#2166ac', lw=1.5, where='post', label='target L')
+            ax.step(t, tpR * 0.8 + 0.05, color='#d6604d', lw=1.5, where='post', label='target R')
+        else:
+            ax.step(t, tpL * 0.9 + 0.05, color=_C['target'], lw=1.5, where='post', label='target present')
+        ax.set_ylim(-0.05, 1.15)
+        ax.set_yticks([0, 1])
+        ax.set_yticklabels(['off', 'on'], fontsize=7)
+        ax.legend(fontsize=6, loc='upper right')
+        ax.set_ylabel('Visual flags', fontsize=8)
+
     # Enforce a minimum visible range on velocity / derivative panels
-    if panel_name in ('eye_velocity', 'head_velocity', 'saccade_burst', 'pursuit_drive'):
+    if panel_name in ('eye_velocity', 'head_velocity', 'saccade_burst', 'pursuit_drive',
+                      'target_velocity', 'scene_velocity'):
         lo, hi = ax.get_ylim()
         span = hi - lo
         if span < 5.0:
