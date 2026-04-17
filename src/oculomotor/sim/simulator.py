@@ -72,8 +72,18 @@ class SimConfig(NamedTuple):
     dt_solve: Heun fixed step (s).  Must satisfy dt < 2 * tau_stage_vis.
               With N_STAGES=40 and tau_vis=0.08 s → tau_stage = 0.002 s
               → dt_max = 0.004 s.  Default 0.001 s gives 4× safety margin.
+
+    warmup_s: Settling period (s) prepended before t=0.  The stimulus is
+              held at its t=0 value for this duration so that fast states
+              (visual delay cascades, canal, NI) reach steady state before
+              the plotted output begins.  The warmup window is stripped from
+              all returned arrays — callers always see t starting at t_array[0].
+              Vergence is initialised analytically to phoria (its TC ~25 s is
+              far too slow to settle in a short warmup).
+              Set to 0.0 to disable.  Default: 3.0 s.
     """
     dt_solve: float = 0.001
+    warmup_s: float = 3.0
 
 
 # ── Top-level parameter container ──────────────────────────────────────────────
@@ -418,36 +428,88 @@ def simulate(params, t_array_or_stimulus, head_vel_array=None,
     _, noise_pos_L = jax.lax.scan(_ou_step, jnp.zeros(3), white_pos_L)  # (T, 3) deg
     _, noise_pos_R = jax.lax.scan(_ou_step, jnp.zeros(3), white_pos_R)  # (T, 3) deg
 
-    noise_canal_interp   = diffrax.LinearInterpolation(ts=t_array, ys=noise_canal)
-    noise_slip_interp    = diffrax.LinearInterpolation(ts=t_array, ys=noise_slip)
-    noise_pos_L_interp   = diffrax.LinearInterpolation(ts=t_array, ys=noise_pos_L)
-    noise_pos_R_interp   = diffrax.LinearInterpolation(ts=t_array, ys=noise_pos_R)
-    noise_vel_interp     = diffrax.LinearInterpolation(ts=t_array, ys=noise_vel)
+    # ── Warmup prepend ────────────────────────────────────────────────────────
+    # Run the ODE for `warmup_s` extra seconds before t_array[0], holding all
+    # stimulus inputs at their t=0 values.  The warmup window is stripped from
+    # the output so callers always see t starting at t_array[0].
+    #
+    # This settles fast states (visual delay cascades ~120 ms, canals ~5 s,
+    # VS/NI) to the steady state corresponding to the start of the stimulus.
+    # Vergence is initialised analytically to phoria below (TC ~25 s is too
+    # slow to settle via warmup).
+    warmup_s = cfg.warmup_s
+    warmup_T = int(round(warmup_s / dt))
 
-    hv_interp                = diffrax.LinearInterpolation(ts=t_array, ys=hv3)
-    hp_interp                = diffrax.LinearInterpolation(ts=t_array, ys=hp3)
-    ha_interp                = diffrax.LinearInterpolation(ts=t_array, ys=ha3)
-    vs_interp                = diffrax.LinearInterpolation(ts=t_array, ys=vs3)
-    target_interp            = diffrax.LinearInterpolation(ts=t_array, ys=pt3)
-    vt_interp                = diffrax.LinearInterpolation(ts=t_array, ys=vt3)
-    scene_present_interp     = diffrax.LinearInterpolation(ts=t_array, ys=sg1)
-    target_present_L_interp  = diffrax.LinearInterpolation(ts=t_array, ys=tg_L)
-    target_present_R_interp  = diffrax.LinearInterpolation(ts=t_array, ys=tg_R)
+    if warmup_T > 0:
+        # Time axis: warmup_T points ending one dt before t_array[0]
+        t_warmup = t_array[0] + dt * (jnp.arange(warmup_T) - warmup_T)   # (warmup_T,)
+        t_full   = jnp.concatenate([t_warmup, t_array])                   # (warmup_T + T,)
+
+        def _prepend(arr):
+            """Tile the t=0 row for warmup_T steps."""
+            reps = (warmup_T,) + (1,) * (arr.ndim - 1)
+            return jnp.concatenate([jnp.tile(arr[0:1], reps), arr], axis=0)
+
+        hv3  = _prepend(hv3)
+        hp3  = _prepend(hp3)
+        ha3  = _prepend(ha3)
+        vs3  = _prepend(vs3)
+        pt3  = _prepend(pt3)
+        vt3  = _prepend(vt3)
+        sg1  = _prepend(sg1[:, None])[:, 0]
+        tg_L = _prepend(tg_L[:, None])[:, 0]
+        tg_R = _prepend(tg_R[:, None])[:, 0]
+
+        # Noise: zeros during warmup (deterministic settling, not noise-driven)
+        noise_canal = jnp.concatenate([jnp.zeros((warmup_T, 6)), noise_canal], axis=0)
+        noise_slip  = jnp.concatenate([jnp.zeros((warmup_T, 3)), noise_slip],  axis=0)
+        noise_pos_L = jnp.concatenate([jnp.zeros((warmup_T, 3)), noise_pos_L], axis=0)
+        noise_pos_R = jnp.concatenate([jnp.zeros((warmup_T, 3)), noise_pos_R], axis=0)
+        noise_vel   = jnp.concatenate([jnp.zeros((warmup_T, 3)), noise_vel],   axis=0)
+    else:
+        t_full   = t_array
+        warmup_T = 0
+
+    noise_canal_interp   = diffrax.LinearInterpolation(ts=t_full, ys=noise_canal)
+    noise_slip_interp    = diffrax.LinearInterpolation(ts=t_full, ys=noise_slip)
+    noise_pos_L_interp   = diffrax.LinearInterpolation(ts=t_full, ys=noise_pos_L)
+    noise_pos_R_interp   = diffrax.LinearInterpolation(ts=t_full, ys=noise_pos_R)
+    noise_vel_interp     = diffrax.LinearInterpolation(ts=t_full, ys=noise_vel)
+
+    hv_interp                = diffrax.LinearInterpolation(ts=t_full, ys=hv3)
+    hp_interp                = diffrax.LinearInterpolation(ts=t_full, ys=hp3)
+    ha_interp                = diffrax.LinearInterpolation(ts=t_full, ys=ha3)
+    vs_interp                = diffrax.LinearInterpolation(ts=t_full, ys=vs3)
+    target_interp            = diffrax.LinearInterpolation(ts=t_full, ys=pt3)
+    vt_interp                = diffrax.LinearInterpolation(ts=t_full, ys=vt3)
+    scene_present_interp     = diffrax.LinearInterpolation(ts=t_full, ys=sg1)
+    target_present_L_interp  = diffrax.LinearInterpolation(ts=t_full, ys=tg_L)
+    target_present_R_interp  = diffrax.LinearInterpolation(ts=t_full, ys=tg_R)
 
     sensory_x0 = jnp.zeros(sensory_model.N_STATES)
     sensory_x0 = sensory_x0.at[_IDX_OTO].set(_otolith.X0)   # otolith settled at gravity
 
+    brain_x0 = brain_model.make_x0()
+    # Vergence: initialise analytically to phoria — TC ~25 s is far too slow
+    # for the warmup period to settle it from zero.
+    brain_x0 = brain_x0.at[_IDX_VERG].set(
+        jnp.asarray(params.brain.phoria, dtype=jnp.float32))
+
     x0 = SimState(
         sensory = sensory_x0,                          # (818,) otolith init at [9.81,0,0, ...]
-        brain   = brain_model.make_x0(),               # (144,) gravity init at [9.81,0,0]
+        brain   = brain_x0,                            # (144,) gravity + phoria init
         plant   = jnp.zeros(plant_model.N_STATES),     #   (6,)  [left (3) | right (3)]
     )
+
+    # Auto-size max_steps from total ODE duration so warmup never hits the budget
+    total_steps = int(jnp.ceil((t_full[-1] - t_full[0]) / dt).item()) + 100
+    max_steps   = max(max_steps, total_steps)
 
     solution = diffrax.diffeqsolve(
         diffrax.ODETerm(ODE_ocular_motor),
         diffrax.Heun(),
-        t0=t_array[0],
-        t1=t_array[-1],
+        t0=t_full[0],
+        t1=t_full[-1],
         dt0=dt,
         y0=x0,
         args=(params, hv_interp, hp_interp, ha_interp, vs_interp, target_interp,
@@ -456,10 +518,17 @@ def simulate(params, t_array_or_stimulus, head_vel_array=None,
               noise_canal_interp, noise_slip_interp,
               noise_pos_L_interp, noise_pos_R_interp, noise_vel_interp),
         stepsize_controller=diffrax.ConstantStepSize(),
-        saveat=diffrax.SaveAt(ts=t_array),
+        saveat=diffrax.SaveAt(ts=t_full),
         max_steps=max_steps,
     )
 
+    # Strip warmup window — return only the requested t_array portion
+    ys = SimState(
+        sensory = solution.ys.sensory[warmup_T:],
+        brain   = solution.ys.brain[warmup_T:],
+        plant   = solution.ys.plant[warmup_T:],
+    )
+
     if return_states:
-        return solution.ys                          # SimState, each field (T, N)
-    return solution.ys.plant                        # (T, 6) [left | right] eye rotation
+        return ys                                   # SimState, each field (T, N)
+    return ys.plant                                 # (T, 6) [left | right] eye rotation
