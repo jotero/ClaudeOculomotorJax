@@ -1,5 +1,5 @@
 """Brain model — velocity storage, neural integrator, saccade generator, efference copy,
-gravity estimator, and smooth pursuit.
+gravity estimator, smooth pursuit, and vergence.
 
 Aggregates all brain subsystems into a single SSM with one state vector and one
 step() function.
@@ -9,6 +9,7 @@ Signal flow:
     raw_slip_delayed (3,)   delayed raw retinal slip           → VS (after EC)
     vel_delayed      (3,)   delayed target velocity on retina  → pursuit (Smith predictor)
     e_cmd            (3,)   motor error command                → SG
+    pos_delayed_L/R  (3,)   per-eye delayed position error     → vergence
 
 One efference copy cascade (120 states), two uses with different gates:
     motor_ec = ec.read_delayed(x_ec)          # delay(u_burst + u_pursuit)
@@ -25,19 +26,29 @@ One efference copy cascade (120 states), two uses with different gates:
         → at steady state: e_vel_pred → 0  (integrator at rest, u_pursuit ≈ v_target)
         u_pursuit = x_pursuit + K_phasic · e_vel_pred
 
+Vergence:
+    e_disp = pos_delayed_L − pos_delayed_R   (binocular disparity, deg)
+    Smith predictor identical to pursuit but position-driven:
+        e_pred = (e_disp − x_verg) / (1 + K_phasic_verg)
+    dx_verg = −x_verg/τ_verg + K_verg · e_pred
+    u_verg  = x_verg + K_phasic_verg · e_pred
+    motor_cmd_L = motor_cmd_version + ½ · u_verg   (L eye converges rightward)
+    motor_cmd_R = motor_cmd_version − ½ · u_verg   (R eye converges leftward)
+
 EC advance (end of step):
-    dx_ec = ec.step(x_ec, u_burst + u_pursuit)   # combined motor command
+    dx_ec = ec.step(x_ec, u_burst + u_pursuit)   # version motor command only
 
 Internal flow:
-    VS  →  w_est  →  −w_est + u_burst + u_pursuit  →  NI  →  motor_cmd
+    VS  →  w_est  →  −w_est + u_burst + u_pursuit  →  NI  →  motor_cmd_version
     SG  →  u_burst    (saccade burst → EC cascade)
     Pursuit → u_pursuit  (→ NI + EC cascade)
     EC  →  delays (u_burst + u_pursuit) by tau_vis
            read used for: VS (scene-gated) and pursuit (target-gated)
     GE  →  g_hat (gravity estimate, cross-product dynamics)
+    Vergence → u_verg → split ±½ to L/R motor commands
 
-State vector  x_brain = [x_vs (3) | x_ni (3) | x_sg (9) | x_ec (120) | x_grav (3) | x_pursuit (3)]
-N_STATES = 141
+State vector  x_brain = [x_vs (3) | x_ni (3) | x_sg (9) | x_ec (120) | x_grav (3) | x_pursuit (3) | x_verg (3)]
+N_STATES = 144
 
 Index constants (relative to x_brain):
     _IDX_VS      — velocity storage states   (3,)
@@ -46,10 +57,12 @@ Index constants (relative to x_brain):
     _IDX_EC      — efference copy states     (120,)
     _IDX_GRAV    — gravity estimator states  (3,)
     _IDX_PURSUIT — pursuit velocity memory   (3,)
+    _IDX_VERG    — vergence position memory  (3,)
 
 Outputs of step():
-    dx_brain   (141,)  state derivative
-    motor_cmd  (3,)    pulse-step motor command → plant
+    dx_brain     (144,)  state derivative
+    motor_cmd_L  (3,)    pulse-step motor command → left  plant
+    motor_cmd_R  (3,)    pulse-step motor command → right plant
 """
 
 from typing import NamedTuple
@@ -62,6 +75,7 @@ from oculomotor.models.brain_models import saccade_generator   as sg
 from oculomotor.models.brain_models import efference_copy      as ec
 from oculomotor.models.brain_models import gravity_estimator   as ge
 from oculomotor.models.brain_models import pursuit             as pu
+from oculomotor.models.brain_models import vergence            as vg
 from oculomotor.models.sensory_models.sensory_model import SensoryOutput  # noqa: F401 (re-exported)
 
 
@@ -118,11 +132,16 @@ class BrainParams(NamedTuple):
     K_phasic_pursuit:      float = 5.0    # pursuit direct feedthrough (dim'less); fast onset
     tau_pursuit:           float = 40.0   # pursuit leak TC (s); ~40 s → ~97.5% gain at 1 Hz
 
+    # Vergence — disparity-driven position integrator + Smith predictor (Patel et al. 1997)
+    K_verg:                float = 4.0    # integration gain (1/s)
+    K_phasic_verg:         float = 1.0    # direct feedthrough (dim'less); Smith predictor
+    tau_verg:              float = 25.0   # vergence position leak TC (s); stable hold
+
 
 # ── State layout ───────────────────────────────────────────────────────────────
 
-N_STATES = vs.N_STATES + ni.N_STATES + sg.N_STATES + ec.N_STATES + ge.N_STATES + pu.N_STATES
-#        = 3 + 3 + 9 + 120 + 3 + 3 = 141
+N_STATES = vs.N_STATES + ni.N_STATES + sg.N_STATES + ec.N_STATES + ge.N_STATES + pu.N_STATES + vg.N_STATES
+#        = 3 + 3 + 9 + 120 + 3 + 3 + 3 = 144
 
 # Index constants — relative to x_brain
 _IDX_VS      = slice(0,             vs.N_STATES)                                        # (3,)
@@ -134,6 +153,8 @@ _IDX_EC      = slice(vs.N_STATES + ni.N_STATES + sg.N_STATES,
 _IDX_GRAV    = slice(vs.N_STATES + ni.N_STATES + sg.N_STATES + ec.N_STATES,
                      vs.N_STATES + ni.N_STATES + sg.N_STATES + ec.N_STATES + ge.N_STATES)  # (3,)
 _IDX_PURSUIT = slice(vs.N_STATES + ni.N_STATES + sg.N_STATES + ec.N_STATES + ge.N_STATES,
+                     vs.N_STATES + ni.N_STATES + sg.N_STATES + ec.N_STATES + ge.N_STATES + pu.N_STATES)  # (3,)
+_IDX_VERG    = slice(vs.N_STATES + ni.N_STATES + sg.N_STATES + ec.N_STATES + ge.N_STATES + pu.N_STATES,
                      N_STATES)                                                           # (3,)
 
 
@@ -149,21 +170,23 @@ def step(x_brain, sensory_out, brain_params):
     """Single ODE step for the brain subsystem.
 
     Args:
-        x_brain:     (141,)        brain state [x_vs | x_ni | x_sg | x_ec | x_grav | x_pursuit]
+        x_brain:     (144,)        brain state [x_vs | x_ni | x_sg | x_ec | x_grav | x_pursuit | x_verg]
         sensory_out: SensoryOutput bundled canal afferents + delayed visual signals
-                       .canal         (6,)    canal afferent rates
-                       .slip_delayed  (3,)    delayed retinal slip (no EC correction yet)
-                       .pos_visible   (3,)    delayed position error, gated by visual field
-                       .e_cmd         (3,)    motor error command for the saccade generator
-                       .vel_delayed   (3,)    delayed target velocity on retina → pursuit
-                       .f_otolith     (3,)    specific force in head frame (m/s²)
-                       .scene_visible scalar  0=dark, 1=lit — gates EC slip correction
-                       .target_visible scalar 0=no target in field, 1=target visible (= gate_vf)
+                       .canal          (6,)    canal afferent rates
+                       .slip_delayed   (3,)    delayed retinal slip (no EC correction yet)
+                       .pos_delayed    (3,)    L+R averaged delayed position error → SG
+                       .vel_delayed    (3,)    delayed target velocity on retina → pursuit
+                       .f_otolith      (3,)    specific force in head frame (m/s²)
+                       .scene_visible  scalar  0=dark, 1=lit — gates EC slip correction
+                       .target_visible scalar  0=no target in field, 1=target visible (= gate_vf)
+                       .pos_delayed_L  (3,)    left  eye delayed position error → vergence
+                       .pos_delayed_R  (3,)    right eye delayed position error → vergence
         brain_params: BrainParams   model parameters
 
     Returns:
-        dx_brain:   (141,)  dx_brain/dt
-        motor_cmd:  (3,)    pulse-step motor command → plant
+        dx_brain:    (144,)  dx_brain/dt
+        motor_cmd_L: (3,)    pulse-step motor command → left  plant
+        motor_cmd_R: (3,)    pulse-step motor command → right plant
     """
     x_vs      = x_brain[_IDX_VS]
     x_ni      = x_brain[_IDX_NI]
@@ -171,6 +194,7 @@ def step(x_brain, sensory_out, brain_params):
     x_ec      = x_brain[_IDX_EC]
     x_grav    = x_brain[_IDX_GRAV]
     x_pursuit = x_brain[_IDX_PURSUIT]
+    x_verg    = x_brain[_IDX_VERG]
 
     # ── One EC, two corrections with separate gates ───────────────────────────
     # motor_ec = delay(u_burst + u_pursuit) — one cascade, read once, used twice.
@@ -219,16 +243,31 @@ def step(x_brain, sensory_out, brain_params):
          g_hat[1] / g_norm,   # roll:  CW tilt (g_hat[1]<0) → eye CCW (−z)
     ])
 
-    # ── Neural integrator: VOR + saccades + pursuit → motor command ───────────
+    # ── Neural integrator: VOR + saccades + pursuit → version motor command ───
     dx_ni, motor_cmd_ni = ni.step(x_ni, -w_est + u_burst + u_pursuit, brain_params)
 
     # Add OCR position offset directly to motor command (bypasses NI leak)
-    motor_cmd = motor_cmd_ni + ocr_pos
+    motor_cmd_version = motor_cmd_ni + ocr_pos
 
-    # ── Efference copy: advance delay cascade with combined motor command ────────
+    # ── Vergence: binocular disparity → disconjugate eye commands ─────────────
+    # e_disp = pos_delayed_L − pos_delayed_R; gated by target_present upstream.
+    # EC correction: add x_verg to cancel the eye's own convergence contribution,
+    # analogous to motor_ec correcting vel_delayed for pursuit.
+    # Without: e_disp = ψ_d − ψ → closed-loop gain ≈ 0.5
+    # With:    e_disp + x_verg ≈ ψ_d → gain ≈ 0.99
+    e_disp = sensory_out.pos_delayed_L - sensory_out.pos_delayed_R
+    dx_verg, u_verg = vg.step(x_verg, e_disp + x_verg, brain_params)
+
+    # Split vergence ±½ around the version command
+    motor_cmd_L = motor_cmd_version + 0.5 * u_verg
+    motor_cmd_R = motor_cmd_version - 0.5 * u_verg
+
+    # ── Efference copy: advance delay cascade with version motor command ──────
+    # EC tracks the conjugate (version) command: u_burst + u_pursuit.
+    # Vergence is disconjugate and does not contaminate VS or pursuit EC.
     dx_ec, _ = ec.step(x_ec, u_burst + u_pursuit, brain_params)
 
     # ── Pack state derivative ─────────────────────────────────────────────────
-    dx_brain = jnp.concatenate([dx_vs, dx_ni, dx_sg, dx_ec, dx_grav, dx_pursuit])
+    dx_brain = jnp.concatenate([dx_vs, dx_ni, dx_sg, dx_ec, dx_grav, dx_pursuit, dx_verg])
 
-    return dx_brain, motor_cmd
+    return dx_brain, motor_cmd_L, motor_cmd_R

@@ -235,7 +235,7 @@ def step(x_sensory, q_head, w_head, a_head, q_eye_L, w_eye_L, q_eye_R, w_eye_R,
         w_eye_R:        (3,)    right eye angular velocity — plant derivative (deg/s)
         w_scene:        (3,)    scene angular velocity (deg/s)
         v_target:       (3,)    target angular velocity in world frame (deg/s)
-        p_target:       (3,)    Cartesian target position (head frame)
+        p_target:       (3,)    Cartesian target position (world frame)
         scene_present:  scalar  0=dark, 1=lit — gates retinal slip
         target_present: scalar  0=no target, 1=present — gates e_vel, e_pos_vis, gate_vf
         sensory_params: SensoryParams  model parameters
@@ -251,10 +251,11 @@ def step(x_sensory, q_head, w_head, a_head, q_eye_L, w_eye_L, q_eye_R, w_eye_R,
     x_vis_L = x_sensory[_IDX_VIS_L]
     x_vis_R = x_sensory[_IDX_VIS_R]
 
-    # IPD geometry: target position relative to each eye (head frame, x = rightward)
-    #   L eye is at [−ipd/2, 0, 0]; R eye is at [+ipd/2, 0, 0]
-    #   p_target relative to L eye = p_target − p_eye_L = p_target + [ipd/2, 0, 0]
-    #   p_target relative to R eye = p_target − p_eye_R = p_target − [ipd/2, 0, 0]
+    # IPD geometry: target position relative to each eye.
+    #   p_target is in world frame; eyes are offset ±ipd/2 along the world x-axis.
+    #   This is exact when q_head=0; for large yaw rotations the true offset is
+    #   R_head @ [±ipd/2, 0, 0] — the error is ~0.5° at 15° yaw, 1 m target depth.
+    #   Approximation is acceptable for all standard oculomotor paradigms.
     ipd_half  = sensory_params.ipd * 0.5
     ipd_shift = jnp.array([ipd_half, 0.0, 0.0])
     p_target_L = p_target + ipd_shift

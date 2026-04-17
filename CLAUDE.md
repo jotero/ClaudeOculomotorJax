@@ -84,7 +84,7 @@ scripts/
 └── demo_fixation.py     Fixational eye movements — noise source comparison
 ```
 
-### State structure (966 total — binocular)
+### State structure (968 total — binocular)
 
 The ODE state is a `SimState` NamedTuple with three groups:
 
@@ -95,9 +95,9 @@ SimState(
                      _IDX_C     _IDX_OTO    _IDX_VIS_L       _IDX_VIS_R
                                             (_IDX_VIS = _IDX_VIS_L, backward compat)
 
-    brain   (141):  [x_vs (3) | x_ni (3) | x_sg (9) | x_ec (120) | x_grav (3) | x_pursuit (3)]
-                     vel-store   NI          sacc-gen   EC delay     gravity est   pursuit mem
-                     _IDX_VS     _IDX_NI     _IDX_SG    _IDX_EC      _IDX_GRAV     _IDX_PURSUIT
+    brain   (144):  [x_vs (3) | x_ni (3) | x_sg (9) | x_ec (120) | x_grav (3) | x_pursuit (3) | x_verg (3)]
+                     vel-store   NI          sacc-gen   EC delay     gravity est   pursuit mem    vergence
+                     _IDX_VS     _IDX_NI     _IDX_SG    _IDX_EC      _IDX_GRAV     _IDX_PURSUIT   _IDX_VERG
 
     plant     (6):  [x_p_L (3) | x_p_R (3)]  — left/right eye rotation vectors (deg)
                      _IDX_P_L    _IDX_P_R

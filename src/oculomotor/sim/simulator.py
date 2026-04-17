@@ -25,9 +25,9 @@ State structure — SimState NamedTuple with three groups:
                       canal       otolith      left retinal    right retinal
                       _IDX_C      _IDX_OTO     _IDX_VIS_L      _IDX_VIS_R
 
-    brain    (141):  [x_vs (3) | x_ni (3) | x_sg (9) | x_ec (120) | x_grav (3) | x_pursuit (3)]
-                      vel-store   NI          sacc-gen   EC delay     gravity est   pursuit mem
-                      _IDX_VS     _IDX_NI     _IDX_SG    _IDX_EC      _IDX_GRAV     _IDX_PURSUIT
+    brain    (144):  [x_vs (3) | x_ni (3) | x_sg (9) | x_ec (120) | x_grav (3) | x_pursuit (3) | x_verg (3)]
+                      vel-store   NI          sacc-gen   EC delay     gravity est   pursuit mem    vergence
+                      _IDX_VS     _IDX_NI     _IDX_SG    _IDX_EC      _IDX_GRAV     _IDX_PURSUIT   _IDX_VERG
 
     plant      (6):  [x_p_L (3) | x_p_R (3)] — left/right eye rotation vectors (deg)
                       _IDX_P_L    _IDX_P_R
@@ -57,7 +57,7 @@ from oculomotor.models.sensory_models.sensory_model import (
     _IDX_C, _IDX_OTO, _IDX_VIS, _IDX_VIS_L, _IDX_VIS_R, SensoryParams,
 )
 from oculomotor.models.sensory_models               import otolith as _otolith
-from oculomotor.models.brain_models.brain_model    import _IDX_VS, _IDX_NI, _IDX_SG, _IDX_EC, _IDX_GRAV, _IDX_PURSUIT, BrainParams
+from oculomotor.models.brain_models.brain_model    import _IDX_VS, _IDX_NI, _IDX_SG, _IDX_EC, _IDX_GRAV, _IDX_PURSUIT, _IDX_VERG, BrainParams
 from oculomotor.models.plant_models.plant_model_first_order import PlantParams, _IDX_P_L, _IDX_P_R
 from oculomotor.models.sensory_models import sensory_model
 from oculomotor.models.brain_models   import brain_model
@@ -134,7 +134,7 @@ PARAMS_DEFAULT     = default_params()
 __all__ = [
     'SimState', 'ODE_ocular_motor', 'simulate',
     '_IDX_C', '_IDX_OTO', '_IDX_VIS', '_IDX_VIS_L', '_IDX_VIS_R',
-    '_IDX_VS', '_IDX_NI', '_IDX_SG', '_IDX_EC', '_IDX_GRAV', '_IDX_PURSUIT',
+    '_IDX_VS', '_IDX_NI', '_IDX_SG', '_IDX_EC', '_IDX_GRAV', '_IDX_PURSUIT', '_IDX_VERG',
     '_IDX_P_L', '_IDX_P_R',
     # params
     'Params', 'SimConfig', 'SensoryParams', 'PlantParams', 'BrainParams',
@@ -149,11 +149,11 @@ class SimState(NamedTuple):
 
     Groups:
         sensory  (818)  Canal + otolith + two retinal delay cascades (L and R).
-        brain    (141)  Central computation: VS, NI, SG, EC, gravity, pursuit.
+        brain    (144)  Central computation: VS, NI, SG, EC, gravity, pursuit, vergence.
         plant      (6)  Two extraocular plants — [left (3) | right (3)] eye rotation (deg).
     """
     sensory: jnp.ndarray   # (818,)  [x_c (12) | x_oto (6) | x_vis_L (400) | x_vis_R (400)]
-    brain:   jnp.ndarray   # (141,)  [x_vs (3) | x_ni (3) | x_sg (9) | x_ec (120) | x_grav (3) | x_pursuit (3)]
+    brain:   jnp.ndarray   # (144,)  [x_vs (3) | x_ni (3) | x_sg (9) | x_ec (120) | x_grav (3) | x_pursuit (3) | x_verg (3)]
     plant:   jnp.ndarray   #   (6,)  [x_p_L (3) | x_p_R (3)]  eye rotation vectors (deg)
 
 
@@ -217,13 +217,13 @@ def ODE_ocular_motor(t, state, args):
         pos_delayed    = sensory_out.pos_delayed   + 0.5 * (noise_pos_L + noise_pos_R),
     )
 
-    # ── Brain: VS + NI + SG + EC (uses averaged sensory_out) ─────────────────
-    dx_brain, motor_cmd = brain_model.step(state.brain, sensory_out, theta.brain)
+    # ── Brain: VS + NI + SG + EC + vergence ──────────────────────────────────
+    dx_brain, motor_cmd_L, motor_cmd_R = brain_model.step(state.brain, sensory_out, theta.brain)
 
-    # ── Plant: version command drives both eyes identically ───────────────────
+    # ── Plant: per-eye commands (version ± ½ vergence) ───────────────────────
     # dx_p is wall-clipped so x_p stays bounded; q_eye = x_p; w_eye = dx_p.
-    dx_p_L, q_eye_L, w_eye_L = plant_model.step(state.plant[_IDX_P_L], motor_cmd, theta.plant)
-    dx_p_R, q_eye_R, w_eye_R = plant_model.step(state.plant[_IDX_P_R], motor_cmd, theta.plant)
+    dx_p_L, q_eye_L, w_eye_L = plant_model.step(state.plant[_IDX_P_L], motor_cmd_L, theta.plant)
+    dx_p_R, q_eye_R, w_eye_R = plant_model.step(state.plant[_IDX_P_R], motor_cmd_R, theta.plant)
     dx_plant = jnp.concatenate([dx_p_L, dx_p_R])
 
     # ── Sensory: retinal signals + canal + otolith + visual delay cascades ────
@@ -293,6 +293,7 @@ def simulate(params, t_array_or_stimulus, head_vel_array=None,
                       states.brain[:, _IDX_EC]             → (T, 120) efference copy cascade
                       states.brain[:, _IDX_GRAV]           → (T, 3)   gravity estimate (m/s²)
                       states.brain[:, _IDX_PURSUIT]        → (T, 3)   pursuit velocity memory
+                      states.brain[:, _IDX_VERG]           → (T, 3)   vergence position (deg)
                       states.sensory[:, _IDX_C]            → (T, 12)  canal states
                       states.sensory[:, _IDX_OTO]          → (T, 6)   otolith LP states
                       states.sensory[:, _IDX_VIS_L]        → (T, 400) left  visual delay cascade

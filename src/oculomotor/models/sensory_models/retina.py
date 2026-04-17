@@ -85,7 +85,7 @@ def retinal_signals(p_target, q_head, w_head, q_eye, w_eye, w_scene, v_target,
     e_pos_vis = gate_vf · e_pos is the gated position error that enters the cascade.
 
     Args:
-        p_target:      (3,)    Cartesian target position
+        p_target:      (3,)    Cartesian target position (world frame, x=right, y=up, z=forward)
         q_head:        (3,)    head angular position (deg)
         w_head:        (3,)    head angular velocity (deg/s)
         q_eye:         (3,)    eye angular position — plant state (deg)
