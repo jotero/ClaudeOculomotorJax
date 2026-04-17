@@ -67,7 +67,7 @@ def _make_ramp(t_np, vel_degs, t_jump=0.2):
 
 def _extract(states, theta, t_np):
     """Extract signals from full state trajectory."""
-    x_p      = np.array(states.plant)
+    x_p      = np.array(states.plant[:, :3])   # (T, 3) left eye
     x_ni     = np.array(states.brain[:, _IDX_NI])
     x_pursuit = np.array(states.brain[:, _IDX_PURSUIT])
     x_sg     = np.array(states.brain[:, _IDX_SG])

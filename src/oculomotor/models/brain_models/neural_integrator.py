@@ -66,5 +66,13 @@ def step(x_ni, u_vel, brain_params):
 
     # ── Dynamics ──────────────────────────────────────────────────────────────
     dx  = A @ x_ni + u_vel
+
+    # Orbital anti-windup: mirror the plant wall-clip so x_ni stays bounded.
+    # When x_ni is at ±orbital_limit and the command pushes further outward,
+    # zero the derivative — exactly as plant_model does for dx_p.
+    L   = brain_params.orbital_limit
+    dx  = jnp.where(x_ni >= L,  jnp.minimum(dx, 0.0), dx)
+    dx  = jnp.where(x_ni <= -L, jnp.maximum(dx, 0.0), dx)
+
     u_p = x_ni + D @ u_vel
     return dx, u_p

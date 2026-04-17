@@ -8,30 +8,29 @@ Signal flow:
     w_head    → [Canal array]         → y_canals (6,)   afferent firing rates
     a_head,
     q_head    → [Otolith array]       → f_gia (3,)      GIA estimate → gravity_estimator
-    e_slip    → [Visual delay, sig 0] → e_slip_delayed   (for VS / OKR)
-    e_pos     → [Visual delay, sig 1] → e_pos_delayed    (for saccade generator)
-    e_vel     → [Visual delay, sig 2] → vel_delayed      (for smooth pursuit)
+    e_slip_L  → [Visual delay L, sig 0] → e_slip_delayed_L  (for VS / OKR)
+    e_pos_L   → [Visual delay L, sig 1] → e_pos_delayed_L   (for saccade error, L eye)
+    e_vel_L   → [Visual delay L, sig 2] → vel_delayed_L     (for smooth pursuit, L eye)
+    (same for R eye)
 
-State vector  x_sensory = [x_c (12) | x_oto (6) | x_vis (400)]  — N_STATES = 418
+Binocular state layout:
+    x_sensory = [x_c (12) | x_oto (6) | x_vis_L (400) | x_vis_R (400)]  — N_STATES = 818
 
-    x_vis layout: [x_slip (120) | x_pos_vis (120) | x_vel (120) | x_gate (40)]
-      x_pos_vis delays the GATED position error gate_vf · e_pos (retinal geometry)
-      x_gate    delays the visual-field gate scalar gate_vf
+    x_vis_{L,R} layout: [x_slip (120) | x_pos_vis (120) | x_vel (120) | x_gate (40)]
 
 Index constants (relative to x_sensory):
-    _IDX_C   — canal states   (12,)
-    _IDX_OTO — otolith states  (6,)
-    _IDX_VIS — visual delay cascade states (400,)
+    _IDX_C     — canal states    (12,)
+    _IDX_OTO   — otolith states   (6,)
+    _IDX_VIS_L — left  visual delay cascade states (400,)
+    _IDX_VIS_R — right visual delay cascade states (400,)
+    _IDX_VIS   — alias for _IDX_VIS_L (backward compatibility)
 
-Outputs of step():
-    dx_sensory      (378,)  state derivative
-    y_canals        (6,)    canal afferent firing rates
-    e_slip_delayed  (3,)    delayed retinal slip   → VS / OKR
-    e_pos_delayed   (3,)    delayed position error → saccade generator
-
-Note: e_slip_delayed and e_pos_delayed are pure state readouts (C @ x_vis).
-They reflect signals from tau_vis seconds ago — they do NOT depend on the
-new e_slip / e_pos inputs passed in this step.
+SensoryOutput fields:
+    Brain-facing (averaged across eyes) — brain_model.py reads these unchanged:
+        canal, slip_delayed, pos_delayed, gate_vf, vel_delayed, f_otolith,
+        scene_visible, target_visible
+    Per-eye diagnostics:
+        slip_delayed_L/R, pos_delayed_L/R, gate_vf_L/R, vel_delayed_L/R
 """
 
 from typing import NamedTuple
@@ -73,6 +72,9 @@ class SensoryParams(NamedTuple):
     tau_pos_drift:      float       = 0.3    # OU drift TC (s); sets how slowly pos error wanders
     sigma_vel:          float       = 0.0    # target velocity noise (deg/s); drives pursuit
 
+    # Binocular
+    ipd:                float       = 0.064  # inter-pupillary distance (m); ~64 mm adult
+
 # ── Re-exports for external callers ────────────────────────────────────────────
 
 # Canal
@@ -98,15 +100,18 @@ delay_cascade_read = _retina.delay_cascade_read
 _N_CANAL_STATES  = _canal.N_STATES          # 12
 _N_OTO_STATES    = _otolith.N_STATES        #  6
 _N_VIS_STATES    = _retina.N_STATES         # 400  [x_slip(120)|x_pos_vis(120)|x_vel(120)|x_gate(40)]
-N_STATES         = _N_CANAL_STATES + _N_OTO_STATES + _N_VIS_STATES  # 418
+N_STATES         = _N_CANAL_STATES + _N_OTO_STATES + 2 * _N_VIS_STATES  # 12+6+400+400 = 818
 
 # Index constants — relative to x_sensory
-_IDX_C   = slice(0,
-                 _N_CANAL_STATES)                                                # (12,)
-_IDX_OTO = slice(_N_CANAL_STATES,
-                 _N_CANAL_STATES + _N_OTO_STATES)                               # (6,)
-_IDX_VIS = slice(_N_CANAL_STATES + _N_OTO_STATES,
-                 _N_CANAL_STATES + _N_OTO_STATES + _N_VIS_STATES)               # (360,)
+_IDX_C     = slice(0,
+                   _N_CANAL_STATES)                                              # (12,)
+_IDX_OTO   = slice(_N_CANAL_STATES,
+                   _N_CANAL_STATES + _N_OTO_STATES)                             # (6,)
+_IDX_VIS_L = slice(_N_CANAL_STATES + _N_OTO_STATES,
+                   _N_CANAL_STATES + _N_OTO_STATES + _N_VIS_STATES)             # (400,)
+_IDX_VIS_R = slice(_N_CANAL_STATES + _N_OTO_STATES + _N_VIS_STATES,
+                   _N_CANAL_STATES + _N_OTO_STATES + 2 * _N_VIS_STATES)         # (400,)
+_IDX_VIS   = _IDX_VIS_L   # backward-compatibility alias (left eye cascade)
 
 
 # ── Bundled sensory output ──────────────────────────────────────────────────────
@@ -114,132 +119,176 @@ _IDX_VIS = slice(_N_CANAL_STATES + _N_OTO_STATES,
 class SensoryOutput(NamedTuple):
     """Bundled sensory outputs — passed as a unit to brain_model.
 
-    Fields:
-        canal:          (N_CANALS,) = (6,)  canal afferent rates (deg/s equiv.)
-        slip_delayed:   (3,)  delayed retinal slip → VS / OKR
-        pos_delayed:    (3,)  delayed retinal position error (raw, deg)
-                              = target_direction − head_position − eye_position, delayed by τ_vis
-        gate_vf:        scalar  visual-field gate: ≈1 when target is in-field, ≈0 when out-of-field
-                                computed from |pos_delayed| vs. visual_field_limit
-        vel_delayed:    (3,)  delayed target velocity on retina → smooth pursuit
-                              Zero when eye perfectly tracks the target.
-        f_otolith:      (3,)  LP-filtered GIA from otolith states → gravity estimator
-                              = PINV_SENS @ x_oto;  at rest upright: [+9.81, 0, 0]
-        scene_visible:  scalar  sensory estimate of scene visibility — equals the external
-                                scene_present flag (no separate delay cascade for scene gate).
-                                Gates OKR/VS EC correction in brain_model.
-        target_visible: scalar  sensory estimate of target visibility — equals gate_vf
-                                (delayed visual-field gate from retinal geometry).
-                                Gates pursuit EC correction in brain_model.
-                                Distinct from the external target_present flag: that flag
-                                controls what retinal signals are computed (→ sensory step);
-                                this is what the brain actually senses.
+    Brain-facing fields (averaged across L and R eyes) — brain_model.py reads
+    these; it is unchanged by the binocular extension:
+        canal:          (6,)    canal afferent rates
+        slip_delayed:   (3,)    delayed retinal slip → VS / OKR  (L+R average)
+        pos_delayed:    (3,)    delayed gated position error → SG  (L+R average)
+        gate_vf:        scalar  delayed visual-field gate  (L+R average)
+        vel_delayed:    (3,)    delayed target velocity → pursuit  (L+R average)
+        f_otolith:      (3,)    LP-filtered GIA → gravity estimator
+        scene_visible:  scalar  = scene_present external flag
+        target_visible: scalar  = averaged gate_vf (retinally computed in-field gate)
 
-    Target selection (visual-field clip + centering saccade) is handled inside the
-    saccade generator using pos_delayed, gate_vf, and the neural integrator state x_ni
-    as a proxy for current eye position.
+    Per-eye fields (diagnostics / binocular analysis):
+        slip_delayed_L/R:  (3,)   per-eye delayed retinal slip
+        pos_delayed_L/R:   (3,)   per-eye delayed gated position error
+        gate_vf_L/R:       scalar  per-eye delayed visual-field gate
+        vel_delayed_L/R:   (3,)   per-eye delayed target velocity
     """
+    # Brain-facing (averaged)
     canal:          jnp.ndarray   # (6,)
-    slip_delayed:   jnp.ndarray   # (3,)
-    pos_delayed:    jnp.ndarray   # (3,)
-    gate_vf:        jnp.ndarray   # scalar
-    vel_delayed:    jnp.ndarray   # (3,)
+    slip_delayed:   jnp.ndarray   # (3,)  L+R average
+    pos_delayed:    jnp.ndarray   # (3,)  L+R average
+    gate_vf:        jnp.ndarray   # scalar  L+R average
+    vel_delayed:    jnp.ndarray   # (3,)  L+R average
     f_otolith:      jnp.ndarray   # (3,)
     scene_visible:  jnp.ndarray   # scalar  (= scene_present input)
-    target_visible: jnp.ndarray   # scalar  (= gate_vf)
+    target_visible: jnp.ndarray   # scalar  (= averaged gate_vf)
+
+    # Per-eye diagnostics
+    slip_delayed_L: jnp.ndarray   # (3,)
+    slip_delayed_R: jnp.ndarray   # (3,)
+    pos_delayed_L:  jnp.ndarray   # (3,)
+    pos_delayed_R:  jnp.ndarray   # (3,)
+    gate_vf_L:      jnp.ndarray   # scalar
+    gate_vf_R:      jnp.ndarray   # scalar
+    vel_delayed_L:  jnp.ndarray   # (3,)
+    vel_delayed_R:  jnp.ndarray   # (3,)
 
 
 def read_outputs(x_sensory, scene_present, sensory_params):
     """Read all sensory outputs from the current state (pure state readout).
 
-    Reads canal afferents, otolith GIA, delayed visual signals, and the visual-field
-    gate from the sensory state.  Target selection (clip + centering) is handled
-    downstream in the saccade generator using the brain's x_ni estimate.
+    Reads canal afferents, otolith GIA, delayed visual signals from both eye
+    cascades, and returns brain-facing averages plus per-eye fields.
 
     Args:
-        x_sensory:      (418,)  sensory state [x_c (12) | x_oto (6) | x_vis (400)]
+        x_sensory:      (818,)  sensory state [x_c(12)|x_oto(6)|x_vis_L(400)|x_vis_R(400)]
         scene_present:  scalar  0=dark, 1=full visual scene present (OKR/VS gate)
-        sensory_params: SensoryParams  (reads canal_gains, vf_limit, k_visual_field)
+        sensory_params: SensoryParams
 
     Returns:
-        SensoryOutput with fields (canal, slip_delayed, pos_delayed, gate_vf,
-                                   vel_delayed, f_otolith, scene_visible, target_visible)
-        scene_visible  = scene_present (external flag passed through)
-        target_visible = gate_vf       (retinally computed in-field gate; no target_present needed)
+        SensoryOutput with brain-facing averaged fields and per-eye diagnostic fields.
     """
-    x_c   = x_sensory[_IDX_C]
-    x_oto = x_sensory[_IDX_OTO]
-    x_vis = x_sensory[_IDX_VIS]
+    x_c     = x_sensory[_IDX_C]
+    x_oto   = x_sensory[_IDX_OTO]
+    x_vis_L = x_sensory[_IDX_VIS_L]
+    x_vis_R = x_sensory[_IDX_VIS_R]
 
-    canal_out    = _canal.nonlinearity(x_c, sensory_params.canal_gains)
-    f_gia        = _otolith.PINV_SENS @ x_oto   # LP-filtered GIA estimate (3,)
-    slip_delayed = _retina.C_slip @ x_vis        # delayed retinal slip
-    pos_delayed  = _retina.C_pos  @ x_vis        # delayed gated pos error (gate_vf · e_pos)
-    vel_delayed  = _retina.C_vel  @ x_vis        # delayed target velocity
-    gate_vf      = (_retina.C_gate @ x_vis)[0]  # delayed visual-field gate (scalar)
+    canal_out = _canal.nonlinearity(x_c, sensory_params.canal_gains)
+    f_gia     = _otolith.PINV_SENS @ x_oto   # LP-filtered GIA estimate (3,)
+
+    # Per-eye readouts
+    slip_L = _retina.C_slip @ x_vis_L
+    slip_R = _retina.C_slip @ x_vis_R
+    pos_L  = _retina.C_pos  @ x_vis_L
+    pos_R  = _retina.C_pos  @ x_vis_R
+    vel_L  = _retina.C_vel  @ x_vis_L
+    vel_R  = _retina.C_vel  @ x_vis_R
+    gate_L = (_retina.C_gate @ x_vis_L)[0]
+    gate_R = (_retina.C_gate @ x_vis_R)[0]
+
+    # Brain-facing averages
+    slip_avg = 0.5 * (slip_L + slip_R)
+    pos_avg  = 0.5 * (pos_L  + pos_R)
+    vel_avg  = 0.5 * (vel_L  + vel_R)
+    gate_avg = 0.5 * (gate_L + gate_R)
 
     return SensoryOutput(
         canal          = canal_out,
-        slip_delayed   = slip_delayed,
-        pos_delayed    = pos_delayed,
-        gate_vf        = gate_vf,
-        vel_delayed    = vel_delayed,
+        slip_delayed   = slip_avg,
+        pos_delayed    = pos_avg,
+        gate_vf        = gate_avg,
+        vel_delayed    = vel_avg,
         f_otolith      = f_gia,
-        scene_visible  = scene_present,   # external flag passed through
-        target_visible = gate_vf,         # retinally computed in-field gate
+        scene_visible  = scene_present,
+        target_visible = gate_avg,
+        slip_delayed_L = slip_L,
+        slip_delayed_R = slip_R,
+        pos_delayed_L  = pos_L,
+        pos_delayed_R  = pos_R,
+        gate_vf_L      = gate_L,
+        gate_vf_R      = gate_R,
+        vel_delayed_L  = vel_L,
+        vel_delayed_R  = vel_R,
     )
 
 
 # ── Combined step ───────────────────────────────────────────────────────────────
 
-def step(x_sensory, q_head, w_head, a_head, q_eye, w_eye,
+def step(x_sensory, q_head, w_head, a_head, q_eye_L, w_eye_L, q_eye_R, w_eye_R,
          w_scene, v_target, p_target, scene_present, target_present, sensory_params):
     """Single ODE step for the sensory subsystem (canal + otolith + visual delay).
 
-    Computes retinal signals internally from world/body state, then advances
-    the canal, otolith, and visual delay cascades.
+    Computes retinal signals for each eye using IPD geometry, then advances
+    the canal, otolith, and two visual delay cascades (one per eye).
 
     Args:
-        x_sensory:      (418,)  sensory state [x_c (12) | x_oto (6) | x_vis (400)]
+        x_sensory:      (818,)  sensory state [x_c(12)|x_oto(6)|x_vis_L(400)|x_vis_R(400)]
         q_head:         (3,)    head angular position (deg)
         w_head:         (3,)    head angular velocity (deg/s)
         a_head:         (3,)    head linear acceleration (m/s²)
-        q_eye:          (3,)    eye angular position — plant state (deg)
-        w_eye:          (3,)    eye angular velocity — plant derivative (deg/s)
+        q_eye_L:        (3,)    left  eye angular position — plant state (deg)
+        w_eye_L:        (3,)    left  eye angular velocity — plant derivative (deg/s)
+        q_eye_R:        (3,)    right eye angular position — plant state (deg)
+        w_eye_R:        (3,)    right eye angular velocity — plant derivative (deg/s)
         w_scene:        (3,)    scene angular velocity (deg/s)
         v_target:       (3,)    target angular velocity in world frame (deg/s)
-                                Used to compute foveal target velocity on retina.
-                                Zero for stationary targets (no pursuit drive).
-        p_target:       (3,)    Cartesian target position
+        p_target:       (3,)    Cartesian target position (head frame)
         scene_present:  scalar  0=dark, 1=lit — gates retinal slip
-        target_present: scalar  0=no foveal target, 1=present — gates e_vel, e_pos_vis,
-                                and gate_vf so that when there is no target, vel_delayed,
-                                pos_delayed, and gate_vf all go to zero in the delay cascade.
+        target_present: scalar  0=no target, 1=present — gates e_vel, e_pos_vis, gate_vf
         sensory_params: SensoryParams  model parameters
 
     Returns:
-        dx_sensory:     (418,)  dx_sensory/dt
+        dx_sensory:     (818,)  dx_sensory/dt
         y_canals:       (6,)    canal afferent firing rates
-        e_slip_delayed: (3,)    delayed retinal slip   (for VS / OKR)
-        e_pos_delayed:  (3,)    delayed position error (for saccade generator)
+        e_slip_delayed: (3,)    delayed retinal slip, L+R average  (for VS / OKR)
+        e_pos_delayed:  (3,)    delayed position error, L+R average (for saccade generator)
     """
-    x_c   = x_sensory[_IDX_C]
-    x_oto = x_sensory[_IDX_OTO]
-    x_vis = x_sensory[_IDX_VIS]
+    x_c     = x_sensory[_IDX_C]
+    x_oto   = x_sensory[_IDX_OTO]
+    x_vis_L = x_sensory[_IDX_VIS_L]
+    x_vis_R = x_sensory[_IDX_VIS_R]
 
-    e_pos, e_pos_vis, raw_slip, e_vel, gate_vf = _retina.retinal_signals(
-        p_target, q_head, w_head, q_eye, w_eye, w_scene, v_target, scene_present,
+    # IPD geometry: target position relative to each eye (head frame, x = rightward)
+    #   L eye is at [−ipd/2, 0, 0]; R eye is at [+ipd/2, 0, 0]
+    #   p_target relative to L eye = p_target − p_eye_L = p_target + [ipd/2, 0, 0]
+    #   p_target relative to R eye = p_target − p_eye_R = p_target − [ipd/2, 0, 0]
+    ipd_half  = sensory_params.ipd * 0.5
+    ipd_shift = jnp.array([ipd_half, 0.0, 0.0])
+    p_target_L = p_target + ipd_shift
+    p_target_R = p_target - ipd_shift
+
+    # Retinal signals per eye
+    _, e_pos_vis_L, raw_slip_L, e_vel_L, gate_vf_L = _retina.retinal_signals(
+        p_target_L, q_head, w_head, q_eye_L, w_eye_L, w_scene, v_target, scene_present,
+        sensory_params.visual_field_limit, sensory_params.k_visual_field)
+
+    _, e_pos_vis_R, raw_slip_R, e_vel_R, gate_vf_R = _retina.retinal_signals(
+        p_target_R, q_head, w_head, q_eye_R, w_eye_R, w_scene, v_target, scene_present,
         sensory_params.visual_field_limit, sensory_params.k_visual_field)
 
     # Gate target-dependent signals by target_present so that when there is no
     # foveal target, vel_delayed, pos_delayed, and gate_vf all decay to zero.
-    e_pos_vis = target_present * e_pos_vis
-    e_vel     = target_present * e_vel
-    gate_vf   = target_present * gate_vf
+    e_pos_vis_L = target_present * e_pos_vis_L
+    e_vel_L     = target_present * e_vel_L
+    gate_vf_L   = target_present * gate_vf_L
+    e_pos_vis_R = target_present * e_pos_vis_R
+    e_vel_R     = target_present * e_vel_R
+    gate_vf_R   = target_present * gate_vf_R
 
-    dx_c,   y_canals                       = _canal.step(x_c,  w_head,                               sensory_params)
-    dx_oto, _                              = _otolith.step(x_oto, jnp.concatenate([a_head, q_head]),  sensory_params)
-    dx_vis, e_slip_delayed, e_pos_delayed  = _retina.step(x_vis, raw_slip, e_pos_vis, e_vel, gate_vf, sensory_params.tau_vis)
+    dx_c,     y_canals  = _canal.step(x_c,   w_head, sensory_params)
+    dx_oto,   _         = _otolith.step(x_oto, jnp.concatenate([a_head, q_head]), sensory_params)
 
-    dx_sensory = jnp.concatenate([dx_c, dx_oto, dx_vis])
+    dx_vis_L, e_slip_delayed_L, e_pos_delayed_L = _retina.step(
+        x_vis_L, raw_slip_L, e_pos_vis_L, e_vel_L, gate_vf_L, sensory_params.tau_vis)
+    dx_vis_R, e_slip_delayed_R, e_pos_delayed_R = _retina.step(
+        x_vis_R, raw_slip_R, e_pos_vis_R, e_vel_R, gate_vf_R, sensory_params.tau_vis)
+
+    dx_sensory = jnp.concatenate([dx_c, dx_oto, dx_vis_L, dx_vis_R])
+
+    # Return averaged delayed signals (brain-facing)
+    e_slip_delayed = 0.5 * (e_slip_delayed_L + e_slip_delayed_R)
+    e_pos_delayed  = 0.5 * (e_pos_delayed_L  + e_pos_delayed_R)
     return dx_sensory, y_canals, e_slip_delayed, e_pos_delayed

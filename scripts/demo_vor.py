@@ -61,7 +61,7 @@ def _extract_signals(theta, t_array, head_vel_1d, states):
     x_c  = np.array(states.sensory[:, _IDX_C])
     x_vs = np.array(states.brain[:, _IDX_VS])
     x_ni = np.array(states.brain[:, _IDX_NI])
-    x_p  = np.array(states.plant)
+    x_p  = np.array(states.plant[:, :3])   # (T, 3) left eye (version ≈ R)
 
     nc  = N_CANALS
     x1  = x_c[:, :nc]
@@ -254,7 +254,7 @@ def demo_okr_cascade():
     x_vis = np.array(states.sensory[:, _IDX_VIS])
     x_vs  = np.array(states.brain[:, _IDX_VS])
     x_ni  = np.array(states.brain[:, _IDX_NI])
-    x_p   = np.array(states.plant)
+    x_p   = np.array(states.plant[:, :3])   # (T, 3) left eye
 
     w_scene_np   = np.where(t_np < on_dur, scene_vel, 0.0)
     eye_vel      = np.gradient(x_p[:, 0], dt)

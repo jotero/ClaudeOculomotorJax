@@ -62,7 +62,7 @@ def _make_pt3(t_np, jumps_deg, T):
 
 def _extract(states, pt3_np, theta, t_np):
     """Extract signals from full state trajectory."""
-    x_p   = np.array(states.plant)
+    x_p   = np.array(states.plant[:, :3])   # (T, 3) left eye
     x_ni  = np.array(states.brain[:, _IDX_NI])
     x_vis = np.array(states.sensory[:, _IDX_VIS])
     x_sg  = np.array(states.brain[:, _IDX_SG])

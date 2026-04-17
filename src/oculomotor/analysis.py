@@ -33,7 +33,7 @@ import jax.numpy as jnp
 from scipy.ndimage import binary_dilation
 from scipy.optimize import curve_fit
 
-from oculomotor.sim.simulator import _IDX_VS, _IDX_NI, _IDX_SG, _IDX_VIS
+from oculomotor.sim.simulator import _IDX_VS, _IDX_NI, _IDX_SG, _IDX_VIS, _IDX_VIS_L, _IDX_VIS_R
 from oculomotor.models.sensory_models.sensory_model import (
     N_CANALS, FLOOR, _SOFTNESS, PINV_SENS, C_pos, C_gate,
 )
@@ -85,11 +85,12 @@ def extract_burst(states, theta):
         Slice [:, 0] for yaw only.
     """
     def _at(state):
-        x_vis_ = state.sensory[_IDX_VIS]
-        e_pd   = C_pos  @ x_vis_
-        gate   = (C_gate @ x_vis_)[0]
-        x_ni_  = state.brain[_IDX_NI]
-        _, u   = sg_mod.step(state.brain[_IDX_SG], e_pd, gate, x_ni_, theta.brain)
+        x_vis_L = state.sensory[_IDX_VIS_L]
+        x_vis_R = state.sensory[_IDX_VIS_R]
+        e_pd  = 0.5 * (C_pos  @ x_vis_L + C_pos  @ x_vis_R)   # L+R average
+        gate  = 0.5 * ((C_gate @ x_vis_L)[0] + (C_gate @ x_vis_R)[0])
+        x_ni_ = state.brain[_IDX_NI]
+        _, u  = sg_mod.step(state.brain[_IDX_SG], e_pd, gate, x_ni_, theta.brain)
         return u
     return np.array(jax.vmap(_at)(states))   # (T, 3)
 
@@ -116,9 +117,10 @@ def extract_sg(states, theta):
             u_burst (T, 3)  recomputed saccade burst command
             x_ni    (T, 3)  neural integrator state (eye-position proxy)
     """
-    x_sg  = np.array(states.brain[:, _IDX_SG])
-    x_vis = np.array(states.sensory[:, _IDX_VIS])
-    x_ni  = np.array(states.brain[:, _IDX_NI])
+    x_sg    = np.array(states.brain[:, _IDX_SG])
+    x_vis_L = np.array(states.sensory[:, _IDX_VIS_L])
+    x_vis_R = np.array(states.sensory[:, _IDX_VIS_R])
+    x_ni    = np.array(states.brain[:, _IDX_NI])
 
     x_copy = x_sg[:, :3]
     z_ref  = x_sg[:, 3]
@@ -126,7 +128,8 @@ def extract_sg(states, theta):
     z_sac  = x_sg[:, 7]
     z_acc  = x_sg[:, 8]
     e_res  = e_held - x_copy
-    e_pd   = x_vis @ np.array(C_pos).T   # (T, 3)
+    # Use L+R average — matches what the brain's pos_delayed actually received
+    e_pd   = 0.5 * (x_vis_L @ np.array(C_pos).T + x_vis_R @ np.array(C_pos).T)  # (T, 3)
 
     u_burst = extract_burst(states, theta)
 

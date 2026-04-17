@@ -26,7 +26,7 @@ from oculomotor.sim import stimuli as stim
 from oculomotor.llm_pipeline.scenario import SimulationScenario, SimulationComparison, Patient
 from oculomotor.sim.simulator import (
     PARAMS_DEFAULT, with_brain, with_sensory, simulate,
-    _IDX_VS, _IDX_NI, _IDX_SG, _IDX_EC, _IDX_VIS, _IDX_PURSUIT,
+    _IDX_VS, _IDX_NI, _IDX_SG, _IDX_EC, _IDX_VIS, _IDX_VIS_L, _IDX_VIS_R, _IDX_PURSUIT,
 )
 from oculomotor.models.brain_models import saccade_generator as sg_mod
 from oculomotor.models.sensory_models.sensory_model import C_slip, C_pos, C_vel, C_gate
@@ -206,12 +206,13 @@ def _extract_signals(states, params, t_np: np.ndarray) -> dict:
     """Extract named signals from a SimState trajectory."""
     dt = t_np[1] - t_np[0]
 
-    x_p       = np.array(states.plant)           # (T, 3)
+    x_p       = np.array(states.plant[:, :3])     # (T, 3) left eye (version = L ≈ R)
     x_vs      = np.array(states.brain[:, _IDX_VS])
     x_ni      = np.array(states.brain[:, _IDX_NI])
     x_sg      = np.array(states.brain[:, _IDX_SG])
     x_pursuit = np.array(states.brain[:, _IDX_PURSUIT])
-    x_vis     = np.array(states.sensory[:, _IDX_VIS])
+    x_vis_L   = np.array(states.sensory[:, _IDX_VIS_L])
+    x_vis_R   = np.array(states.sensory[:, _IDX_VIS_R])
 
     # Eye velocity (numerical derivative, smoothed)
     w_eye = np.gradient(x_p, dt, axis=0)
@@ -220,16 +221,17 @@ def _extract_signals(states, params, t_np: np.ndarray) -> dict:
     # (use x_vs as proxy for head velocity estimate)
     w_est = x_vs  # VS state ≈ w_est
 
-    # Retinal signals from visual delay cascade
-    e_pos_delayed = x_vis @ np.array(C_pos).T    # (T, 3)
+    # Retinal signals — L+R average matches what brain actually received
+    e_pos_delayed = 0.5 * (x_vis_L @ np.array(C_pos).T + x_vis_R @ np.array(C_pos).T)  # (T, 3)
 
-    # Saccade burst (re-compute from SG state + delayed retinal signals)
+    # Saccade burst (re-compute from SG state + averaged delayed retinal signals)
     def _burst_at(state):
-        x_vis_ = state.sensory[_IDX_VIS]
-        e_pd   = C_pos  @ x_vis_
-        gate   = (C_gate @ x_vis_)[0]
-        x_ni_  = state.brain[_IDX_NI]
-        _, u   = sg_mod.step(state.brain[_IDX_SG], e_pd, gate, x_ni_, params.brain)
+        x_vis_L_ = state.sensory[_IDX_VIS_L]
+        x_vis_R_ = state.sensory[_IDX_VIS_R]
+        e_pd = 0.5 * (C_pos  @ x_vis_L_ + C_pos  @ x_vis_R_)
+        gate = 0.5 * ((C_gate @ x_vis_L_)[0] + (C_gate @ x_vis_R_)[0])
+        x_ni_ = state.brain[_IDX_NI]
+        _, u  = sg_mod.step(state.brain[_IDX_SG], e_pd, gate, x_ni_, params.brain)
         return u
     u_burst = np.array(jax.vmap(_burst_at)(states))  # (T, 3)
 

@@ -71,7 +71,7 @@ THETA_OKN_OFF = with_brain(PARAMS_DEFAULT, g_burst=0.0)
 def _extract(states, theta, t_np):
     """Extract efference-copy signals from full state trajectory."""
     tau_p = theta.brain.tau_p
-    x_p   = np.array(states.plant)
+    x_p   = np.array(states.plant[:, :3])   # (T, 3) left eye
     x_ni  = np.array(states.brain[:, _IDX_NI])
     x_vs  = np.array(states.brain[:, _IDX_VS])
 

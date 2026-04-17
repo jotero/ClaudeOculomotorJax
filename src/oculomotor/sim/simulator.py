@@ -1,50 +1,50 @@
 """Full oculomotor simulator — wires sensory_model, brain_model, and plant_model.
 
-Signal flow (3-D):
+Signal flow (3-D, binocular):
 
     VOR pathway:
         w_head (3,) → [Sensory: Canal Array] → y_canals (6,)
 
-    Visual delay (inside sensory_model):
+    Visual delay (inside sensory_model, per eye):
         e_slip (3,)  = scene_present · (w_scene − w_head − dx_p + u_burst)
-        e_slip → [Sensory: Visual delay, sig 0] → e_slip_delayed  (for VS / OKR)
-        e_pos  → [Sensory: Visual delay, sig 1] → e_pos_delayed   (for SG)
+        e_slip → [Sensory: Visual delay L/R, sig 0] → e_slip_delayed  (for VS / OKR)
+        e_pos  → [Sensory: Visual delay L/R, sig 1] → e_pos_delayed   (for SG)
 
-    Brain model (VS + NI + SG + EC):
+    Brain model (VS + NI + SG + EC) — driven by L+R averages:
         [y_canals | e_slip_delayed] → VS  → w_est
         e_pos_delayed → target selector → SG → u_burst
-        u_vel = −w_est + u_burst → NI → motor_cmd
-        u_burst → efference copy (slip cancellation)
+        u_vel = −w_est + u_burst → NI → motor_cmd  (version command, same for both eyes)
 
-    Plant model:
-        motor_cmd → Plant → q_eye (eye rotation vector)
+    Plant model (binocular — same version motor_cmd drives both eyes):
+        motor_cmd → Plant_L → q_eye_L
+        motor_cmd → Plant_R → q_eye_R
 
 State structure — SimState NamedTuple with three groups:
 
-    sensory  (252):  [x_c (12) | x_vis (240)]
-                      canal       retinal-delay cascade
-                      _IDX_C      _IDX_VIS          (indices into sensory)
+    sensory  (818):  [x_c (12) | x_oto (6) | x_vis_L (400) | x_vis_R (400)]
+                      canal       otolith      left retinal    right retinal
+                      _IDX_C      _IDX_OTO     _IDX_VIS_L      _IDX_VIS_R
 
-    brain    (135):  [x_vs (3) | x_ni (3) | x_sg (9) | x_ec (120)]
-                      vel-store   NI          sacc-gen   EC delay cascade
-                      _IDX_VS     _IDX_NI     _IDX_SG    _IDX_EC          (indices into brain)
+    brain    (141):  [x_vs (3) | x_ni (3) | x_sg (9) | x_ec (120) | x_grav (3) | x_pursuit (3)]
+                      vel-store   NI          sacc-gen   EC delay     gravity est   pursuit mem
+                      _IDX_VS     _IDX_NI     _IDX_SG    _IDX_EC      _IDX_GRAV     _IDX_PURSUIT
 
-    plant      (3):  x_p — eye rotation vector (deg); directly observable
-
-    x_sg sub-layout: [x_copy(3) | z_ref(1) | e_held(3) | z_sac(1) | z_acc(1)]
+    plant      (6):  [x_p_L (3) | x_p_R (3)] — left/right eye rotation vectors (deg)
+                      _IDX_P_L    _IDX_P_R
 
 Head velocity input:
     Accepts 1-D (T,) horizontal-only array — padded to (T, 3) internally.
     Accepts 3-D (T, 3) array directly for full 3-D stimulation.
-    Accepts a Stimulus object (oculomotor.sim.stimuli) for full 6-DOF + visual input.
 
 Output:
-    simulate() returns eye rotation vector, shape (T, 3), or a SimState trajectory
-    when return_states=True.  Access subsystem states via:
-        states.plant                → (T, 3)  eye rotation
-        states.brain[:, _IDX_VS]   → (T, 3)  velocity storage
-        states.sensory[:, _IDX_C]  → (T, 12) canal states
-        etc.
+    simulate() returns eye rotation vector array, shape (T, 6) [L eye | R eye],
+    or a SimState trajectory when return_states=True.  Access subsystem states via:
+        states.plant[:, :3]              → (T, 3)  left  eye rotation
+        states.plant[:, 3:]              → (T, 3)  right eye rotation
+        states.brain[:, _IDX_VS]         → (T, 3)  velocity storage
+        states.sensory[:, _IDX_C]        → (T, 12) canal states
+        states.sensory[:, _IDX_VIS_L]    → (T, 400) left  visual delay cascade
+        states.sensory[:, _IDX_VIS_R]    → (T, 400) right visual delay cascade
 """
 
 from typing import NamedTuple
@@ -53,10 +53,12 @@ import jax
 import jax.numpy as jnp
 import diffrax
 
-from oculomotor.models.sensory_models.sensory_model import _IDX_C, _IDX_OTO, _IDX_VIS, SensoryParams
+from oculomotor.models.sensory_models.sensory_model import (
+    _IDX_C, _IDX_OTO, _IDX_VIS, _IDX_VIS_L, _IDX_VIS_R, SensoryParams,
+)
 from oculomotor.models.sensory_models               import otolith as _otolith
 from oculomotor.models.brain_models.brain_model    import _IDX_VS, _IDX_NI, _IDX_SG, _IDX_EC, _IDX_GRAV, _IDX_PURSUIT, BrainParams
-from oculomotor.models.plant_models.plant_model_first_order import PlantParams
+from oculomotor.models.plant_models.plant_model_first_order import PlantParams, _IDX_P_L, _IDX_P_R
 from oculomotor.models.sensory_models import sensory_model
 from oculomotor.models.brain_models   import brain_model
 from oculomotor.models.plant_models   import plant_model_first_order as plant_model
@@ -131,7 +133,9 @@ PARAMS_DEFAULT     = default_params()
 # Re-export params API so callers can import everything from simulator
 __all__ = [
     'SimState', 'ODE_ocular_motor', 'simulate',
-    '_IDX_C', '_IDX_OTO', '_IDX_VIS', '_IDX_VS', '_IDX_NI', '_IDX_SG', '_IDX_EC', '_IDX_GRAV', '_IDX_PURSUIT',
+    '_IDX_C', '_IDX_OTO', '_IDX_VIS', '_IDX_VIS_L', '_IDX_VIS_R',
+    '_IDX_VS', '_IDX_NI', '_IDX_SG', '_IDX_EC', '_IDX_GRAV', '_IDX_PURSUIT',
+    '_IDX_P_L', '_IDX_P_R',
     # params
     'Params', 'SimConfig', 'SensoryParams', 'PlantParams', 'BrainParams',
     'default_params', 'with_brain', 'with_sensory', 'with_plant',
@@ -144,15 +148,13 @@ class SimState(NamedTuple):
     """Structured ODE state — a JAX-compatible pytree (NamedTuple).
 
     Groups:
-        sensory  (378)  Canal + otolith + retinal delay cascade (slip, pos, vel).
+        sensory  (818)  Canal + otolith + two retinal delay cascades (L and R).
         brain    (141)  Central computation: VS, NI, SG, EC, gravity, pursuit.
-        plant      (3)  Extraocular plant — eye rotation vector (deg)
+        plant      (6)  Two extraocular plants — [left (3) | right (3)] eye rotation (deg).
     """
-    sensory: jnp.ndarray   # (418,)  [x_c (12) | x_oto (6) | x_vis (400)]
+    sensory: jnp.ndarray   # (818,)  [x_c (12) | x_oto (6) | x_vis_L (400) | x_vis_R (400)]
     brain:   jnp.ndarray   # (141,)  [x_vs (3) | x_ni (3) | x_sg (9) | x_ec (120) | x_grav (3) | x_pursuit (3)]
-    plant:   jnp.ndarray   #   (3,)  eye rotation vector (deg)
-
-
+    plant:   jnp.ndarray   #   (6,)  [x_p_L (3) | x_p_R (3)]  eye rotation vectors (deg)
 
 
 # ── ODE vector field ───────────────────────────────────────────────────────────
@@ -164,27 +166,28 @@ def ODE_ocular_motor(t, state, args):
 
     Evaluation order:
         1. read_outputs  — slice delayed signals from sensory state for brain
-        2. brain_model   — VS + NI + SG + EC → motor_cmd
-        3. plant_model   — motor_cmd → dx_plant;  dx_plant[_IDX_Q] = w_true (deg/s)
-        4. sensory_model — canal + visual delay cascade driven by w_true
+        2. brain_model   — VS + NI + SG + EC → motor_cmd (version, same for both eyes)
+        3. plant_model   — motor_cmd → dx_plant_L/R; w_eye_{L,R} = dx_plant (deg/s)
+        4. sensory_model — canal + visual delay cascades driven by w_eye_{L,R}
 
     sensory_model.step must follow plant_model.step because it requires
-    w_eye = dx_plant[_IDX_Q] (instantaneous eye velocity, no lag).  Using the
-    tracked velocity in state.plant[_IDX_W] instead would introduce a ~5 ms
-    lag that breaks efference-copy cancellation and causes a post-saccade blip.
+    w_eye = dx_plant (instantaneous eye velocity, no lag).
 
     Args:
         t:     scalar time (s)
         state: SimState pytree with fields (sensory, brain, plant)
         args:  (theta, hv_interp, hp_interp, ha_interp, vs_interp, target_interp,
-                vt_interp, scene_present_interp, target_present_interp)
+                vt_interp, scene_present_interp, target_present_interp,
+                noise_canal_interp, noise_slip_interp,
+                noise_pos_L_interp, noise_pos_R_interp, noise_vel_interp)
 
     Returns:
         SimState of derivatives (dsensory, dbrain, dplant)
     """
     (theta, hv_interp, hp_interp, ha_interp, vs_interp, target_interp,
      vt_interp, scene_present_interp, target_present_interp,
-     noise_canal_interp, noise_slip_interp, noise_pos_interp,
+     noise_canal_interp, noise_slip_interp,
+     noise_pos_L_interp, noise_pos_R_interp,
      noise_vel_interp) = args
 
     # ── External inputs at time t ────────────────────────────────────────────
@@ -194,35 +197,39 @@ def ODE_ocular_motor(t, state, args):
     w_scene       = vs_interp.evaluate(t)              # (3,) scene angular velocity (deg/s)
     p_target      = target_interp.evaluate(t)          # (3,) Cartesian target position
     v_target      = vt_interp.evaluate(t)              # (3,) target angular velocity (deg/s)
-    scene_present  = scene_present_interp.evaluate(t)         # scalar: 0=dark, 1=lit
-    target_present = target_present_interp.evaluate(t)        # scalar: gates vel_delayed in retina
+    scene_present  = scene_present_interp.evaluate(t)  # scalar: 0=dark, 1=lit
+    target_present = target_present_interp.evaluate(t) # scalar: gates vel_delayed in retina
 
-    # ── Sensory: read bundled outputs for brain ───────────────────────────────
-    # f_gia from otolith LP state; gate_vf from |pos_delayed|; target selection in SG
-    # target_present not passed — target_visible = gate_vf (retinal geometry)
+    # ── Sensory: read bundled outputs for brain (averaged L+R) ───────────────
     sensory_out = sensory_model.read_outputs(
         state.sensory, scene_present, theta.sensory)
 
     # ── Sensory noise ─────────────────────────────────────────────────────────
+    noise_pos_L = noise_pos_L_interp.evaluate(t)   # (3,) left  eye position OU drift
+    noise_pos_R = noise_pos_R_interp.evaluate(t)   # (3,) right eye position OU drift
     sensory_out = sensory_out._replace(
-        canal        = sensory_out.canal        + noise_canal_interp.evaluate(t),
-        slip_delayed = sensory_out.slip_delayed + noise_slip_interp.evaluate(t),
-        pos_delayed  = sensory_out.pos_delayed  + noise_pos_interp.evaluate(t),
-        vel_delayed  = sensory_out.vel_delayed  + noise_vel_interp.evaluate(t),
+        canal          = sensory_out.canal        + noise_canal_interp.evaluate(t),
+        slip_delayed   = sensory_out.slip_delayed + noise_slip_interp.evaluate(t),
+        vel_delayed    = sensory_out.vel_delayed  + noise_vel_interp.evaluate(t),
+        # Per-eye position noise then averaged for brain
+        pos_delayed_L  = sensory_out.pos_delayed_L + noise_pos_L,
+        pos_delayed_R  = sensory_out.pos_delayed_R + noise_pos_R,
+        pos_delayed    = sensory_out.pos_delayed   + 0.5 * (noise_pos_L + noise_pos_R),
     )
 
-    # ── Brain: VS + NI + SG + EC ──────────────────────────────────────────────
+    # ── Brain: VS + NI + SG + EC (uses averaged sensory_out) ─────────────────
     dx_brain, motor_cmd = brain_model.step(state.brain, sensory_out, theta.brain)
 
-    # ── Plant ─────────────────────────────────────────────────────────────────
-    # dx_p is wall-clipped at ±orbital_limit so x_p stays bounded.
-    # q_eye = x_p (bounded by construction); w_eye = dx_p (consistent with q_eye).
-    dx_plant, q_eye, w_eye = plant_model.step(state.plant, motor_cmd, theta.plant)
+    # ── Plant: version command drives both eyes identically ───────────────────
+    # dx_p is wall-clipped so x_p stays bounded; q_eye = x_p; w_eye = dx_p.
+    dx_p_L, q_eye_L, w_eye_L = plant_model.step(state.plant[_IDX_P_L], motor_cmd, theta.plant)
+    dx_p_R, q_eye_R, w_eye_R = plant_model.step(state.plant[_IDX_P_R], motor_cmd, theta.plant)
+    dx_plant = jnp.concatenate([dx_p_L, dx_p_R])
 
-    # ── Sensory: retinal signals + canal + otolith + visual delay ────────────
-    # w_eye = dx_plant = w_true (algebraic, no lag) — must follow plant step.
+    # ── Sensory: retinal signals + canal + otolith + visual delay cascades ────
+    # w_eye_{L,R} = dx_plant (algebraic, no lag) — must follow plant step.
     dx_sensory, _, _, _ = sensory_model.step(
-        state.sensory, q_head, w_head, a_head, q_eye, w_eye,
+        state.sensory, q_head, w_head, a_head, q_eye_L, w_eye_L, q_eye_R, w_eye_R,
         w_scene, v_target, p_target, scene_present, target_present, theta.sensory)
 
     return SimState(
@@ -244,7 +251,7 @@ def simulate(params, t_array_or_stimulus, head_vel_array=None,
              max_steps=10000, sim_config=None,
              return_states=False,
              key=None):
-    """Integrate the oculomotor ODE and return eye rotation vector.
+    """Integrate the oculomotor ODE and return eye rotation vectors.
 
     Args:
         params:               Params — model parameters (see default_params()).
@@ -271,23 +278,25 @@ def simulate(params, t_array_or_stimulus, head_vel_array=None,
         max_steps:            ODE solver step budget (≥ duration / dt_solve).
         sim_config:           SimConfig — solver settings. Default: SIM_CONFIG_DEFAULT.
         return_states:        if True, return full state trajectory as a SimState
-                              instead of just eye rotation (T, 3).
+                              instead of just eye rotation (T, 6).
 
     Returns:
         If return_states=False (default):
-            eye_rot: eye rotation vector (deg), shape (T, 3)
+            eye_rot: eye rotation vectors (deg), shape (T, 6) [left (3) | right (3)]
         If return_states=True:
             states: SimState pytree, each field has shape (T, N):
-                      states.plant                      → (T, 3)   eye rotation vector
-                      states.brain[:, _IDX_VS]         → (T, 3)   velocity storage
-                      states.brain[:, _IDX_NI]         → (T, 3)   neural integrator
-                      states.brain[:, _IDX_SG]         → (T, 9)   saccade generator
-                      states.brain[:, _IDX_EC]         → (T, 120) efference copy cascade
-                      states.brain[:, _IDX_GRAV]       → (T, 3)   gravity estimate (m/s²)
-                      states.brain[:, _IDX_PURSUIT]    → (T, 3)   pursuit velocity memory
-                      states.sensory[:, _IDX_C]        → (T, 12)  canal states
-                      states.sensory[:, _IDX_OTO]      → (T, 6)   otolith LP states
-                      states.sensory[:, _IDX_VIS]      → (T, 400) visual delay cascade
+                      states.plant[:, :3]                  → (T, 3)   left  eye rotation
+                      states.plant[:, 3:]                  → (T, 3)   right eye rotation
+                      states.brain[:, _IDX_VS]             → (T, 3)   velocity storage
+                      states.brain[:, _IDX_NI]             → (T, 3)   neural integrator
+                      states.brain[:, _IDX_SG]             → (T, 9)   saccade generator
+                      states.brain[:, _IDX_EC]             → (T, 120) efference copy cascade
+                      states.brain[:, _IDX_GRAV]           → (T, 3)   gravity estimate (m/s²)
+                      states.brain[:, _IDX_PURSUIT]        → (T, 3)   pursuit velocity memory
+                      states.sensory[:, _IDX_C]            → (T, 12)  canal states
+                      states.sensory[:, _IDX_OTO]          → (T, 6)   otolith LP states
+                      states.sensory[:, _IDX_VIS_L]        → (T, 400) left  visual delay cascade
+                      states.sensory[:, _IDX_VIS_R]        → (T, 400) right visual delay cascade
     """
     cfg = sim_config if sim_config is not None else SIM_CONFIG_DEFAULT
     dt  = cfg.dt_solve
@@ -373,30 +382,33 @@ def simulate(params, t_array_or_stimulus, head_vel_array=None,
     if key is None:
         key = jax.random.PRNGKey(0)
     k_canal, k_slip, k_pos, k_vel = jax.random.split(key, 4)
+    k_pos_L, k_pos_R = jax.random.split(k_pos, 2)
 
     noise_canal = jax.random.normal(k_canal, (T, 6)) * params.sensory.sigma_canal  # (T, 6) deg/s
     noise_slip  = jax.random.normal(k_slip,  (T, 3)) * params.sensory.sigma_slip   # (T, 3) deg/s
     noise_vel   = jax.random.normal(k_vel,   (T, 3)) * params.sensory.sigma_vel    # (T, 3) deg/s
 
-    # Retinal position drift — OU process so error wanders slowly (not white noise).
-    # White noise crosses threshold every ms → continuous firing.
+    # Retinal position drift — independent OU processes for L and R eyes.
     # OU with tau_pos_drift ~300ms accumulates slowly → sparse microsaccades.
     sigma_pos      = params.sensory.sigma_pos
     tau_pos_drift  = params.sensory.tau_pos_drift
     alpha_ou       = jnp.exp(-dt / tau_pos_drift)
     ou_drive       = jnp.sqrt(1.0 - alpha_ou ** 2) * sigma_pos
-    white_pos      = jax.random.normal(k_pos, (T, 3))
 
     def _ou_step(carry, w):
         x = alpha_ou * carry + ou_drive * w
         return x, x
 
-    _, noise_pos = jax.lax.scan(_ou_step, jnp.zeros(3), white_pos)  # (T, 3) deg
+    white_pos_L = jax.random.normal(k_pos_L, (T, 3))
+    white_pos_R = jax.random.normal(k_pos_R, (T, 3))
+    _, noise_pos_L = jax.lax.scan(_ou_step, jnp.zeros(3), white_pos_L)  # (T, 3) deg
+    _, noise_pos_R = jax.lax.scan(_ou_step, jnp.zeros(3), white_pos_R)  # (T, 3) deg
 
-    noise_canal_interp = diffrax.LinearInterpolation(ts=t_array, ys=noise_canal)
-    noise_slip_interp  = diffrax.LinearInterpolation(ts=t_array, ys=noise_slip)
-    noise_pos_interp   = diffrax.LinearInterpolation(ts=t_array, ys=noise_pos)
-    noise_vel_interp   = diffrax.LinearInterpolation(ts=t_array, ys=noise_vel)
+    noise_canal_interp   = diffrax.LinearInterpolation(ts=t_array, ys=noise_canal)
+    noise_slip_interp    = diffrax.LinearInterpolation(ts=t_array, ys=noise_slip)
+    noise_pos_L_interp   = diffrax.LinearInterpolation(ts=t_array, ys=noise_pos_L)
+    noise_pos_R_interp   = diffrax.LinearInterpolation(ts=t_array, ys=noise_pos_R)
+    noise_vel_interp     = diffrax.LinearInterpolation(ts=t_array, ys=noise_vel)
 
     hv_interp             = diffrax.LinearInterpolation(ts=t_array, ys=hv3)
     hp_interp             = diffrax.LinearInterpolation(ts=t_array, ys=hp3)
@@ -411,9 +423,9 @@ def simulate(params, t_array_or_stimulus, head_vel_array=None,
     sensory_x0 = sensory_x0.at[_IDX_OTO].set(_otolith.X0)   # otolith settled at gravity
 
     x0 = SimState(
-        sensory = sensory_x0,                          # (418,) otolith init at [9.81,0,0, ...]
+        sensory = sensory_x0,                          # (818,) otolith init at [9.81,0,0, ...]
         brain   = brain_model.make_x0(),               # (141,) gravity init at [9.81,0,0]
-        plant   = jnp.zeros(plant_model.N_STATES),     #   (3,)  eye rotation vector
+        plant   = jnp.zeros(plant_model.N_STATES),     #   (6,)  [left (3) | right (3)]
     )
 
     solution = diffrax.diffeqsolve(
@@ -425,8 +437,8 @@ def simulate(params, t_array_or_stimulus, head_vel_array=None,
         y0=x0,
         args=(params, hv_interp, hp_interp, ha_interp, vs_interp, target_interp,
               vt_interp, scene_present_interp, target_present_interp,
-              noise_canal_interp, noise_slip_interp, noise_pos_interp,
-              noise_vel_interp),
+              noise_canal_interp, noise_slip_interp,
+              noise_pos_L_interp, noise_pos_R_interp, noise_vel_interp),
         stepsize_controller=diffrax.ConstantStepSize(),
         saveat=diffrax.SaveAt(ts=t_array),
         max_steps=max_steps,
@@ -434,4 +446,4 @@ def simulate(params, t_array_or_stimulus, head_vel_array=None,
 
     if return_states:
         return solution.ys                          # SimState, each field (T, N)
-    return solution.ys.plant                        # (T, 3) eye rotation vector
+    return solution.ys.plant                        # (T, 6) [left | right] eye rotation

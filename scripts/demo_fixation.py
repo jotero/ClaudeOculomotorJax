@@ -57,7 +57,7 @@ def _make_t():
 def _extract(states, params, t_np):
     """Extract eye position, velocity, and burst from a state trajectory."""
     dt   = float(t_np[1] - t_np[0])
-    x_p  = np.array(states.plant)          # (T, 3)
+    x_p  = np.array(states.plant[:, :3])    # (T, 3) left eye (version ≈ R)
 
     eye_vel = np.gradient(x_p, dt, axis=0) # (T, 3)
 
