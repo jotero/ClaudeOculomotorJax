@@ -175,9 +175,11 @@ def step(x_brain, sensory_out, brain_params):
     # motor_ec = delay(u_burst + u_pursuit) — one cascade, read once, used twice.
     motor_ec = ec.read_delayed(x_ec)
 
-    # OKR / VS: scene-gated — cancels all self-generated motion in the visual scene
-    #   slip_delayed ≈ −(u_burst+u_pursuit)(t−τ)  →  corrected ≈ 0 during any motion ✓
-    e_slip_corrected = sensory_out.slip_delayed + sensory_out.scene_present * motor_ec
+    # OKR / VS: scene-gated — slip and EC correction both gated by scene_present.
+    #   Parallel to the pursuit path (target_present gates vel_delayed + motor_ec).
+    #   When dark: zero visual input to VS; x_vs decays freely with τ_vs → clean OKAN.
+    #   When lit:  slip_delayed ≈ −(u_burst+u_pursuit)(t−τ)  →  corrected ≈ 0 ✓
+    e_slip_corrected = sensory_out.scene_present * (sensory_out.slip_delayed + motor_ec)
 
     # Pursuit: target-gated — foveal target slip only (excludes VOR, OKN, fixation)
     #   Gate the *entire* signal by target_present so that when there is no moving

@@ -28,7 +28,7 @@ from oculomotor.sim.simulator import (
     _IDX_C, _IDX_VS, _IDX_NI, _IDX_VIS, _IDX_SG,
 )
 from oculomotor.models.sensory_models.sensory_model import N_CANALS, FLOOR, _SOFTNESS, PINV_SENS
-from oculomotor.models.sensory_models.sensory_model import C_slip, C_pos
+from oculomotor.models.sensory_models.sensory_model import C_slip, C_pos, C_gate
 from oculomotor.models.brain_models import saccade_generator as sg_mod
 from oculomotor.sim import stimuli as stim_mod
 
@@ -92,8 +92,11 @@ def _extract_signals(theta, t_array, head_vel_1d, states):
 def _extract_burst(states, theta):
     """Recompute u_burst (T, 3) from full state trajectory via vmap."""
     def _at(state):
-        e_pos_delayed = C_pos @ state.sensory[_IDX_VIS]
-        _, u_burst = sg_mod.step(state.brain[_IDX_SG], e_pos_delayed, theta.brain)
+        x_vis_        = state.sensory[_IDX_VIS]
+        e_pos_delayed = C_pos  @ x_vis_
+        gate_vf       = (C_gate @ x_vis_)[0]
+        x_ni_         = state.brain[_IDX_NI]
+        _, u_burst    = sg_mod.step(state.brain[_IDX_SG], e_pos_delayed, gate_vf, x_ni_, theta.brain)
         return u_burst
     return np.array(jax.vmap(_at)(states))
 

@@ -197,9 +197,6 @@ def ODE_ocular_motor(t, state, args):
     scene_present  = scene_present_interp.evaluate(t)         # scalar: 0=dark, 1=lit
     target_present = target_present_interp.evaluate(t)        # scalar: 0=no target, 1=present
 
-    # ── Unpack plant state ────────────────────────────────────────────────────
-    q_eye = state.plant   # (3,) eye rotation vector (deg)
-
     # ── Sensory: read bundled outputs for brain ───────────────────────────────
     # f_gia from otolith LP state; gate_vf from |pos_delayed|; target selection in SG
     sensory_out = sensory_model.read_outputs(
@@ -217,7 +214,9 @@ def ODE_ocular_motor(t, state, args):
     dx_brain, motor_cmd = brain_model.step(state.brain, sensory_out, theta.brain)
 
     # ── Plant ─────────────────────────────────────────────────────────────────
-    dx_plant, _, w_eye = plant_model.step(state.plant, motor_cmd, theta.plant)
+    # dx_p is wall-clipped at ±orbital_limit so x_p stays bounded.
+    # q_eye = x_p (bounded by construction); w_eye = dx_p (consistent with q_eye).
+    dx_plant, q_eye, w_eye = plant_model.step(state.plant, motor_cmd, theta.plant)
 
     # ── Sensory: retinal signals + canal + otolith + visual delay ────────────
     # w_eye = dx_plant = w_true (algebraic, no lag) — must follow plant step.
