@@ -143,6 +143,91 @@ def with_plant(params: Params, **kwargs) -> Params:
 SIM_CONFIG_DEFAULT = SimConfig()
 PARAMS_DEFAULT     = default_params()
 
+
+# ── Vestibular lesion helpers ───────────────────────────────────────────────────
+
+def with_uvh(params: Params, side: str = 'left',
+             canal_gain_frac: float = 0.1,
+             f_afferent: float = None) -> Params:
+    """Unilateral vestibular hypofunction (deafferentation / vestibular neuritis).
+
+    Reduces canal gains on the affected side AND lowers the VS equilibrium bias for
+    that population to reflect the lost afferent drive (~30% of resting discharge).
+
+    Args:
+        side:            'left' or 'right'.
+        canal_gain_frac: Remaining canal gain fraction (0 = complete loss, 0.1 = 90% loss).
+        f_afferent:      Fraction of b_vs from afferents.  Defaults to params.brain.f_afferent.
+
+    Canal index convention (matches sensory_model.py):
+        0–2 = Left canals  (LHC, LASC, LPSC)
+        3–5 = Right canals (RHC, RASC, RPSC)
+
+    b_vs layout: [x_L (0:3) | x_R (3:6)].
+    """
+    import numpy as np
+    if f_afferent is None:
+        f_afferent = params.brain.f_afferent
+
+    b_total = float(np.mean(np.broadcast_to(
+        np.asarray(params.brain.b_vs, dtype=float), (6,))))   # healthy total
+    b_intr  = b_total * (1.0 - f_afferent)   # intrinsic component (survives nerve cut)
+    b_full  = b_total                          # healthy population bias
+
+    cg = np.array(params.sensory.canal_gains, dtype=float)
+
+    # Population convention note:
+    #   Model LEFT pop (b_vs[0:3]) codes RIGHTWARD rotation ≡ anatomical RIGHT VN.
+    #   Model RIGHT pop (b_vs[3:6]) codes LEFTWARD rotation  ≡ anatomical LEFT  VN.
+    #   Left ear/nerve lesion → LEFT canals silent → anatomical LEFT VN (= model RIGHT pop) loses drive.
+    #   Nystagmus beats AWAY from lesion: left lesion → net rightward signal → slow-phase left → fast-phase right.
+
+    if side == 'left':
+        cg[:3] *= canal_gain_frac                                                         # silence left canals
+        b_vs = jnp.array([b_full, b_full, b_full, b_intr, b_intr, b_intr], dtype=jnp.float32)  # RIGHT pop drops
+    elif side == 'right':
+        cg[3:] *= canal_gain_frac                                                         # silence right canals
+        b_vs = jnp.array([b_intr, b_intr, b_intr, b_full, b_full, b_full], dtype=jnp.float32)  # LEFT pop drops
+    else:
+        raise ValueError(f"side must be 'left' or 'right', got {side!r}")
+
+    return params._replace(
+        sensory = params.sensory._replace(canal_gains=jnp.array(cg, dtype=jnp.float32)),
+        brain   = params.brain._replace(b_vs=b_vs),
+    )
+
+
+def with_vn_lesion(params: Params, side: str = 'left') -> Params:
+    """Unilateral VN infarct / complete VN ablation.
+
+    Silences the affected population entirely (b_L or b_R → 0) AND removes
+    its canal afferent drive.  Stronger acute nystagmus than with_uvh() because
+    intrinsic firing is also abolished.
+
+    See with_uvh() for population convention (model RIGHT pop = anatomical LEFT VN).
+
+    Args:
+        side: 'left' or 'right'.
+    """
+    import numpy as np
+    b_total = float(np.mean(np.broadcast_to(
+        np.asarray(params.brain.b_vs, dtype=float), (6,))))
+    cg = np.array(params.sensory.canal_gains, dtype=float)
+
+    if side == 'left':
+        cg[:3] = 0.0
+        b_vs = jnp.array([b_total, b_total, b_total, 0.0, 0.0, 0.0], dtype=jnp.float32)  # RIGHT pop → 0
+    elif side == 'right':
+        cg[3:] = 0.0
+        b_vs = jnp.array([0.0, 0.0, 0.0, b_total, b_total, b_total], dtype=jnp.float32)  # LEFT pop → 0
+    else:
+        raise ValueError(f"side must be 'left' or 'right', got {side!r}")
+
+    return params._replace(
+        sensory = params.sensory._replace(canal_gains=jnp.array(cg, dtype=jnp.float32)),
+        brain   = params.brain._replace(b_vs=b_vs),
+    )
+
 # Re-export params API so callers can import everything from simulator
 __all__ = [
     'SimState', 'ODE_ocular_motor', 'simulate',
@@ -152,6 +237,7 @@ __all__ = [
     # params
     'Params', 'SimConfig', 'SensoryParams', 'PlantParams', 'BrainParams',
     'default_params', 'with_brain', 'with_sensory', 'with_plant',
+    'with_uvh', 'with_vn_lesion',
     'PARAMS_DEFAULT', 'SIM_CONFIG_DEFAULT',
 ]
 

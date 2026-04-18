@@ -125,9 +125,20 @@ class BrainParams(NamedTuple):
     alpha_reset:           float = 1.0    # centering gain (0–1); e_center = −α·x_ni when out-of-field
 
     # Bilateral velocity storage — tonic VN resting drive
-    b_vs:                  float = 100.0  # intrinsic VN bias (deg/s); equilibrium of each population
-                                          # orthogonal-canal assumption: PINV cancels afferent DC bias
-                                          # keeps x_R > 0 for |ω| < b_vs / (K_vs · τ_vs) ≈ 50 deg/s
+    # b_vs can be a scalar (same for all 6 states) or a (6,) array (per-population).
+    # Equilibrium: x_L → b_vs[:3], x_R → b_vs[3:].  Net x_L−x_R = 0 when symmetric.
+    #
+    # Afferent/intrinsic split (Straka & Dieringer 2004; Smith & Curthoys 1989):
+    #   b_intrinsic = b_vs_total * (1 − f_afferent) ≈ 70 deg/s  (persists after nerve cut)
+    #   b_afferent  = b_vs_total *  f_afferent       ≈ 30 deg/s  (lost with ipsilateral deafferentation)
+    #
+    # Lesion presets (use with_uvh() / with_vn_lesion() helpers):
+    #   Healthy:          b_vs = 100.0  (scalar → broadcast)
+    #   UVH left:         b_vs = (70, 70, 70, 100, 100, 100)  — afferent drive lost on left
+    #   VN infarct left:  b_vs = ( 0,  0,  0, 100, 100, 100)  — entire left pop silenced
+    #   Bilateral hypo:   b_vs = (70, 70, 70,  70,  70,  70)  — both sides deafferented
+    b_vs:                  float = 100.0  # scalar OR (6,) per-population bias (deg/s)
+    f_afferent:            float = 0.30   # fraction of b_vs from canal afferents (~30%)
 
     # Otolith / gravity estimation — Laurens & Angelaki (2011, 2017)
     K_grav:                float = 0.5    # otolith correction gain (1/s); TC = 1/K_grav ≈ 2 s
@@ -182,7 +193,8 @@ def make_x0(brain_params=None):
     x0 = x0.at[_IDX_GRAV].set(ge.X0)
     if brain_params is not None:
         # Both populations start at their resting bias so net x_L − x_R = 0 at rest.
-        x0 = x0.at[_IDX_VS].set(brain_params.b_vs * jnp.ones(vs.N_STATES))
+        b = jnp.broadcast_to(jnp.asarray(brain_params.b_vs, dtype=jnp.float32), (vs.N_STATES,))
+        x0 = x0.at[_IDX_VS].set(b)
     return x0
 
 

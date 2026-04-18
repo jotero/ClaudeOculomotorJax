@@ -94,7 +94,7 @@ def step(x_vs, u, brain_params):
     g_hat    = u[N_CANALS+3:]          # (3,)
     u_lin    = jnp.concatenate([canal_in, slip_in])   # (9,) linear inputs
 
-    b = brain_params.b_vs * jnp.ones(6)   # equilibrium (intrinsic resting state)
+    b = jnp.broadcast_to(jnp.asarray(brain_params.b_vs, dtype=jnp.float32), (6,))  # equilibrium (6,)
 
     # ── ABCD matrices ──────────────────────────────────────────────────────────
 
