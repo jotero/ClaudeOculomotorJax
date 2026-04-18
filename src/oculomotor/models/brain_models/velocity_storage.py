@@ -1,140 +1,131 @@
-"""Velocity Storage SSM — Raphan/Cohen (1979) leaky-integrator architecture.
+"""Velocity Storage SSM — push-pull bilateral architecture.
 
-Implements the Raphan, Matsuo & Cohen (1979 Exp Brain Res) velocity-storage
-model: a leaky integrator charged by semicircular canal afferents (and
-retinal slip), with storage TC = τ_vs directly settable to match post-
-rotatory nystagmus / OKAN data (~20 s in monkey: Cohen et al. 1977).
+Two populations (Left, Right) model the bilateral vestibular nucleus (VN)
+Type I / Type II neuron organization.
 
-    dx_vs/dt = A_vs @ x_vs + B_vs(θ) @ u
-      y_vs   = C_vs @ x_vs  +  D_vs(θ) @ u       (D feedthrough)
+State:  x_vs = [x_L (3,) | x_R (3,)]                        (6,)
+Input:  u    = [y_canals (6,) | e_slip_delayed (3,) | g_hat (3,)]  (12,)
+Output: w_est = ω̂  (3,)  — net head-velocity estimate → NI
 
-States:  x_vs = [ω̂_x, ω̂_y, ω̂_z]                    (3,)   angular velocity estimate
-Input:   u    = [y_canals (6,) | e_slip_delayed (3,)]  (9,)   stacked afferents + visual
-Output:  y_vs = ω̂  →  feeds Neural SSM
+ABCD system (linear core):
+────────────────────────────────────────────────────────────────────────
+    dx/dt  = A @ (x − b)  +  B @ u_lin  +  gd(x, g_hat)
+    w_est  = C @ x        +  D @ u_lin
 
-──────────────────────────────────────────────────────────────────────────
-Architecture (Raphan et al. 1979):
+    u_lin  = [y_canals (6,) | e_slip_delayed (3,)]  (9,)   linear inputs
+    g_hat  is handled separately in gd() — nonlinear, outside ABCD core
 
-    VS is a leaky integrator with storage TC τ_vs, driven by canal afferents
-    (K_vs gain) and retinal slip (K_vis gain).  The two parameters are
-    INDEPENDENT: τ_vs sets the storage/OKAN decay; K_vs sets how aggressively
-    canal signals charge the store.
+    A  (6×6)  =  −(1/τ_vs) · I₆
+                 diagonal; one TC for both populations.
+                 Future: full 6×6 → cross-axis coupling, asymmetric decay.
 
-    Canal pathway:
-        dω̂/dt += K_vs · u_canal       [canal charges VS; K_vs = coupling gain]
+    B  (6×9)  =  ⎡  +K_vs·PINV_SENS  │  −K_vis·I₃ ⎤   ← left  population
+                 ⎣  −K_vs·PINV_SENS  │  +K_vis·I₃ ⎦   ← right population
+                 Push-pull: opposite canal sign, opposite visual sign.
+                 Future: full 6×9 → per-neuron canal and visual weights.
 
-    Visual pathway (OKR / OKAN):
-        dω̂/dt -= K_vis · e_slip_delayed
+    C  (3×6)  =  [I₃ | −I₃]
+                 Reads net signal x_L − x_R.
+                 Likely kept fixed (defines L/R convention).
 
-    Leak:
-        dω̂/dt -= ω̂ / τ_vs            [τ_vs = storage/OKAN time constant directly]
+    D  (3×9)  =  [PINV_SENS | −g_vis·I₃]
+                 Canal and slip feedthrough on the net output.
+                 Future: fit D → data-driven feedthrough gains.
 
-    Combined:
-        dω̂/dt = −(1/τ_vs)·ω̂ + K_vs·u_canal − K_vis·e_slip_delayed
+    b  (6,)   =  b_vs · 1₆
+                 Equilibrium (intrinsic VN resting state, deg/s units).
+                 Future: fit per-neuron bias vector.
 
-where u_canal = PINV_SENS @ y_canals  (3,)  is internal — VS owns the mixing.
+────────────────────────────────────────────────────────────────────────
+Path from scalar params → matrix params (system identification):
 
-In 3-D (independent axes, diagonal matrices):
-    A_vs = −(1/τ_vs) · I₃                     (3×3)  θ-dependent via τ_vs only
-    B_vs = [K_vs·PINV_SENS | −K_vis·I₃]       (3×9)  θ-dependent
-    D_vs = [PINV_SENS      | −g_vis·I₃]        (3×9)  θ-dependent
+    Stage 1 (now):   A = −(1/τ)·I,  B built from K_vs/K_vis scalars
+    Stage 2:         A = diag(a),    B = free (6×9)   [per-axis TCs]
+    Stage 3:         A free (6×6),   B free (6×9)     [full coupling]
 
-Storage/OKAN time constant = τ_vs (directly; no compound formula).
-Typical: τ_vs = 20 s  (Cohen, Matsuo & Raphan 1977 J Neurophysiol;
-                        Raphan, Matsuo & Cohen 1979 Exp Brain Res).
+    At each stage the fitting code is identical — only the pytree changes.
+    Nonlinearities (gravity coupling, future rectification) remain outside
+    the ABCD core and are held fixed during linear fitting.
 
-──────────────────────────────────────────────────────────────────────────
-Why K_vs and τ_vs are independent:
+────────────────────────────────────────────────────────────────────────
+Healthy symmetric regime:
+    At rest:  x_L = x_R = b  →  C @ x = 0   (no spontaneous nystagmus) ✓
+    Head right (+):  x_L ↑, x_R ↓  →  w_est > 0  →  eye moves left ✓
+    Scene right (+): x_L ↓, x_R ↑  →  w_est < 0  →  eye follows right ✓
+    C @ x = x_L − x_R is identical to old scalar x_vs in linear regime.
 
-  In the Laurens & Angelaki (2011) Kalman formulation, A = −(1/τ_vs + K_vs),
-  so K_vs appears in BOTH the decay and the drive, creating a constraint:
-      τ_eff = 1/(1/τ_vs + K_vs)
-  To get τ_eff = 20 s one needs tiny K_vs ≈ 0.03 /s, which charges VS too
-  slowly — the canal adapts (τ_c = 5 s) before VS can accumulate significant
-  velocity.
-
-  The Raphan model avoids this: A = −1/τ_vs, so τ_vs IS the storage TC
-  directly, and K_vs is free to be large (e.g. 0.1 /s) for rapid charging.
-  With K_vs = 0.1 and τ_vs = 20 s, VS charges to ~19 deg/s during a 15-s
-  constant-velocity rotation vs ~6 deg/s with the Kalman formulation.
-
-──────────────────────────────────────────────────────────────────────────
-Visual pathway (OKR / OKAN):
-
-  Sign convention: e_slip_delayed > 0 when scene moves faster than eye.
-  This charges x_vs NEGATIVELY (−K_vis term in B), so
-  w_est = x_vs − g_vis·e_slip_delayed becomes more negative, and
-  u_vel = −g_vor · w_est increases in the scene direction → eye follows. ✓
-
-  OKR steady-state gain (τ_vs = 20 s, g_vor = 1):
-      w_eye/w_scene ≈ (τ_vs·K_vis + g_vis) / (1 + τ_vs·K_vis + g_vis)
-
-  OKAN time constant = τ_vs, independent of K_vis.
-  When scene turns off, x_vs (negative) decays with τ_vs → OKAN. ✓
-
-──────────────────────────────────────────────────────────────────────────
-Canal feedthrough (D includes PINV_SENS):
-  • y_vs = x_vs + D @ u — fast canal signal passes to NI even when x_vs≈0
-    (Robinson 1977 / Raphan-Cohen 1979 architecture).
-  • At HIT frequencies x_vs ≈ 0 so canal drives NI directly.
-  • At low frequencies x_vs dominates (velocity storage extension).
-
-3-D extension notes:
-    A_vs → off-diagonal gravity coupling terms (axis-dependent VS)
-    K_vs → 3×3 gain matrix
-    These off-diagonal terms are zero for Level 1b; add later.
+Lesion modelling (once rectification is added):
+    Left VN lesion:  b_L → 0  →  spontaneous rightward nystagmus ✓
+    Left neuritis:   canal_gains_L → 0  →  asymmetric canal drive ✓
 
 Parameters:
-  τ_vs  — storage time constant (s).  Typical: 20 s  (Raphan et al. 1979;
-           Cohen et al. 1977).  This IS the OKAN TC — set directly from data.
-  K_vs  — canal coupling gain (1/s).  Typical: 0.1 /s.  Controls how fast
-           canal afferents charge the VS store.  Independent of τ_vs.
-           Larger K_vs → VS charges faster but SS level = K_vs·τ_vs·u_canal
-           (e.g. K_vs=0.05 → x_vs_ss = u_canal at constant canal drive).
-  K_vis — visual state gain (1/s).    Default: 0.3 /s; charges VS from slip.
-           Does NOT affect OKAN time constant (only τ_vs controls OKAN TC).
-  g_vis — visual direct feedthrough.  Default: 0.3; provides fast OKR onset.
-           Combined with K_vis sets steady-state OKR gain ≈ 86% at defaults.
+    b_vs  (deg/s) — intrinsic VN resting bias; equilibrium of each pop.
+                    orthogonal-canal assumption: PINV cancels afferent DC.
+                    Keeps x_R > 0 for |ω| < b_vs / (K_vs · τ_vs) ≈ 50 deg/s.
+    τ_vs  (s)     — storage / OKAN TC.       Default 20 s.
+    K_vs  (1/s)   — canal→VS gain.           Default 0.1.
+    K_vis (1/s)   — visual→VS gain.          Default 1.0.
+    g_vis         — visual feedthrough.      Default 0.3.
+    K_gd  (1/s)   — gravity dumping gain.    Default 0 (disabled).
 """
 
 import jax.numpy as jnp
 from oculomotor.models.sensory_models.sensory_model import PINV_SENS, N_CANALS
 
-N_STATES  = 3
+N_STATES  = 6   # x_L(3) + x_R(3)
 N_INPUTS  = N_CANALS + 3 + 3   # 6 canal afferents + 3 slip + 3 g_hat
-N_OUTPUTS = 3
+N_OUTPUTS = 3   # w_est (3,)
+
 
 def step(x_vs, u, brain_params):
-    """Single ODE step: state derivative + velocity command output.
+    """Single ODE step: bilateral VS dynamics + net velocity output.
 
     Args:
-        x_vs:  (3,)    VS state (stored angular velocity estimate)
-        u:     (12,)   stacked input [y_canals (6,) | e_slip_delayed (3,) | g_hat (3,)]
-        brain_params: BrainParams  model parameters
+        x_vs:         (6,)   VS state [x_L (3,) | x_R (3,)]
+        u:            (12,)  [y_canals (6,) | e_slip_delayed (3,) | g_hat (3,)]
+        brain_params: BrainParams
 
     Returns:
-        dx:    (3,)  dx_vs/dt
-        w_est: (3,)  angular velocity estimate (deg/s)
+        dx:    (6,)  dx_vs/dt
+        w_est: (3,)  angular velocity estimate → NI (deg/s)
     """
-    canal_in   = u[:N_CANALS]       # (6,)  canal afferent rates
-    slip_in    = u[N_CANALS:N_CANALS+3]  # (3,)  corrected retinal slip
-    g_hat      = u[N_CANALS+3:]     # (3,)  gravity estimate (m/s²)
+    canal_in = u[:N_CANALS]             # (6,)
+    slip_in  = u[N_CANALS:N_CANALS+3]  # (3,)
+    g_hat    = u[N_CANALS+3:]          # (3,)
+    u_lin    = jnp.concatenate([canal_in, slip_in])   # (9,) linear inputs
 
-    u_cs = jnp.concatenate([canal_in, slip_in])   # (9,) — original linear inputs
+    b = brain_params.b_vs * jnp.ones(6)   # equilibrium (intrinsic resting state)
 
-    # ── Linear system matrices ─────────────────────────────────────────────────
-    A = -(1.0 / brain_params.tau_vs) * jnp.eye(3)
-    B = jnp.concatenate([brain_params.K_vs  * PINV_SENS, -brain_params.K_vis * jnp.eye(3)], axis=1)
-    D = jnp.concatenate([PINV_SENS,                     -brain_params.g_vis  * jnp.eye(3)], axis=1)
-    # C = I (identity — omitted)
+    # ── ABCD matrices ──────────────────────────────────────────────────────────
 
-    # ── Gravity dumping: preferential decay of components ⊥ to gravity ────────
-    # cross(ĝ, cross(ĝ, x_vs)) / |ĝ|² = x_vs_parallel − x_vs = −x_vs_perp
-    # Adds −K_gd · x_vs_perp to the dynamics → horizontal storage decays faster.
-    g_norm_sq  = jnp.dot(g_hat, g_hat) + 1e-9
-    gd_term    = brain_params.K_gd * jnp.cross(g_hat, jnp.cross(g_hat, x_vs)) / g_norm_sq
+    # A (6×6): state decay toward bias — diagonal, single TC for both pops
+    A = -(1.0 / brain_params.tau_vs) * jnp.eye(6)
 
-    # ── Dynamics ──────────────────────────────────────────────────────────────
-    dx    = A @ x_vs + B @ u_cs + gd_term
-    w_est = x_vs     + D @ u_cs
+    # B (6×9): push-pull canal and visual inputs
+    #   upper (left  pop): canal excites +, slip inhibits −
+    #   lower (right pop): canal inhibits −, slip excites +
+    B_top = jnp.concatenate([ brain_params.K_vs * PINV_SENS, -brain_params.K_vis * jnp.eye(3)], axis=1)
+    B_bot = jnp.concatenate([-brain_params.K_vs * PINV_SENS,  brain_params.K_vis * jnp.eye(3)], axis=1)
+    B = jnp.concatenate([B_top, B_bot], axis=0)
+
+    # C (3×6): read net signal x_L − x_R
+    C = jnp.concatenate([jnp.eye(3), -jnp.eye(3)], axis=1)
+
+    # D (3×9): feedthrough on net output — canal + visual
+    D = jnp.concatenate([PINV_SENS, -brain_params.g_vis * jnp.eye(3)], axis=1)
+
+    # ── Gravity dumping — nonlinear correction, outside ABCD core ─────────────
+    # cross(ĝ, cross(ĝ, v)) / |ĝ|² = −v_⊥  (component perpendicular to gravity)
+    # Applied to deviation (x − b) so the tonic bias is not dumped.
+    # K_gd = 0 by default — disabled until gravity estimator is validated.
+    g_norm_sq = jnp.dot(g_hat, g_hat) + 1e-9
+    dev   = x_vs - b
+    gd_L  = brain_params.K_gd * jnp.cross(g_hat, jnp.cross(g_hat, dev[:3])) / g_norm_sq
+    gd_R  = brain_params.K_gd * jnp.cross(g_hat, jnp.cross(g_hat, dev[3:])) / g_norm_sq
+    gd    = jnp.concatenate([gd_L, gd_R])
+
+    # ── Linear dynamics + nonlinear correction ─────────────────────────────────
+    dx    = A @ (x_vs - b) + B @ u_lin + gd   # state derivative
+    w_est = C @ x_vs       + D @ u_lin         # output (C @ b = 0 since b_L = b_R)
+
     return dx, w_est

@@ -71,9 +71,10 @@ THETA_OKN_OFF = with_brain(PARAMS_DEFAULT, g_burst=0.0)
 def _extract(states, theta, t_np):
     """Extract efference-copy signals from full state trajectory."""
     tau_p = theta.brain.tau_p
-    x_p   = np.array(states.plant[:, :3])   # (T, 3) left eye
-    x_ni  = np.array(states.brain[:, _IDX_NI])
-    x_vs  = np.array(states.brain[:, _IDX_VS])
+    x_p      = np.array(states.plant[:, :3])   # (T, 3) left eye
+    x_ni     = np.array(states.brain[:, _IDX_NI])
+    x_vs_raw = np.array(states.brain[:, _IDX_VS])
+    x_vs     = x_vs_raw[:, :3] - x_vs_raw[:, 3:]   # net: x_L − x_R  (T, 3)
 
     # u_burst_delayed: last 3 states of the EC cascade = delayed burst output
     u_burst_delayed = np.array(states.brain[:, _IDX_EC])[:, -3:]  # (T, 3)
@@ -390,11 +391,12 @@ def _run_tests():
     states = simulate(THETA_SAC, t, p_target_array=pt3,
                       scene_present_array=jnp.ones(T),
                       max_steps=int(0.6/dt)+200, return_states=True)
-    x_vs = np.array(states.brain[:, _IDX_VS])
+    x_vs_raw = np.array(states.brain[:, _IDX_VS])
+    x_vs_net = x_vs_raw[:, :3] - x_vs_raw[:, 3:]   # net: x_L − x_R
     mask = (t_np > 0.3) & (t_np < 0.55)
-    contamination = np.abs(x_vs[mask]).max()
+    contamination = np.abs(x_vs_net[mask]).max()
     assert contamination < 5.0, \
-        f'FAIL: VS contaminated by saccade; max|x_vs|={contamination:.3f}'
+        f'FAIL: VS contaminated by saccade; max|x_vs_net|={contamination:.3f}'
     print(f'  3. VS low after saccade (stationary world)          PASS'
           f'  (max={contamination:.2f})')
 
@@ -407,8 +409,9 @@ def _run_tests():
                       head_vel_array=jnp.zeros(T), v_scene_array=vs3,
                       scene_present_array=jnp.ones(T),
                       max_steps=int(2.0/dt)+200, return_states=True)
-    x_vs = np.array(states.brain[:, _IDX_VS])
-    vs_late = np.abs(x_vs[t_np > 1.0, 0]).mean()
+    x_vs_raw = np.array(states.brain[:, _IDX_VS])
+    x_vs_net = x_vs_raw[:, :3] - x_vs_raw[:, 3:]   # net: x_L − x_R
+    vs_late = np.abs(x_vs_net[t_np > 1.0, 0]).mean()
     assert vs_late > 1.0, \
         f'FAIL: VS not driven by scene; mean={vs_late:.2f}'
     print(f'  4. VS driven by scene motion                        PASS'
@@ -429,8 +432,10 @@ def _run_tests():
                              head_vel_array=jnp.zeros(T), v_scene_array=vs3,
                              scene_present_array=sp, max_steps=max_s, return_states=True)
 
-    x_vs_sac   = np.array(states_sac.brain[:,   _IDX_VS])[:, 0]
-    x_vs_nosac = np.array(states_nosac.brain[:, _IDX_VS])[:, 0]
+    _raw_sac   = np.array(states_sac.brain[:,   _IDX_VS])
+    _raw_nosac = np.array(states_nosac.brain[:, _IDX_VS])
+    x_vs_sac   = (_raw_sac[:,   :3] - _raw_sac[:,   3:])[:, 0]   # net yaw
+    x_vs_nosac = (_raw_nosac[:, :3] - _raw_nosac[:, 3:])[:, 0]   # net yaw
     mask5   = t_np > 7.0
     vs_diff = np.abs(x_vs_sac[mask5] - x_vs_nosac[mask5]).max()
     assert vs_diff < 5.0, \

@@ -47,10 +47,10 @@ _C = {
 
 # ── Utilities ──────────────────────────────────────────────────────────────────
 
-def _sustained_rotation(v_deg_s=30.0, rotate_dur=15.0, coast_dur=60.0, sample_rate=100.0):
-    total = rotate_dur + coast_dur
+def _sustained_rotation(v_deg_s=30.0, rest_dur=5.0, rotate_dur=15.0, coast_dur=60.0, sample_rate=100.0):
+    total = rest_dur + rotate_dur + coast_dur
     t  = jnp.arange(0.0, total, 1.0 / sample_rate)
-    hv = jnp.where(t < rotate_dur, v_deg_s, 0.0)
+    hv = jnp.where((t >= rest_dur) & (t < rest_dur + rotate_dur), v_deg_s, 0.0)
     return t, hv
 
 
@@ -70,10 +70,11 @@ def _extract_signals(theta, t_array, head_vel_1d, states):
     f   = float(FLOOR)
     y_c = -f + sp_softplus(k * (x2 + f)) / k + sp_softplus(k * (x2 - f)) / k
 
-    pinv    = np.array(PINV_SENS)
-    u_canal = (pinv @ y_c.T).T
-    w_est   = x_vs + u_canal
-    u_p     = x_ni - theta.brain.tau_p * w_est
+    pinv      = np.array(PINV_SENS)
+    u_canal   = (pinv @ y_c.T).T
+    x_vs_net  = x_vs[:, :3] - x_vs[:, 3:]   # C @ x_vs = x_L − x_R  (net VS signal)
+    w_est     = x_vs_net + u_canal
+    u_p       = x_ni - theta.brain.tau_p * w_est
 
     eye_pos = x_p[:, 0]
     dt      = float(t_array[1] - t_array[0])
@@ -83,7 +84,7 @@ def _extract_signals(theta, t_array, head_vel_1d, states):
         head_vel=hv, x1_c0=x1[:, 0], x1_c1=x1[:, 1],
         x2_c0=x2[:, 0], x2_c1=x2[:, 1],
         y_c0=y_c[:, 0], y_c1=y_c[:, 1],
-        u_canal=u_canal[:, 0], x_vs=x_vs[:, 0],
+        u_canal=u_canal[:, 0], x_vs=x_vs_net[:, 0],
         w_est=w_est[:, 0], x_ni=x_ni[:, 0],
         u_p=u_p[:, 0], eye_pos=eye_pos, eye_vel=eye_vel,
     )
@@ -110,8 +111,11 @@ def _ax_fmt(ax):
 
 def demo_vor_cascade():
     """9-panel cascade: head → canal → VS → NI → plant → burst."""
+    rest_dur   = 5.0
     rotate_dur = 15.0
-    t, hv = _sustained_rotation(v_deg_s=30.0, rotate_dur=rotate_dur, coast_dur=60.0)
+    coast_dur  = 60.0
+    t, hv = _sustained_rotation(v_deg_s=30.0, rest_dur=rest_dur,
+                                 rotate_dur=rotate_dur, coast_dur=coast_dur)
     t_np  = np.array(t)
     max_s = int((float(t[-1]) - float(t[0])) / 0.001) + 500
 
@@ -137,8 +141,11 @@ def demo_vor_cascade():
                  fontsize=11)
 
     vline_kw = dict(color='k', lw=0.8, ls='--', alpha=0.4)
+    t_onset  = rest_dur
+    t_offset = rest_dur + rotate_dur
     for ax in axes:
-        ax.axvline(rotate_dur, **vline_kw)
+        ax.axvline(t_onset,  **vline_kw)
+        ax.axvline(t_offset, **vline_kw)
         _ax_fmt(ax)
 
     axes[0].plot(t_np, sigs['head_vel'], color=_C['head'], lw=1.5)
@@ -251,10 +258,11 @@ def demo_okr_cascade():
     dt     = 1.0 / sr
     burst  = _extract_burst(states, theta_okn)
 
-    x_vis = np.array(states.sensory[:, _IDX_VIS])
-    x_vs  = np.array(states.brain[:, _IDX_VS])
-    x_ni  = np.array(states.brain[:, _IDX_NI])
-    x_p   = np.array(states.plant[:, :3])   # (T, 3) left eye
+    x_vis    = np.array(states.sensory[:, _IDX_VIS])
+    x_vs_raw = np.array(states.brain[:, _IDX_VS])
+    x_vs_net = x_vs_raw[:, :3] - x_vs_raw[:, 3:]   # C @ x_vs = x_L − x_R
+    x_ni     = np.array(states.brain[:, _IDX_NI])
+    x_p      = np.array(states.plant[:, :3])   # (T, 3) left eye
 
     w_scene_np   = np.where(t_np < on_dur, scene_vel, 0.0)
     eye_vel      = np.gradient(x_p[:, 0], dt)
@@ -291,15 +299,15 @@ def demo_okr_cascade():
     axes[1].set_title('Visual delay cascade output  (efference copy suppresses saccade artefacts)')
     axes[1].legend(fontsize=8)
 
-    axes[2].plot(t_np, x_vs[:, 0], color='steelblue', lw=1.5,
+    axes[2].plot(t_np, x_vs_net[:, 0], color='steelblue', lw=1.5,
                  label=f'x_vs  (tau_vs = {THETA.brain.tau_vs} s)')
     axes[2].set_ylabel('VS state\n(deg/s)')
     axes[2].set_title('Velocity storage  (charges during OKN, sustains OKAN)')
     axes[2].legend(fontsize=8)
 
-    axes[3].plot(t_np, u_vis_direct,  color=_C['scene'],  lw=1.5,
+    axes[3].plot(t_np, u_vis_direct,    color=_C['scene'],  lw=1.5,
                  label=f'g_vis * e_delayed  (direct, g_vis={THETA.brain.g_vis})')
-    axes[3].plot(t_np, -x_vs[:, 0],  color='steelblue', lw=1.5, ls='--',
+    axes[3].plot(t_np, -x_vs_net[:, 0], color='steelblue', lw=1.5, ls='--',
                  label='-x_vs  (VS contribution)')
     axes[3].set_ylabel('Visual drive\n(deg/s)')
     axes[3].set_title('Visual contributions to eye-velocity command')

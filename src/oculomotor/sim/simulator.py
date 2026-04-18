@@ -25,7 +25,7 @@ State structure — SimState NamedTuple with three groups:
                       canal       otolith      left retinal    right retinal
                       _IDX_C      _IDX_OTO     _IDX_VIS_L      _IDX_VIS_R
 
-    brain    (144):  [x_vs (3) | x_ni (3) | x_sg (9) | x_ec (120) | x_grav (3) | x_pursuit (3) | x_verg (3)]
+    brain    (147):  [x_vs (6) | x_ni (3) | x_sg (9) | x_ec (120) | x_grav (3) | x_pursuit (3) | x_verg (3)]
                       vel-store   NI          sacc-gen   EC delay     gravity est   pursuit mem    vergence
                       _IDX_VS     _IDX_NI     _IDX_SG    _IDX_EC      _IDX_GRAV     _IDX_PURSUIT   _IDX_VERG
 
@@ -41,7 +41,10 @@ Output:
     or a SimState trajectory when return_states=True.  Access subsystem states via:
         states.plant[:, :3]              → (T, 3)  left  eye rotation
         states.plant[:, 3:]              → (T, 3)  right eye rotation
-        states.brain[:, _IDX_VS]         → (T, 3)  velocity storage
+        states.brain[:, _IDX_VS]         → (T, 6)  velocity storage [x_L (3) | x_R (3)]
+        states.brain[:, _IDX_VS_L]       → (T, 3)  left  VN population
+        states.brain[:, _IDX_VS_R]       → (T, 3)  right VN population
+        # net VS: states.brain[:, _IDX_VS_L] - states.brain[:, _IDX_VS_R]  (T, 3)
         states.sensory[:, _IDX_C]        → (T, 12) canal states
         states.sensory[:, _IDX_VIS_L]    → (T, 400) left  visual delay cascade
         states.sensory[:, _IDX_VIS_R]    → (T, 400) right visual delay cascade
@@ -57,7 +60,7 @@ from oculomotor.models.sensory_models.sensory_model import (
     _IDX_C, _IDX_OTO, _IDX_VIS, _IDX_VIS_L, _IDX_VIS_R, SensoryParams,
 )
 from oculomotor.models.sensory_models               import otolith as _otolith
-from oculomotor.models.brain_models.brain_model    import _IDX_VS, _IDX_NI, _IDX_SG, _IDX_EC, _IDX_GRAV, _IDX_PURSUIT, _IDX_VERG, BrainParams
+from oculomotor.models.brain_models.brain_model    import _IDX_VS, _IDX_VS_L, _IDX_VS_R, _IDX_NI, _IDX_SG, _IDX_EC, _IDX_GRAV, _IDX_PURSUIT, _IDX_VERG, BrainParams
 from oculomotor.models.plant_models.plant_model_first_order import PlantParams, _IDX_P_L, _IDX_P_R
 from oculomotor.models.sensory_models import sensory_model
 from oculomotor.models.brain_models   import brain_model
@@ -144,7 +147,7 @@ PARAMS_DEFAULT     = default_params()
 __all__ = [
     'SimState', 'ODE_ocular_motor', 'simulate',
     '_IDX_C', '_IDX_OTO', '_IDX_VIS', '_IDX_VIS_L', '_IDX_VIS_R',
-    '_IDX_VS', '_IDX_NI', '_IDX_SG', '_IDX_EC', '_IDX_GRAV', '_IDX_PURSUIT', '_IDX_VERG',
+    '_IDX_VS', '_IDX_VS_L', '_IDX_VS_R', '_IDX_NI', '_IDX_SG', '_IDX_EC', '_IDX_GRAV', '_IDX_PURSUIT', '_IDX_VERG',
     '_IDX_P_L', '_IDX_P_R',
     # params
     'Params', 'SimConfig', 'SensoryParams', 'PlantParams', 'BrainParams',
@@ -489,7 +492,7 @@ def simulate(params, t_array_or_stimulus, head_vel_array=None,
     sensory_x0 = jnp.zeros(sensory_model.N_STATES)
     sensory_x0 = sensory_x0.at[_IDX_OTO].set(_otolith.X0)   # otolith settled at gravity
 
-    brain_x0 = brain_model.make_x0()
+    brain_x0 = brain_model.make_x0(params.brain)
     # Vergence: initialise analytically to phoria — TC ~25 s is far too slow
     # for the warmup period to settle it from zero.
     brain_x0 = brain_x0.at[_IDX_VERG].set(
@@ -497,7 +500,7 @@ def simulate(params, t_array_or_stimulus, head_vel_array=None,
 
     x0 = SimState(
         sensory = sensory_x0,                          # (818,) otolith init at [9.81,0,0, ...]
-        brain   = brain_x0,                            # (144,) gravity + phoria init
+        brain   = brain_x0,                            # (147,) VS at b_vs, gravity + phoria init
         plant   = jnp.zeros(plant_model.N_STATES),     #   (6,)  [left (3) | right (3)]
     )
 

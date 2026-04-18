@@ -47,11 +47,13 @@ Internal flow:
     GE  →  g_hat (gravity estimate, cross-product dynamics)
     Vergence → u_verg → split ±½ to L/R motor commands
 
-State vector  x_brain = [x_vs (3) | x_ni (3) | x_sg (9) | x_ec (120) | x_grav (3) | x_pursuit (3) | x_verg (3)]
-N_STATES = 144
+State vector  x_brain = [x_vs (6) | x_ni (3) | x_sg (9) | x_ec (120) | x_grav (3) | x_pursuit (3) | x_verg (3)]
+N_STATES = 147
 
 Index constants (relative to x_brain):
-    _IDX_VS      — velocity storage states   (3,)
+    _IDX_VS      — velocity storage states   (6,)  = left(3) + right(3)
+    _IDX_VS_L    — left  VN population       (3,)
+    _IDX_VS_R    — right VN population       (3,)
     _IDX_NI      — neural integrator states  (3,)
     _IDX_SG      — saccade generator states  (9,)
     _IDX_EC      — efference copy states     (120,)
@@ -60,7 +62,7 @@ Index constants (relative to x_brain):
     _IDX_VERG    — vergence position memory  (3,)
 
 Outputs of step():
-    dx_brain     (144,)  state derivative
+    dx_brain     (147,)  state derivative
     motor_cmd_L  (3,)    pulse-step motor command → left  plant
     motor_cmd_R  (3,)    pulse-step motor command → right plant
 """
@@ -122,6 +124,11 @@ class BrainParams(NamedTuple):
     orbital_limit:         float = 50.0   # oculomotor range half-width (deg); clip e_cmd to ±limit
     alpha_reset:           float = 1.0    # centering gain (0–1); e_center = −α·x_ni when out-of-field
 
+    # Bilateral velocity storage — tonic VN resting drive
+    b_vs:                  float = 100.0  # intrinsic VN bias (deg/s); equilibrium of each population
+                                          # orthogonal-canal assumption: PINV cancels afferent DC bias
+                                          # keeps x_R > 0 for |ω| < b_vs / (K_vs · τ_vs) ≈ 50 deg/s
+
     # Otolith / gravity estimation — Laurens & Angelaki (2011, 2017)
     K_grav:                float = 0.5    # otolith correction gain (1/s); TC = 1/K_grav ≈ 2 s
     K_gd:                  float = 0.0    # gravity dumping gain (1/s); 0 = disabled
@@ -143,10 +150,12 @@ class BrainParams(NamedTuple):
 # ── State layout ───────────────────────────────────────────────────────────────
 
 N_STATES = vs.N_STATES + ni.N_STATES + sg.N_STATES + ec.N_STATES + ge.N_STATES + pu.N_STATES + vg.N_STATES
-#        = 3 + 3 + 9 + 120 + 3 + 3 + 3 = 144
+#        = 6 + 3 + 9 + 120 + 3 + 3 + 3 = 147
 
 # Index constants — relative to x_brain
-_IDX_VS      = slice(0,             vs.N_STATES)                                        # (3,)
+_IDX_VS      = slice(0,             vs.N_STATES)                                        # (6,) L+R
+_IDX_VS_L    = slice(0,             3)                                                  # (3,) left  population
+_IDX_VS_R    = slice(3,             vs.N_STATES)                                        # (3,) right population
 _IDX_NI      = slice(vs.N_STATES,   vs.N_STATES + ni.N_STATES)                         # (3,)
 _IDX_SG      = slice(vs.N_STATES + ni.N_STATES,
                      vs.N_STATES + ni.N_STATES + sg.N_STATES)                           # (9,)
@@ -160,10 +169,21 @@ _IDX_VERG    = slice(vs.N_STATES + ni.N_STATES + sg.N_STATES + ec.N_STATES + ge.
                      N_STATES)                                                           # (3,)
 
 
-def make_x0():
-    """Default initial brain state — gravity estimator pointing down (upright head)."""
+def make_x0(brain_params=None):
+    """Default initial brain state.
+
+    VS populations initialised to b_vs (bilateral equilibrium — both pops at resting bias).
+    Gravity estimator initialised pointing down (upright head).
+
+    Args:
+        brain_params: BrainParams NamedTuple.  If None, uses b_vs=0 (zero bias; old behaviour).
+    """
     x0 = jnp.zeros(N_STATES)
-    return x0.at[_IDX_GRAV].set(ge.X0)
+    x0 = x0.at[_IDX_GRAV].set(ge.X0)
+    if brain_params is not None:
+        # Both populations start at their resting bias so net x_L − x_R = 0 at rest.
+        x0 = x0.at[_IDX_VS].set(brain_params.b_vs * jnp.ones(vs.N_STATES))
+    return x0
 
 
 # ── Step function ──────────────────────────────────────────────────────────────

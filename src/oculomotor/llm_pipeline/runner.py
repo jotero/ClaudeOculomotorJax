@@ -26,7 +26,7 @@ from oculomotor.sim import stimuli as stim
 from oculomotor.llm_pipeline.scenario import SimulationScenario, SimulationComparison, Patient
 from oculomotor.sim.simulator import (
     PARAMS_DEFAULT, with_brain, with_sensory, simulate,
-    _IDX_VS, _IDX_NI, _IDX_SG, _IDX_EC, _IDX_VIS, _IDX_VIS_L, _IDX_VIS_R, _IDX_PURSUIT,
+    _IDX_VS, _IDX_VS_L, _IDX_VS_R, _IDX_NI, _IDX_SG, _IDX_EC, _IDX_VIS, _IDX_VIS_L, _IDX_VIS_R, _IDX_PURSUIT,
     _IDX_VERG,
 )
 from oculomotor.models.brain_models import saccade_generator as sg_mod
@@ -217,7 +217,7 @@ def _extract_signals(states, params, t_np: np.ndarray) -> dict:
     version   = 0.5 * (eye_pos_L + eye_pos_R)       # (T, 3) conjugate (version)
     vergence  = eye_pos_L - eye_pos_R               # (T, 3) vergence angle (deg, + = converged)
 
-    x_vs      = np.array(states.brain[:, _IDX_VS])
+    x_vs      = np.array(states.brain[:, _IDX_VS])          # (T, 6) L+R populations
     x_ni      = np.array(states.brain[:, _IDX_NI])
     x_sg      = np.array(states.brain[:, _IDX_SG])
     x_pursuit = np.array(states.brain[:, _IDX_PURSUIT])
@@ -228,8 +228,8 @@ def _extract_signals(states, params, t_np: np.ndarray) -> dict:
     # Eye velocity (version derivative — same as L eye vel when version ≈ L)
     w_eye = np.gradient(version, dt, axis=0)
 
-    # VS state ≈ head velocity estimate
-    w_est = x_vs
+    # VS state ≈ head velocity estimate: net of bilateral populations
+    w_est = x_vs[:, :3] - x_vs[:, 3:]   # x_L − x_R  →  (T, 3)
 
     # Retinal signals — gate-weighted average consistent with sensory_model fix
     gate_L = x_vis_L @ np.array(C_gate).T           # (T, 1)

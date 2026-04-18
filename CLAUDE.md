@@ -52,14 +52,14 @@ oculomotor/
 │   │   │                              Delays: slip(120) | pos_vis(120) | vel(120) | gate_vf(40)
 │   │   └── sensory_model.py           Connector: canal + otolith + retina → SensoryOutput (418 states)
 │   ├── brain_models/
-│   │   ├── velocity_storage.py        VS leaky integrator; PINV_SENS mixing + OKR (3 states)
+│   │   ├── velocity_storage.py        VS push-pull bilateral (L/R VN pops); ABCD SSM + OKR (6 states)
 │   │   ├── neural_integrator.py       NI leaky integrator (Robinson 1975) (3 states)
 │   │   ├── saccade_generator.py       Robinson local-feedback burst + OPN gate (9 states)
 │   │   │                              Target selection (clip + centering) is internal to SG
 │   │   ├── efference_copy.py          Motor command delay cascade for slip cancellation (120 states)
 │   │   ├── gravity_estimator.py       Cross-product gravity transport + otolith correction (3 states)
 │   │   ├── pursuit.py                 Smooth pursuit leaky integrator + Smith predictor (3 states)
-│   │   └── brain_model.py             Connector: VS + NI + SG + EC + GE + pursuit → motor_cmd (141 states)
+│   │   └── brain_model.py             Connector: VS + NI + SG + EC + GE + pursuit → motor_cmd (147 states)
 │   ├── plant_models/
 │   │   ├── plant_model_first_order.py First-order plant (Robinson 1964) (3 states)
 │   │   └── readout.py                 Eye position readout utilities + rotation_matrix()
@@ -84,7 +84,7 @@ scripts/
 └── demo_fixation.py     Fixational eye movements — noise source comparison
 ```
 
-### State structure (968 total — binocular)
+### State structure (971 total — binocular)
 
 The ODE state is a `SimState` NamedTuple with three groups:
 
@@ -95,9 +95,11 @@ SimState(
                      _IDX_C     _IDX_OTO    _IDX_VIS_L       _IDX_VIS_R
                                             (_IDX_VIS = _IDX_VIS_L, backward compat)
 
-    brain   (144):  [x_vs (3) | x_ni (3) | x_sg (9) | x_ec (120) | x_grav (3) | x_pursuit (3) | x_verg (3)]
+    brain   (147):  [x_vs (6) | x_ni (3) | x_sg (9) | x_ec (120) | x_grav (3) | x_pursuit (3) | x_verg (3)]
                      vel-store   NI          sacc-gen   EC delay     gravity est   pursuit mem    vergence
                      _IDX_VS     _IDX_NI     _IDX_SG    _IDX_EC      _IDX_GRAV     _IDX_PURSUIT   _IDX_VERG
+                     _IDX_VS_L (slice 0:3) = left VN population
+                     _IDX_VS_R (slice 3:6) = right VN population
 
     plant     (6):  [x_p_L (3) | x_p_R (3)]  — left/right eye rotation vectors (deg)
                      _IDX_P_L    _IDX_P_R
@@ -122,7 +124,7 @@ class PlantParams(NamedTuple):
     tau_p
 
 class BrainParams(NamedTuple):
-    tau_vs, K_vs, K_vis, g_vis,
+    tau_vs, K_vs, K_vis, g_vis, b_vs,   # VS: TC, canal gain, visual gain, feedthrough, resting bias
     tau_i, tau_p, tau_vis,
     g_burst, e_sat_sac, k_sac, threshold_sac, ...
     K_pursuit, K_phasic_pursuit, tau_pursuit,
@@ -193,12 +195,13 @@ Each behavior has a corresponding demo script and output figure.
 8. **Fixational eye movements** — canal noise filtered by VS/NI/plant; retinal position OU drift produces sparse corrective microsaccades; retinal velocity noise drives pursuit-like slow drift.
    - Demo: `scripts/demo_fixation.py` → `outputs/fixation.png`
 
-## Current status (2026-04-16)
+## Current status (2026-04-17)
 
 - **Working well**: VOR, VVOR, OKN/OKAN, saccades (main sequence, refractory, oblique), smooth pursuit (velocity-driven), efference copy slip cancellation, otolith LP adaptation, sensory noise system, fixational eye movements.
+- **Recent change**: VS expanded to bilateral push-pull architecture (6 states, L/R VN populations). Net output `x_L − x_R` identical to old scalar `x_vs` in healthy symmetric case — all existing demos/notebooks work unchanged (use `vs_net()` helper for extraction). New `b_vs` parameter (default 100 deg/s) sets VN resting bias.
 - **Pending improvement**: Pursuit position sensitivity (`K_pursuit_pos` — see future work).
 - **Not yet debugged**: Gravity estimator (`gravity_estimator.py`) — implemented but behavior not verified. Will be debugged together with vergence, since T-VOR is strongly vergence-dependent.
-- **Next focus**: Binocularity and vergence — see future work section.
+- **Next focus**: Verify bilateral VS produces correct output (run demos), then binocularity and vergence.
 
 ## Not yet implemented / pending (future work)
 
