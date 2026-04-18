@@ -199,7 +199,7 @@ K_vs (1/s):  canal→VS gain. Healthy 0.1.
 K_vis (1/s): visual→VS gain. Healthy 1.0. 0 = no OKR.
 tau_i (s):   neural integrator TC. Healthy ≥20 s. Short (2–5 s) → gaze-evoked nystagmus.
 g_burst:     saccade burst ceiling (deg/s). Healthy 700. 0 = complete palsy.
-K_pursuit / K_phasic_pursuit: pursuit gains. Healthy 2 / 5.
+K_pursuit / K_phasic_pursuit: pursuit gains. Healthy 4 / 5.
 tau_pursuit (s): pursuit maintenance TC. Healthy 40 s. Short (5–15 s) = poor maintenance.
 
 | Condition | Parameter changes |
@@ -212,7 +212,7 @@ tau_pursuit (s): pursuit maintenance TC. Healthy 40 s. Short (5–15 s) = poor m
 | Nodulus / uvula lesion | tau_vs=1.5, K_vs=0.001 |
 | Complete saccadic palsy | g_burst=0.0 |
 | Slow saccades (PSP, SCA) | g_burst=200–350 |
-| Pursuit deficit (MT/MST, Parkinson's) | K_pursuit=0.3, K_phasic_pursuit=0.5, tau_pursuit=8 |
+| Pursuit deficit (MT/MST, Parkinson's) | K_pursuit=0.5, K_phasic_pursuit=0.5, tau_pursuit=8 |
 
 ## Panel selection
 
