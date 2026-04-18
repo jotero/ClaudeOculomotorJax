@@ -93,10 +93,13 @@ class BrainParams(NamedTuple):
     # Velocity storage — Raphan, Matsuo & Cohen (1979)
     tau_vs:                float = 20.0   # storage / OKAN TC (s); ~20 s monkey (Cohen 1977)
     K_vs:                  float = 0.1    # canal-to-VS gain (1/s); controls charging speed
-    K_vis:                 float = 1.0    # visual-to-VS gain (1/s); OKR / OKAN charging
-                                          # OKN SS gain ≈ (K_vis·τ_vs + g_vis)/(1 + K_vis·τ_vs + g_vis)
-                                          # K_vis=1.0 → L=20.3 → gain ≈ 0.95  (was 0.3 → 0.86)
-    g_vis:                 float = 0.3    # visual feedthrough (unitless); fast OKR onset
+    K_vis:                 float = 0.1    # visual-to-VS gain (1/s); OKR / OKAN charging
+                                          # OKN SS gain ≈ (2·K_vis·τ_vs + g_vis)/(1 + 2·K_vis·τ_vs + g_vis)
+                                          # K_vis=0.1, g_vis=1.0 → L=5 → gain ≈ 0.833  (Raphan-like regime)
+    g_vis:                 float = 1.0    # visual feedthrough (unitless); direct OKR pathway
+                                          # at SS OKN: INT/SPV ≈ 2·K_vis·τ_vs / (2·K_vis·τ_vs + g_vis) ≈ 0.80
+                                          # g_vis=2.0 gives INT/SPV≈0.67 (Raphan exact) but amplifies EC residuals →
+                                          # post-saccadic oscillations; g_vis=1.0 balances separation vs stability
 
     # Neural integrator — bilateral push-pull + null adaptation (Robinson 1975; rebound: Zee et al. 1980)
     tau_i:                 float = 25.0   # leak TC (s); healthy >20 s (Cannon & Robinson 1985)
