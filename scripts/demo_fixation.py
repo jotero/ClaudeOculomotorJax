@@ -28,10 +28,8 @@ import matplotlib.pyplot as plt
 
 from oculomotor.sim.simulator import (
     PARAMS_DEFAULT, with_brain, with_sensory, simulate,
-    _IDX_NI, _IDX_SG, _IDX_VIS,
 )
-from oculomotor.models.brain_models import saccade_generator as sg_mod
-from oculomotor.models.sensory_models.sensory_model import C_pos, C_gate
+from oculomotor.analysis import extract_burst, ax_fmt
 
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), '..', 'outputs')
 
@@ -56,34 +54,11 @@ def _make_t():
 
 def _extract(states, params, t_np):
     """Extract eye position, velocity, and burst from a state trajectory."""
-    dt   = float(t_np[1] - t_np[0])
-    x_p  = np.array(states.plant[:, :3])    # (T, 3) left eye (version ≈ R)
-
-    eye_vel = np.gradient(x_p, dt, axis=0) # (T, 3)
-
-    # Saccade burst — re-compute from SG state + delayed retinal signals
-    def _burst_at(state):
-        x_vis_ = state.sensory[_IDX_VIS]
-        e_pd   = C_pos  @ x_vis_
-        gate   = (C_gate @ x_vis_)[0]
-        x_ni_  = state.brain[_IDX_NI]
-        _, u   = sg_mod.step(state.brain[_IDX_SG], e_pd, gate, x_ni_, params.brain)
-        return u
-
-    u_burst = np.array(jax.vmap(_burst_at)(states))  # (T, 3)
-
-    return dict(
-        eye_pos = x_p,
-        eye_vel = eye_vel,
-        u_burst = u_burst,
-    )
-
-
-def _ax_fmt(ax, ylabel):
-    ax.set_ylabel(ylabel, fontsize=7.5)
-    ax.axhline(0, color=_C['zero'], lw=0.5, ls='--')
-    ax.grid(True, alpha=0.15)
-    ax.tick_params(labelsize=7)
+    dt      = float(t_np[1] - t_np[0])
+    x_p     = np.array(states.plant[:, :3])        # (T, 3) left eye
+    eye_vel = np.gradient(x_p, dt, axis=0)          # (T, 3)
+    u_burst = extract_burst(states, params)          # (T, 3)
+    return dict(eye_pos=x_p, eye_vel=eye_vel, u_burst=u_burst)
 
 
 def _equalize_row(axes_row, min_span=None):
@@ -165,17 +140,17 @@ def demo_fixation():
         # Row 0: eye position
         axes[0, ci].axhline(0, color=_C['target'], lw=1.0, ls=':', label='target (0°)')
         axes[0, ci].plot(t_np, s['eye_pos'][:, 0], color=_C['eye'], lw=0.8, label='eye yaw')
-        _ax_fmt(axes[0, ci], 'Eye position (deg)')
+        ax_fmt(axes[0, ci], ylabel='Eye position (deg)')
         if ci == 0:
             axes[0, ci].legend(fontsize=7, loc='upper right')
 
         # Row 1: eye velocity
         axes[1, ci].plot(t_np, s['eye_vel'][:, 0], color=_C['vel'], lw=0.7)
-        _ax_fmt(axes[1, ci], 'Eye velocity (deg/s)')
+        ax_fmt(axes[1, ci], ylabel='Eye velocity (deg/s)')
 
         # Row 2: saccade burst
         axes[2, ci].plot(t_np, s['u_burst'][:, 0], color=_C['burst'], lw=0.8)
-        _ax_fmt(axes[2, ci], 'Burst  u_burst (deg/s)')
+        ax_fmt(axes[2, ci], ylabel='Burst  u_burst (deg/s)')
 
         # Row 3: noise signal(s) — yaw component of each active source
         ax3 = axes[3, ci]
@@ -190,7 +165,7 @@ def demo_fixation():
             ax3.plot(t_np, noise['canal'][:, 0], color='#555555', lw=0.7)
         else:
             ax3.plot(t_np, noise[noise_key][:, 0], color='#9970ab', lw=0.7)
-        _ax_fmt(ax3, noise_label or 'Noise signal')
+        ax_fmt(ax3, ylabel=noise_label or 'Noise signal')
         ax3.set_xlabel('Time (s)', fontsize=8)
 
     # ── Equalize y-axes row by row (rows 0–2 share limits; row 3 independent) ──

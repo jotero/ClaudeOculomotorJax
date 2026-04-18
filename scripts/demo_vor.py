@@ -29,8 +29,8 @@ from oculomotor.sim.simulator import (
 )
 from oculomotor.models.sensory_models.sensory_model import N_CANALS, FLOOR, _SOFTNESS, PINV_SENS
 from oculomotor.models.sensory_models.sensory_model import C_slip, C_pos, C_gate
-from oculomotor.models.brain_models import saccade_generator as sg_mod
 from oculomotor.sim import stimuli as stim_mod
+from oculomotor.analysis import ax_fmt, extract_burst, vs_net, ni_net
 
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), '..', 'outputs')
 THETA = PARAMS_DEFAULT
@@ -72,7 +72,7 @@ def _extract_signals(theta, t_array, head_vel_1d, states):
 
     pinv      = np.array(PINV_SENS)
     u_canal   = (pinv @ y_c.T).T
-    x_vs_net  = x_vs[:, :3] - x_vs[:, 3:6]  # C @ x_vs = x_L − x_R  (net VS signal)
+    x_vs_net  = x_vs[:, :3] - x_vs[:, 3:6]   # x_L − x_R  (net VS signal)
     w_est     = x_vs_net + u_canal
     u_p       = x_ni[:, :3] - x_ni[:, 3:6] - theta.brain.tau_p * w_est
 
@@ -90,22 +90,6 @@ def _extract_signals(theta, t_array, head_vel_1d, states):
     )
 
 
-def _extract_burst(states, theta):
-    """Recompute u_burst (T, 3) from full state trajectory via vmap."""
-    def _at(state):
-        x_vis_        = state.sensory[_IDX_VIS]
-        e_pos_delayed = C_pos  @ x_vis_
-        gate_vf       = (C_gate @ x_vis_)[0]
-        x_ni_raw      = state.brain[_IDX_NI]
-        x_ni_net      = x_ni_raw[:3] - x_ni_raw[3:6]  # net eye position
-        _, u_burst    = sg_mod.step(state.brain[_IDX_SG], e_pos_delayed, gate_vf, x_ni_net, theta.brain)
-        return u_burst
-    return np.array(jax.vmap(_at)(states))
-
-
-def _ax_fmt(ax):
-    ax.axhline(0, color='gray', lw=0.5)
-    ax.grid(True, alpha=0.25)
 
 
 # ── Plot 1: VOR in the dark — 9-panel signal cascade ──────────────────────────
@@ -125,7 +109,7 @@ def demo_vor_cascade():
                          target_present_array=jnp.zeros(T),   # dark — no visible target
                          max_steps=max_s, return_states=True)
     sigs      = _extract_signals(THETA, t, hv, states)
-    burst     = _extract_burst(states, THETA)
+    burst     = extract_burst(states, THETA)
 
     theta_no_vs = with_brain(THETA, tau_vs=0.1, K_vs=0.001)
     states_nv   = simulate(theta_no_vs, t, head_vel_array=hv,
@@ -147,7 +131,7 @@ def demo_vor_cascade():
     for ax in axes:
         ax.axvline(t_onset,  **vline_kw)
         ax.axvline(t_offset, **vline_kw)
-        _ax_fmt(ax)
+        ax_fmt(ax)
 
     axes[0].plot(t_np, sigs['head_vel'], color=_C['head'], lw=1.5)
     axes[0].set_ylabel('Head vel\n(deg/s)')
@@ -257,13 +241,11 @@ def demo_okr_cascade():
                       max_steps=max_s, return_states=True)
     t_np   = np.array(t_arr)
     dt     = 1.0 / sr
-    burst  = _extract_burst(states, theta_okn)
+    burst  = extract_burst(states, theta_okn)
 
     x_vis    = np.array(states.sensory[:, _IDX_VIS])
-    x_vs_raw = np.array(states.brain[:, _IDX_VS])
-    x_vs_net = x_vs_raw[:, :3] - x_vs_raw[:, 3:6]  # C @ x_vs = x_L − x_R
-    x_ni_raw = np.array(states.brain[:, _IDX_NI])
-    x_ni     = x_ni_raw[:, :3] - x_ni_raw[:, 3:6]  # net NI position
+    x_vs_net = vs_net(states)    # (T, 3) x_L − x_R
+    x_ni     = ni_net(states)    # (T, 3) net NI position
     x_p      = np.array(states.plant[:, :3])   # (T, 3) left eye
 
     w_scene_np   = np.where(t_np < on_dur, scene_vel, 0.0)
@@ -289,7 +271,7 @@ def demo_okr_cascade():
     vline_kw = dict(color='k', lw=0.8, ls='--', alpha=0.4)
     for ax in axes:
         ax.axvline(on_dur, **vline_kw)
-        _ax_fmt(ax)
+        ax_fmt(ax)
 
     axes[0].plot(t_np, w_scene_np, color=_C['scene'], lw=1.5)
     axes[0].set_ylabel('Scene vel\n(deg/s)')
@@ -417,8 +399,8 @@ def demo_vvor():
     e_delayed_dark = (x_vis_dark @ np.array(C_pos).T)[:, 0]
     e_delayed_lit  = (x_vis_lit  @ np.array(C_pos).T)[:, 0]
 
-    burst_dark = _extract_burst(states_dark, theta_dark)
-    burst_lit  = _extract_burst(states_lit,  theta_lit)
+    burst_dark = extract_burst(states_dark, theta_dark)
+    burst_lit  = extract_burst(states_lit,  theta_lit)
 
     sg_dark = np.array(states_dark.brain[:, _IDX_SG])
     sg_lit  = np.array(states_lit.brain[:,  _IDX_SG])
@@ -437,7 +419,7 @@ def demo_vvor():
     vline_kw = dict(color='k', lw=0.8, ls='--', alpha=0.4)
     for ax in axes:
         ax.axvline(rotate_dur, **vline_kw)
-        _ax_fmt(ax)
+        ax_fmt(ax)
 
     # ── Row 0: eye velocity ────────────────────────────────────────────────────
     axes[0].plot(t_vv, -hv_vv,   color='gray',      lw=1.0, ls=':', alpha=0.6,

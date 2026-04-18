@@ -1,5 +1,29 @@
 # ClaudeOculomotorJax — Project Context for Claude
 
+## Shared analysis utilities — no redundant helpers
+
+`oculomotor/analysis.py` is the single source of truth for post-hoc signal extraction and plotting
+helpers. **Never redefine these locally in a demo script or notebook cell:**
+
+| Function | What it gives you |
+|---|---|
+| `vs_net(states)` | VS net signal x_L − x_R, (T, 3), deg/s |
+| `ni_net(states)` | NI net signal x_L − x_R, (T, 3), deg |
+| `vs_null(states)` | VS null-adaptation state, (T, 3) |
+| `ni_null(states)` | NI null-adaptation state, (T, 3) |
+| `extract_burst(states, theta)` | u_burst via vmap, (T, 3) |
+| `extract_sg(states, theta)` | All SG sub-states dict |
+| `extract_canal(states)` | Canal yaw estimate, (T,) |
+| `extract_spv(t, ev, burst)` | Slow-phase velocity via burst mask |
+| `fit_tc(t, y, t_start, t_end)` | Exponential TC fit |
+| `ax_fmt(ax, ylabel, xlabel, ylim)` | Standard axes formatting |
+
+When you need a yaw-only scalar in a notebook, use a thin one-liner wrapper:
+```python
+def vs_net_yaw(states): return _vs_net3(states)[:, 0]
+```
+Do **not** reimplement the logic.
+
 ## Running scripts
 
 Always use `-X utf8` to avoid Windows cp1252 encoding errors (Greek letters in print statements crash otherwise):

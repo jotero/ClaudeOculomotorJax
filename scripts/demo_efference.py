@@ -39,10 +39,10 @@ from oculomotor.sim.simulator import (
     PARAMS_DEFAULT, with_brain, simulate,
     _IDX_C, _IDX_NI, _IDX_SG, _IDX_VIS, _IDX_VS, _IDX_EC, _IDX_PURSUIT,
 )
-from oculomotor.models.brain_models import saccade_generator as sg_mod
-from oculomotor.models.sensory_models.sensory_model import C_slip, C_pos, C_gate
+from oculomotor.models.sensory_models.sensory_model import C_slip
 from oculomotor.models.sensory_models.sensory_model import N_CANALS, canal_nonlinearity
 from oculomotor.models.brain_models import velocity_storage as vs_mod
+from oculomotor.analysis import ax_fmt, extract_burst, vs_net, ni_net
 
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), '..', 'outputs')
 
@@ -63,18 +63,6 @@ THETA_NO_SAC = with_brain(PARAMS_DEFAULT, g_burst=0.0)
 
 # ── Utilities ──────────────────────────────────────────────────────────────────
 
-def _vs_net(states):
-    """Extract VS net signal (x_L − x_R) from state trajectory.  (T, 3)"""
-    raw = np.array(states.brain[:, _IDX_VS])
-    return raw[:, :3] - raw[:, 3:6]
-
-
-def _ni_net(states):
-    """Extract NI net signal (T, 3)."""
-    raw = np.array(states.brain[:, _IDX_NI])
-    return raw[:, :3] - raw[:, 3:6]
-
-
 def _extract(states, theta):
     """Extract efference-copy signals from full state trajectory.
 
@@ -85,23 +73,15 @@ def _extract(states, theta):
     """
     tau_p     = theta.brain.tau_p
     x_p       = np.array(states.plant[:, :3])                   # (T, 3) left eye
-    x_vs      = _vs_net(states)                                  # (T, 3) VS net
-    x_ni      = _ni_net(states)                                  # (T, 3) NI net
+    x_vs      = vs_net(states)                                   # (T, 3) VS net
+    x_ni      = ni_net(states)                                   # (T, 3) NI net
     x_pursuit = np.array(states.brain[:, _IDX_PURSUIT])         # (T, 3) pursuit mem
 
     # motor_ec = delay(u_burst + u_pursuit): last 3 states of EC cascade
     motor_ec        = np.array(states.brain[:, _IDX_EC])[:, -3:]  # (T, 3)
     u_burst_delayed = motor_ec                                    # alias for saccade figure
 
-    # u_burst: recompute from SG state at each time step
-    def _burst_at(state):
-        e_pd      = C_pos @ state.sensory[_IDX_VIS]
-        gate_vf   = (C_gate @ state.sensory[_IDX_VIS])[0]
-        x_ni_raw  = state.brain[_IDX_NI]
-        x_ni_net  = x_ni_raw[:3] - x_ni_raw[3:6]
-        _, u_b    = sg_mod.step(state.brain[_IDX_SG], e_pd, gate_vf, x_ni_net, theta.brain)
-        return u_b
-    u_burst = np.array(jax.vmap(_burst_at)(states))              # (T, 3)
+    u_burst = extract_burst(states, theta)                       # (T, 3)
 
     # raw_slip_delayed: C_slip reads last stage of visual delay cascade
     x_vis_np         = np.array(states.sensory[:, _IDX_VIS])    # (T, 240)
@@ -132,15 +112,12 @@ def _extract(states, theta):
                 cor_slip=cor_slip, w_eye=w_eye)
 
 
-def _ax_fmt(ax, ylim_min=None):
-    ax.axhline(0, color='k', lw=0.4)
-    ax.grid(True, alpha=0.2)
-    if ylim_min is not None:
-        lo, hi = ax.get_ylim()
-        span = hi - lo
-        if span < ylim_min:
-            mid = (hi + lo) / 2
-            ax.set_ylim(mid - ylim_min / 2, mid + ylim_min / 2)
+def _enforce_min_span(ax, ylim_min):
+    """Expand ax y-limits to a minimum span (used after plotting)."""
+    lo, hi = ax.get_ylim()
+    if (hi - lo) < ylim_min:
+        mid = (lo + hi) / 2
+        ax.set_ylim(mid - ylim_min / 2, mid + ylim_min / 2)
 
 
 # ── Figure 1: efference_saccade.png ───────────────────────────────────────────
@@ -180,7 +157,7 @@ def demo_efference_saccade():
 
     for ax in axes:
         ax.axvline(t_jump, color='gray', lw=0.8, ls='--', alpha=0.5)
-        _ax_fmt(ax)
+        ax_fmt(ax)
 
     # P1: eye position vs target
     axes[0].plot(t_np, s['x_p'][:, 0],
@@ -228,7 +205,8 @@ def demo_efference_saccade():
     axes[4].set_xlabel('Time (s)')
     axes[4].set_title('Pursuit integrator — saccade does not drive pursuit')
     axes[4].legend(fontsize=8)
-    _ax_fmt(axes[4], ylim_min=2.0)
+    ax_fmt(axes[4])
+    _enforce_min_span(axes[4], 2.0)
 
     fig.tight_layout()
     path = os.path.join(OUTPUT_DIR, 'efference_saccade.png')
@@ -296,7 +274,7 @@ def demo_efference_pursuit():
 
     for ax in axes:
         ax.axvline(t_ramp, color='gray', lw=0.8, ls='--', alpha=0.5)
-        _ax_fmt(ax)
+        ax_fmt(ax)
 
     # P1: tracking quality — eye vs target (position and velocity)
     w_eye = np.gradient(s['x_p'][:, 0], dt)
@@ -385,14 +363,7 @@ def _run_tests():
                       scene_present_array=jnp.zeros(T),
                       max_steps=int(0.8/dt)+200, return_states=True)
 
-    def _burst_at(state):
-        e_pd      = C_pos @ state.sensory[_IDX_VIS]
-        gate_vf   = (C_gate @ state.sensory[_IDX_VIS])[0]
-        x_ni_raw  = state.brain[_IDX_NI]
-        x_ni_net  = x_ni_raw[:3] - x_ni_raw[3:6]
-        _, u_b    = sg_mod.step(state.brain[_IDX_SG], e_pd, gate_vf, x_ni_net, THETA_SAC.brain)
-        return u_b
-    u_burst = np.array(jax.vmap(_burst_at)(states))[:, 0]
+    u_burst = extract_burst(states, THETA_SAC)[:, 0]
     ec_out  = np.array(states.brain[:, _IDX_EC])[:, -3]
 
     peak_burst = t_np[np.argmax(u_burst)]
@@ -417,7 +388,7 @@ def _run_tests():
     states = simulate(THETA_SAC, t, p_target_array=pt3,
                       scene_present_array=jnp.ones(T),
                       max_steps=int(0.6/dt)+200, return_states=True)
-    x_vs_net = _vs_net(states)
+    x_vs_net = vs_net(states)
     mask     = (t_np > 0.3) & (t_np < 0.55)
     contam   = np.abs(x_vs_net[mask]).max()
     assert contam < 5.0, \
@@ -441,7 +412,7 @@ def _run_tests():
                       head_vel_array=jnp.zeros(T), v_scene_array=vs3,
                       scene_present_array=jnp.ones(T),
                       max_steps=int(2.0/dt)+200, return_states=True)
-    x_vs_net = _vs_net(states)
+    x_vs_net = vs_net(states)
     t_np     = np.array(t)
     vs_late  = np.abs(x_vs_net[t_np > 1.0, 0]).mean()
     assert vs_late > 1.0, f'FAIL: VS not driven by scene; mean={vs_late:.2f}'
@@ -464,7 +435,7 @@ def _run_tests():
                        scene_present_array=jnp.ones(T2),
                        target_present_array=jnp.ones(T2),
                        max_steps=int(T_end/dt2)+500, return_states=True)
-    x_vs_net2 = _vs_net(states2)
+    x_vs_net2 = vs_net(states2)
     mask6     = t2_np > 2.0
     vs_pur    = np.abs(x_vs_net2[mask6, 0]).mean()
     assert vs_pur < 3.0, \

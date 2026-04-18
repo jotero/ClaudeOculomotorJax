@@ -13,7 +13,6 @@ Usage
 import sys
 import os
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 import matplotlib
@@ -26,9 +25,8 @@ from oculomotor.sim.simulator import (
     PARAMS_DEFAULT, with_brain, simulate,
     _IDX_NI, _IDX_SG, _IDX_VIS,
 )
-from oculomotor.models.brain_models import saccade_generator as sg_mod
-from oculomotor.models.sensory_models.sensory_model import C_slip, C_pos, C_gate
-from oculomotor.models.sensory_models import retina
+from oculomotor.models.sensory_models.sensory_model import C_pos
+from oculomotor.analysis import ax_fmt, extract_burst, ni_net
 
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), '..', 'outputs')
 
@@ -62,31 +60,20 @@ def _make_pt3(t_np, jumps_deg, T):
 
 def _extract(states, pt3_np, theta, t_np):
     """Extract signals from full state trajectory."""
-    x_p   = np.array(states.plant[:, :3])   # (T, 3) left eye
-    x_ni_raw = np.array(states.brain[:, _IDX_NI])
-    x_ni     = x_ni_raw[:, :3] - x_ni_raw[:, 3:6]  # net eye position (T, 3)
-    x_vis = np.array(states.sensory[:, _IDX_VIS])
-    x_sg  = np.array(states.brain[:, _IDX_SG])
+    x_p    = np.array(states.plant[:, :3])   # (T, 3) left eye
+    x_ni   = ni_net(states)                  # (T, 3) net NI position
+    x_vis  = np.array(states.sensory[:, _IDX_VIS])
+    x_sg   = np.array(states.brain[:, _IDX_SG])
 
-    # SG state layout: [x_copy(3) | z_ref(1) | e_held(3) | z_sac(1) | z_acc(1)]
     x_copy = x_sg[:, :3]
     z_ref  = x_sg[:, 3]
     e_held = x_sg[:, 4:7]
     z_sac  = x_sg[:, 7]
     z_acc  = x_sg[:, 8]
-    e_res  = e_held - x_copy   # ballistic residual
+    e_res  = e_held - x_copy
 
-    e_pos_delayed = (x_vis @ np.array(C_pos).T)  # (T, 3)
-
-    def _burst_at(state):
-        x_vis_ = state.sensory[_IDX_VIS]
-        e_pd   = C_pos  @ x_vis_
-        gate   = (C_gate @ x_vis_)[0]
-        x_ni_raw = state.brain[_IDX_NI]
-        x_ni_net = x_ni_raw[:3] - x_ni_raw[3:6]
-        _, u     = sg_mod.step(state.brain[_IDX_SG], e_pd, gate, x_ni_net, theta.brain)
-        return u
-    u_burst = np.array(jax.vmap(_burst_at)(states))
+    e_pos_delayed = x_vis @ np.array(C_pos).T   # (T, 3)
+    u_burst       = extract_burst(states, theta) # (T, 3)
 
     target_yaw   = np.degrees(np.arctan2(pt3_np[:, 0], pt3_np[:, 2]))
     target_pitch = np.degrees(np.arctan2(pt3_np[:, 1], pt3_np[:, 2]))
@@ -106,11 +93,6 @@ def _extract(states, pt3_np, theta, t_np):
         target_yaw=target_yaw,
         target_pitch=target_pitch,
     )
-
-
-def _ax_fmt(ax):
-    ax.axhline(0, color='k', lw=0.4)
-    ax.grid(True, alpha=0.2)
 
 
 # ── Figure 1: saccade_cascade.png ─────────────────────────────────────────────
@@ -174,7 +156,7 @@ def demo_saccade_cascade():
         axes[0, ci].plot(t_np, tgt_yaw,            color=_C['target'], lw=1.5, label='target pos')
         axes[0, ci].plot(t_np, s['eye_pos'][:, 0], color=_C['eye'],    lw=1.5, label='eye pos')
         axes[0, ci].plot(t_np, s['x_ni'][:, 0],    color=_C['ni'],     lw=0.9, ls='--', label='NI (eye hold signal)')
-        _vl(axes[0, ci]); _ax_fmt(axes[0, ci])
+        _vl(axes[0, ci]); ax_fmt(axes[0, ci])
         if ci == 0: axes[0, ci].legend(fontsize=6.5)
 
         # ── Row 1: cascade output (e_pos_delayed) and sample-and-hold (e_held) ─
@@ -182,7 +164,7 @@ def demo_saccade_cascade():
                          label='e_delayed  (cascade output, settling ~120 ms)')
         axes[1, ci].plot(t_np, s['e_held'],        color=_C['reset'], lw=1.8,
                          label='e_held  (tracks cascade; freezes when z_sac=1)')
-        _vl(axes[1, ci]); _ax_fmt(axes[1, ci])
+        _vl(axes[1, ci]); ax_fmt(axes[1, ci])
         if ci == 0: axes[1, ci].legend(fontsize=6.5)
 
         # ── Row 2: trigger pathway — z_acc (analog) + z_sac (binary latch) ────
@@ -205,7 +187,7 @@ def demo_saccade_cascade():
                          label='x_copy  (internal copy; resets to 0 between saccades)')
         axes[3, ci].axhline(amp, color=_C['target'], lw=0.7, ls=':', alpha=0.6,
                             label=f'target amp = {amp}°')
-        _vl(axes[3, ci]); _ax_fmt(axes[3, ci])
+        _vl(axes[3, ci]); ax_fmt(axes[3, ci])
         if ci == 0: axes[3, ci].legend(fontsize=6.5)
 
         # ── Row 4: burst command and eye velocity ─────────────────────────────
@@ -213,7 +195,7 @@ def demo_saccade_cascade():
                          label='u_burst  (velocity command to NI + plant)')
         axes[4, ci].plot(t_np, s['eye_vel_h'], color=_C['vel'],   lw=1.2, ls='--',
                          label='eye velocity  (plant response)')
-        _vl(axes[4, ci]); _ax_fmt(axes[4, ci])
+        _vl(axes[4, ci]); ax_fmt(axes[4, ci])
         yabs = max(np.max(np.abs(s['u_burst_h'])), np.max(np.abs(s['eye_vel_h'])), 1.0)
         axes[4, ci].set_ylim(-yabs * 0.1, yabs * 1.1)
         if ci == 0: axes[4, ci].legend(fontsize=6.5)

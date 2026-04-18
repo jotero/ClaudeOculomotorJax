@@ -4,6 +4,18 @@ Shared across notebooks and scripts — import instead of copy-pasting.
 
 Functions
 ---------
+vs_net(states)
+    Net velocity storage signal x_L − x_R, shape (T, 3).
+
+ni_net(states)
+    Net neural integrator signal x_L − x_R, shape (T, 3).
+
+vs_null(states)
+    VS null-adaptation state, shape (T, 3).
+
+ni_null(states)
+    NI null-adaptation state, shape (T, 3).
+
 extract_canal(states)
     Canal head-velocity estimate (yaw) from SimState trajectory.
 
@@ -23,7 +35,7 @@ saccade_metrics(eye_pos_yaw, eye_vel_yaw, t_jump_idx, dt)
 fit_tc(t, y, t_start, t_end, label)
     Fit A·exp(−t/τ) + offset; return (tau, t_fit, y_fit).
 
-ax_fmt(ax, ylabel, xlabel)
+ax_fmt(ax, ylabel, xlabel, ylim)
     Standard axes formatting (zero line, grid, labels, tick size).
 """
 
@@ -33,7 +45,11 @@ import jax.numpy as jnp
 from scipy.ndimage import binary_dilation
 from scipy.optimize import curve_fit
 
-from oculomotor.sim.simulator import _IDX_VS, _IDX_NI, _IDX_SG, _IDX_VIS, _IDX_VIS_L, _IDX_VIS_R
+from oculomotor.sim.simulator import (
+    _IDX_VS, _IDX_VS_L, _IDX_VS_R, _IDX_VS_NULL,
+    _IDX_NI, _IDX_NI_L, _IDX_NI_R, _IDX_NI_NULL,
+    _IDX_SG, _IDX_VIS, _IDX_VIS_L, _IDX_VIS_R,
+)
 from oculomotor.models.sensory_models.sensory_model import (
     N_CANALS, FLOOR, _SOFTNESS, PINV_SENS, C_pos, C_gate,
 )
@@ -44,6 +60,30 @@ try:
 except ImportError:  # fallback
     def _sp_softplus(x):
         return np.log1p(np.exp(x))
+
+
+# ── State extractors ──────────────────────────────────────────────────────────
+
+def vs_net(states):
+    """Net velocity storage signal: x_L − x_R, shape (T, 3), deg/s."""
+    return (np.array(states.brain[:, _IDX_VS_L]) -
+            np.array(states.brain[:, _IDX_VS_R]))
+
+
+def ni_net(states):
+    """Net neural integrator signal: x_L − x_R, shape (T, 3), deg."""
+    return (np.array(states.brain[:, _IDX_NI_L]) -
+            np.array(states.brain[:, _IDX_NI_R]))
+
+
+def vs_null(states):
+    """VS null-adaptation state, shape (T, 3), deg/s."""
+    return np.array(states.brain[:, _IDX_VS_NULL])
+
+
+def ni_null(states):
+    """NI null-adaptation state, shape (T, 3), deg."""
+    return np.array(states.brain[:, _IDX_NI_NULL])
 
 
 # ── Canal ──────────────────────────────────────────────────────────────────────
@@ -87,10 +127,11 @@ def extract_burst(states, theta):
     def _at(state):
         x_vis_L = state.sensory[_IDX_VIS_L]
         x_vis_R = state.sensory[_IDX_VIS_R]
-        e_pd  = 0.5 * (C_pos  @ x_vis_L + C_pos  @ x_vis_R)   # L+R average
-        gate  = 0.5 * ((C_gate @ x_vis_L)[0] + (C_gate @ x_vis_R)[0])
-        x_ni_ = state.brain[_IDX_NI]
-        _, u  = sg_mod.step(state.brain[_IDX_SG], e_pd, gate, x_ni_, theta.brain)
+        e_pd    = 0.5 * (C_pos  @ x_vis_L + C_pos  @ x_vis_R)   # L+R average
+        gate    = 0.5 * ((C_gate @ x_vis_L)[0] + (C_gate @ x_vis_R)[0])
+        x_ni_   = state.brain[_IDX_NI]
+        x_ni_net = x_ni_[:3] - x_ni_[3:6]   # net: x_L − x_R (3,)
+        _, u    = sg_mod.step(state.brain[_IDX_SG], e_pd, gate, x_ni_net, theta.brain)
         return u
     return np.array(jax.vmap(_at)(states))   # (T, 3)
 
@@ -248,7 +289,7 @@ def fit_tc(t, y, t_start, t_end, label=''):
 
 # ── Plot formatting ───────────────────────────────────────────────────────────
 
-def ax_fmt(ax, ylabel='', xlabel=''):
+def ax_fmt(ax, ylabel='', xlabel='', ylim=None):
     """Standard axes formatting: zero line, grid, labels, tick size."""
     ax.axhline(0, color='gray', lw=0.4)
     ax.grid(True, alpha=0.2)
@@ -256,4 +297,6 @@ def ax_fmt(ax, ylabel='', xlabel=''):
         ax.set_ylabel(ylabel, fontsize=8)
     if xlabel:
         ax.set_xlabel(xlabel, fontsize=8)
+    if ylim is not None:
+        ax.set_ylim(ylim)
     ax.tick_params(labelsize=7)

@@ -14,7 +14,6 @@ Usage
 import sys
 import os
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 import matplotlib
@@ -27,8 +26,8 @@ from oculomotor.sim.simulator import (
     PARAMS_DEFAULT, with_brain, simulate,
     _IDX_NI, _IDX_SG, _IDX_VIS, _IDX_PURSUIT,
 )
-from oculomotor.models.brain_models import saccade_generator as sg_mod
-from oculomotor.models.sensory_models.sensory_model import C_slip, C_pos
+from oculomotor.models.sensory_models.sensory_model import C_pos
+from oculomotor.analysis import ax_fmt, extract_burst, ni_net
 
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), '..', 'outputs')
 
@@ -67,10 +66,10 @@ def _make_ramp(t_np, vel_degs, t_jump=0.2):
 
 def _extract(states, theta, t_np):
     """Extract signals from full state trajectory."""
-    x_p      = np.array(states.plant[:, :3])   # (T, 3) left eye
-    x_ni     = np.array(states.brain[:, _IDX_NI])
-    x_pursuit = np.array(states.brain[:, _IDX_PURSUIT])
-    x_sg     = np.array(states.brain[:, _IDX_SG])
+    x_p       = np.array(states.plant[:, :3])          # (T, 3) left eye
+    x_ni      = ni_net(states)                          # (T, 3) net NI position
+    x_pursuit = np.array(states.brain[:, _IDX_PURSUIT]) # (T, 3)
+    x_sg      = np.array(states.brain[:, _IDX_SG])
 
     x_copy = x_sg[:, :3]
     z_ref  = x_sg[:, 3]
@@ -78,29 +77,18 @@ def _extract(states, theta, t_np):
     z_sac  = x_sg[:, 7]
     z_acc  = x_sg[:, 8]
 
-    x_vis = np.array(states.sensory[:, _IDX_VIS])
+    x_vis         = np.array(states.sensory[:, _IDX_VIS])
     e_pos_delayed = x_vis @ np.array(C_pos).T
-
-    def _burst_at(state):
-        e_pd = C_pos @ state.sensory[_IDX_VIS]
-        _, u = sg_mod.step(state.brain[_IDX_SG], e_pd, theta.brain)
-        return u
-    u_burst = np.array(jax.vmap(_burst_at)(states))
+    u_burst       = extract_burst(states, theta)         # (T, 3) — fixes missing gate/x_ni args
 
     dt = float(t_np[1] - t_np[0])
-    eye_vel = np.gradient(x_p[:, 0], dt)
     return dict(
         eye_pos=x_p, x_ni=x_ni, x_pursuit=x_pursuit,
         e_pos_delayed=e_pos_delayed[:, 0],
         e_held=e_held[:, 0], x_copy=x_copy[:, 0],
         z_ref=z_ref, z_sac=z_sac, z_acc=z_acc,
-        u_burst_h=u_burst[:, 0], eye_vel_h=eye_vel,
+        u_burst_h=u_burst[:, 0], eye_vel_h=np.gradient(x_p[:, 0], dt),
     )
-
-
-def _ax_fmt(ax):
-    ax.axhline(0, color='k', lw=0.4)
-    ax.grid(True, alpha=0.2)
 
 
 # ── Figure 1: smooth_pursuit.png ──────────────────────────────────────────────
@@ -160,7 +148,7 @@ def demo_smooth_pursuit():
         axes[0, ci].plot(t_np, s_nop['eye_pos'][:, 0],  color=_C['no_pursuit'], lw=1.0, ls='--', label='no pursuit')
         axes[0, ci].plot(t_np, s_pur['eye_pos'][:, 0],  color=_C['eye'],       lw=1.5, label='pursuit')
         axes[0, ci].axvline(T_jump, color='gray', lw=0.5, ls='--', alpha=0.4)
-        _ax_fmt(axes[0, ci])
+        ax_fmt(axes[0, ci])
         if ci == 0:
             axes[0, ci].legend(fontsize=6.5)
 
@@ -171,7 +159,7 @@ def demo_smooth_pursuit():
         axes[1, ci].axvline(T_jump, color='gray', lw=0.5, ls='--', alpha=0.4)
         yabs = max(abs(vel) * 1.3, 10.0)
         axes[1, ci].set_ylim(-yabs * 0.15, yabs)
-        _ax_fmt(axes[1, ci])
+        ax_fmt(axes[1, ci])
         if ci == 0:
             axes[1, ci].legend(fontsize=6.5)
 
@@ -180,7 +168,7 @@ def demo_smooth_pursuit():
         axes[2, ci].plot(t_np, u_pursuit, color=_C['pursuit'], lw=1.5, label='u_pursuit (memory)')
         axes[2, ci].axvline(T_jump, color='gray', lw=0.5, ls='--', alpha=0.4)
         axes[2, ci].set_ylim(-vel * 0.1, vel * 1.3)
-        _ax_fmt(axes[2, ci])
+        ax_fmt(axes[2, ci])
         if ci == 0:
             axes[2, ci].legend(fontsize=6.5)
         axes[2, ci].set_xlabel('Time (s)')
@@ -244,12 +232,12 @@ def demo_pursuit_cascade():
         axes[0, ci].plot(t_np, target_deg,          color=_C['target'],  lw=1.5, label='target')
         axes[0, ci].plot(t_np, s['eye_pos'][:, 0],  color=_C['eye'],     lw=1.5, label='eye')
         axes[0, ci].plot(t_np, s['x_ni'][:, 0],     color=_C['ni'],      lw=0.8, ls='--', label='NI')
-        _vl(axes[0, ci]); _ax_fmt(axes[0, ci])
+        _vl(axes[0, ci]); ax_fmt(axes[0, ci])
         if ci == 0: axes[0, ci].legend(fontsize=6)
 
         axes[1, ci].plot(t_np, s['e_pos_delayed'], color=_C['error'],  lw=1.0, ls='--', label='e_delayed')
         axes[1, ci].plot(t_np, s['e_held'],        color=_C['reset'],  lw=1.8, label='e_held')
-        _vl(axes[1, ci]); _ax_fmt(axes[1, ci])
+        _vl(axes[1, ci]); ax_fmt(axes[1, ci])
         if ci == 0: axes[1, ci].legend(fontsize=6)
 
         axes[2, ci].plot(t_np, s['z_acc'], color='#e08214', lw=1.5, label='z_acc')
@@ -262,13 +250,13 @@ def demo_pursuit_cascade():
         axes[3, ci].plot(t_np, s['e_res'] if 'e_res' in s else s['e_held'] - s['x_copy'],
                          color=_C['error'], lw=1.5, label='e_res')
         axes[3, ci].plot(t_np, s['x_copy'], color=_C['reset'], lw=1.2, ls='--', label='x_copy')
-        _vl(axes[3, ci]); _ax_fmt(axes[3, ci])
+        _vl(axes[3, ci]); ax_fmt(axes[3, ci])
         if ci == 0: axes[3, ci].legend(fontsize=6)
 
         axes[4, ci].plot(t_np, s['u_burst_h'], color=_C['burst'], lw=1.5, label='u_burst')
         axes[4, ci].plot(t_np, s['eye_vel_h'], color=_C['vel'],   lw=1.2, ls='--', label='eye vel')
         axes[4, ci].axhline(vel, color=_C['target'], lw=0.8, ls=':', label=f'{vel} deg/s')
-        _vl(axes[4, ci]); _ax_fmt(axes[4, ci])
+        _vl(axes[4, ci]); ax_fmt(axes[4, ci])
         yabs = max(np.nanmax(np.abs(s['u_burst_h'])), np.nanmax(np.abs(s['eye_vel_h'])), vel, 1.0)
         axes[4, ci].set_ylim(-yabs * 0.1, yabs * 1.1)
         if ci == 0: axes[4, ci].legend(fontsize=6)
@@ -333,7 +321,7 @@ def demo_vor_saccade():
     vline_kw = dict(color='k', lw=0.8, ls='--', alpha=0.4)
     for ax in axes:
         ax.axvline(1.5, **vline_kw)
-        _ax_fmt(ax)
+        ax_fmt(ax)
 
     axes[0].plot(t_np, head_pos,              color=_C['head'],       lw=1.0, ls=':', label='head pos')
     axes[0].plot(t_np, s_ns['eye_pos'][:, 0], color=_C['no_pursuit'], lw=1.2, ls='--', label='VOR only')
