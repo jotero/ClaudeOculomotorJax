@@ -58,52 +58,75 @@ Lesion modelling (once rectification is added):
     Left VN lesion:  b_L → 0  →  spontaneous rightward nystagmus ✓
     Left neuritis:   canal_gains_L → 0  →  asymmetric canal drive ✓
 
+Null-point adaptation (mirrors neural_integrator):
+────────────────────────────────────────────────────────────────────────
+    State layout:  x_vs = [x_L (3,) | x_R (3,) | x_null (3,)]    (9,)
+
+    dx_null/dt = (w_est − x_null) / τ_vs_adapt
+
+    x_null tracks the current VS output.  The VS leak target shifts toward
+    x_null (via b_eff), so sustained activation extends effective TC.
+    With τ_vs_adapt >> τ_vs (default 600 s), effect is negligible in normal
+    demos — only becomes significant for very-long stimuli (PAN modelling).
+
+    For PAN: set τ_vs_adapt ≈ 30–60 s.  The null adaptation accumulates
+    during spontaneous nystagmus, providing the slow oscillatory drive.
+
 Parameters:
-    b_vs  (deg/s) — intrinsic VN resting bias; equilibrium of each pop.
-                    orthogonal-canal assumption: PINV cancels afferent DC.
-                    Keeps x_R > 0 for |ω| < b_vs / (K_vs · τ_vs) ≈ 50 deg/s.
-    τ_vs  (s)     — storage / OKAN TC.       Default 20 s.
-    K_vs  (1/s)   — canal→VS gain.           Default 0.1.
-    K_vis (1/s)   — visual→VS gain.          Default 1.0.
-    g_vis         — visual feedthrough.      Default 0.3.
-    K_gd  (1/s)   — gravity dumping gain.    Default 0 (disabled).
+    b_vs       (deg/s) — intrinsic VN resting bias.          Default 100.
+    τ_vs       (s)     — storage / OKAN TC.                  Default 20 s.
+    K_vs       (1/s)   — canal→VS gain.                      Default 0.1.
+    K_vis      (1/s)   — visual→VS gain.                     Default 1.0.
+    g_vis              — visual feedthrough.                  Default 0.3.
+    K_gd       (1/s)   — gravity dumping gain.               Default 0 (disabled).
+    τ_vs_adapt (s)     — null adaptation TC.                  Default 600 s.
 """
 
 import jax.numpy as jnp
 from oculomotor.models.sensory_models.sensory_model import PINV_SENS, N_CANALS
 
-N_STATES  = 6   # x_L(3) + x_R(3)
+N_STATES  = 9   # x_L(3) + x_R(3) + x_null(3)
 N_INPUTS  = N_CANALS + 3 + 3   # 6 canal afferents + 3 slip + 3 g_hat
 N_OUTPUTS = 3   # w_est (3,)
 
+# Sub-index slices (relative to x_vs)
+_IDX_L    = slice(0, 3)
+_IDX_R    = slice(3, 6)
+_IDX_NULL = slice(6, 9)
+
 
 def step(x_vs, u, brain_params):
-    """Single ODE step: bilateral VS dynamics + net velocity output.
+    """Single ODE step: bilateral VS dynamics + null adaptation + net velocity output.
 
     Args:
-        x_vs:         (6,)   VS state [x_L (3,) | x_R (3,)]
+        x_vs:         (9,)   VS state [x_L (3,) | x_R (3,) | x_null (3,)]
         u:            (12,)  [y_canals (6,) | e_slip_delayed (3,) | g_hat (3,)]
         brain_params: BrainParams
 
     Returns:
-        dx:    (6,)  dx_vs/dt
+        dx:    (9,)  dx_vs/dt
         w_est: (3,)  angular velocity estimate → NI (deg/s)
     """
+    x_L    = x_vs[_IDX_L]    # (3,) left  pop
+    x_R    = x_vs[_IDX_R]    # (3,) right pop
+    x_null = x_vs[_IDX_NULL] # (3,) adapted null
+    x_pop  = x_vs[:6]        # (6,) bilateral populations (for ABCD)
+
     canal_in = u[:N_CANALS]             # (6,)
     slip_in  = u[N_CANALS:N_CANALS+3]  # (3,)
     g_hat    = u[N_CANALS+3:]          # (3,)
     u_lin    = jnp.concatenate([canal_in, slip_in])   # (9,) linear inputs
 
-    b = jnp.broadcast_to(jnp.asarray(brain_params.b_vs, dtype=jnp.float32), (6,))  # equilibrium (6,)
+    # Population equilibria: b_vs bias ± half-null shift
+    b6     = jnp.broadcast_to(jnp.asarray(brain_params.b_vs, dtype=jnp.float32), (6,))
+    b_eff  = b6 + jnp.concatenate([x_null / 2.0, -x_null / 2.0])  # (6,)
 
     # ── ABCD matrices ──────────────────────────────────────────────────────────
 
-    # A (6×6): state decay toward bias — diagonal, single TC for both pops
+    # A (6×6): state decay toward adapted bias — diagonal, single TC for both pops
     A = -(1.0 / brain_params.tau_vs) * jnp.eye(6)
 
     # B (6×9): push-pull canal and visual inputs
-    #   upper (left  pop): canal excites +, slip inhibits −
-    #   lower (right pop): canal inhibits −, slip excites +
     B_top = jnp.concatenate([ brain_params.K_vs * PINV_SENS, -brain_params.K_vis * jnp.eye(3)], axis=1)
     B_bot = jnp.concatenate([-brain_params.K_vs * PINV_SENS,  brain_params.K_vis * jnp.eye(3)], axis=1)
     B = jnp.concatenate([B_top, B_bot], axis=0)
@@ -115,17 +138,19 @@ def step(x_vs, u, brain_params):
     D = jnp.concatenate([PINV_SENS, -brain_params.g_vis * jnp.eye(3)], axis=1)
 
     # ── Gravity dumping — nonlinear correction, outside ABCD core ─────────────
-    # cross(ĝ, cross(ĝ, v)) / |ĝ|² = −v_⊥  (component perpendicular to gravity)
-    # Applied to deviation (x − b) so the tonic bias is not dumped.
-    # K_gd = 0 by default — disabled until gravity estimator is validated.
     g_norm_sq = jnp.dot(g_hat, g_hat) + 1e-9
-    dev   = x_vs - b
+    dev   = x_pop - b_eff
     gd_L  = brain_params.K_gd * jnp.cross(g_hat, jnp.cross(g_hat, dev[:3])) / g_norm_sq
     gd_R  = brain_params.K_gd * jnp.cross(g_hat, jnp.cross(g_hat, dev[3:])) / g_norm_sq
     gd    = jnp.concatenate([gd_L, gd_R])
 
-    # ── Linear dynamics + nonlinear correction ─────────────────────────────────
-    dx    = A @ (x_vs - b) + B @ u_lin + gd   # state derivative
-    w_est = C @ x_vs       + D @ u_lin         # output (C @ b = 0 since b_L = b_R)
+    # ── Bilateral dynamics: leak toward adapted bias ───────────────────────────
+    dx_pop = A @ (x_pop - b_eff) + B @ u_lin + gd
 
-    return dx, w_est
+    # ── Net output ─────────────────────────────────────────────────────────────
+    w_est = C @ x_pop + D @ u_lin   # (C @ b_eff = 0 since b_eff_L − b_eff_R = x_null − x_null = 0)
+
+    # ── Null adaptation: null tracks w_est ────────────────────────────────────
+    dx_null = (w_est - x_null) / brain_params.tau_vs_adapt
+
+    return jnp.concatenate([dx_pop, dx_null]), w_est

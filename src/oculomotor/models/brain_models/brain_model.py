@@ -47,22 +47,26 @@ Internal flow:
     GE  →  g_hat (gravity estimate, cross-product dynamics)
     Vergence → u_verg → split ±½ to L/R motor commands
 
-State vector  x_brain = [x_vs (6) | x_ni (3) | x_sg (9) | x_ec (120) | x_grav (3) | x_pursuit (3) | x_verg (3)]
-N_STATES = 147
+State vector  x_brain = [x_vs (9) | x_ni (9) | x_sg (9) | x_ec (120) | x_grav (3) | x_pursuit (3) | x_verg (3)]
+N_STATES = 156
 
 Index constants (relative to x_brain):
-    _IDX_VS      — velocity storage states   (6,)  = left(3) + right(3)
-    _IDX_VS_L    — left  VN population       (3,)
-    _IDX_VS_R    — right VN population       (3,)
-    _IDX_NI      — neural integrator states  (3,)
-    _IDX_SG      — saccade generator states  (9,)
-    _IDX_EC      — efference copy states     (120,)
-    _IDX_GRAV    — gravity estimator states  (3,)
-    _IDX_PURSUIT — pursuit velocity memory   (3,)
-    _IDX_VERG    — vergence position memory  (3,)
+    _IDX_VS       — velocity storage states   (9,)  = left(3) + right(3) + null(3)
+    _IDX_VS_L     — left  VN population       (3,)
+    _IDX_VS_R     — right VN population       (3,)
+    _IDX_VS_NULL  — VS null adaptation state  (3,)
+    _IDX_NI       — neural integrator states  (9,)  = left(3) + right(3) + null(3)
+    _IDX_NI_L     — left  NPH population      (3,)
+    _IDX_NI_R     — right NPH population      (3,)
+    _IDX_NI_NULL  — NI null adaptation state  (3,)
+    _IDX_SG       — saccade generator states  (9,)
+    _IDX_EC       — efference copy states     (120,)
+    _IDX_GRAV     — gravity estimator states  (3,)
+    _IDX_PURSUIT  — pursuit velocity memory   (3,)
+    _IDX_VERG     — vergence position memory  (3,)
 
 Outputs of step():
-    dx_brain     (147,)  state derivative
+    dx_brain     (156,)  state derivative
     motor_cmd_L  (3,)    pulse-step motor command → left  plant
     motor_cmd_R  (3,)    pulse-step motor command → right plant
 """
@@ -94,12 +98,16 @@ class BrainParams(NamedTuple):
                                           # K_vis=1.0 → L=20.3 → gain ≈ 0.95  (was 0.3 → 0.86)
     g_vis:                 float = 0.3    # visual feedthrough (unitless); fast OKR onset
 
-    # Neural integrator — Robinson (1975)
+    # Neural integrator — bilateral push-pull + null adaptation (Robinson 1975; rebound: Zee et al. 1980)
     tau_i:                 float = 25.0   # leak TC (s); healthy >20 s (Cannon & Robinson 1985)
     tau_p:                 float = 0.15   # plant TC copy — NI feedthrough for lag cancellation
     tau_vis:               float = 0.08   # visual delay copy — EC delay must match retinal delay
                                           # should match PlantParams.tau_p in healthy subjects;
                                           # may differ in pathology (imperfect internal model)
+    b_ni:                  float = 0.0    # NPH intrinsic resting bias (deg); 0 = no net bias at centre gaze
+                                          # future: set >0 for unilateral NPH lesion modelling
+    tau_ni_adapt:          float = 20.0   # NI null adaptation TC (s); controls rebound nystagmus amplitude
+                                          # τ_ni_adapt → ∞: no rebound; τ_ni_adapt ~10–30 s: visible rebound
 
     # Saccade generator — Robinson (1975) local-feedback burst model
     g_burst:               float = 700.0  # burst ceiling (deg/s); 0 disables saccades
@@ -139,6 +147,8 @@ class BrainParams(NamedTuple):
     #   Bilateral hypo:   b_vs = (70, 70, 70,  70,  70,  70)  — both sides deafferented
     b_vs:                  float = 100.0  # scalar OR (6,) per-population bias (deg/s)
     f_afferent:            float = 0.30   # fraction of b_vs from canal afferents (~30%)
+    tau_vs_adapt:          float = 600.0  # VS null adaptation TC (s); >> tau_vs → negligible in normal demos
+                                          # reduce to ~30–60 s to engage PAN-like slow oscillation
 
     # Otolith / gravity estimation — Laurens & Angelaki (2011, 2017)
     K_grav:                float = 0.5    # otolith correction gain (1/s); TC = 1/K_grav ≈ 2 s
@@ -161,29 +171,45 @@ class BrainParams(NamedTuple):
 # ── State layout ───────────────────────────────────────────────────────────────
 
 N_STATES = vs.N_STATES + ni.N_STATES + sg.N_STATES + ec.N_STATES + ge.N_STATES + pu.N_STATES + vg.N_STATES
-#        = 6 + 3 + 9 + 120 + 3 + 3 + 3 = 147
+#        = 9 + 9 + 9 + 120 + 3 + 3 + 3 = 156
 
-# Index constants — relative to x_brain
-_IDX_VS      = slice(0,             vs.N_STATES)                                        # (6,) L+R
-_IDX_VS_L    = slice(0,             3)                                                  # (3,) left  population
-_IDX_VS_R    = slice(3,             vs.N_STATES)                                        # (3,) right population
-_IDX_NI      = slice(vs.N_STATES,   vs.N_STATES + ni.N_STATES)                         # (3,)
-_IDX_SG      = slice(vs.N_STATES + ni.N_STATES,
-                     vs.N_STATES + ni.N_STATES + sg.N_STATES)                           # (9,)
-_IDX_EC      = slice(vs.N_STATES + ni.N_STATES + sg.N_STATES,
-                     vs.N_STATES + ni.N_STATES + sg.N_STATES + ec.N_STATES)             # (120,)
-_IDX_GRAV    = slice(vs.N_STATES + ni.N_STATES + sg.N_STATES + ec.N_STATES,
-                     vs.N_STATES + ni.N_STATES + sg.N_STATES + ec.N_STATES + ge.N_STATES)  # (3,)
-_IDX_PURSUIT = slice(vs.N_STATES + ni.N_STATES + sg.N_STATES + ec.N_STATES + ge.N_STATES,
-                     vs.N_STATES + ni.N_STATES + sg.N_STATES + ec.N_STATES + ge.N_STATES + pu.N_STATES)  # (3,)
-_IDX_VERG    = slice(vs.N_STATES + ni.N_STATES + sg.N_STATES + ec.N_STATES + ge.N_STATES + pu.N_STATES,
-                     N_STATES)                                                           # (3,)
+# ── Index constants — relative to x_brain ─────────────────────────────────────
+# Computed from module N_STATES to stay in sync automatically.
+
+_o_vs  = 0
+_o_ni  = _o_vs + vs.N_STATES   # 9
+_o_sg  = _o_ni + ni.N_STATES   # 18
+_o_ec  = _o_sg + sg.N_STATES   # 27
+_o_gv  = _o_ec + ec.N_STATES   # 147
+_o_pu  = _o_gv + ge.N_STATES   # 150
+_o_vg  = _o_pu + pu.N_STATES   # 153
+
+# Velocity storage (9 states: L pop + R pop + null)
+_IDX_VS      = slice(_o_vs,     _o_vs + 9)   # (9,)
+_IDX_VS_L    = slice(_o_vs,     _o_vs + 3)   # (3,) left  VN pop
+_IDX_VS_R    = slice(_o_vs + 3, _o_vs + 6)   # (3,) right VN pop
+_IDX_VS_NULL = slice(_o_vs + 6, _o_vs + 9)   # (3,) null adaptation
+
+# Neural integrator (9 states: L pop + R pop + null)
+_IDX_NI      = slice(_o_ni,     _o_ni + 9)   # (9,)
+_IDX_NI_L    = slice(_o_ni,     _o_ni + 3)   # (3,) left  NPH pop
+_IDX_NI_R    = slice(_o_ni + 3, _o_ni + 6)   # (3,) right NPH pop
+_IDX_NI_NULL = slice(_o_ni + 6, _o_ni + 9)   # (3,) null adaptation
+
+# Remaining subsystems
+_IDX_SG      = slice(_o_sg, _o_sg + sg.N_STATES)   # (9,)
+_IDX_EC      = slice(_o_ec, _o_ec + ec.N_STATES)   # (120,)
+_IDX_GRAV    = slice(_o_gv, _o_gv + ge.N_STATES)   # (3,)
+_IDX_PURSUIT = slice(_o_pu, _o_pu + pu.N_STATES)   # (3,)
+_IDX_VERG    = slice(_o_vg, N_STATES)               # (3,)
 
 
 def make_x0(brain_params=None):
     """Default initial brain state.
 
     VS populations initialised to b_vs (bilateral equilibrium — both pops at resting bias).
+    VS/NI null adaptation states initialised to 0 (no initial adaptation).
+    NI populations initialised to 0 (b_ni=0 → net=0 at centre gaze).
     Gravity estimator initialised pointing down (upright head).
 
     Args:
@@ -192,9 +218,13 @@ def make_x0(brain_params=None):
     x0 = jnp.zeros(N_STATES)
     x0 = x0.at[_IDX_GRAV].set(ge.X0)
     if brain_params is not None:
-        # Both populations start at their resting bias so net x_L − x_R = 0 at rest.
-        b = jnp.broadcast_to(jnp.asarray(brain_params.b_vs, dtype=jnp.float32), (vs.N_STATES,))
-        x0 = x0.at[_IDX_VS].set(b)
+        # VS: both populations start at resting bias; null starts at 0.
+        b6 = jnp.broadcast_to(jnp.asarray(brain_params.b_vs, dtype=jnp.float32), (6,))
+        x0 = x0.at[_IDX_VS_L].set(b6[:3])
+        x0 = x0.at[_IDX_VS_R].set(b6[3:])
+        # _IDX_VS_NULL stays at 0 (no initial adaptation)
+        # NI: b_ni populations (b_ni=0 default → stays zero)
+        # _IDX_NI_L/R/NULL all stay at 0
     return x0
 
 
@@ -204,7 +234,7 @@ def step(x_brain, sensory_out, brain_params):
     """Single ODE step for the brain subsystem.
 
     Args:
-        x_brain:     (144,)        brain state [x_vs | x_ni | x_sg | x_ec | x_grav | x_pursuit | x_verg]
+        x_brain:     (156,)        brain state [x_vs (9) | x_ni (9) | x_sg | x_ec | x_grav | x_pursuit | x_verg]
         sensory_out: SensoryOutput bundled canal afferents + delayed visual signals
                        .canal          (6,)    canal afferent rates
                        .slip_delayed   (3,)    delayed retinal slip (no EC correction yet)
@@ -222,8 +252,9 @@ def step(x_brain, sensory_out, brain_params):
         motor_cmd_L: (3,)    pulse-step motor command → left  plant
         motor_cmd_R: (3,)    pulse-step motor command → right plant
     """
-    x_vs      = x_brain[_IDX_VS]
-    x_ni      = x_brain[_IDX_NI]
+    x_vs      = x_brain[_IDX_VS]      # (9,): bilateral VS + null
+    x_ni      = x_brain[_IDX_NI]      # (9,): bilateral NI + null
+    x_ni_net  = x_ni[:3] - x_ni[3:6]  # (3,): net eye position (L pop − R pop)
     x_sg      = x_brain[_IDX_SG]
     x_ec      = x_brain[_IDX_EC]
     x_grav    = x_brain[_IDX_GRAV]
@@ -262,8 +293,8 @@ def step(x_brain, sensory_out, brain_params):
         brain_params)
 
     # ── Saccade generator (target selection handled internally) ───────────────
-    # x_ni is the brain's proxy for current eye position (avoids plant state dependency)
-    dx_sg, u_burst = sg.step(x_sg, sensory_out.pos_delayed, sensory_out.gate_vf, x_ni, brain_params)
+    # x_ni_net is the brain's proxy for current eye position (avoids plant state dependency)
+    dx_sg, u_burst = sg.step(x_sg, sensory_out.pos_delayed, sensory_out.gate_vf, x_ni_net, brain_params)
 
     # ── OCR / somatogravic: gravity-driven eye position command ───────────────
     # g_hat = specific force (+x upright).  Tilt signals are normalised components:
@@ -278,6 +309,7 @@ def step(x_brain, sensory_out, brain_params):
     ])
 
     # ── Neural integrator: VOR + saccades + pursuit → version motor command ───
+    # ni.step takes (9,) x_ni [L|R|null] and returns (9,) dx + (3,) motor_cmd on net
     dx_ni, motor_cmd_ni = ni.step(x_ni, -w_est + u_burst + u_pursuit, brain_params)
 
     # Add OCR position offset directly to motor command (bypasses NI leak)

@@ -1,78 +1,110 @@
-"""Neural Integrator SSM — leaky integrator of eye-velocity commands (3-D).
+"""Neural Integrator SSM — bilateral push-pull with null-point adaptation.
 
-Converts a combined eye-velocity command into a sustained eye-position command.
-The NI is agnostic to the source of the velocity: VOR, saccade, OKR, or any
-combination.  Gains and sign conventions live upstream in the simulator.
+Mirrors the velocity_storage bilateral architecture.  Two populations (Left,
+Right) model the bilateral nucleus prepositus hypoglossi (NPH) / interstitial
+nucleus of Cajal (INC) organisation.
 
-Architecture: Robinson (1975) "Oculomotor control signals" in "Basic Mechanisms
-of Ocular Motility", pp. 337–374. Leak time constant characterized in primate
-by Cannon & Robinson (1985 Biol Cybern).
+State:  x_ni = [x_L (3,) | x_R (3,) | x_null (3,)]         (9,)
+Input:  u_vel                                                 (3,)  velocity command
+Output: u_p — pulse-step motor command to plant               (3,)
 
-    dx_n/dt = A_n(θ) @ x_n + u_vel
-    y_n     = C_n @ x_n + tau_p · u_vel
+ABCD system (bilateral core):
+────────────────────────────────────────────────────────────────────────
+    dx_L /dt = −(1/τ_i)·(x_L − b_ni − x_null/2) + u_vel/2
+    dx_R /dt = −(1/τ_i)·(x_R − b_ni + x_null/2) − u_vel/2
 
-States:  x_n = [pos_cmd_x, pos_cmd_y, pos_cmd_z]   (3,)   eye position command (deg)
-Input:   u_vel                                       (3,)   combined eye-velocity command
-                                                            (already in eye coordinates,
-                                                            sign-flipped and gain-scaled
-                                                            by the caller)
-Output:  y_n → pulse-step signal to Plant SSM
+    Net position:  x_net = x_L − x_R   (identical to old scalar x_ni)
+    d(x_net)/dt  = −(1/τ_i)·(x_net − x_null) + u_vel      ← leaks toward null, not 0
 
-Pulse-step output:
-    y_n = x_n  +  tau_p · u_vel
+    u_p  =  x_net  +  τ_p · u_vel     (pulse-step: lag-cancelled motor command)
 
-    The tau_p feedthrough exactly cancels the plant's low-pass lag so that
-    eye position tracks the velocity command at all frequencies.
-    tau_p is a plant parameter, not a VOR or saccade parameter — it belongs
-    here because the NI must know the plant it drives.
+Null-point adaptation:
+────────────────────────────────────────────────────────────────────────
+    dx_null/dt = (x_net − x_null) / τ_ni_adapt
 
-VOR gain and sign:
-    The sign inversion (eyes move opposite to head) and g_vor live in the
-    simulator, applied to the VS velocity estimate before it reaches the NI:
-        u_vor = −g_vor · w_est
-    The NI itself is gain-free.
+    The null slowly tracks the current net position.  During sustained eccentric
+    gaze (x_net = E), x_null → E.  On return to centre (x_net = 0), the NI leaks
+    toward x_null = E → eye drifts back (slow phase eccentric) → fast phase toward
+    centre → rebound nystagmus. ✓
+
+    τ_ni_adapt default 20 s: ~half-period rebound after sustained right gaze.
+    τ_ni_adapt → ∞ (very large):  null frozen at 0 → reverts to old NI behaviour.
+
+Bilateral conventions (mirror velocity_storage):
+    Model LEFT pop  (x_L, 0:3) codes RIGHTWARD gaze = anatomical RIGHT NPH.
+    Model RIGHT pop (x_R, 3:6) codes LEFTWARD  gaze = anatomical LEFT  NPH.
+    Net x_L − x_R > 0  →  rightward eye position command.
+
+    b_ni (default 0):  NPH intrinsic resting bias.  At net level (C @ x = 0) the
+    resting discharge cancels, so b_ni=0 is physiologically appropriate unless
+    modelling unilateral NPH lesions (future work).
+
+Anti-windup:
+    Applied to the net derivative d(x_net)/dt before distributing back to
+    individual populations.  Prevents integrator wind-up beyond ±orbital_limit.
 
 Parameters:
-  tau_i  — integrator leak TC (s).  Healthy: >20 s (near-perfect integration);
-           fitted value ~25 s in normal rhesus monkey
-           (Cannon & Robinson 1985; Robinson 1975).
-  tau_p  — plant TC (s); used only for the lag-cancellation feedthrough.
+    τ_i         (s)   — leak TC.         Default 25 s (healthy).
+    τ_p         (s)   — plant TC copy.   Default 0.15 s.
+    b_ni        (deg) — NPH resting bias. Default 0.
+    τ_ni_adapt  (s)   — null adaptation TC.  Default 20 s.
+    orbital_limit (deg) — oculomotor range half-width.  Default 50 deg.
 """
 
 import jax.numpy as jnp
 
-N_STATES  = 3
+N_STATES  = 9   # x_L(3) + x_R(3) + x_null(3)
 N_INPUTS  = 3
 N_OUTPUTS = 3
 
+# Sub-index slices (relative to x_ni)
+_IDX_L    = slice(0, 3)
+_IDX_R    = slice(3, 6)
+_IDX_NULL = slice(6, 9)
+
 
 def step(x_ni, u_vel, brain_params):
-    """Single ODE step: state derivative + motor command output.
+    """Single ODE step: bilateral NI dynamics + null adaptation + motor command.
 
     Args:
-        x_ni:  (3,)  NI state (eye position command, deg)
-        u_vel: (3,)  combined eye-velocity command (deg/s)
-                     caller is responsible for sign flip and gain scaling
-        theta: Params  model parameters
+        x_ni:         (9,)  NI state [x_L (3,) | x_R (3,) | x_null (3,)]
+        u_vel:        (3,)  combined eye-velocity command (deg/s) — sign-flipped upstream
+        brain_params: BrainParams
 
     Returns:
-        dx:  (3,)  dx_ni/dt
+        dx:  (9,)  dx_ni/dt
         u_p: (3,)  pulse-step motor command to plant
     """
-    # ── System matrices ───────────────────────────────────────────────────────
-    A = (-1.0 / brain_params.tau_i) * jnp.eye(3)
-    D = brain_params.tau_p * jnp.eye(3)
-    # B = C = I (identity — omitted)
+    x_L    = x_ni[_IDX_L]    # (3,) left  pop
+    x_R    = x_ni[_IDX_R]    # (3,) right pop
+    x_null = x_ni[_IDX_NULL] # (3,) adapted null
 
-    # ── Dynamics ──────────────────────────────────────────────────────────────
-    dx  = A @ x_ni + u_vel
+    b_ni   = jnp.asarray(brain_params.b_ni,  dtype=jnp.float32)
+    L      = brain_params.orbital_limit
+    tau_i  = brain_params.tau_i
 
-    # Orbital anti-windup: mirror the plant wall-clip so x_ni stays bounded.
-    # When x_ni is at ±orbital_limit and the command pushes further outward,
-    # zero the derivative — exactly as plant_model does for dx_p.
-    L   = brain_params.orbital_limit
-    dx  = jnp.where(x_ni >= L,  jnp.minimum(dx, 0.0), dx)
-    dx  = jnp.where(x_ni <= -L, jnp.maximum(dx, 0.0), dx)
+    # ── Population equilibria: leak toward b_ni ± half-null ──────────────────
+    # b_eff_L = b_ni + x_null/2   (left  pop target rises with rightward null)
+    # b_eff_R = b_ni - x_null/2   (right pop target falls with rightward null)
+    dx_L_raw = -(1.0 / tau_i) * (x_L - b_ni - x_null / 2.0) + u_vel / 2.0
+    dx_R_raw = -(1.0 / tau_i) * (x_R - b_ni + x_null / 2.0) - u_vel / 2.0
 
-    u_p = x_ni + D @ u_vel
-    return dx, u_p
+    # ── Anti-windup on net ────────────────────────────────────────────────────
+    x_net   = x_L - x_R                      # current net position
+    dx_net  = dx_L_raw - dx_R_raw            # net derivative before clipping
+    dx_sum  = dx_L_raw + dx_R_raw            # common-mode: unaffected by windup
+
+    dx_net  = jnp.where(x_net >= L,  jnp.minimum(dx_net, 0.0), dx_net)
+    dx_net  = jnp.where(x_net <= -L, jnp.maximum(dx_net, 0.0), dx_net)
+
+    # Reconstruct individual derivatives from clipped net + unchanged sum
+    dx_L = (dx_net + dx_sum) / 2.0
+    dx_R = (dx_sum - dx_net) / 2.0
+
+    # ── Null adaptation: null slowly tracks net position ──────────────────────
+    dx_null = (x_net - x_null) / brain_params.tau_ni_adapt
+
+    # ── Pulse-step motor command: lag cancellation feedthrough ────────────────
+    u_p = x_net + brain_params.tau_p * u_vel
+
+    return jnp.concatenate([dx_L, dx_R, dx_null]), u_p

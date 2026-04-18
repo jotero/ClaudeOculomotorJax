@@ -72,9 +72,9 @@ def _extract_signals(theta, t_array, head_vel_1d, states):
 
     pinv      = np.array(PINV_SENS)
     u_canal   = (pinv @ y_c.T).T
-    x_vs_net  = x_vs[:, :3] - x_vs[:, 3:]   # C @ x_vs = x_L − x_R  (net VS signal)
+    x_vs_net  = x_vs[:, :3] - x_vs[:, 3:6]  # C @ x_vs = x_L − x_R  (net VS signal)
     w_est     = x_vs_net + u_canal
-    u_p       = x_ni - theta.brain.tau_p * w_est
+    u_p       = x_ni[:, :3] - x_ni[:, 3:6] - theta.brain.tau_p * w_est
 
     eye_pos = x_p[:, 0]
     dt      = float(t_array[1] - t_array[0])
@@ -85,7 +85,7 @@ def _extract_signals(theta, t_array, head_vel_1d, states):
         x2_c0=x2[:, 0], x2_c1=x2[:, 1],
         y_c0=y_c[:, 0], y_c1=y_c[:, 1],
         u_canal=u_canal[:, 0], x_vs=x_vs_net[:, 0],
-        w_est=w_est[:, 0], x_ni=x_ni[:, 0],
+        w_est=w_est[:, 0], x_ni=u_p[:, 0],  # net NI output (pulse-step)
         u_p=u_p[:, 0], eye_pos=eye_pos, eye_vel=eye_vel,
     )
 
@@ -96,8 +96,9 @@ def _extract_burst(states, theta):
         x_vis_        = state.sensory[_IDX_VIS]
         e_pos_delayed = C_pos  @ x_vis_
         gate_vf       = (C_gate @ x_vis_)[0]
-        x_ni_         = state.brain[_IDX_NI]
-        _, u_burst    = sg_mod.step(state.brain[_IDX_SG], e_pos_delayed, gate_vf, x_ni_, theta.brain)
+        x_ni_raw      = state.brain[_IDX_NI]
+        x_ni_net      = x_ni_raw[:3] - x_ni_raw[3:6]  # net eye position
+        _, u_burst    = sg_mod.step(state.brain[_IDX_SG], e_pos_delayed, gate_vf, x_ni_net, theta.brain)
         return u_burst
     return np.array(jax.vmap(_at)(states))
 
@@ -260,8 +261,9 @@ def demo_okr_cascade():
 
     x_vis    = np.array(states.sensory[:, _IDX_VIS])
     x_vs_raw = np.array(states.brain[:, _IDX_VS])
-    x_vs_net = x_vs_raw[:, :3] - x_vs_raw[:, 3:]   # C @ x_vs = x_L − x_R
-    x_ni     = np.array(states.brain[:, _IDX_NI])
+    x_vs_net = x_vs_raw[:, :3] - x_vs_raw[:, 3:6]  # C @ x_vs = x_L − x_R
+    x_ni_raw = np.array(states.brain[:, _IDX_NI])
+    x_ni     = x_ni_raw[:, :3] - x_ni_raw[:, 3:6]  # net NI position
     x_p      = np.array(states.plant[:, :3])   # (T, 3) left eye
 
     w_scene_np   = np.where(t_np < on_dur, scene_vel, 0.0)

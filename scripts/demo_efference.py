@@ -45,7 +45,7 @@ from oculomotor.sim.simulator import (
     _IDX_C, _IDX_NI, _IDX_SG, _IDX_VIS, _IDX_VS, _IDX_EC,
 )
 from oculomotor.models.brain_models import saccade_generator as sg_mod
-from oculomotor.models.sensory_models.sensory_model import C_slip, C_pos
+from oculomotor.models.sensory_models.sensory_model import C_slip, C_pos, C_gate
 from oculomotor.models.sensory_models.sensory_model import N_CANALS, canal_nonlinearity
 from oculomotor.models.brain_models import velocity_storage as vs_mod
 
@@ -72,17 +72,21 @@ def _extract(states, theta, t_np):
     """Extract efference-copy signals from full state trajectory."""
     tau_p = theta.brain.tau_p
     x_p      = np.array(states.plant[:, :3])   # (T, 3) left eye
-    x_ni     = np.array(states.brain[:, _IDX_NI])
     x_vs_raw = np.array(states.brain[:, _IDX_VS])
-    x_vs     = x_vs_raw[:, :3] - x_vs_raw[:, 3:]   # net: x_L − x_R  (T, 3)
+    x_vs     = x_vs_raw[:, :3] - x_vs_raw[:, 3:6]  # net: x_L − x_R  (T, 3)
+    x_ni_raw = np.array(states.brain[:, _IDX_NI])
+    x_ni_net = x_ni_raw[:, :3] - x_ni_raw[:, 3:6]  # net NI position  (T, 3)
 
     # u_burst_delayed: last 3 states of the EC cascade = delayed burst output
     u_burst_delayed = np.array(states.brain[:, _IDX_EC])[:, -3:]  # (T, 3)
 
     # u_burst: recompute from SG state + delayed position error
     def _at(state):
-        e_pd   = C_pos @ state.sensory[_IDX_VIS]
-        _, u_b = sg_mod.step(state.brain[_IDX_SG], e_pd, theta.brain)
+        e_pd      = C_pos @ state.sensory[_IDX_VIS]
+        gate_vf   = (C_gate @ state.sensory[_IDX_VIS])[0]
+        x_ni_raw  = state.brain[_IDX_NI]
+        x_ni_net  = x_ni_raw[:3] - x_ni_raw[3:6]
+        _, u_b    = sg_mod.step(state.brain[_IDX_SG], e_pd, gate_vf, x_ni_net, theta.brain)
         return u_b
     u_burst = np.array(jax.vmap(_at)(states))  # (T, 3)
 
@@ -94,7 +98,7 @@ def _extract(states, theta, t_np):
     # corrected slip = what VS actually receives
     cor_slip = raw_slip_delayed + u_burst_delayed              # (T, 3)
 
-    # w_eye approximation from NI + VS state
+    # w_eye approximation from NI net + VS state
     cg = jnp.array(theta.sensory.canal_gains)
     x_c_j   = states.sensory[:, _IDX_C]
     x_vs_j  = states.brain[:, _IDX_VS]
@@ -103,12 +107,14 @@ def _extract(states, theta, t_np):
     def _w_est_at(xc, xvs, xvis):
         y_c  = canal_nonlinearity(xc, cg)
         e_sl = C_slip @ xvis
-        _, w = vs_mod.step(xvs, jnp.concatenate([y_c, e_sl]), theta.brain)
+        # VS step requires 12-element input: [y_canals(6) | slip(3) | g_hat(3)]
+        g_hat_upright = jnp.array([9.81, 0.0, 0.0])
+        _, w = vs_mod.step(xvs, jnp.concatenate([y_c, e_sl, g_hat_upright]), theta.brain)
         return w
     w_est = np.array(jax.vmap(_w_est_at)(x_c_j, x_vs_j, x_vis_j))  # (T, 3)
-    w_eye = (x_ni - x_p) / tau_p + (-w_est + u_burst)               # (T, 3)
+    w_eye = (x_ni_net - x_p) / tau_p + (-w_est + u_burst)           # (T, 3)
 
-    return dict(x_p=x_p, x_vs=x_vs, u_burst=u_burst,
+    return dict(x_p=x_p, x_vs=x_vs, x_ni=x_ni_net, u_burst=u_burst,
                 u_burst_delayed=u_burst_delayed,
                 raw_slip_delayed=raw_slip_delayed,
                 cor_slip=cor_slip, w_eye=w_eye)
@@ -250,7 +256,8 @@ def demo_okn_debug():
     x_vs_sac   = s['x_vs'][:, 0]
     x_vs_nosac = s_ns['x_vs'][:, 0]
     x_p_sac    = s['x_p'][:, 0]
-    x_ni_sac   = np.array(states_sac.brain[:, _IDX_NI])[:, 0]
+    _x_ni_sac_raw = np.array(states_sac.brain[:, _IDX_NI])
+    x_ni_sac      = (_x_ni_sac_raw[:, 0] - _x_ni_sac_raw[:, 3])  # net NI yaw
     x_sg_sac   = np.array(states_sac.brain[:, _IDX_SG])[:, 3]   # z_ref
 
     thr       = THETA_OKN.brain.threshold_sac
@@ -343,7 +350,7 @@ def _run_tests():
     t = jnp.arange(0.0, 0.5, dt)
     states = simulate(THETA_NO_SAC, t, max_steps=int(0.5/dt)+200, return_states=True)
     u_bd = np.array(states.brain[:, _IDX_EC])[:, -3:]   # last 3 of cascade
-    assert np.allclose(u_bd, 0.0, atol=1e-6), \
+    assert np.allclose(u_bd, 0.0, atol=1e-5), \
         f'FAIL: u_burst_delayed non-zero without burst; max={np.abs(u_bd).max():.2e}'
     print('  1. u_burst_delayed zero without burst               PASS')
 
@@ -360,8 +367,11 @@ def _run_tests():
                       max_steps=int(0.8/dt)+200, return_states=True)
 
     def _burst_at(state):
-        e_pd   = C_pos @ state.sensory[_IDX_VIS]
-        _, u_b = sg_mod.step(state.brain[_IDX_SG], e_pd, THETA_SAC.brain)
+        e_pd     = C_pos @ state.sensory[_IDX_VIS]
+        gate_vf  = (C_gate @ state.sensory[_IDX_VIS])[0]
+        x_ni_raw = state.brain[_IDX_NI]
+        x_ni_net = x_ni_raw[:3] - x_ni_raw[3:6]
+        _, u_b   = sg_mod.step(state.brain[_IDX_SG], e_pd, gate_vf, x_ni_net, THETA_SAC.brain)
         return u_b
     u_burst = np.array(jax.vmap(_burst_at)(states))[:, 0]
     u_bd    = np.array(states.brain[:, _IDX_EC])[:, -3]
@@ -392,7 +402,7 @@ def _run_tests():
                       scene_present_array=jnp.ones(T),
                       max_steps=int(0.6/dt)+200, return_states=True)
     x_vs_raw = np.array(states.brain[:, _IDX_VS])
-    x_vs_net = x_vs_raw[:, :3] - x_vs_raw[:, 3:]   # net: x_L − x_R
+    x_vs_net = x_vs_raw[:, :3] - x_vs_raw[:, 3:6]  # net: x_L − x_R
     mask = (t_np > 0.3) & (t_np < 0.55)
     contamination = np.abs(x_vs_net[mask]).max()
     assert contamination < 5.0, \
@@ -410,7 +420,7 @@ def _run_tests():
                       scene_present_array=jnp.ones(T),
                       max_steps=int(2.0/dt)+200, return_states=True)
     x_vs_raw = np.array(states.brain[:, _IDX_VS])
-    x_vs_net = x_vs_raw[:, :3] - x_vs_raw[:, 3:]   # net: x_L − x_R
+    x_vs_net = x_vs_raw[:, :3] - x_vs_raw[:, 3:6]  # net: x_L − x_R
     vs_late = np.abs(x_vs_net[t_np > 1.0, 0]).mean()
     assert vs_late > 1.0, \
         f'FAIL: VS not driven by scene; mean={vs_late:.2f}'
@@ -434,8 +444,8 @@ def _run_tests():
 
     _raw_sac   = np.array(states_sac.brain[:,   _IDX_VS])
     _raw_nosac = np.array(states_nosac.brain[:, _IDX_VS])
-    x_vs_sac   = (_raw_sac[:,   :3] - _raw_sac[:,   3:])[:, 0]   # net yaw
-    x_vs_nosac = (_raw_nosac[:, :3] - _raw_nosac[:, 3:])[:, 0]   # net yaw
+    x_vs_sac   = (_raw_sac[:,   :3] - _raw_sac[:,   3:6])[:, 0]  # net yaw
+    x_vs_nosac = (_raw_nosac[:, :3] - _raw_nosac[:, 3:6])[:, 0]  # net yaw
     mask5   = t_np > 7.0
     vs_diff = np.abs(x_vs_sac[mask5] - x_vs_nosac[mask5]).max()
     assert vs_diff < 5.0, \

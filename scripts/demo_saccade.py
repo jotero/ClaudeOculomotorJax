@@ -63,7 +63,8 @@ def _make_pt3(t_np, jumps_deg, T):
 def _extract(states, pt3_np, theta, t_np):
     """Extract signals from full state trajectory."""
     x_p   = np.array(states.plant[:, :3])   # (T, 3) left eye
-    x_ni  = np.array(states.brain[:, _IDX_NI])
+    x_ni_raw = np.array(states.brain[:, _IDX_NI])
+    x_ni     = x_ni_raw[:, :3] - x_ni_raw[:, 3:6]  # net eye position (T, 3)
     x_vis = np.array(states.sensory[:, _IDX_VIS])
     x_sg  = np.array(states.brain[:, _IDX_SG])
 
@@ -81,8 +82,9 @@ def _extract(states, pt3_np, theta, t_np):
         x_vis_ = state.sensory[_IDX_VIS]
         e_pd   = C_pos  @ x_vis_
         gate   = (C_gate @ x_vis_)[0]
-        x_ni_  = state.brain[_IDX_NI]
-        _, u   = sg_mod.step(state.brain[_IDX_SG], e_pd, gate, x_ni_, theta.brain)
+        x_ni_raw = state.brain[_IDX_NI]
+        x_ni_net = x_ni_raw[:3] - x_ni_raw[3:6]
+        _, u     = sg_mod.step(state.brain[_IDX_SG], e_pd, gate, x_ni_net, theta.brain)
         return u
     u_burst = np.array(jax.vmap(_burst_at)(states))
 

@@ -25,9 +25,11 @@ State structure — SimState NamedTuple with three groups:
                       canal       otolith      left retinal    right retinal
                       _IDX_C      _IDX_OTO     _IDX_VIS_L      _IDX_VIS_R
 
-    brain    (147):  [x_vs (6) | x_ni (3) | x_sg (9) | x_ec (120) | x_grav (3) | x_pursuit (3) | x_verg (3)]
+    brain    (156):  [x_vs (9) | x_ni (9) | x_sg (9) | x_ec (120) | x_grav (3) | x_pursuit (3) | x_verg (3)]
                       vel-store   NI          sacc-gen   EC delay     gravity est   pursuit mem    vergence
                       _IDX_VS     _IDX_NI     _IDX_SG    _IDX_EC      _IDX_GRAV     _IDX_PURSUIT   _IDX_VERG
+                      _IDX_VS_L (0:3)  _IDX_VS_R (3:6)  _IDX_VS_NULL (6:9)
+                      _IDX_NI_L (0:3)  _IDX_NI_R (3:6)  _IDX_NI_NULL (6:9)
 
     plant      (6):  [x_p_L (3) | x_p_R (3)] — left/right eye rotation vectors (deg)
                       _IDX_P_L    _IDX_P_R
@@ -60,7 +62,12 @@ from oculomotor.models.sensory_models.sensory_model import (
     _IDX_C, _IDX_OTO, _IDX_VIS, _IDX_VIS_L, _IDX_VIS_R, SensoryParams,
 )
 from oculomotor.models.sensory_models               import otolith as _otolith
-from oculomotor.models.brain_models.brain_model    import _IDX_VS, _IDX_VS_L, _IDX_VS_R, _IDX_NI, _IDX_SG, _IDX_EC, _IDX_GRAV, _IDX_PURSUIT, _IDX_VERG, BrainParams
+from oculomotor.models.brain_models.brain_model    import (
+    _IDX_VS, _IDX_VS_L, _IDX_VS_R, _IDX_VS_NULL,
+    _IDX_NI, _IDX_NI_L, _IDX_NI_R, _IDX_NI_NULL,
+    _IDX_SG, _IDX_EC, _IDX_GRAV, _IDX_PURSUIT, _IDX_VERG,
+    BrainParams,
+)
 from oculomotor.models.plant_models.plant_model_first_order import PlantParams, _IDX_P_L, _IDX_P_R
 from oculomotor.models.sensory_models import sensory_model
 from oculomotor.models.brain_models   import brain_model
@@ -232,7 +239,9 @@ def with_vn_lesion(params: Params, side: str = 'left') -> Params:
 __all__ = [
     'SimState', 'ODE_ocular_motor', 'simulate',
     '_IDX_C', '_IDX_OTO', '_IDX_VIS', '_IDX_VIS_L', '_IDX_VIS_R',
-    '_IDX_VS', '_IDX_VS_L', '_IDX_VS_R', '_IDX_NI', '_IDX_SG', '_IDX_EC', '_IDX_GRAV', '_IDX_PURSUIT', '_IDX_VERG',
+    '_IDX_VS', '_IDX_VS_L', '_IDX_VS_R', '_IDX_VS_NULL',
+    '_IDX_NI', '_IDX_NI_L', '_IDX_NI_R', '_IDX_NI_NULL',
+    '_IDX_SG', '_IDX_EC', '_IDX_GRAV', '_IDX_PURSUIT', '_IDX_VERG',
     '_IDX_P_L', '_IDX_P_R',
     # params
     'Params', 'SimConfig', 'SensoryParams', 'PlantParams', 'BrainParams',
@@ -252,7 +261,7 @@ class SimState(NamedTuple):
         plant      (6)  Two extraocular plants — [left (3) | right (3)] eye rotation (deg).
     """
     sensory: jnp.ndarray   # (818,)  [x_c (12) | x_oto (6) | x_vis_L (400) | x_vis_R (400)]
-    brain:   jnp.ndarray   # (144,)  [x_vs (3) | x_ni (3) | x_sg (9) | x_ec (120) | x_grav (3) | x_pursuit (3) | x_verg (3)]
+    brain:   jnp.ndarray   # (156,)  [x_vs (9) | x_ni (9) | x_sg (9) | x_ec (120) | x_grav (3) | x_pursuit (3) | x_verg (3)]
     plant:   jnp.ndarray   #   (6,)  [x_p_L (3) | x_p_R (3)]  eye rotation vectors (deg)
 
 
