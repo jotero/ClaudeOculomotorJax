@@ -104,28 +104,6 @@
   }
   @keyframes spin { to { transform: rotate(360deg); } }
 
-  /* Backend bar */
-  .backend-bar {
-    width: 100%; max-width: 820px; margin-bottom: 10px;
-    display: flex; align-items: center; gap: 8px; font-size: 0.75rem; color: #555;
-  }
-  .backend-bar label { white-space: nowrap; }
-  .backend-bar input {
-    flex: 1; background: #0f1117; border: 1px solid #222535;
-    border-radius: 6px; color: #777; font-size: 0.75rem;
-    padding: 4px 8px; outline: none; font-family: monospace;
-    transition: border-color 0.2s, color 0.2s;
-  }
-  .backend-bar input:focus { border-color: #4a6cf7; color: #ccc; }
-  .backend-bar .save-btn {
-    background: none; border: 1px solid #222535; color: #555;
-    font-size: 0.72rem; padding: 0 10px; height: 26px; border-radius: 5px;
-    align-self: auto;
-  }
-  .backend-bar .save-btn:hover { border-color: #4a6cf7; color: #aaa; background: none; }
-  .backend-status { font-size: 0.7rem; white-space: nowrap; }
-  .backend-status.ok  { color: #4a7a4a; }
-  .backend-status.err { color: #7a4a4a; }
 
   /* Avatar section */
   #avatar-section {
@@ -175,12 +153,6 @@
 <h1>OculomotorSim</h1>
 <p class="subtitle">Describe a scenario or comparison — the model figures out what to simulate.</p>
 
-<div class="backend-bar">
-  <label for="backend-url">Backend:</label>
-  <input id="backend-url" type="text" placeholder="http://localhost:8000">
-  <button class="secondary save-btn" onclick="saveBackend()">Save</button>
-  <span class="backend-status" id="backend-status"></span>
-</div>
 
 <div class="card">
   <div class="input-row">
@@ -266,18 +238,6 @@ function getBackend() {
     ? 'http://localhost:8000'
     : 'https://giggling-confused-thriving.ngrok-free.dev';
 }
-function saveBackend() {
-  const val = document.getElementById('backend-url').value.trim().replace(/\/$/, '');
-  if (val) {
-    localStorage.setItem('oculomotor_backend', val);
-    const s = document.getElementById('backend-status');
-    s.textContent = 'saved'; s.className = 'backend-status ok';
-    setTimeout(() => { s.textContent = ''; }, 2000);
-  }
-}
-window.addEventListener('DOMContentLoaded', () => {
-  document.getElementById('backend-url').value = getBackend();
-});
 
 // ── Simulation ────────────────────────────────────────────────────────────────
 let _currentRunId = null;
@@ -288,7 +248,7 @@ function set(text) { document.getElementById('prompt').value = text; }
 async function run() {
   const prompt  = document.getElementById('prompt').value.trim();
   if (!prompt) return;
-  const backend = document.getElementById('backend-url').value.trim().replace(/\/$/, '') || getBackend();
+  const backend = getBackend();
   const btn     = document.getElementById('btn');
   const status  = document.getElementById('status');
   const result  = document.getElementById('result');
@@ -338,15 +298,14 @@ async function run() {
     status.className = 'status error';
     status.textContent = 'Error: ' + e.message;
     if (e.message.includes('fetch') || e.message.includes('Failed')) {
-      status.textContent += ' — is the backend running at ' +
-        (document.getElementById('backend-url').value || 'localhost:8000') + '?';
+      status.textContent += ' — is the backend running at ' + getBackend() + '?';
     }
   } finally { btn.disabled = false; }
 }
 
 async function submitFeedback() {
   if (!_currentRunId) return;
-  const backend = document.getElementById('backend-url').value.trim().replace(/\/$/, '') || getBackend();
+  const backend = getBackend();
   const btn     = document.getElementById('submit-feedback-btn');
   const confirm = document.getElementById('feedback-confirm');
   btn.disabled  = true;
@@ -373,8 +332,7 @@ async function submitFeedback() {
 
 function downloadData() {
   if (!_currentRunId) return;
-  const backend = document.getElementById('backend-url').value.trim().replace(/\/$/, '') || getBackend();
-  window.open(backend + '/download/' + _currentRunId);
+  window.open(getBackend() + '/download/' + _currentRunId);
 }
 
 // Play/scrub — delegates to module-scope functions exposed on window

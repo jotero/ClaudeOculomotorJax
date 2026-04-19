@@ -210,27 +210,43 @@ class Patient(BaseModel):
             "right neuritis → [1,1,1,0,0,0]; bilateral loss → [0,0,0,0,0,0]."
         )
     )
-    tau_vs: float = Field(default=20.0, description="Velocity storage TC (s). Healthy ~20 s. Nodulus lesion → 1–3 s.")
-    K_vs:   float = Field(default=0.1,  description="Canal→VS gain (1/s). Healthy ~0.1. Reduce with tau_vs for nodulus lesions.")
-    K_vis:  float = Field(default=1.0,  description="Visual (OKR) gain into VS (1/s). Healthy ~1.0. 0 = no OKR.")
-    g_vis:  float = Field(default=0.3,  description="Visual feedthrough gain. Healthy ~0.3. Fast OKR onset.")
+    tau_vs: float = Field(default=20.0, description="Velocity storage TC (s). Healthy 20 s. Nodulus/uvula lesion → 1–3 s. OKN/OKAN decay TC.")
+    K_vs:   float = Field(default=0.1,  description="Canal→VS charging gain (1/s). Healthy 0.1. Reduce with tau_vs for nodulus lesions.")
+    K_vis:  float = Field(default=0.1,  description="Visual→VS charging gain (1/s). Healthy 0.1. OKR/OKAN drive. 0 = no OKR.")
+    g_vis:  float = Field(default=0.6,  description="Direct visual feedthrough gain (Raphan 1979). Healthy 0.6. Fast OKR onset component. OKR inner-loop stable when g_vis < 1.")
     tau_i:  float = Field(default=25.0,
         description=(
-            "Neural integrator TC (s). Healthy ≥20 s. "
-            "Short (2–8 s) → centripetal drift. "
-            "GEN visible only if pursuit is also impaired (K_pursuit ≤ 0.3) OR in the dark. "
+            "Neural integrator TC (s). Healthy 25 s. "
+            "Short (2–8 s) → centripetal drift → gaze-evoked nystagmus (GEN). "
+            "GEN visible in lit room only if pursuit also impaired (K_pursuit ≤ 0.3). "
             "Cerebellar lesion: pair with K_pursuit=0.1–0.3."
         ))
-    g_burst: float = Field(default=700.0, description="Saccade burst ceiling (deg/s). Healthy ~700. 0 = complete palsy. 200–400 = slow saccades (PSP, SCA).")
-    K_pursuit:        float = Field(default=2.0,
+    g_burst: float = Field(default=700.0, description="Saccade burst ceiling (deg/s). Healthy 700. 0 = complete palsy. 200–400 = slow saccades (PSP, SCA).")
+    K_pursuit:        float = Field(default=4.0,
         description=(
-            "Pursuit integrator gain (1/s). Healthy ~4; default 2 (mild reduction). "
-            "Cerebellar lesion → 0.1–0.3 (severe pursuit deficit). "
-            "Must be reduced alongside tau_i to see GEN in a lit room."
+            "Pursuit integration gain (1/s). Healthy 4.0. Rise TC ≈ 1/K_pursuit. "
+            "Cerebellar/MT lesion → 0.1–0.5 (severe pursuit deficit). "
+            "Reduce alongside tau_i to see GEN in a lit room."
         ))
-    K_phasic_pursuit: float = Field(default=5.0,  description="Pursuit direct feedthrough gain. Healthy ~5. Provides fast pursuit onset.")
-    tau_pursuit:      float = Field(default=40.0, description="Pursuit integrator TC (s). Healthy ~40 s. Short (5–15 s) → poor pursuit maintenance.")
-    K_grav: float = Field(default=0.5, description="Otolith gravity estimation gain. Relevant for tilt / OVAR.")
+    K_phasic_pursuit: float = Field(default=5.0,  description="Pursuit direct feedthrough gain. Healthy 5.0. Controls fast pursuit onset velocity step.")
+    tau_pursuit:      float = Field(default=40.0, description="Pursuit leak TC (s). Healthy 40 s → ~97% gain at 1 Hz. Short (5–15 s) → poor pursuit maintenance.")
+    K_grav: float = Field(default=0.5, description="Otolith gravity correction gain. Healthy 0.5. Relevant for tilt / OVAR / off-vertical axis rotation.")
+
+    # Adaptation time constants
+    tau_vs_adapt: float = Field(
+        default=600.0,
+        description=(
+            "VS null-adaptation TC (s). Default 600 s → negligible in short demos. "
+            "Reduce to 30–60 s to model PAN (periodic alternating nystagmus) — "
+            "slow oscillatory null-point drift due to VS adaptation."
+        ))
+    tau_ni_adapt: float = Field(
+        default=20.0,
+        description=(
+            "NI null-adaptation TC (s). Default 20 s → rebound nystagmus after sustained eccentric gaze. "
+            "Longer (>60 s) → weaker rebound; shorter (5–10 s) → strong rebound after brief gaze deviation. "
+            "Cerebellar/brainstem lesion may impair or abolish rebound nystagmus."
+        ))
 
     # Vergence — binocular disparity-driven convergence / divergence
     K_verg:        float              = Field(default=4.0,
@@ -258,7 +274,7 @@ class Patient(BaseModel):
                 raise ValueError(f'canal_gains[{i}]={g} out of range [0, 1]')
         return v
 
-    @field_validator('tau_vs', 'tau_i', 'tau_pursuit', 'tau_verg')
+    @field_validator('tau_vs', 'tau_i', 'tau_pursuit', 'tau_verg', 'tau_vs_adapt', 'tau_ni_adapt')
     @classmethod
     def _check_positive_tc(cls, v, info):
         if v <= 0:

@@ -51,16 +51,18 @@ JAX-based primate oculomotor simulation:
     Retinal position error → Visual delay → Saccade generator (SG) → NI
     Retinal velocity error → Visual delay → Smooth pursuit → NI
 
-The runner converts the 3-D target world position to retinal angles via:
-    p_target = (target_pos − head_pos) / depth     [tan(yaw), tan(pitch), 1]
-    v_target = d/dt(arctan(rel/depth))              [deg/s; includes head-translation effect]
-
 ## Stimulus schema — four piecewise channels
 
-Each channel is a list of **BodySegment** (or VisualFlagsSegment) objects concatenated in time.
+Three **motion channels** describe how the head, visual target, and scene background move through time.
+One **visibility channel** says whether the scene is lit and whether a fixation target is present.
+Each channel is a list of time segments concatenated end-to-end.
 Total simulation duration = max of the four channel sums.
 
-### head: list[BodySegment]   — head 6-DOF in world frame
+**Always begin with 0.5–1 s of stationary baseline** (head still, target straight ahead, scene lit)
+before the main stimulus, unless the user explicitly specifies otherwise. This gives the model
+time to settle and provides a clear pre-stimulus reference in the figure.
+
+### head: list of segments   — head 6-DOF in world frame
 
   rot_yaw_vel / rot_pitch_vel — head angular velocity (deg/s) → drives semicircular canals.
   rot_profile = 'constant' | 'sinusoid' | 'impulse'
@@ -74,7 +76,7 @@ Total simulation duration = max of the four channel sums.
     'sinusoid' — vel(t)=amplitude·sin(2πf·t);  amplitude=rot_*_vel; starts at zero vel
     'impulse'  — trapezoid: rises to rot_*_vel in ramp_dur_s, falls, then coasts; ends at zero vel
 
-### target: list[BodySegment]  — 3-D world position (metres)
+### target: list of segments   — 3-D world position (metres)
 
   Target is specified in WORLD CARTESIAN COORDINATES (metres), not angles.
   The runner projects it geometrically to retinal coordinates for you.
@@ -96,12 +98,12 @@ Total simulation duration = max of the four channel sums.
     30°  → lin_x_0 ≈ 0.577 m       30 deg/s  → lin_x_vel ≈ 0.524 m/s
     None (omit) = position/velocity continues from previous segment
 
-### scene: list[BodySegment]  — visual background motion
+### scene: list of segments   — visual background motion
 
   rot_yaw_vel — scene angular velocity (deg/s) → drives OKR / velocity storage.
   All fields default to 0 (stationary lit room).
 
-### visual: list[VisualFlagsSegment]  — scene / target visibility
+### visual: list of segments   — scene / target visibility flags
 
   scene_present  = lit room?  True → OKR active. False → darkness.
   target_present = discrete foveal target?  True → pursuit + saccades active.
@@ -134,12 +136,16 @@ Total simulation duration = max of the four channel sums.
   head:   [{duration_s: 2.5, rot_yaw_vel: -200, rot_profile: "impulse"}]
   ... (same target / scene / visual as rightward)
 
-### Alternating left + right HITs (6 s):
-  head:   [{duration_s: 3, rot_yaw_vel: 200, rot_profile: "impulse"},
-           {duration_s: 3, rot_yaw_vel: -200, rot_profile: "impulse"}]
-  target: [{duration_s: 6, lin_z_0: 1.0}]
-  scene:  [{duration_s: 6}]
-  visual: [{duration_s: 6, scene_present: false, target_present: true}]
+### Alternating cover test (esophoric patient, target at 2 m, 25 s):
+  # Baseline 5 s → cover R eye 10 s (R drifts toward phoria) → uncover 10 s (re-fusion saccade)
+  head:   [{duration_s: 25}]
+  target: [{duration_s: 25, lin_z_0: 2.0}]
+  scene:  [{duration_s: 25}]
+  visual: [{duration_s: 5},
+           {duration_s: 10, target_present_L: true, target_present_R: false},
+           {duration_s: 10}]
+  patient: {phoria: [8, 0, 0]}
+  plot: {panels: ["visual_flags", "eye_position", "vergence"]}
 
 ### VOR step in the dark (5 s rotation + 15 s coast):
   head:   [{duration_s: 5, rot_yaw_vel: 60},
@@ -191,37 +197,63 @@ Total simulation duration = max of the four channel sums.
            {duration_s: 0.2, scene_present: true, target_present: false},
            {duration_s: 1.8, scene_present: true, target_present: true}]
 
-## Patient parameters (overrides from healthy defaults)
+## Patient parameters — healthy defaults and pathological ranges
 
-canal_gains [L_HC, L_AC, L_PC, R_HC, R_AC, R_PC]: per-canal sensitivity 0–1.
-tau_vs (s):  velocity storage TC. Healthy ~20 s. Nodulus lesion → 1–3 s.
-K_vs (1/s):  canal→VS gain. Healthy 0.1.
-K_vis (1/s): visual→VS gain. Healthy 1.0. 0 = no OKR.
-tau_i (s):   neural integrator TC. Healthy ≥20 s. Short (2–5 s) → gaze-evoked nystagmus.
-g_burst:     saccade burst ceiling (deg/s). Healthy 700. 0 = complete palsy.
-K_pursuit / K_phasic_pursuit: pursuit gains. Healthy 4 / 5.
-tau_pursuit (s): pursuit maintenance TC. Healthy 40 s. Short (5–15 s) = poor maintenance.
+All defaults match the healthy model. Only specify parameters that differ from healthy.
 
-| Condition | Parameter changes |
-|-----------|-------------------|
+| Parameter | Healthy default | Pathological range / meaning |
+|-----------|:--------------:|------------------------------|
+| canal_gains [L_HC,L_AC,L_PC,R_HC,R_AC,R_PC] | [1,1,1,1,1,1] | 0 = complete paresis; left neuritis=[0,0,0,1,1,1] |
+| tau_vs (s) | 20.0 | 1–3 s → nodulus/uvula lesion; short TC dumps VS quickly |
+| K_vs (1/s) | 0.1 | Reduce with tau_vs for nodulus lesion |
+| K_vis (1/s) | 0.1 | Visual→VS gain. 0 = no OKR/OKAN |
+| g_vis | 0.6 | Direct visual feedthrough (Raphan 1979). < 1 required for stability |
+| tau_i (s) | 25.0 | Short (2–8 s) → centripetal drift; GEN in dark OR if K_pursuit also low |
+| g_burst (deg/s) | 700.0 | 0 = saccadic palsy; 200–400 = slow saccades (PSP, SCA) |
+| K_pursuit (1/s) | 4.0 | Pursuit integration gain. 0.1–0.5 = severe deficit (cerebellar, MT/MST) |
+| K_phasic_pursuit | 5.0 | Pursuit direct feedthrough. Controls fast onset |
+| tau_pursuit (s) | 40.0 | 5–15 s = poor pursuit maintenance |
+| K_grav | 0.5 | Otolith correction gain. Relevant for tilt / OVAR |
+| tau_vs_adapt (s) | 600.0 | VS null adaptation. Reduce to 30–60 s for PAN (periodic alternating nystagmus) |
+| tau_ni_adapt (s) | 20.0 | NI null adaptation. Controls rebound nystagmus amplitude after eccentric gaze |
+| K_verg (1/s) | 4.0 | Vergence integration gain. Reduce for convergence insufficiency |
+| tau_verg (s) | 25.0 | Vergence leak TC. Short → vergence can't hold |
+| phoria [H,V,T] (deg) | [0,0,0] | Resting vergence at rest. >0 = esophoria, <0 = exophoria |
+
+The parameter descriptions above are sufficient to map any disorder to parameters — use them.
+The table below is a set of **worked examples** to illustrate common mappings:
+
+| Clinical condition (example) | Parameter changes |
+|-----------------------------|-------------------|
 | Healthy | all defaults |
 | Left vestibular neuritis | canal_gains=[0,0,0,1,1,1] |
 | Right vestibular neuritis | canal_gains=[1,1,1,0,0,0] |
 | Bilateral vestibular loss | canal_gains=[0,0,0,0,0,0] |
-| Cerebellar GEN (SCA, alcohol) | tau_i=2.0–5.0 |
-| Nodulus / uvula lesion | tau_vs=1.5, K_vs=0.001 |
+| Nodulus / uvula lesion | tau_vs=1.5, K_vs=0.05 |
+| Cerebellar GEN (dark) | tau_i=4.0 |
+| Cerebellar GEN (lit room) | tau_i=4.0, K_pursuit=0.2 (BOTH required) |
 | Complete saccadic palsy | g_burst=0.0 |
-| Slow saccades (PSP, SCA) | g_burst=200–350 |
-| Pursuit deficit (MT/MST, Parkinson's) | K_pursuit=0.5, K_phasic_pursuit=0.5, tau_pursuit=8 |
+| Slow saccades (PSP, SCA) | g_burst=250 |
+| Pursuit deficit (cerebellar) | K_pursuit=0.3, K_phasic_pursuit=1.0, tau_pursuit=8 |
+| Rebound nystagmus | tau_ni_adapt=10.0 (strong rebound) |
+| PAN (periodic alt. nystagmus) | tau_vs_adapt=45.0 |
+| Esophoria / cover test | phoria=[8,0,0] |
 
-## Panel selection
+## Panel selection — include visual_flags whenever scene or target visibility changes
 
-VOR / HIT:       ['head_velocity', 'eye_velocity', 'eye_position']
-HIT + neuritis:  ['head_velocity', 'eye_velocity', 'eye_position', 'saccade_burst']
-OKN / OKAN:      ['head_velocity', 'eye_velocity', 'eye_position', 'velocity_storage']
-Saccades:        ['eye_position', 'eye_velocity', 'saccade_burst', 'refractory']
-Pursuit:         ['eye_position', 'eye_velocity', 'pursuit_drive']
-Full cascade:    all panels
+`visual_flags` shows: scene on/off (green/red rows), target present (orange row), and scene velocity
+(right axis). Include it in EVERY scenario where scene or target turns on/off during the trial.
+
+VOR in dark (step + coast):    ['visual_flags', 'head_velocity', 'eye_velocity', 'eye_position', 'velocity_storage']
+HIT (vHIT, impulse test):      ['visual_flags', 'head_velocity', 'eye_velocity', 'eye_position']
+HIT + unilateral neuritis:     ['visual_flags', 'head_velocity', 'eye_velocity', 'eye_position', 'saccade_burst']
+OKN / OKAN:                    ['visual_flags', 'eye_velocity', 'eye_position', 'velocity_storage']
+Saccades:                      ['visual_flags', 'target_position', 'eye_position', 'eye_velocity', 'saccade_burst']
+Smooth pursuit:                ['visual_flags', 'target_velocity', 'eye_position', 'eye_velocity', 'pursuit_drive']
+GEN (gaze-evoked nystagmus):   ['visual_flags', 'eye_position', 'eye_velocity', 'neural_integrator']
+Rebound nystagmus:             ['visual_flags', 'eye_position', 'eye_velocity', 'neural_integrator']
+Vergence / cover test:         ['visual_flags', 'eye_position', 'vergence']
+Full cascade:                  all panels
 
 Always call the `generate_scenario` tool with your answer.
 """).strip()
@@ -264,11 +296,15 @@ def call_llm(description: str, model: str) -> SimulationScenario | SimulationCom
         max_tokens=4096,
         system=SYSTEM_PROMPT,
         tools=tools,
-        tool_choice={"type": "auto"},
+        tool_choice={"type": "any"},   # force tool use — never a plain-text reply
         messages=[{"role": "user", "content": description}],
     )
 
-    tool_block = next(b for b in response.content if b.type == "tool_use")
+    tool_block = next((b for b in response.content if b.type == "tool_use"), None)
+    if tool_block is None:
+        text = " ".join(b.text for b in response.content if hasattr(b, "text"))
+        raise ValueError(f"LLM did not call a tool (stop_reason={response.stop_reason!r}). "
+                         f"Response text: {text[:300]!r}")
     print(f"  → LLM chose: {tool_block.name}")
 
     if tool_block.name == "generate_comparison":

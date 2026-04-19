@@ -198,6 +198,8 @@ def _build_params(patient: Patient):
         K_phasic_pursuit= patient.K_phasic_pursuit,
         tau_pursuit     = patient.tau_pursuit,
         K_grav          = patient.K_grav,
+        tau_vs_adapt    = patient.tau_vs_adapt,
+        tau_ni_adapt    = patient.tau_ni_adapt,
         K_verg          = patient.K_verg,
         K_phasic_verg   = patient.K_phasic_verg,
         tau_verg        = patient.tau_verg,
@@ -217,8 +219,8 @@ def _extract_signals(states, params, t_np: np.ndarray) -> dict:
     version   = 0.5 * (eye_pos_L + eye_pos_R)       # (T, 3) conjugate (version)
     vergence  = eye_pos_L - eye_pos_R               # (T, 3) vergence angle (deg, + = converged)
 
-    x_vs      = np.array(states.brain[:, _IDX_VS])          # (T, 6) L+R populations
-    x_ni      = np.array(states.brain[:, _IDX_NI])
+    x_vs_raw  = np.array(states.brain[:, _IDX_VS])           # (T, 9) x_L + x_R + x_null
+    x_ni_raw  = np.array(states.brain[:, _IDX_NI])           # (T, 9) x_L + x_R + x_null
     x_sg      = np.array(states.brain[:, _IDX_SG])
     x_pursuit = np.array(states.brain[:, _IDX_PURSUIT])
     x_verg    = np.array(states.brain[:, _IDX_VERG])   # (T, 3) vergence integrator state
@@ -228,8 +230,9 @@ def _extract_signals(states, params, t_np: np.ndarray) -> dict:
     # Eye velocity (version derivative — same as L eye vel when version ≈ L)
     w_eye = np.gradient(version, dt, axis=0)
 
-    # VS state ≈ head velocity estimate: net of bilateral populations
-    w_est = x_vs[:, :3] - x_vs[:, 3:]   # x_L − x_R  →  (T, 3)
+    # VS and NI nets: x_L − x_R (x_null at [6:9] excluded)
+    w_est = x_vs_raw[:, :3] - x_vs_raw[:, 3:6]   # VS net  (T, 3)
+    x_ni  = x_ni_raw[:, :3] - x_ni_raw[:, 3:6]   # NI net  (T, 3)
 
     # Retinal signals — gate-weighted average consistent with sensory_model fix
     gate_L = x_vis_L @ np.array(C_gate).T           # (T, 1)
@@ -248,8 +251,9 @@ def _extract_signals(states, params, t_np: np.ndarray) -> dict:
         norm = jnp.maximum(gL + gR, 1e-6)
         e_pd = (gL * (C_pos @ x_vis_L_) + gR * (C_pos @ x_vis_R_)) / norm
         gate = jnp.clip(gL + gR, 0.0, 1.0)
-        x_ni_ = state.brain[_IDX_NI]
-        _, u  = sg_mod.step(state.brain[_IDX_SG], e_pd, gate, x_ni_, params.brain)
+        x_ni_     = state.brain[_IDX_NI]
+        x_ni_net  = x_ni_[:3] - x_ni_[3:6]   # bilateral → net (x_L − x_R), (3,)
+        _, u  = sg_mod.step(state.brain[_IDX_SG], e_pd, gate, x_ni_net, params.brain)
         return u
     u_burst = np.array(jax.vmap(_burst_at)(states))  # (T, 3)
 
@@ -295,24 +299,39 @@ _C = {
     'zero':   '#aaaaaa',
 }
 
+def _add_visual_shading(ax, t, sp, tp):
+    """Gray tint for dark periods; no shading when scene is always on (avoids clutter)."""
+    if not (sp < 0.5).any():
+        return
+    in_seg = False
+    for i in range(len(t)):
+        if sp[i] < 0.5 and not in_seg:
+            t0, in_seg = t[i], True
+        elif sp[i] >= 0.5 and in_seg:
+            ax.axvspan(t0, t[i], color='#333333', alpha=0.10, lw=0, zorder=0)
+            in_seg = False
+    if in_seg:
+        ax.axvspan(t0, t[-1], color='#333333', alpha=0.10, lw=0, zorder=0)
+
+
 _PANEL_LABELS = {
     'eye_position':      'Eye position (deg)',
     'eye_velocity':      'Eye velocity (deg/s)',
     'head_velocity':     'Head velocity (deg/s)',
     'gaze_error':        'Gaze error (deg)',
-    'retinal_error':     'Retinal error (deg)',
-    'canal_afferents':   'VS state (deg/s equiv.)',
-    'velocity_storage':  'Velocity storage x_vs',
-    'neural_integrator': 'NI state x_ni',
-    'saccade_burst':     'Burst u_burst (deg/s)',
-    'pursuit_drive':     'Pursuit drive (deg/s)',
-    'refractory':        'Refractory z_ref',
+    'retinal_error':     'Retinal position error (deg)',
+    'canal_afferents':   'Velocity storage (deg/s)',
+    'velocity_storage':  'Velocity storage (deg/s)',
+    'neural_integrator': 'Neural integrator (deg)',
+    'saccade_burst':     'Saccade burst (deg/s)',
+    'pursuit_drive':     'Pursuit integrator (deg/s)',
+    'refractory':        'OPN / refractory state',
     'vergence':          'Vergence angle (deg)',
     # stimulus panels
     'target_position':   'Target position (deg)',
     'target_velocity':   'Target velocity (deg/s)',
     'scene_velocity':    'Scene velocity (deg/s)',
-    'visual_flags':      'Visual flags',
+    'visual_flags':      'Visual context',
 }
 
 
@@ -337,27 +356,37 @@ def _draw_panel(ax, panel_name: str, t: np.ndarray, sig: dict,
 
     target_yaw_deg = np.degrees(np.arctan(pt[:, 0]))
 
+    tp_combined = np.maximum(tpL, tpR)
+
     # Visual-flags panels don't need a zero line; all others do
     if panel_name != 'visual_flags':
         ax.axhline(0, color=_C['zero'], lw=0.5, ls='--')
+        _add_visual_shading(ax, t, sp, tp_combined)
 
     if panel_name == 'eye_position':
-        # Show L and R eyes separately if they differ meaningfully (binocular scenario)
         ep_L = sig['eye_pos_L']
         ep_R = sig['eye_pos_R']
         bino_spread = np.max(np.abs(ep_L[:, 0] - ep_R[:, 0]))
-        if bino_spread > 0.5:   # binocular — show L/R individually
+        if bino_spread > 0.5:
             ax.plot(t, ep_L[:, 0], color='#2166ac', lw=1.2, label='L eye')
             ax.plot(t, ep_R[:, 0], color='#d6604d', lw=1.2, label='R eye')
         else:
             ax.plot(t, ep[:, 0], color=_C['eye'], lw=1.2, label='Eye yaw (version)')
-        ax.plot(t, target_yaw_deg, color=_C['target'], lw=1.0, ls='--', label='Target')
+        # Target: solid when visible, dashed+faded when absent
+        ax.plot(t, np.where(tp_combined > 0.5, target_yaw_deg, np.nan),
+                color=_C['target'], lw=1.2, ls='-', label='Target (visible)')
+        if (tp_combined < 0.5).any():
+            ax.plot(t, np.where(tp_combined < 0.5, target_yaw_deg, np.nan),
+                    color=_C['target'], lw=0.8, ls='--', alpha=0.4, label='Target (absent)')
         ax.legend(fontsize=6, loc='upper right')
         ax.set_ylabel('Eye / target position (deg)', fontsize=8)
 
     elif panel_name == 'eye_velocity':
         ax.plot(t, ev[:, 0],  color=_C['eye'],  lw=1.2, label='Eye vel')
         ax.plot(t, hv[:, 0],  color=_C['head'], lw=1.0, ls=':', label='Head vel')
+        # Scene velocity as reference when OKR is relevant
+        if np.any(np.abs(vs[:, 0]) > 0.5):
+            ax.plot(t, vs[:, 0], color='#8c510a', lw=0.9, ls='--', alpha=0.7, label='Scene vel')
         ax.legend(fontsize=6, loc='upper right')
 
     elif panel_name == 'head_velocity':
@@ -429,19 +458,51 @@ def _draw_panel(ax, panel_name: str, t: np.ndarray, sig: dict,
         ax.legend(fontsize=6, loc='upper right')
 
     elif panel_name == 'visual_flags':
-        # scene_present as a filled band; target flags as step lines
-        ax.fill_between(t, 0, sp,  color='#aaaaaa', alpha=0.35, step='post', label='scene present')
-        # Only show per-eye lines if they ever differ; otherwise one combined line
-        if np.any(tpL != tpR):
-            ax.step(t, tpL * 0.9 + 0.05, color='#2166ac', lw=1.5, where='post', label='target L')
-            ax.step(t, tpR * 0.8 + 0.05, color='#d6604d', lw=1.5, where='post', label='target R')
-        else:
-            ax.step(t, tpL * 0.9 + 0.05, color=_C['target'], lw=1.5, where='post', label='target present')
-        ax.set_ylim(-0.05, 1.15)
-        ax.set_yticks([0, 1])
-        ax.set_yticklabels(['off', 'on'], fontsize=7)
-        ax.legend(fontsize=6, loc='upper right')
-        ax.set_ylabel('Visual flags', fontsize=8)
+        bino = np.any(tpL != tpR)
+        ax.set_ylim(0, 1)
+        ax.set_yticks([])
+        ax.set_ylabel('Visual context', fontsize=8)
+
+        # Layout: bottom row = scene, top row = target (split L/R if cover test)
+        S0, S1 = 0.04, 0.36      # scene row  (normalised data coords since ylim=[0,1])
+        T0, T1 = 0.44, 0.96      # target row
+
+        # Scene row — green when lit, red when dark
+        ax.fill_between(t, S0, S1, where=sp > 0.5, step='post',
+                        color='#4d9221', alpha=0.55, lw=0)
+        ax.fill_between(t, S0, S1, where=sp < 0.5, step='post',
+                        color='#d73027', alpha=0.40, lw=0)
+        ax.text(0.002, (S0 + S1) / 2, 'Scene', va='center', ha='left',
+                fontsize=7, transform=ax.transAxes)
+
+        # Target row
+        if not bino:
+            ax.fill_between(t, T0, T1, where=tp_combined > 0.5, step='post',
+                            color='#d6604d', alpha=0.65, lw=0)
+            ax.fill_between(t, T0, T1, where=tp_combined < 0.5, step='post',
+                            color='#aaaaaa', alpha=0.25, lw=0)
+            ax.text(0.002, (T0 + T1) / 2, 'Target', va='center', ha='left',
+                    fontsize=7, transform=ax.transAxes)
+        else:  # cover-test: split into L/R sub-rows
+            mid = (T0 + T1) / 2 - 0.01
+            for (pres, y0, y1, lbl) in [(tpL, mid + 0.02, T1, 'Tgt L'),
+                                         (tpR, T0,        mid, 'Tgt R')]:
+                ax.fill_between(t, y0, y1, where=pres > 0.5, step='post',
+                                color='#d6604d', alpha=0.65, lw=0)
+                ax.fill_between(t, y0, y1, where=pres < 0.5, step='post',
+                                color='#aaaaaa', alpha=0.25, lw=0)
+                ax.text(0.002, (y0 + y1) / 2, lbl, va='center', ha='left',
+                        fontsize=7, transform=ax.transAxes)
+
+        # Scene velocity overlay on right y-axis (when non-zero)
+        if np.any(np.abs(vs[:, 0]) > 0.5):
+            ax2 = ax.twinx()
+            ax2.step(t, vs[:, 0], where='post', color='#8c510a', lw=1.3, alpha=0.85)
+            ax2.axhline(0, color='#8c510a', lw=0.4, alpha=0.5)
+            vs_max = max(np.max(np.abs(vs[:, 0])), 1.0)
+            ax2.set_ylim(-vs_max * 1.4, vs_max * 1.4)
+            ax2.set_ylabel('Scene vel (°/s)', fontsize=7, color='#8c510a')
+            ax2.tick_params(labelsize=6, colors='#8c510a')
 
     # Enforce a minimum visible range on velocity / derivative panels
     if panel_name in ('eye_velocity', 'head_velocity', 'saccade_burst', 'pursuit_drive',
