@@ -166,6 +166,12 @@ def _build_eye_trajectory(sim_data: dict, fps: int = 60) -> dict | None:
 
 # ── API endpoints ─────────────────────────────────────────────────────────────
 
+@app.get('/version')
+async def version_endpoint():
+    """Return the running simulator version and git commit."""
+    return JSONResponse({'version': _SIM_VERSION})
+
+
 @app.post('/run', response_model=RunResponse)
 async def run_endpoint(req: RunRequest):
     """LLM decides single simulation or comparison; runs and returns the figure."""
