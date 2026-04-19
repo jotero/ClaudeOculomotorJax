@@ -101,6 +101,16 @@ class BrainParams(NamedTuple):
                                           # g_vis=1.0 → zero gain margin → sustained ~6 Hz onset ringing
                                           # g_vis=0.6 → τ_decay = τ_vis/ln(1/0.6) ≈ 157 ms (~1 cycle, acceptable)
                                           # SS OKN: gain ≈ 0.82, INT/SPV ≈ 0.87
+    # b_vs can be a scalar (same for all 6 states) or a (6,) array (per-population).
+    # Equilibrium: x_L → b_vs[:3], x_R → b_vs[3:].  Net x_L−x_R = 0 when symmetric.
+    # Use with_uvh() / with_vn_lesion() helpers to set lesion presets:
+    #   Healthy:          b_vs = 100.0  (scalar → broadcast)
+    #   UVH left:         b_vs = (100, 100, 100, 70, 70, 70)  — ~30 deg/s afferent drive lost on left
+    #   VN infarct left:  b_vs = (100, 100, 100,  0,  0,  0)  — entire left pop silenced
+    #   Bilateral hypo:   b_vs = ( 70,  70,  70, 70, 70, 70)  — both sides deafferented
+    b_vs:                  float = 100.0  # scalar OR (6,) per-population bias (deg/s)
+    tau_vs_adapt:          float = 600.0  # VS null adaptation TC (s); >> tau_vs → negligible in normal demos
+                                          # reduce to ~30–60 s to engage PAN-like slow oscillation
 
     # Neural integrator — bilateral push-pull + null adaptation (Robinson 1975; rebound: Zee et al. 1980)
     tau_i:                 float = 25.0   # leak TC (s); healthy >20 s (Cannon & Robinson 1985)
@@ -135,24 +145,6 @@ class BrainParams(NamedTuple):
     # Saccade target selection — handled inside the saccade generator
     orbital_limit:         float = 50.0   # oculomotor range half-width (deg); clip e_cmd to ±limit
     alpha_reset:           float = 1.0    # centering gain (0–1); e_center = −α·x_ni when out-of-field
-
-    # Bilateral velocity storage — tonic VN resting drive
-    # b_vs can be a scalar (same for all 6 states) or a (6,) array (per-population).
-    # Equilibrium: x_L → b_vs[:3], x_R → b_vs[3:].  Net x_L−x_R = 0 when symmetric.
-    #
-    # Afferent/intrinsic split (Straka & Dieringer 2004; Smith & Curthoys 1989):
-    #   b_intrinsic = b_vs_total * (1 − f_afferent) ≈ 70 deg/s  (persists after nerve cut)
-    #   b_afferent  = b_vs_total *  f_afferent       ≈ 30 deg/s  (lost with ipsilateral deafferentation)
-    #
-    # Lesion presets (use with_uvh() / with_vn_lesion() helpers):
-    #   Healthy:          b_vs = 100.0  (scalar → broadcast)
-    #   UVH left:         b_vs = (70, 70, 70, 100, 100, 100)  — afferent drive lost on left
-    #   VN infarct left:  b_vs = ( 0,  0,  0, 100, 100, 100)  — entire left pop silenced
-    #   Bilateral hypo:   b_vs = (70, 70, 70,  70,  70,  70)  — both sides deafferented
-    b_vs:                  float = 100.0  # scalar OR (6,) per-population bias (deg/s)
-    f_afferent:            float = 0.30   # fraction of b_vs from canal afferents (~30%)
-    tau_vs_adapt:          float = 600.0  # VS null adaptation TC (s); >> tau_vs → negligible in normal demos
-                                          # reduce to ~30–60 s to engage PAN-like slow oscillation
 
     # Otolith / gravity estimation — Laurens & Angelaki (2011, 2017)
     K_grav:                float = 0.5    # otolith correction gain (1/s); TC = 1/K_grav ≈ 2 s

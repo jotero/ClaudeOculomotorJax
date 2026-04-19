@@ -21,12 +21,17 @@ Canal geometry (semi-anatomical, 45° vertical canals):
     Convention: x = rightward yaw, y = upward pitch, z = CW roll
     _S = 1/√2 (sin/cos 45°)
 
-    canal 0 — RHC  right horizontal  (yaw+)
-    canal 1 — LHC  left  horizontal  (yaw−)
-    canal 2 — RAC  right anterior    (RALP, pitch+ & CW roll+)
-    canal 3 — LPC  left  posterior   (RALP, pitch− & CW roll−)
-    canal 4 — LAC  left  anterior    (LARP, pitch+ & CCW roll)
+    Left canals  (indices 0–2):
+    canal 0 — LHC  left  horizontal  (yaw−)
+    canal 1 — LAC  left  anterior    (LARP, pitch+ & CCW roll)
+    canal 2 — LPC  left  posterior   (RALP, pitch− & CW roll−)
+
+    Right canals (indices 3–5):
+    canal 3 — RHC  right horizontal  (yaw+)
+    canal 4 — RAC  right anterior    (RALP, pitch+ & CW roll+)
     canal 5 — RPC  right posterior   (LARP, pitch− & CW roll)
+
+    Coplanar pairs: RALP = {RAC(4), LPC(2)};  LARP = {LAC(1), RPC(5)}
 
 Because ORIENTATIONS^T @ ORIENTATIONS = 2·I₃, the pseudo-inverse is
 exactly PINV_SENS = (1/2)·ORIENTATIONS^T.
@@ -40,11 +45,11 @@ from jax.nn import softplus
 _S = 2 ** -0.5    # sin/cos 45° = 1/√2
 
 ORIENTATIONS = jnp.array([
-    [ 1.,   0.,   0.],   # canal 0 — RHC  right horizontal
-    [-1.,   0.,   0.],   # canal 1 — LHC  left  horizontal
-    [ 0.,  _S,   _S],   # canal 2 — RAC  right anterior
-    [ 0., -_S,  -_S],   # canal 3 — LPC  left  posterior
-    [ 0.,  _S,  -_S],   # canal 4 — LAC  left  anterior
+    [-1.,   0.,   0.],   # canal 0 — LHC  left  horizontal
+    [ 0.,  _S,  -_S],   # canal 1 — LAC  left  anterior
+    [ 0., -_S,  -_S],   # canal 2 — LPC  left  posterior
+    [ 1.,   0.,   0.],   # canal 3 — RHC  right horizontal
+    [ 0.,  _S,   _S],   # canal 4 — RAC  right anterior
     [ 0., -_S,   _S],   # canal 5 — RPC  right posterior
 ])  # (N_CANALS, 3)
 

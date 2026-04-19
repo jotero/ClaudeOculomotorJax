@@ -390,7 +390,7 @@ def _draw_panel(ax, panel_name: str, t: np.ndarray, sig: dict,
         ax.legend(fontsize=6, loc='upper right')
 
     elif panel_name == 'head_velocity':
-        ax.plot(t, hv[:, 0], color=_C['head'], lw=1.2, label='Head vel yaw')
+        ax.plot(t, hv[:, 0], color=_C['head'], lw=1.2, label='Head velocity (yaw)')
         if hv.shape[1] > 1 and np.any(hv[:, 1] != 0):
             ax.plot(t, hv[:, 1], color=_C['burst'], lw=1.0, ls='--', label='pitch')
         ax.legend(fontsize=6, loc='upper right')
@@ -401,33 +401,33 @@ def _draw_panel(ax, panel_name: str, t: np.ndarray, sig: dict,
         ax.legend(fontsize=6, loc='upper right')
 
     elif panel_name == 'retinal_error':
-        ax.plot(t, ep_d[:, 0], color=_C['error'], lw=1.2, label='e_pos_delayed yaw')
+        ax.plot(t, ep_d[:, 0], color=_C['error'], lw=1.2, label='Retinal position error (yaw)')
         ax.legend(fontsize=6, loc='upper right')
 
     elif panel_name == 'velocity_storage':
-        ax.plot(t, sig['w_est'][:, 0], color=_C['vs'], lw=1.2, label='x_vs yaw')
+        ax.plot(t, sig['w_est'][:, 0], color=_C['vs'], lw=1.2, label='Velocity storage (yaw)')
         ax.legend(fontsize=6, loc='upper right')
 
     elif panel_name == 'neural_integrator':
-        ax.plot(t, sig['x_ni'][:, 0], color=_C['ni'], lw=1.2, label='x_ni yaw')
+        ax.plot(t, sig['x_ni'][:, 0], color=_C['ni'], lw=1.2, label='Neural integrator (yaw)')
         ax.legend(fontsize=6, loc='upper right')
 
     elif panel_name == 'saccade_burst':
-        ax.plot(t, sig['u_burst'][:, 0], color=_C['burst'], lw=1.2, label='u_burst yaw')
+        ax.plot(t, sig['u_burst'][:, 0], color=_C['burst'], lw=1.2, label='Saccade burst (yaw)')
         ax.legend(fontsize=6, loc='upper right')
 
     elif panel_name == 'pursuit_drive':
-        ax.plot(t, sig['x_pursuit'][:, 0], color=_C['pursuit'], lw=1.2, label='x_pursuit')
+        ax.plot(t, sig['x_pursuit'][:, 0], color=_C['pursuit'], lw=1.2, label='Pursuit integrator')
         ax.legend(fontsize=6, loc='upper right')
 
     elif panel_name == 'refractory':
-        ax.plot(t, sig['z_ref'], color=_C['ref'], lw=1.2, label='z_ref (OPN)')
+        ax.plot(t, sig['z_ref'], color=_C['ref'], lw=1.2, label='OPN refractory state')
         ax.axhline(scenario.patient.g_burst * 0.0 + 0.5, color='k', lw=0.6, ls='--', alpha=0.4)
         ax.legend(fontsize=6, loc='upper right')
 
     elif panel_name == 'vergence':
-        ax.plot(t, sig['vergence'][:, 0],  color='#1b7837', lw=1.5, label='Vergence (L−R)')
-        ax.plot(t, sig['x_verg'][:, 0],    color='#762a83', lw=1.0, ls=':', label='x_verg state')
+        ax.plot(t, sig['vergence'][:, 0],  color='#1b7837', lw=1.5, label='Vergence angle')
+        ax.plot(t, sig['x_verg'][:, 0],    color='#762a83', lw=1.0, ls=':', label='Vergence integrator')
         phoria_val = scenario.patient.phoria[0]
         if abs(phoria_val) > 0.1:
             ax.axhline(phoria_val, color='#ff8c00', lw=1.0, ls='--',
@@ -464,35 +464,53 @@ def _draw_panel(ax, panel_name: str, t: np.ndarray, sig: dict,
         ax.set_ylabel('Visual context', fontsize=8)
 
         # Layout: bottom row = scene, top row = target (split L/R if cover test)
-        S0, S1 = 0.04, 0.36      # scene row  (normalised data coords since ylim=[0,1])
+        S0, S1 = 0.04, 0.36      # scene row y-limits (data coords, ylim=[0,1])
         T0, T1 = 0.44, 0.96      # target row
 
+        def _flag_spans(ax, t, flag, y0, y1, color_on, color_off, alpha_on=0.70, alpha_off=0.25):
+            """Draw axvspan blocks for a binary flag array."""
+            in_on = in_off = False
+            t0_on = t0_off = t[0]
+            for i in range(len(t)):
+                val = flag[i] > 0.5
+                if val and not in_on:
+                    if in_off:
+                        ax.axvspan(t0_off, t[i], ymin=y0, ymax=y1,
+                                   color=color_off, alpha=alpha_off, lw=0)
+                        in_off = False
+                    t0_on, in_on = t[i], True
+                elif not val and not in_off:
+                    if in_on:
+                        ax.axvspan(t0_on, t[i], ymin=y0, ymax=y1,
+                                   color=color_on, alpha=alpha_on, lw=0)
+                        in_on = False
+                    t0_off, in_off = t[i], True
+            if in_on:
+                ax.axvspan(t0_on, t[-1], ymin=y0, ymax=y1,
+                           color=color_on, alpha=alpha_on, lw=0)
+            if in_off:
+                ax.axvspan(t0_off, t[-1], ymin=y0, ymax=y1,
+                           color=color_off, alpha=alpha_off, lw=0)
+
         # Scene row — green when lit, red when dark
-        ax.fill_between(t, S0, S1, where=sp > 0.5, step='post',
-                        color='#4d9221', alpha=0.55, lw=0)
-        ax.fill_between(t, S0, S1, where=sp < 0.5, step='post',
-                        color='#d73027', alpha=0.40, lw=0)
-        ax.text(0.002, (S0 + S1) / 2, 'Scene', va='center', ha='left',
-                fontsize=7, transform=ax.transAxes)
+        _flag_spans(ax, t, sp, S0, S1, '#4dac26', '#d73027', alpha_on=0.70, alpha_off=0.55)
+        ax.text(0.01, (S0 + S1) / 2, 'Scene', va='center', ha='left',
+                fontsize=7, color='#222222')
 
         # Target row
         if not bino:
-            ax.fill_between(t, T0, T1, where=tp_combined > 0.5, step='post',
-                            color='#d6604d', alpha=0.65, lw=0)
-            ax.fill_between(t, T0, T1, where=tp_combined < 0.5, step='post',
-                            color='#aaaaaa', alpha=0.25, lw=0)
-            ax.text(0.002, (T0 + T1) / 2, 'Target', va='center', ha='left',
-                    fontsize=7, transform=ax.transAxes)
+            _flag_spans(ax, t, tp_combined, T0, T1, '#d6604d', '#aaaaaa',
+                        alpha_on=0.75, alpha_off=0.30)
+            ax.text(0.01, (T0 + T1) / 2, 'Target', va='center', ha='left',
+                    fontsize=7, color='#222222')
         else:  # cover-test: split into L/R sub-rows
             mid = (T0 + T1) / 2 - 0.01
-            for (pres, y0, y1, lbl) in [(tpL, mid + 0.02, T1, 'Tgt L'),
-                                         (tpR, T0,        mid, 'Tgt R')]:
-                ax.fill_between(t, y0, y1, where=pres > 0.5, step='post',
-                                color='#d6604d', alpha=0.65, lw=0)
-                ax.fill_between(t, y0, y1, where=pres < 0.5, step='post',
-                                color='#aaaaaa', alpha=0.25, lw=0)
-                ax.text(0.002, (y0 + y1) / 2, lbl, va='center', ha='left',
-                        fontsize=7, transform=ax.transAxes)
+            for (pres, y0, y1, lbl) in [(tpL, mid + 0.02, T1, 'L eye'),
+                                         (tpR, T0,        mid, 'R eye')]:
+                _flag_spans(ax, t, pres, y0, y1, '#d6604d', '#aaaaaa',
+                            alpha_on=0.75, alpha_off=0.30)
+                ax.text(0.01, (y0 + y1) / 2, lbl, va='center', ha='left',
+                        fontsize=7, color='#222222')
 
         # Scene velocity overlay on right y-axis (when non-zero)
         if np.any(np.abs(vs[:, 0]) > 0.5):
@@ -527,7 +545,15 @@ def _build_figure(
     gs  = gridspec.GridSpec(n, 1, hspace=0.45)
 
     title = scenario.plot.title or scenario.description
-    fig.suptitle(title, fontsize=11, fontweight='bold', y=1.0)
+    has_narrative = bool(scenario.narrative)
+    fig.suptitle(title, fontsize=11, fontweight='bold', y=1.02 if has_narrative else 1.0)
+
+    if has_narrative:
+        import textwrap
+        wrapped = textwrap.fill(scenario.narrative, width=115)
+        fig.text(0.5, 1.0, wrapped, ha='center', va='top',
+                 fontsize=7.5, color='#444444', style='italic',
+                 transform=fig.transFigure)
 
     axes = [fig.add_subplot(gs[i]) for i in range(n)]
     for ax, panel in zip(axes, panels):
@@ -629,7 +655,15 @@ def _build_comparison_figure(
 
     fig = plt.figure(figsize=(10, 2.2 * n))
     gs  = gridspec.GridSpec(n, 1, hspace=0.45)
-    fig.suptitle(comparison.title, fontsize=11, fontweight='bold', y=1.0)
+    has_narrative = bool(comparison.narrative)
+    fig.suptitle(comparison.title, fontsize=11, fontweight='bold', y=1.02 if has_narrative else 1.0)
+
+    if has_narrative:
+        import textwrap
+        wrapped = textwrap.fill(comparison.narrative, width=115)
+        fig.text(0.5, 1.0, wrapped, ha='center', va='top',
+                 fontsize=7.5, color='#444444', style='italic',
+                 transform=fig.transFigure)
 
     axes = [fig.add_subplot(gs[i]) for i in range(n)]
 

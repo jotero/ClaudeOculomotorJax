@@ -133,7 +133,7 @@ def with_sensory(params: Params, **kwargs) -> Params:
     """Return a new Params with sensory fields updated.
 
     Example:
-        p = with_sensory(default_params(), canal_gains=jnp.array([0,0,1,1,1,1.]))
+        p = with_sensory(default_params(), canal_gains=jnp.array([0,0,0,1,1,1.]))  # left canals paretic
     """
     return params._replace(sensory=params.sensory._replace(**kwargs))
 
@@ -155,46 +155,36 @@ PARAMS_DEFAULT     = default_params()
 
 def with_uvh(params: Params, side: str = 'left',
              canal_gain_frac: float = 0.1,
-             f_afferent: float = None) -> Params:
+             b_lesion: float = 70.0) -> Params:
     """Unilateral vestibular hypofunction (deafferentation / vestibular neuritis).
 
     Reduces canal gains on the affected side AND lowers the VS equilibrium bias for
-    that population to reflect the lost afferent drive (~30% of resting discharge).
+    that population.  b_lesion is the residual bias after nerve cut — typically
+    ~70 deg/s (intrinsic VN firing survives, afferent drive ~30 deg/s is lost).
 
     Args:
         side:            'left' or 'right'.
-        canal_gain_frac: Remaining canal gain fraction (0 = complete loss, 0.1 = 90% loss).
-        f_afferent:      Fraction of b_vs from afferents.  Defaults to params.brain.f_afferent.
+        canal_gain_frac: Remaining canal gain on the affected side (0=complete, 0.1=90% loss).
+        b_lesion:        VN bias of the affected population after lesion (deg/s). Default 70.
 
-    Canal index convention (matches sensory_model.py):
-        0–2 = Left canals  (LHC, LASC, LPSC)
-        3–5 = Right canals (RHC, RASC, RPSC)
-
-    b_vs layout: [x_L (0:3) | x_R (3:6)].
+    Canal index convention:  0–2 = Left (LHC, LAC, LPC);  3–5 = Right (RHC, RAC, RPC)
+    b_vs layout: [x_L (0:3) | x_R (3:6)]
+    Population convention:
+        Model LEFT pop  (b_vs[0:3]) = anatomical RIGHT VN (codes rightward rotation)
+        Model RIGHT pop (b_vs[3:6]) = anatomical LEFT  VN (codes leftward rotation)
+        Left lesion → model RIGHT pop drops; right lesion → model LEFT pop drops.
     """
     import numpy as np
-    if f_afferent is None:
-        f_afferent = params.brain.f_afferent
-
-    b_total = float(np.mean(np.broadcast_to(
-        np.asarray(params.brain.b_vs, dtype=float), (6,))))   # healthy total
-    b_intr  = b_total * (1.0 - f_afferent)   # intrinsic component (survives nerve cut)
-    b_full  = b_total                          # healthy population bias
-
+    b_healthy = float(np.mean(np.broadcast_to(
+        np.asarray(params.brain.b_vs, dtype=float), (6,))))
     cg = np.array(params.sensory.canal_gains, dtype=float)
 
-    # Population convention note:
-    #   Model LEFT pop (b_vs[0:3]) codes RIGHTWARD rotation ≡ anatomical RIGHT VN.
-    #   Model RIGHT pop (b_vs[3:6]) codes LEFTWARD rotation  ≡ anatomical LEFT  VN.
-    #   Left ear/nerve lesion → LEFT canals silent → anatomical LEFT VN (= model RIGHT pop) loses drive.
-    #   Nystagmus beats AWAY from lesion: left lesion → net rightward signal → slow-phase left → fast-phase right.
-
     if side == 'left':
-        cg[:3] *= canal_gain_frac                                                         # silence left canals
-        b_vs = jnp.array([b_full, b_full, b_full, b_intr, b_intr, b_intr], dtype=jnp.float32)  # RIGHT pop drops
+        cg[:3] *= canal_gain_frac
+        b_vs = jnp.array([b_healthy, b_healthy, b_healthy, b_lesion, b_lesion, b_lesion], dtype=jnp.float32)
     elif side == 'right':
-        cg[3:] *= canal_gain_frac                                                         # silence right canals
-        b_vs = jnp.array([b_intr, b_intr, b_intr, b_full, b_full, b_full], dtype=jnp.float32)  # LEFT pop drops
+        cg[3:] *= canal_gain_frac
+        b_vs = jnp.array([b_lesion, b_lesion, b_lesion, b_healthy, b_healthy, b_healthy], dtype=jnp.float32)
     else:
         raise ValueError(f"side must be 'left' or 'right', got {side!r}")
 
@@ -205,35 +195,15 @@ def with_uvh(params: Params, side: str = 'left',
 
 
 def with_vn_lesion(params: Params, side: str = 'left') -> Params:
-    """Unilateral VN infarct / complete VN ablation.
+    """Unilateral VN infarct — silences the affected population entirely (b → 0).
 
-    Silences the affected population entirely (b_L or b_R → 0) AND removes
-    its canal afferent drive.  Stronger acute nystagmus than with_uvh() because
-    intrinsic firing is also abolished.
-
-    See with_uvh() for population convention (model RIGHT pop = anatomical LEFT VN).
+    Stronger acute nystagmus than with_uvh() because intrinsic firing is also abolished.
+    Use with_uvh(b_lesion=0) for the same effect with explicit canal gain control.
 
     Args:
         side: 'left' or 'right'.
     """
-    import numpy as np
-    b_total = float(np.mean(np.broadcast_to(
-        np.asarray(params.brain.b_vs, dtype=float), (6,))))
-    cg = np.array(params.sensory.canal_gains, dtype=float)
-
-    if side == 'left':
-        cg[:3] = 0.0
-        b_vs = jnp.array([b_total, b_total, b_total, 0.0, 0.0, 0.0], dtype=jnp.float32)  # RIGHT pop → 0
-    elif side == 'right':
-        cg[3:] = 0.0
-        b_vs = jnp.array([0.0, 0.0, 0.0, b_total, b_total, b_total], dtype=jnp.float32)  # LEFT pop → 0
-    else:
-        raise ValueError(f"side must be 'left' or 'right', got {side!r}")
-
-    return params._replace(
-        sensory = params.sensory._replace(canal_gains=jnp.array(cg, dtype=jnp.float32)),
-        brain   = params.brain._replace(b_vs=b_vs),
-    )
+    return with_uvh(params, side=side, canal_gain_frac=0.0, b_lesion=0.0)
 
 # Re-export params API so callers can import everything from simulator
 __all__ = [

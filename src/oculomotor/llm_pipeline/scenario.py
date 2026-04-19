@@ -414,6 +414,21 @@ class SimulationScenario(BaseModel):
     """
 
     description: str = Field(description="One-sentence plain-English description (used as figure title).")
+    narrative: str = Field(
+        default="",
+        description=(
+            "2–4 sentence plain-English explanation of how the clinical case is modelled: "
+            "which parameters were changed from healthy defaults, what each change represents "
+            "physiologically, and what the expected output looks like. "
+            "Written for a clinician reader — no variable names, no jargon beyond standard "
+            "vestibular/oculomotor terminology. "
+            "Example: 'Left vestibular neuritis is modelled by setting the three left-ear "
+            "canal gains to zero (indices 0–2: horizontal, anterior, posterior). The right "
+            "vestibular nucleus fires unopposed at rest, driving a spontaneous rightward "
+            "nystagmus. During leftward head impulses no compensatory signal arrives, producing "
+            "corrective catch-up saccades; rightward impulses remain intact.'"
+        )
+    )
 
     head: list[BodySegment] = Field(
         min_length=1,
@@ -476,6 +491,14 @@ class SimulationComparison(BaseModel):
     """
 
     title: str = Field(description="Figure title, e.g. 'Healthy vs Left Neuritis — vHIT'.")
+    narrative: str = Field(
+        default="",
+        description=(
+            "2–4 sentence explanation of what differs between the compared conditions, "
+            "what parameters encode each condition, and what the reader should look for in "
+            "the overlay. Plain English, clinician-facing, no variable names."
+        )
+    )
     panels: list[Literal[
         'eye_position', 'eye_velocity', 'head_velocity', 'gaze_error',
         'retinal_error', 'canal_afferents', 'velocity_storage',

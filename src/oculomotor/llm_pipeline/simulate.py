@@ -203,7 +203,7 @@ All defaults match the healthy model. Only specify parameters that differ from h
 
 | Parameter | Healthy default | Pathological range / meaning |
 |-----------|:--------------:|------------------------------|
-| canal_gains [L_HC,L_AC,L_PC,R_HC,R_AC,R_PC] | [1,1,1,1,1,1] | 0 = complete paresis; left neuritis=[0,0,0,1,1,1] |
+| canal_gains [L_HC,L_AC,L_PC,R_HC,R_AC,R_PC] | [1,1,1,1,1,1] | Indices 0–2 = left ear (horiz, ant, post); 3–5 = right ear. Left neuritis=[0,0,0,1,1,1]; right=[1,1,1,0,0,0] |
 | tau_vs (s) | 20.0 | 1–3 s → nodulus/uvula lesion; short TC dumps VS quickly |
 | K_vs (1/s) | 0.1 | Reduce with tau_vs for nodulus lesion |
 | K_vis (1/s) | 0.1 | Visual→VS gain. 0 = no OKR/OKAN |
@@ -254,6 +254,21 @@ GEN (gaze-evoked nystagmus):   ['visual_flags', 'eye_position', 'eye_velocity', 
 Rebound nystagmus:             ['visual_flags', 'eye_position', 'eye_velocity', 'neural_integrator']
 Vergence / cover test:         ['visual_flags', 'eye_position', 'vergence']
 Full cascade:                  all panels
+
+## narrative field — always fill this in
+
+Every scenario and comparison requires a `narrative` field: 2–4 sentences written for a
+clinician reader (no variable names, no code syntax). Explain:
+  1. Which aspect of the physiology is altered and why (e.g. "left vestibular nerve is silent").
+  2. Which model parameters were changed from healthy and what they represent.
+  3. What the reader should expect to see in the figure (nystagmus direction, saccade asymmetry, etc.).
+
+Example for left vestibular neuritis vHIT:
+  "The left vestibular nerve is modelled as completely silent by setting canal_gains[0:3] = 0
+   (left horizontal, anterior, and posterior canals). During a leftward head impulse no
+   compensatory signal reaches the brain, producing a corrective catch-up saccade at the
+   end of the movement — the hallmark of a positive vHIT on the left side. Rightward impulses
+   remain intact because the right canals (indices 3–5) are unaffected."
 
 Always call the `generate_scenario` tool with your answer.
 """).strip()

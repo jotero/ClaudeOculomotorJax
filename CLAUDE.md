@@ -149,7 +149,7 @@ class PlantParams(NamedTuple):
     tau_p
 
 class BrainParams(NamedTuple):
-    tau_vs, K_vs, K_vis, g_vis, b_vs, f_afferent, tau_vs_adapt,  # VS
+    tau_vs, K_vs, K_vis, g_vis, b_vs, tau_vs_adapt,  # VS
     tau_i, tau_p, tau_vis, b_ni, tau_ni_adapt,                    # NI
     g_burst, e_sat_sac, k_sac, threshold_sac, ...
     K_pursuit, K_phasic_pursuit, tau_pursuit,
