@@ -95,11 +95,12 @@ class BrainParams(NamedTuple):
     K_vs:                  float = 0.1    # canal-to-VS gain (1/s); controls charging speed
     K_vis:                 float = 0.1    # visual-to-VS gain (1/s); OKR / OKAN charging
                                           # OKN SS gain ≈ (2·K_vis·τ_vs + g_vis)/(1 + 2·K_vis·τ_vs + g_vis)
-                                          # K_vis=0.1, g_vis=1.0 → L=5 → gain ≈ 0.833  (Raphan-like regime)
-    g_vis:                 float = 1.0    # visual feedthrough (unitless); direct OKR pathway
-                                          # at SS OKN: INT/SPV ≈ 2·K_vis·τ_vs / (2·K_vis·τ_vs + g_vis) ≈ 0.80
-                                          # g_vis=2.0 gives INT/SPV≈0.67 (Raphan exact) but amplifies EC residuals →
-                                          # post-saccadic oscillations; g_vis=1.0 balances separation vs stability
+                                          # K_vis=0.1, g_vis=0.6 → SS gain ≈ 0.82  (Raphan 1979)
+    g_vis:                 float = 0.6    # direct visual pathway gain (Raphan 1979, Fig. 8: gl = 0.6)
+                                          # OKR inner loop: L(jω) ≈ g_vis·exp(−jω·τ_vis) → stable iff g_vis < 1
+                                          # g_vis=1.0 → zero gain margin → sustained ~6 Hz onset ringing
+                                          # g_vis=0.6 → τ_decay = τ_vis/ln(1/0.6) ≈ 157 ms (~1 cycle, acceptable)
+                                          # SS OKN: gain ≈ 0.82, INT/SPV ≈ 0.87
 
     # Neural integrator — bilateral push-pull + null adaptation (Robinson 1975; rebound: Zee et al. 1980)
     tau_i:                 float = 25.0   # leak TC (s); healthy >20 s (Cannon & Robinson 1985)
