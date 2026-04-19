@@ -30,7 +30,7 @@ from oculomotor.sim.simulator import (
     _IDX_VERG,
 )
 from oculomotor.models.brain_models import saccade_generator as sg_mod
-from oculomotor.models.sensory_models.sensory_model import C_slip, C_pos, C_vel, C_gate
+from oculomotor.models.sensory_models.sensory_model import C_slip, C_pos, C_vel, C_target_in_vf
 
 
 # ── Stimulus builder ──────────────────────────────────────────────────────────
@@ -153,8 +153,8 @@ def _build_stimulus(scenario: SimulationScenario) -> dict:
     # Scene angular velocity → OKR / velocity storage
     v_scene = scene_arr['rot_vel']                 # (T, 3) deg/s
 
-    # Visual flags — per-eye target_present (supports cover test)
-    sp, tpL, tpR = stim.build_visual_flags(scenario.visual, T, dt)
+    # Visual flags — per-eye scene_present and target_present
+    spL, spR, tpL, tpR = stim.build_visual_flags(scenario.visual, T, dt)
 
     # Head linear acceleration in world frame → simulator adds gravity rotation to get
     # specific force in head frame (already done inside ODE_ocular_motor)
@@ -167,7 +167,8 @@ def _build_stimulus(scenario: SimulationScenario) -> dict:
         p_target_array          = jnp.array(p_target),
         v_target_array          = jnp.array(v_target),
         v_scene_array           = jnp.array(v_scene),
-        scene_present_array     = jnp.array(sp),
+        scene_present_L_array   = jnp.array(spL),
+        scene_present_R_array   = jnp.array(spR),
         target_present_L_array  = jnp.array(tpL),
         target_present_R_array  = jnp.array(tpR),
         # 6-DOF arrays stored for plotting (stripped before passing to ODE)
@@ -242,8 +243,8 @@ def _extract_signals(states, params, t_np: np.ndarray) -> dict:
     x_ni  = x_ni_raw[:, :3] - x_ni_raw[:, 3:6]   # NI net  (T, 3)
 
     # Retinal signals — gate-weighted average consistent with sensory_model fix
-    gate_L = x_vis_L @ np.array(C_gate).T           # (T, 1)
-    gate_R = x_vis_R @ np.array(C_gate).T           # (T, 1)
+    gate_L = x_vis_L @ np.array(C_target_in_vf).T           # (T, 1)
+    gate_R = x_vis_R @ np.array(C_target_in_vf).T           # (T, 1)
     gate_sum = gate_L + gate_R + 1e-6               # (T, 1)
     pos_L  = x_vis_L @ np.array(C_pos).T            # (T, 3)
     pos_R  = x_vis_R @ np.array(C_pos).T            # (T, 3)
@@ -253,8 +254,8 @@ def _extract_signals(states, params, t_np: np.ndarray) -> dict:
     def _burst_at(state):
         x_vis_L_ = state.sensory[_IDX_VIS_L]
         x_vis_R_ = state.sensory[_IDX_VIS_R]
-        gL = (C_gate @ x_vis_L_)[0]
-        gR = (C_gate @ x_vis_R_)[0]
+        gL = (C_target_in_vf @ x_vis_L_)[0]
+        gR = (C_target_in_vf @ x_vis_R_)[0]
         norm = jnp.maximum(gL + gR, 1e-6)
         e_pd = (gL * (C_pos @ x_vis_L_) + gR * (C_pos @ x_vis_R_)) / norm
         gate = jnp.clip(gL + gR, 0.0, 1.0)

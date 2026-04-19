@@ -168,7 +168,9 @@ class VisualFlagsSegment(BaseModel):
                            target_present_L=True, target_present_R=False
     """
     duration_s:       float          = Field(gt=0, le=120, description="Duration of this segment (s).")
-    scene_present:    bool           = Field(default=True,  description="True = lit room → OKR active.")
+    scene_present:    bool           = Field(default=True,  description="Both-eye shorthand: True = lit room → OKR active for both eyes.")
+    scene_present_L:  Optional[bool] = Field(default=None,  description="L-eye override. None = inherit scene_present. False = L eye in darkness.")
+    scene_present_R:  Optional[bool] = Field(default=None,  description="R-eye override. None = inherit scene_present. False = R eye in darkness.")
     target_present:   bool           = Field(default=True,  description="Both-eye shorthand: True = target visible for both eyes.")
     target_present_L: Optional[bool] = Field(default=None,  description="L-eye override. None = inherit target_present. False = cover L eye.")
     target_present_R: Optional[bool] = Field(default=None,  description="R-eye override. None = inherit target_present. False = cover R eye.")

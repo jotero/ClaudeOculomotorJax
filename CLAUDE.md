@@ -73,7 +73,7 @@ oculomotor/
 │   │   ├── canal.py                   Canal array SSM (Steinhausen, 6 canals, 12 states)
 │   │   ├── otolith.py                 Otolith SSM (bilateral LP adaptation, 6 states)
 │   │   ├── retina.py                  Retinal geometry + visual delay cascade (400 states)
-│   │   │                              Delays: slip(120) | pos_vis(120) | vel(120) | gate_vf(40)
+│   │   │                              Delays: slip(120) | pos_vis(120) | vel(120) | target_in_vf(40)
 │   │   └── sensory_model.py           Connector: canal + otolith + retina → SensoryOutput (418 states)
 │   ├── brain_models/
 │   │   ├── velocity_storage.py        VS push-pull bilateral (L/R VN pops); ABCD SSM + OKR (6 states)
@@ -108,13 +108,13 @@ scripts/
 └── demo_fixation.py     Fixational eye movements — noise source comparison
 ```
 
-### State structure (980 total — binocular)
+### State structure (1140 total — binocular)
 
 The ODE state is a `SimState` NamedTuple with three groups:
 
 ```
 SimState(
-    sensory (818):  [x_c (12) | x_oto (6) | x_vis_L (400) | x_vis_R (400)]
+    sensory (978):  [x_c (12) | x_oto (6) | x_vis_L (480) | x_vis_R (480)]
                      canal      otolith     left retinal     right retinal
                      _IDX_C     _IDX_OTO    _IDX_VIS_L       _IDX_VIS_R
                                             (_IDX_VIS = _IDX_VIS_L, backward compat)
@@ -133,7 +133,7 @@ SimState(
 
 `x_sg` sub-layout: `[x_copy(3) | z_ref(1) | e_held(3) | z_sac(1) | z_acc(1)]`
 
-`x_vis` sub-layout: `[x_slip(120) | x_pos_vis(120) | x_vel(120) | x_gate(40)]`
+`x_vis` sub-layout: `[x_scene_vel(120) | x_target_pos(120) | x_target_vel(120) | x_target_in_vf(40) | x_scene_visible(40) | x_target_visible(40)]`
 
 ### Params structure
 
@@ -269,7 +269,7 @@ Any plant implementing this contract (first-order, second-order, MJX-backed) is 
 
 ```python
 def step(x_brain, sensory_out: SensoryOutput, brain_params) -> (dx_brain, motor_cmd):
-    # sensory_out fields: canal(6), slip_delayed(3), pos_delayed(3), gate_vf(scalar),
+    # sensory_out fields: canal(6), slip_delayed(3), pos_delayed(3), target_in_vf(scalar),
     #                     vel_delayed(3), f_otolith(3), scene_present, target_present
 ```
 
@@ -313,15 +313,15 @@ def step(x, u, theta):
 - Returns `(dx, y)` always — ODE integrator uses `dx`; simulator uses `y` to wire modules.
 - Input/output shapes and units must be documented in the module docstring.
 - **`theta` is a `Params` NamedTuple** — access via `theta.sensory.tau_c`, `theta.brain.tau_vs`, etc. Never treat it as a dict.
-- Module-level constants are kept only when used by external code (e.g. `retina.C_slip`, `retina.C_gate`, `canal.PINV_SENS`).
+- Module-level constants are kept only when used by external code (e.g. `retina.C_slip`, `retina.C_target_in_vf`, `canal.PINV_SENS`).
 
 ### Nonlinear extensions
 
 Some modules have nonlinearities that wrap the linear ABCD core:
 
 - **Canal** (`canal.py`): `nonlinearity(x_c, gains)` applies smooth push-pull rectification to the `x2` (inertia state) to get afferent firing rates. The linear `A @ x + B @ u` drives the state derivative; only the output is nonlinear. Re-exported as `canal_nonlinearity` from `sensory_model.py`.
-- **Saccade generator**: gates (`gate_err`, `gate_res`, `gate_dir`) and adaptive reset TC layered on top of linear SSM core. Target selection (orbital clip + centering saccade) is handled internally using `x_ni` as a proxy for eye position and `gate_vf` to detect out-of-field targets.
-- **Visual delay** (`retina.py`): fixed companion-form `A` (40-stage cascade) with module-level `C_slip` / `C_pos` / `C_vel` / `C_gate` readout matrices — kept at module level because external code reads them directly. `gate_vf` is computed in `retinal_signals()` (retinal geometry, not a brain decision) and delayed by its own 40-stage scalar cascade so the SG can distinguish fixation from out-of-field.
+- **Saccade generator**: gates (`gate_err`, `gate_res`, `gate_dir`) and adaptive reset TC layered on top of linear SSM core. Target selection (orbital clip + centering saccade) is handled internally using `x_ni` as a proxy for eye position and `target_in_vf` to detect out-of-field targets.
+- **Visual delay** (`retina.py`): fixed companion-form `A` (40-stage cascade) with module-level `C_slip` / `C_pos` / `C_vel` / `C_target_in_vf` readout matrices — kept at module level because external code reads them directly. `target_in_vf` is computed in `retinal_signals()` (retinal geometry, not a brain decision) and delayed by its own 40-stage scalar cascade so the SG can distinguish fixation from out-of-field.
 
 ### Connector modules
 
@@ -448,5 +448,5 @@ Planned approach when ready:
 - Gravity / specific force axis convention: **x = up** (matches `canal.py` and `gravity_estimator.py`); at rest upright, `g_head = [9.81, 0, 0]` m/s²
 - `scene_present`: scalar in [0,1] — is the visual scene physically on? (external input)
 - `target_present`: scalar in [0,1] — is there a foveal target? Gates pursuit integrator; set to 0 for pure OKN
-- `gate_vf`: scalar in [0,1] — delayed visual-field gate (from retinal geometry); distinguishes fixation from out-of-field in the SG
-- `pos_delayed`: (3,) delayed gated position error `gate_vf · e_pos` — zero means fixating OR target out of field; use `gate_vf` to disambiguate
+- `target_in_vf`: scalar in [0,1] — delayed visual-field gate (from retinal geometry); distinguishes fixation from out-of-field in the SG
+- `pos_delayed`: (3,) delayed gated position error `target_in_vf · e_pos` — zero means fixating OR target out of field; use `target_in_vf` to disambiguate

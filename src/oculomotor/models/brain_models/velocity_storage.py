@@ -136,6 +136,9 @@ def step(x_vs, u, brain_params):
     A = -(1.0 / brain_params.tau_vs) * jnp.eye(6)
 
     # B (6×9): push-pull canal and visual inputs, scaled by per-population health
+    # Future work: correctly combining canal (head-frame) and optokinetic (eye-frame)
+    # inputs may require applying current eye position (R_eye) to one of them so both
+    # are expressed in the same frame before summation.
     B_top = jnp.concatenate([ g_pop[:3, None] * brain_params.K_vs * PINV_SENS, -brain_params.K_vis * jnp.eye(3)], axis=1)
     B_bot = jnp.concatenate([-g_pop[3:, None] * brain_params.K_vs * PINV_SENS,  brain_params.K_vis * jnp.eye(3)], axis=1)
     B = jnp.concatenate([B_top, B_bot], axis=0)

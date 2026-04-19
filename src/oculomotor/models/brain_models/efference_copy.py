@@ -25,6 +25,18 @@ it TWICE — once for u_burst (saccade EC) and once for u_pursuit (pursuit EC):
 The EC delay uses the same gamma-distributed cascade (N_STAGES first-order LP
 filters, tau_vis total delay) as the visual pathway.
 
+Frame note
+──────────
+The motor command (u_burst + u_pursuit) is in head frame.  The retinal slip
+it must cancel (retina.retinal_signals) is in eye frame.  The mismatch is
+(R_eye.T − I) @ motor_ec, which is zero at centre gaze and grows with
+eccentricity.  In practice this matters only for saccades made while the head
+is moving and the eye is off-centre — a rare combination in standard paradigms.
+Future work: investigate whether the EC should be generated in eye frame
+(transform u_burst before entering the cascade) or corrected at readout
+(apply current R_gaze_T to motor_ec in brain_model).  The two approaches
+differ in how they handle the changing gaze geometry during the visual delay.
+
 State: x_ec = (N_STAGES × 3,) = (120,) delay cascade for one 3-D signal.
 
 Parameters:

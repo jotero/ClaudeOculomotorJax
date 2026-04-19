@@ -266,7 +266,7 @@ def ODE_ocular_motor(t, state, args):
         t:     scalar time (s)
         state: SimState pytree with fields (sensory, brain, plant)
         args:  (theta, hv_interp, hp_interp, ha_interp, vs_interp, target_interp,
-                vt_interp, scene_present_interp,
+                vt_interp, scene_present_L_interp, scene_present_R_interp,
                 target_present_L_interp, target_present_R_interp,
                 noise_canal_interp, noise_slip_interp,
                 noise_pos_L_interp, noise_pos_R_interp, noise_vel_interp)
@@ -275,7 +275,7 @@ def ODE_ocular_motor(t, state, args):
         SimState of derivatives (dsensory, dbrain, dplant)
     """
     (theta, hv_interp, hp_interp, ha_interp, vs_interp, target_interp,
-     vt_interp, scene_present_interp,
+     vt_interp, scene_present_L_interp, scene_present_R_interp,
      target_present_L_interp, target_present_R_interp,
      noise_canal_interp, noise_slip_interp,
      noise_pos_L_interp, noise_pos_R_interp,
@@ -288,13 +288,13 @@ def ODE_ocular_motor(t, state, args):
     w_scene           = vs_interp.evaluate(t)                  # (3,) scene angular velocity (deg/s)
     p_target          = target_interp.evaluate(t)              # (3,) Cartesian target position
     v_target          = vt_interp.evaluate(t)                  # (3,) target angular velocity (deg/s)
-    scene_present     = scene_present_interp.evaluate(t)       # scalar: 0=dark, 1=lit
+    scene_present_L   = scene_present_L_interp.evaluate(t)     # scalar: 0=dark, 1=lit (L eye)
+    scene_present_R   = scene_present_R_interp.evaluate(t)     # scalar: 0=dark, 1=lit (R eye)
     target_present_L  = target_present_L_interp.evaluate(t)   # scalar: 0=L eye covered
     target_present_R  = target_present_R_interp.evaluate(t)   # scalar: 0=R eye covered
 
     # ── Sensory: read bundled outputs for brain (averaged L+R) ───────────────
-    sensory_out = sensory_model.read_outputs(
-        state.sensory, scene_present, theta.sensory)
+    sensory_out = sensory_model.read_outputs(state.sensory, theta.sensory)
 
     # ── Sensory noise ─────────────────────────────────────────────────────────
     noise_pos_L = noise_pos_L_interp.evaluate(t)   # (3,) left  eye position OU drift
@@ -320,9 +320,9 @@ def ODE_ocular_motor(t, state, args):
 
     # ── Sensory: retinal signals + canal + otolith + visual delay cascades ────
     # w_eye_{L,R} = dx_plant (algebraic, no lag) — must follow plant step.
-    dx_sensory, _, _, _ = sensory_model.step(
+    dx_sensory = sensory_model.step(
         state.sensory, q_head, w_head, a_head, q_eye_L, w_eye_L, q_eye_R, w_eye_R,
-        w_scene, v_target, p_target, scene_present,
+        w_scene, v_target, p_target, scene_present_L, scene_present_R,
         target_present_L, target_present_R, theta.sensory)
 
     return SimState(
@@ -340,6 +340,8 @@ def simulate(params, t_array_or_stimulus, head_vel_array=None,
              p_target_array=None,
              v_target_array=None,
              scene_present_array=None,
+             scene_present_L_array=None,
+             scene_present_R_array=None,
              target_present_array=None,
              target_present_L_array=None,
              target_present_R_array=None,
@@ -365,9 +367,11 @@ def simulate(params, t_array_or_stimulus, head_vel_array=None,
         v_target_array:       target angular velocity in world frame, shape (T, 3) or (T,) or None.
                               None (default) = stationary target (no pursuit drive).
                               Shape (T,) = horizontal-only velocity (yaw); pitch/roll = 0.
-        scene_present_array:  scene visibility gain, shape (T,), values in [0, 1].
+        scene_present_array:  both-eye shorthand, shape (T,), values in [0, 1].
                               None (default) = inferred: 1.0 if v_scene_array was
                               provided, 0.0 (dark) if v_scene_array is None.
+        scene_present_L_array: per-eye override for left  eye, shape (T,). None = scene_present_array.
+        scene_present_R_array: per-eye override for right eye, shape (T,). None = scene_present_array.
         target_present_array: target visibility gain for both eyes, shape (T,), values in [0, 1].
                               None (default) = 1.0 (target always present).
                               Shorthand for setting both L and R eyes simultaneously.
@@ -465,13 +469,15 @@ def simulate(params, t_array_or_stimulus, head_vel_array=None,
         jnp.cumsum(0.5 * (hv3[:-1] + hv3[1:]) * dt_arr[:, None], axis=0),
     ])                                                              # (T, 3)
 
-    # ── Scene presence gain ───────────────────────────────────────────────────
+    # ── Scene presence gain (per-eye; defaults cascade from scene_present_array) ─
     if scene_present_array is not None:
-        sg1 = jnp.asarray(scene_present_array, dtype=jnp.float32)
+        sg_both = jnp.asarray(scene_present_array, dtype=jnp.float32)
     elif v_scene_array is not None:
-        sg1 = jnp.ones(T, dtype=jnp.float32)
+        sg_both = jnp.ones(T, dtype=jnp.float32)
     else:
-        sg1 = jnp.zeros(T, dtype=jnp.float32)   # dark
+        sg_both = jnp.zeros(T, dtype=jnp.float32)   # dark
+    sg_L = jnp.asarray(scene_present_L_array, dtype=jnp.float32) if scene_present_L_array is not None else sg_both
+    sg_R = jnp.asarray(scene_present_R_array, dtype=jnp.float32) if scene_present_R_array is not None else sg_both
 
     # ── Target presence gain (per-eye; defaults cascade from target_present_array) ─
     if target_present_array is not None:
@@ -561,7 +567,8 @@ def simulate(params, t_array_or_stimulus, head_vel_array=None,
     vs_interp                = diffrax.LinearInterpolation(ts=t_full, ys=vs3)
     target_interp            = diffrax.LinearInterpolation(ts=t_full, ys=pt3)
     vt_interp                = diffrax.LinearInterpolation(ts=t_full, ys=vt3)
-    scene_present_interp     = diffrax.LinearInterpolation(ts=t_full, ys=sg1)
+    scene_present_L_interp   = diffrax.LinearInterpolation(ts=t_full, ys=sg_L)
+    scene_present_R_interp   = diffrax.LinearInterpolation(ts=t_full, ys=sg_R)
     target_present_L_interp  = diffrax.LinearInterpolation(ts=t_full, ys=tg_L)
     target_present_R_interp  = diffrax.LinearInterpolation(ts=t_full, ys=tg_R)
 
@@ -592,7 +599,7 @@ def simulate(params, t_array_or_stimulus, head_vel_array=None,
         dt0=dt,
         y0=x0,
         args=(params, hv_interp, hp_interp, ha_interp, vs_interp, target_interp,
-              vt_interp, scene_present_interp,
+              vt_interp, scene_present_L_interp, scene_present_R_interp,
               target_present_L_interp, target_present_R_interp,
               noise_canal_interp, noise_slip_interp,
               noise_pos_L_interp, noise_pos_R_interp, noise_vel_interp),

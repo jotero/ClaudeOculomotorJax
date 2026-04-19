@@ -51,7 +51,7 @@ from oculomotor.sim.simulator import (
     _IDX_SG, _IDX_VIS, _IDX_VIS_L, _IDX_VIS_R,
 )
 from oculomotor.models.sensory_models.sensory_model import (
-    N_CANALS, FLOOR, _SOFTNESS, PINV_SENS, C_pos, C_gate,
+    N_CANALS, FLOOR, _SOFTNESS, PINV_SENS, C_pos, C_target_in_vf,
 )
 from oculomotor.models.brain_models import saccade_generator as sg_mod
 
@@ -128,7 +128,7 @@ def extract_burst(states, theta):
         x_vis_L = state.sensory[_IDX_VIS_L]
         x_vis_R = state.sensory[_IDX_VIS_R]
         e_pd    = 0.5 * (C_pos  @ x_vis_L + C_pos  @ x_vis_R)   # L+R average
-        gate    = 0.5 * ((C_gate @ x_vis_L)[0] + (C_gate @ x_vis_R)[0])
+        gate    = 0.5 * ((C_target_in_vf @ x_vis_L)[0] + (C_target_in_vf @ x_vis_R)[0])
         x_ni_   = state.brain[_IDX_NI]
         x_ni_net = x_ni_[:3] - x_ni_[3:6]   # net: x_L − x_R (3,)
         _, u    = sg_mod.step(state.brain[_IDX_SG], e_pd, gate, x_ni_net, theta.brain)

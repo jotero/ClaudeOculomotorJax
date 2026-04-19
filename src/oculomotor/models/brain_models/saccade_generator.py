@@ -126,7 +126,7 @@ import jax.numpy as jnp
 import jax
 
 N_STATES  = 9   # x_copy(3) + z_ref(1) + e_held(3) + z_sac(1) + z_acc(1)
-N_INPUTS  = 9   # pos_delayed(3) + gate_vf(1) + x_ni(3) → e_cmd(3) computed internally
+N_INPUTS  = 9   # pos_delayed(3) + target_in_vf(1) + x_ni(3) → e_cmd(3) computed internally
 N_OUTPUTS = 3   # u_burst (3,)
 
 
@@ -152,22 +152,22 @@ def burst_velocity(e_residual, brain_params):
 
 # ── SSM step ──────────────────────────────────────────────────────────────────
 
-def step(x_sg, pos_delayed, gate_vf, x_ni, brain_params):
+def step(x_sg, pos_delayed, target_in_vf, x_ni, brain_params):
     """Single ODE step: target selection + burst dynamics + burst output.
 
     Target selection (inside step — uses brain-internal x_ni, not plant state):
-        gate_vf ≈ 1  (in visual field):
+        target_in_vf ≈ 1  (in visual field):
             e_cmd = clip(pos_delayed, −orbital_limit − x_ni,  +orbital_limit − x_ni)
             Parks the eye at the oculomotor boundary when the target is visible but
             beyond mechanical reach; otherwise a normal saccade error.
-        gate_vf ≈ 0  (target outside ~90° visual field):
+        target_in_vf ≈ 0  (target outside ~90° visual field):
             e_cmd = −alpha_reset · x_ni
             Centripetal centering saccade; drives eye back toward primary position.
 
     Args:
         x_sg:        (N_STATES,)  [x_copy(3) | z_ref(1) | e_held(3) | z_sac(1) | z_acc(1)]
         pos_delayed: (3,)         delayed retinal position error (deg, raw)
-        gate_vf:     scalar       visual-field gate (≈1 in-field, ≈0 out-of-field)
+        target_in_vf:     scalar       visual-field gate (≈1 in-field, ≈0 out-of-field)
         x_ni:        (3,)         neural integrator state — brain's eye-position estimate (deg)
         brain_params: BrainParams
 
@@ -193,8 +193,8 @@ def step(x_sg, pos_delayed, gate_vf, x_ni, brain_params):
     # Out-of-field case: centripetal centering saccade toward primary position
     e_center = -alpha_reset * x_ni
 
-    # Blend by gate: gate_vf=1 → track target; gate_vf=0 → center
-    e_cur     = gate_vf * e_target + (1.0 - gate_vf) * e_center
+    # Blend by gate: target_in_vf=1 → track target; target_in_vf=0 → center
+    e_cur     = target_in_vf * e_target + (1.0 - target_in_vf) * e_center
     e_cur_mag = jnp.linalg.norm(e_cur)
 
     e_res     = e_held - x_copy          # ballistic residual (against HELD target)

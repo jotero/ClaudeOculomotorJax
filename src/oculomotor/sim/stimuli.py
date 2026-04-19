@@ -463,29 +463,36 @@ def build_visual_flags(
     segments,   # list[VisualFlagsSegment]
     total_T: int,
     dt: float = 0.001,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Convert VisualFlagsSegments to (scene_present, target_present_L, target_present_R).
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Convert VisualFlagsSegments to per-eye (scene_present_L, scene_present_R,
+    target_present_L, target_present_R).
 
-    target_present_L/R default to the segment's target_present value when the
-    per-eye override fields are None — enabling the cover-test scenario where
-    one eye is patched for part of the trial.
+    scene_present_L/R and target_present_L/R default to the segment's scene_present /
+    target_present value when the per-eye override fields are None — enabling monocular
+    occlusion and cover-test scenarios.
 
     Returns:
-        scene_present:    (T,) float32 in [0, 1]
-        target_present_L: (T,) float32 in [0, 1] — L eye visibility
-        target_present_R: (T,) float32 in [0, 1] — R eye visibility
+        scene_present_L:  (T,) float32 in [0, 1] — L eye scene visibility
+        scene_present_R:  (T,) float32 in [0, 1] — R eye scene visibility
+        target_present_L: (T,) float32 in [0, 1] — L eye target visibility
+        target_present_R: (T,) float32 in [0, 1] — R eye target visibility
     """
-    sp_chunks, tpL_chunks, tpR_chunks = [], [], []
+    spL_chunks, spR_chunks, tpL_chunks, tpR_chunks = [], [], [], []
     for seg in segments:
         T   = max(1, round(seg.duration_s / dt))
+        sp  = float(seg.scene_present)
+        spL = float(seg.scene_present_L)  if seg.scene_present_L  is not None else sp
+        spR = float(seg.scene_present_R)  if seg.scene_present_R  is not None else sp
         tp  = float(seg.target_present)
         tpL = float(seg.target_present_L) if seg.target_present_L is not None else tp
         tpR = float(seg.target_present_R) if seg.target_present_R is not None else tp
-        sp_chunks.append(np.full(T, float(seg.scene_present), dtype=np.float32))
+        spL_chunks.append(np.full(T, spL, dtype=np.float32))
+        spR_chunks.append(np.full(T, spR, dtype=np.float32))
         tpL_chunks.append(np.full(T, tpL, dtype=np.float32))
         tpR_chunks.append(np.full(T, tpR, dtype=np.float32))
 
-    sp  = np.concatenate(sp_chunks)
+    spL = np.concatenate(spL_chunks)
+    spR = np.concatenate(spR_chunks)
     tpL = np.concatenate(tpL_chunks)
     tpR = np.concatenate(tpR_chunks)
 
@@ -493,7 +500,7 @@ def build_visual_flags(
         if len(arr) >= T: return arr[:T]
         return np.concatenate([arr, np.full(T - len(arr), arr[-1], dtype=np.float32)])
 
-    return _fit1d(sp, total_T), _fit1d(tpL, total_T), _fit1d(tpR, total_T)
+    return _fit1d(spL, total_T), _fit1d(spR, total_T), _fit1d(tpL, total_T), _fit1d(tpR, total_T)
 
 
 # ── Legacy segment-based builders (kept for backward compat) ───────────────────
