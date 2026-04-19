@@ -210,6 +210,23 @@ class Patient(BaseModel):
             "right neuritis → [1,1,1,0,0,0]; bilateral loss → [0,0,0,0,0,0]."
         )
     )
+    b_vs_L: float = Field(
+        default=100.0,
+        description=(
+            "Left vestibular nucleus bias and responsiveness (deg/s). Healthy 100. "
+            "Controls both resting firing rate and canal drive gain for the left VN. "
+            "70 = vestibular neuritis (intrinsic activity survives, afferent drive lost). "
+            "0  = VN infarct (population completely silent, no canal drive). "
+            "Use alongside canal_gains=0 for neuritis; b_vs_L=0 alone for VN infarct."
+        )
+    )
+    b_vs_R: float = Field(
+        default=100.0,
+        description=(
+            "Right vestibular nucleus bias and responsiveness (deg/s). Healthy 100. "
+            "Same scale as b_vs_L. 70 = right neuritis; 0 = right VN infarct."
+        )
+    )
     tau_vs: float = Field(default=20.0, description="Velocity storage TC (s). Healthy 20 s. Nodulus/uvula lesion → 1–3 s. OKN/OKAN decay TC.")
     K_vs:   float = Field(default=0.1,  description="Canal→VS charging gain (1/s). Healthy 0.1. Reduce with tau_vs for nodulus lesions.")
     K_vis:  float = Field(default=0.1,  description="Visual→VS charging gain (1/s). Healthy 0.1. OKR/OKAN drive. 0 = no OKR.")

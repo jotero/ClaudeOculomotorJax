@@ -94,6 +94,8 @@ _IDX_L    = slice(0, 3)
 _IDX_R    = slice(3, 6)
 _IDX_NULL = slice(6, 9)
 
+B_NOMINAL = 100.0   # healthy resting bias (deg/s); used to derive per-population input scaling
+
 
 def step(x_vs, u, brain_params):
     """Single ODE step: bilateral VS dynamics + null adaptation + net velocity output.
@@ -121,14 +123,21 @@ def step(x_vs, u, brain_params):
     b6     = jnp.broadcast_to(jnp.asarray(brain_params.b_vs, dtype=jnp.float32), (6,))
     b_eff  = b6 + jnp.concatenate([x_null / 2.0, -x_null / 2.0])  # (6,)
 
+    # Per-population health [0–1]: derived from b_vs relative to healthy nominal.
+    # b_vs = 100 (healthy scalar) → g_pop = [1,…,1] → full canal drive.
+    # b_vs[3:6] = 0  (left VN infarct) → g_pop[3:6] = 0 → canal drive and bias both zero.
+    # b_vs[3:6] = 70 (left UVH)        → g_pop[3:6] = 0.7 → partial drive.
+    # This ensures x initialised to b_vs is already at equilibrium — no spurious transient.
+    g_pop  = b6 / B_NOMINAL                                         # (6,)
+
     # ── ABCD matrices ──────────────────────────────────────────────────────────
 
     # A (6×6): state decay toward adapted bias — diagonal, single TC for both pops
     A = -(1.0 / brain_params.tau_vs) * jnp.eye(6)
 
-    # B (6×9): push-pull canal and visual inputs
-    B_top = jnp.concatenate([ brain_params.K_vs * PINV_SENS, -brain_params.K_vis * jnp.eye(3)], axis=1)
-    B_bot = jnp.concatenate([-brain_params.K_vs * PINV_SENS,  brain_params.K_vis * jnp.eye(3)], axis=1)
+    # B (6×9): push-pull canal and visual inputs, scaled by per-population health
+    B_top = jnp.concatenate([ g_pop[:3, None] * brain_params.K_vs * PINV_SENS, -brain_params.K_vis * jnp.eye(3)], axis=1)
+    B_bot = jnp.concatenate([-g_pop[3:, None] * brain_params.K_vs * PINV_SENS,  brain_params.K_vis * jnp.eye(3)], axis=1)
     B = jnp.concatenate([B_top, B_bot], axis=0)
 
     # C (3×6): read net signal x_L − x_R

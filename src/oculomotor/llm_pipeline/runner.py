@@ -186,8 +186,15 @@ def _build_params(patient: Patient):
     # Sensory overrides
     params = with_sensory(params, canal_gains=jnp.array(patient.canal_gains, dtype=float))
 
+    # b_vs_L/R → 6-vector (model LEFT pop = anatomical RIGHT VN, model RIGHT pop = anatomical LEFT VN)
+    b_vs = jnp.array([
+        patient.b_vs_R, patient.b_vs_R, patient.b_vs_R,   # model LEFT pop = anatomical RIGHT VN
+        patient.b_vs_L, patient.b_vs_L, patient.b_vs_L,   # model RIGHT pop = anatomical LEFT  VN
+    ], dtype=float)
+
     # Brain overrides
     params = with_brain(params,
+        b_vs            = b_vs,
         tau_vs          = patient.tau_vs,
         K_vs            = patient.K_vs,
         K_vis           = patient.K_vis,

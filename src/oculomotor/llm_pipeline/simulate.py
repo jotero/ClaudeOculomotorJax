@@ -204,6 +204,8 @@ All defaults match the healthy model. Only specify parameters that differ from h
 | Parameter | Healthy default | Pathological range / meaning |
 |-----------|:--------------:|------------------------------|
 | canal_gains [L_HC,L_AC,L_PC,R_HC,R_AC,R_PC] | [1,1,1,1,1,1] | Indices 0–2 = left ear (horiz, ant, post); 3–5 = right ear. Left neuritis=[0,0,0,1,1,1]; right=[1,1,1,0,0,0] |
+| b_vs_L (deg/s) | 100 | Left VN bias + canal responsiveness. 100=healthy, 70=neuritis (intrinsic survives), 0=VN infarct. Use with canal_gains=0 for neuritis; b_vs_L=0 alone for infarct. |
+| b_vs_R (deg/s) | 100 | Right VN — same scale as b_vs_L. |
 | tau_vs (s) | 20.0 | 1–3 s → nodulus/uvula lesion; short TC dumps VS quickly |
 | K_vs (1/s) | 0.1 | Reduce with tau_vs for nodulus lesion |
 | K_vis (1/s) | 0.1 | Visual→VS gain. 0 = no OKR/OKAN |
@@ -226,9 +228,10 @@ The table below is a set of **worked examples** to illustrate common mappings:
 | Clinical condition (example) | Parameter changes |
 |-----------------------------|-------------------|
 | Healthy | all defaults |
-| Left vestibular neuritis | canal_gains=[0,0,0,1,1,1] |
-| Right vestibular neuritis | canal_gains=[1,1,1,0,0,0] |
-| Bilateral vestibular loss | canal_gains=[0,0,0,0,0,0] |
+| Left vestibular neuritis | canal_gains=[0,0,0,1,1,1], b_vs_L=70 |
+| Right vestibular neuritis | canal_gains=[1,1,1,0,0,0], b_vs_R=70 |
+| Left VN infarct | b_vs_L=0 |
+| Bilateral vestibular loss | canal_gains=[0,0,0,0,0,0], b_vs_L=0, b_vs_R=0 |
 | Nodulus / uvula lesion | tau_vs=1.5, K_vs=0.05 |
 | Cerebellar GEN (dark) | tau_i=4.0 |
 | Cerebellar GEN (lit room) | tau_i=4.0, K_pursuit=0.2 (BOTH required) |

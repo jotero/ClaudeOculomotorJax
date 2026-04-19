@@ -156,23 +156,22 @@ PARAMS_DEFAULT     = default_params()
 def with_uvh(params: Params, side: str = 'left',
              canal_gain_frac: float = 0.1,
              b_lesion: float = 70.0) -> Params:
-    """Unilateral vestibular hypofunction (deafferentation / vestibular neuritis).
+    """Unilateral vestibular hypofunction (vestibular neuritis / deafferentation).
 
-    Reduces canal gains on the affected side AND lowers the VS equilibrium bias for
-    that population.  b_lesion is the residual bias after nerve cut — typically
-    ~70 deg/s (intrinsic VN firing survives, afferent drive ~30 deg/s is lost).
+    Zeros canal gains on the affected side (nerve is cut) and lowers the VS population
+    bias to b_lesion (~70 deg/s: intrinsic VN firing survives, afferent drive ~30 lost).
+    The reduced b_vs also scales canal drive in velocity_storage via b_vs/B_NOMINAL,
+    so no spurious transient occurs regardless of initial conditions.
 
     Args:
         side:            'left' or 'right'.
-        canal_gain_frac: Remaining canal gain on the affected side (0=complete, 0.1=90% loss).
-        b_lesion:        VN bias of the affected population after lesion (deg/s). Default 70.
+        canal_gain_frac: Remaining canal gain on the affected side (0=complete loss).
+        b_lesion:        Residual VN bias after nerve cut (deg/s). Default 70.
 
-    Canal index convention:  0–2 = Left (LHC, LAC, LPC);  3–5 = Right (RHC, RAC, RPC)
-    b_vs layout: [x_L (0:3) | x_R (3:6)]
     Population convention:
-        Model LEFT pop  (b_vs[0:3]) = anatomical RIGHT VN (codes rightward rotation)
-        Model RIGHT pop (b_vs[3:6]) = anatomical LEFT  VN (codes leftward rotation)
-        Left lesion → model RIGHT pop drops; right lesion → model LEFT pop drops.
+        Model LEFT pop  (b_vs[0:3]) = anatomical RIGHT VN
+        Model RIGHT pop (b_vs[3:6]) = anatomical LEFT  VN
+        Left lesion → model RIGHT pop (b_vs[3:6]) drops.
     """
     import numpy as np
     b_healthy = float(np.mean(np.broadcast_to(
@@ -195,15 +194,27 @@ def with_uvh(params: Params, side: str = 'left',
 
 
 def with_vn_lesion(params: Params, side: str = 'left') -> Params:
-    """Unilateral VN infarct — silences the affected population entirely (b → 0).
+    """Unilateral VN infarct — silences the affected population entirely (b_vs → 0).
 
-    Stronger acute nystagmus than with_uvh() because intrinsic firing is also abolished.
-    Use with_uvh(b_lesion=0) for the same effect with explicit canal gain control.
+    Sets b_vs to 0 for the affected side; velocity_storage derives zero canal drive
+    from it automatically (b_vs/B_NOMINAL = 0), so canal_gains are left untouched.
+    Stronger acute nystagmus than with_uvh() since intrinsic firing is also abolished.
 
     Args:
         side: 'left' or 'right'.
     """
-    return with_uvh(params, side=side, canal_gain_frac=0.0, b_lesion=0.0)
+    import numpy as np
+    b_healthy = float(np.mean(np.broadcast_to(
+        np.asarray(params.brain.b_vs, dtype=float), (6,))))
+
+    if side == 'left':
+        b_vs = jnp.array([b_healthy, b_healthy, b_healthy, 0.0, 0.0, 0.0], dtype=jnp.float32)
+    elif side == 'right':
+        b_vs = jnp.array([0.0, 0.0, 0.0, b_healthy, b_healthy, b_healthy], dtype=jnp.float32)
+    else:
+        raise ValueError(f"side must be 'left' or 'right', got {side!r}")
+
+    return params._replace(brain=params.brain._replace(b_vs=b_vs))
 
 # Re-export params API so callers can import everything from simulator
 __all__ = [

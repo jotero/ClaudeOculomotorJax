@@ -101,14 +101,11 @@ class BrainParams(NamedTuple):
                                           # g_vis=1.0 → zero gain margin → sustained ~6 Hz onset ringing
                                           # g_vis=0.6 → τ_decay = τ_vis/ln(1/0.6) ≈ 157 ms (~1 cycle, acceptable)
                                           # SS OKN: gain ≈ 0.82, INT/SPV ≈ 0.87
-    # b_vs can be a scalar (same for all 6 states) or a (6,) array (per-population).
-    # Equilibrium: x_L → b_vs[:3], x_R → b_vs[3:].  Net x_L−x_R = 0 when symmetric.
-    # Use with_uvh() / with_vn_lesion() helpers to set lesion presets:
-    #   Healthy:          b_vs = 100.0  (scalar → broadcast)
-    #   UVH left:         b_vs = (100, 100, 100, 70, 70, 70)  — ~30 deg/s afferent drive lost on left
-    #   VN infarct left:  b_vs = (100, 100, 100,  0,  0,  0)  — entire left pop silenced
-    #   Bilateral hypo:   b_vs = ( 70,  70,  70, 70, 70, 70)  — both sides deafferented
-    b_vs:                  float = 100.0  # scalar OR (6,) per-population bias (deg/s)
+    b_vs:                  float = 100.0  # VN resting bias AND population gain (deg/s).
+                                          # Scalar broadcasts to all 6 states; pass a (6,) array for asymmetry.
+                                          # velocity_storage scales canal drive by b_vs / B_NOMINAL, so b_vs
+                                          # simultaneously sets the equilibrium firing rate and the input
+                                          # responsiveness of each population — one parameter controls both.
     tau_vs_adapt:          float = 600.0  # VS null adaptation TC (s); >> tau_vs → negligible in normal demos
                                           # reduce to ~30–60 s to engage PAN-like slow oscillation
 
