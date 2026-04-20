@@ -8,8 +8,13 @@ Two-stage encode from brain version/vergence command to per-muscle nerve activat
 
     Stage 2 — Nucleus-to-nerve projections  (M_NERVE_PROJ, 12×12):
         12 nucleus activations → 12 nerve outputs [6 left-eye | 6 right-eye]
-        Captures bilateral anatomy: ABN → ipsilateral LR + contralateral MR via MLF;
-        CN4 → contralateral SO; all CN3 subdivisions → ipsilateral muscle.
+        Anatomy modelled: ABN → ipsilateral LR only; CN3_MR → ipsilateral MR (carries
+        both version and vergence drive, absorbing the MLF pathway);
+        CN4 → contralateral SO; all other CN3 subdivisions → ipsilateral muscle.
+        Note: the MLF (ABN interneurons crossing to contralateral MR) is not modelled
+        as a separate projection here — CN3_MR absorbs both the direct vergence drive
+        and the version component that would otherwise come via the MLF.  INO lesions
+        therefore require a separate CN3_MR version-yaw gain (not yet implemented).
 
     Decode (plant, per eye)  — M_PLANT_EYE_{L,R}  (3×6):
         6 nerve activations → 3-D effective motor command
@@ -24,12 +29,13 @@ Healthy (all gains = 1) round-trip is transparent:
 ─────────────────────────────────────────────────────────────────────────────
 Lesion guide
 ─────────────────────────────────────────────────────────────────────────────
-CN VI nerve palsy (R):   g_nerve[LR_R+6] = 0    (LR only; MR_L via MLF intact)
-CN VI nucleus palsy (R): g_nucleus[ABN_R] = 0   (LR_R + conjugate MR_L both affected)
+CN VI nerve palsy (R):   g_nerve[LR_R] = 0         (LR_R only; MR_L unaffected)
+CN VI nucleus palsy (R): g_nucleus[ABN_R] = 0      (LR_R paralysed; MR_L unaffected
+                                                     because ABN no longer projects to MR)
 CN III nerve palsy (R):  g_nerve[[MR_R,SR_R,IR_R,IO_R]+6] = 0  (LR_R + SO_R intact)
 CN IV nerve palsy (R):   g_nerve[SO_R+6] = 0
-INO (right MLF):         requires zeroing M_NERVE_PROJ[MR_L, ABN_R] directly
-                         (g_nucleus/g_nerve cannot isolate a single inter-nuclear projection)
+INO (right MLF):         not yet modelable via gains alone — requires splitting CN3_MR_L
+                         into separate version (MLF-pathway) and vergence components.
 
 ─────────────────────────────────────────────────────────────────────────────
 Muscle / nucleus index constants
@@ -66,6 +72,18 @@ _M_NERVE_R_np = np.array([
 _M_NERVE_L_np = _M_NERVE_R_np * np.array([-1.0, +1.0, -1.0], dtype=np.float32)
 
 # Per-eye decode: M_PLANT_EYE = pinv(M_NERVE)  →  M_PLANT_EYE @ M_NERVE = I₃
+#
+# For reference: with symmetric 45°/45° angles (Q=0, pitch-roll decouple):
+#
+#   M_PLANT_EYE_R  (row=axis, col=muscle: LR    MR    SR     IR     SO     IO)
+#     yaw:        [+1/2, -1/2,   0,     0,     0,     0   ]
+#     pitch:      [  0,    0,  +√2/4, -√2/4, -√2/4, +√2/4]
+#     roll:       [  0,    0,  -√2/4, +√2/4, -√2/4, +√2/4]
+#
+#   M_PLANT_EYE_L  (yaw and roll rows negated vs R):
+#     yaw:        [-1/2, +1/2,   0,     0,     0,     0   ]
+#     pitch:      [  0,    0,  +√2/4, -√2/4, -√2/4, +√2/4]
+#     roll:       [  0,    0,  +√2/4, -√2/4, +√2/4, -√2/4]
 _M_PLANT_EYE_R_np = np.linalg.pinv(_M_NERVE_R_np).astype(np.float32)  # (3, 6)
 _M_PLANT_EYE_L_np = np.linalg.pinv(_M_NERVE_L_np).astype(np.float32)  # (3, 6)
 
@@ -99,22 +117,20 @@ N_NERVES = 12   # = 6 left-eye + 6 right-eye
 
 
 # ── Stage 2 — M_NERVE_PROJ  (12 × 12)  nucleus → nerve ───────────────────────
-# Bilateral anatomy:
-#   ABN_L → LR_L  (direct, CN VI nerve)  +  MR_R  (via MLF to right CN3_MR)
-#   ABN_R → LR_R  (direct, CN VI nerve)  +  MR_L  (via MLF to left  CN3_MR)
+# Anatomy modelled:
+#   ABN_L → LR_L  (direct, CN VI nerve only — MLF not modelled separately)
+#   ABN_R → LR_R  (direct, CN VI nerve only)
 #   CN4_L → SO_R  (CN IV nerve decussates in dorsal midbrain)
 #   CN4_R → SO_L
 #   CN3 subdivisions → ipsilateral muscle (CN III nerve, uncrossed)
+# CN3_MR absorbs both vergence drive and the version component that would
+# anatomically travel via the MLF — see Stage 1 M_NUCLEUS derivation.
 
 _M_NERVE_PROJ_np = np.zeros((N_NERVES, N_NUCLEI), dtype=np.float32)
 
-# ABN_L: ipsilateral LR_L + contralateral MR_R via MLF
+# ABN_L/R: ipsilateral LR only (no contralateral MR projection)
 _M_NERVE_PROJ_np[LR_L, ABN_L] = 1.0
-_M_NERVE_PROJ_np[MR_R, ABN_L] = 1.0
-
-# ABN_R: ipsilateral LR_R + contralateral MR_L via MLF
 _M_NERVE_PROJ_np[LR_R, ABN_R] = 1.0
-_M_NERVE_PROJ_np[MR_L, ABN_R] = 1.0
 
 # CN4_L → SO_R (contralateral);  CN4_R → SO_L (contralateral)
 _M_NERVE_PROJ_np[SO_R, CN4_L] = 1.0
@@ -141,11 +157,12 @@ _M_NERVE_PROJ_np[IO_R, CN3_IO_R] = 1.0
 #                           [M_NERVE_R | −0.5*M_NERVE_R]]
 #
 # Since M_NERVE_PROJ is square and full-rank, M_NUCLEUS = inv(M_NERVE_PROJ) @ M_FULL.
-# Key results (verified analytically):
-#   ABN_R:      [+1, 0, 0, −0.5, 0, 0]  — version yaw + vergence inhibits LR
-#   ABN_L:      [−1, 0, 0, −0.5, 0, 0]
-#   CN3_MR_L/R: [ 0, 0, 0, +1,   0, 0]  — pure convergence drive, no version
-#   CN4_L/R:    version pitch/roll + vergence pitch/roll (vertical gaze)
+# Key results with no MLF in M_NERVE_PROJ:
+#   ABN_L:       [−1, 0, 0, −0.5, 0, 0]  — version yaw + vergence inhibits LR_L
+#   ABN_R:       [+1, 0, 0, −0.5, 0, 0]  — version yaw + vergence inhibits LR_R
+#   CN3_MR_L:    [+1, 0, 0, +0.5, 0, 0]  — version + vergence drive to left  MR
+#   CN3_MR_R:    [−1, 0, 0, +0.5, 0, 0]  — version + vergence drive to right MR
+#   CN4_L/R:     version pitch/roll + vergence pitch/roll (vertical gaze)
 #   CN3_SR/IR/IO: version pitch/roll ± vergence pitch/roll
 
 _M_FULL_np = np.vstack([
@@ -154,17 +171,35 @@ _M_FULL_np = np.vstack([
 ]).astype(np.float32)   # (12, 6)
 
 _M_NUCLEUS_np = np.linalg.solve(_M_NERVE_PROJ_np, _M_FULL_np).astype(np.float32)  # (12, 6)
+#
+# Reference: M_NUCLEUS for symmetric 45°/45° angles (0.707=√2/2, 0.354=√2/4)
+# With no MLF in M_NERVE_PROJ, CN3_MR_L/R carry both version_yaw and vergence_yaw = ±½.
+# vergence_yaw = ½ in all 4 ABN/MR entries (push-pull pairs cancel for version,
+# all add for vergence) — no correction needed for non-negative encoding.
+# Columns: [ver_yaw  ver_pit  ver_rol  vrg_yaw  vrg_pit  vrg_rol]
+#  ABN_L  (0): [ -1,     0,       0,      -1/2,    0,       0   ]
+#  ABN_R  (1): [ +1,     0,       0,      -1/2,    0,       0   ]
+#  CN4_L  (2): [  0,   -√2/2,   -√2/2,    0,     +√2/4,  +√2/4 ]
+#  CN4_R  (3): [  0,   -√2/2,   +√2/2,    0,     -√2/4,  +√2/4 ]
+#  CN3_MR_L(4):[ +1,     0,       0,      +1/2,    0,       0   ]
+#  CN3_MR_R(5):[ -1,     0,       0,      +1/2,    0,       0   ]
+#  CN3_SR_L(6):[  0,   +√2/2,   +√2/2,    0,     +√2/4,  +√2/4 ]
+#  CN3_SR_R(7):[  0,   +√2/2,   -√2/2,    0,     -√2/4,  +√2/4 ]
+#  CN3_IR_L(8):[  0,   -√2/2,   -√2/2,    0,     -√2/4,  -√2/4 ]
+#  CN3_IR_R(9):[  0,   -√2/2,   +√2/2,    0,     +√2/4,  -√2/4 ]
+# CN3_IO_L(10):[  0,   +√2/2,   -√2/2,    0,     +√2/4,  -√2/4 ]
+# CN3_IO_R(11):[  0,   +√2/2,   +√2/2,    0,     -√2/4,  -√2/4 ]
 
 
 # ── JAX arrays (immutable; safe inside jit) ────────────────────────────────────
 
-M_NERVE_R     = jnp.array(_M_NERVE_R_np)        # (6, 3)  right-eye muscle geometry
-M_NERVE_L     = jnp.array(_M_NERVE_L_np)        # (6, 3)  left-eye  muscle geometry
-M_PLANT_EYE_R = jnp.array(_M_PLANT_EYE_R_np)   # (3, 6)  right-eye decode (plant)
-M_PLANT_EYE_L = jnp.array(_M_PLANT_EYE_L_np)   # (3, 6)  left-eye  decode (plant)
+M_NERVE_R     = jnp.array(_M_NERVE_R_np)             # (6, 3)  right-eye muscle geometry
+M_NERVE_L     = jnp.array(_M_NERVE_L_np)             # (6, 3)  left-eye  muscle geometry
+M_PLANT_EYE_R = jnp.array(_M_PLANT_EYE_R_np)        # (3, 6)  right-eye decode (plant)
+M_PLANT_EYE_L = jnp.array(_M_PLANT_EYE_L_np)        # (3, 6)  left-eye  decode (plant)
 
-M_NUCLEUS    = jnp.array(_M_NUCLEUS_np)          # (12, 6) brain → nuclei
-M_NERVE_PROJ = jnp.array(_M_NERVE_PROJ_np)       # (12,12) nuclei → nerves (bilateral anatomy)
+M_NUCLEUS    = jnp.array(_M_NUCLEUS_np)    # (12, 6) brain → nuclei
+M_NERVE_PROJ = jnp.array(_M_NERVE_PROJ_np) # (12,12) nuclei → nerves
 
 G_NUCLEUS_DEFAULT = jnp.ones(N_NUCLEI, dtype=jnp.float32)  # healthy: all = 1
 G_NERVE_DEFAULT   = jnp.ones(N_NERVES, dtype=jnp.float32)  # healthy: all = 1
