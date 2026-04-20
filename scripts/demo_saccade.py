@@ -13,6 +13,7 @@ Usage
 import sys
 import os
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import matplotlib
@@ -22,7 +23,7 @@ if not SHOW:
 import matplotlib.pyplot as plt
 
 from oculomotor.sim.simulator import (
-    PARAMS_DEFAULT, with_brain, simulate,
+    PARAMS_DEFAULT, with_brain, with_sensory, simulate,
     _IDX_NI, _IDX_SG, _IDX_VIS,
 )
 from oculomotor.models.sensory_models.sensory_model import C_pos
@@ -41,7 +42,8 @@ _C = {
     'ref':    '#aaaaaa',
 }
 
-THETA_SAC = with_brain(PARAMS_DEFAULT, g_burst=700.0)
+_NOISE    = with_sensory(PARAMS_DEFAULT, sigma_canal=0.5, sigma_pos=0.2, sigma_vel=0.2)
+THETA_SAC = with_brain(_NOISE, g_burst=700.0)
 
 
 # ── Utilities ──────────────────────────────────────────────────────────────────
@@ -145,7 +147,8 @@ def demo_saccade_cascade():
 
         states = simulate(THETA_SAC, t, p_target_array=pt3,
                           scene_present_array=jnp.ones(T),
-                          max_steps=max_s, return_states=True)
+                          max_steps=max_s, return_states=True,
+                          key=jax.random.PRNGKey(ci))
         s = _extract(states, np.array(pt3), THETA_SAC, t_np)
 
         def _vl(ax):
@@ -249,7 +252,7 @@ def demo_saccade_summary():
     t_jump_ms = 0.1
 
     amps_out, peak_vels = [], []
-    for amp in amplitudes_deg:
+    for i, amp in enumerate(amplitudes_deg):
         pt3_ms = jnp.stack([
             jnp.where(t_ms >= t_jump_ms, jnp.tan(jnp.radians(float(amp))), 0.0),
             jnp.zeros(T_ms),
@@ -257,7 +260,8 @@ def demo_saccade_summary():
         ], axis=1)
         eye = simulate(THETA_SAC, t_ms, p_target_array=pt3_ms,
                        scene_present_array=jnp.ones(T_ms),
-                       max_steps=int(0.8/dt)+200)
+                       max_steps=int(0.8/dt)+200,
+                       key=jax.random.PRNGKey(i))
         eye_yaw = np.array(eye[:, 0])
         vel = np.gradient(eye_yaw, dt)
         amps_out.append(float(eye_yaw[-1] - eye_yaw[0]))
@@ -277,7 +281,8 @@ def demo_saccade_summary():
 
     states = simulate(THETA_SAC, t, p_target_array=pt3_obl,
                       scene_present_array=jnp.ones(T),
-                      max_steps=max_s, return_states=True)
+                      max_steps=max_s, return_states=True,
+                      key=jax.random.PRNGKey(0))
     s = _extract(states, np.array(pt3_obl), THETA_SAC, t_np)
 
     # ── Figure layout ─────────────────────────────────────────────────────────
@@ -321,7 +326,8 @@ def demo_saccade_summary():
         ], axis=1)
         eye_i = np.array(simulate(THETA_SAC, t_ms, p_target_array=pt3_ms,
                                   scene_present_array=jnp.ones(T_ms),
-                                  max_steps=int(0.8/dt)+200)[:, 0])
+                                  max_steps=int(0.8/dt)+200,
+                                  key=jax.random.PRNGKey(i))[:, 0])
         ax_eye.plot(t_np_ms - t_jump_ms, eye_i,
                     color=cmap(i / (len(amplitudes_deg) - 1)), lw=1.2,
                     label=f'{amp:.0f}°' if amp in [1, 5, 10, 20] else None)

@@ -20,7 +20,7 @@ One efference copy cascade (120 states), two uses with different gates:
 
     Pursuit Smith predictor — target-gated (foveal target slip only):
         e_combined = target_visible · (vel_delayed + motor_ec)   ≈ v_target when target on
-        Full signal gated by target_visible (= target_in_vf) → zero drive when no target in field
+        Full signal gated by target_visible → zero drive when no target in field
         e_vel_pred = (e_combined − x_pursuit) / (1 + K_phasic)
         → at onset:        ~45 % of v_target drives integrator  (less oscillation)
         → at steady state: e_vel_pred → 0  (integrator at rest, u_pursuit ≈ v_target)
@@ -253,7 +253,18 @@ def step(x_brain, sensory_out, brain_params):
     x_pursuit = x_brain[_IDX_PURSUIT]
     x_verg    = x_brain[_IDX_VERG]
 
-    # ── Binocular combining — gate × signal, then visibility-weighted average ──
+    # ── Binocular combining — version (average) and vergence (difference) ────────
+    # Each signal is gated by the per-eye delayed visibility (tv_L/R or sv_L/R),
+    # then summed and divided by the number of eyes that can see (1 or 2).
+    # scene/target_visible clip to [0,1] so they act as binary presence gates.
+    # Vergence (e_disp) uses the difference of the per-eye gated positions,
+    # further gated by bino = tv_L * tv_R so it is only active when both eyes
+    # see the target (binocular fusion required for disparity).
+    # TODO (diplopia): when disparity is too large the two retinal images are not
+    # fused and the version error from each eye may diverge. In that regime the
+    # weighted average is ambiguous — one option is to fall back to the dominant
+    # eye's signal (e.g. whichever has higher tv) and suppress the other, similar
+    # to what happens perceptually during suppression of the non-dominant eye.
     sv_L, sv_R = sensory_out.scene_vis_L, sensory_out.scene_vis_R
     tv_L, tv_R = sensory_out.target_vis_L, sensory_out.target_vis_R
 
@@ -262,14 +273,17 @@ def step(x_brain, sensory_out, brain_params):
     sv_norm = jnp.maximum(sv_sum, 1e-6)
     tv_norm = jnp.maximum(tv_sum, 1e-6)
 
+    pos_L = tv_L * sensory_out.pos_L
+    pos_R = tv_R * sensory_out.pos_R
+
     slip_delayed   = (sv_L * sensory_out.slip_L + sv_R * sensory_out.slip_R) / sv_norm
-    scene_visible  = 0.5 * sv_sum
-    pos_delayed    = (tv_L * sensory_out.pos_L + tv_R * sensory_out.pos_R) / tv_norm
+    scene_visible  = jnp.clip(sv_sum, 0.0, 1.0)
+    pos_delayed    = (pos_L + pos_R) / tv_norm
     vel_delayed    = (tv_L * sensory_out.vel_L + tv_R * sensory_out.vel_R) / tv_norm
-    target_visible = 0.5 * tv_sum
-    target_in_vf   = jnp.clip(tv_sum, 0.0, 1.0)
-    pos_delayed_L  = tv_L * sensory_out.pos_L   # per-eye gated positions for vergence
-    pos_delayed_R  = tv_R * sensory_out.pos_R
+    target_visible = jnp.clip(tv_sum, 0.0, 1.0)
+
+    bino   = tv_L * tv_R
+    e_disp = bino * (pos_L - pos_R)
 
     # ── One EC, two corrections with separate gates ───────────────────────────
     # motor_ec = delay(u_burst + u_pursuit) — one cascade, read once, used twice.
@@ -301,7 +315,7 @@ def step(x_brain, sensory_out, brain_params):
 
     # ── Saccade generator (target selection handled internally) ───────────────
     # x_ni_net is the brain's proxy for current eye position (avoids plant state dependency)
-    dx_sg, u_burst = sg.step(x_sg, pos_delayed, target_in_vf, x_ni_net, brain_params)
+    dx_sg, u_burst = sg.step(x_sg, pos_delayed, target_visible, x_ni_net, brain_params)
 
     # ── OCR / somatogravic: gravity-driven eye position command ───────────────
     # g_hat = specific force (+x upright).  Tilt signals are normalised components:
@@ -323,12 +337,9 @@ def step(x_brain, sensory_out, brain_params):
     motor_cmd_version = motor_cmd_ni + ocr_pos
 
     # ── Vergence: binocular disparity → disconjugate eye commands ─────────────
-    # Binocularity gate: vergence drive requires both eyes to see the target.
-    #   bino = tv_L * tv_R ≈ 1 when both eyes fuse, 0 when either covered.
+    # bino = tv_L * tv_R ≈ 1 when both eyes fuse, 0 when either covered.
     # When bino = 0: e_disp = 0 → dx_verg = −(x_verg − phoria)/τ_verg ✓
     # EC correction: add x_verg so that, when bino>0, e_pred = e_disp/(1+K_ph).
-    bino   = tv_L * tv_R
-    e_disp = bino * (pos_delayed_L - pos_delayed_R)
     dx_verg, u_verg = vg.step(x_verg, e_disp + x_verg, brain_params)
 
     # Split vergence ±½ around the version command

@@ -14,6 +14,7 @@ Usage
 import sys
 import os
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import matplotlib
@@ -23,7 +24,7 @@ if not SHOW:
 import matplotlib.pyplot as plt
 
 from oculomotor.sim.simulator import (
-    PARAMS_DEFAULT, with_brain, simulate,
+    PARAMS_DEFAULT, with_brain, with_sensory, simulate,
     _IDX_NI, _IDX_SG, _IDX_VIS, _IDX_PURSUIT,
 )
 from oculomotor.models.sensory_models.sensory_model import C_pos
@@ -44,7 +45,7 @@ _C = {
     'head':      '#555555',
 }
 
-THETA = PARAMS_DEFAULT
+THETA = with_sensory(PARAMS_DEFAULT, sigma_canal=0.5, sigma_pos=0.2, sigma_vel=0.2)
 
 
 # ── Utilities ──────────────────────────────────────────────────────────────────
@@ -130,12 +131,14 @@ def demo_smooth_pursuit():
                               p_target_array=pt3, v_target_array=vt3,
                               scene_present_array=jnp.ones(T),
                               target_present_array=jnp.ones(T),
-                              max_steps=max_s, return_states=True)
+                              max_steps=max_s, return_states=True,
+                              key=jax.random.PRNGKey(ci))
         states_nop = simulate(theta_nop, t,
                               p_target_array=pt3,
                               scene_present_array=jnp.ones(T),
                               target_present_array=jnp.ones(T),
-                              max_steps=max_s, return_states=True)
+                              max_steps=max_s, return_states=True,
+                              key=jax.random.PRNGKey(ci))
 
         s_pur = _extract(states_pur, theta_pur, t_np)
         s_nop = _extract(states_nop, theta_nop, t_np)
@@ -221,7 +224,8 @@ def demo_pursuit_cascade():
                           p_target_array=pt3, v_target_array=vt3,
                           scene_present_array=jnp.ones(T),
                           target_present_array=jnp.ones(T),
-                          max_steps=max_s, return_states=True)
+                          max_steps=max_s, return_states=True,
+                          key=jax.random.PRNGKey(ci))
         s = _extract(states, THETA, t_np)
 
         def _vl(ax):
@@ -304,10 +308,12 @@ def demo_vor_saccade():
 
     states_sac = simulate(theta_sac,    t, head_vel_array=hv,
                           target_present_array=jnp.ones(T),
-                          max_steps=max_s, return_states=True)
+                          max_steps=max_s, return_states=True,
+                          key=jax.random.PRNGKey(0))
     states_ns  = simulate(theta_no_sac, t, head_vel_array=hv,
                           target_present_array=jnp.ones(T),
-                          max_steps=max_s, return_states=True)
+                          max_steps=max_s, return_states=True,
+                          key=jax.random.PRNGKey(0))
 
     s    = _extract(states_sac, theta_sac, t_np)
     s_ns = _extract(states_ns,  theta_no_sac, t_np)

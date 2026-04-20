@@ -24,7 +24,7 @@ if not SHOW:
 import matplotlib.pyplot as plt
 
 from oculomotor.sim.simulator import (
-    PARAMS_DEFAULT, with_brain, simulate,
+    PARAMS_DEFAULT, with_brain, with_sensory, simulate,
     _IDX_C, _IDX_VS, _IDX_NI, _IDX_VIS, _IDX_SG,
 )
 from oculomotor.models.sensory_models.sensory_model import N_CANALS, FLOOR, _SOFTNESS, PINV_SENS
@@ -33,7 +33,7 @@ from oculomotor.sim import stimuli as stim_mod
 from oculomotor.analysis import ax_fmt, extract_burst, vs_net, ni_net
 
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), '..', 'outputs')
-THETA = PARAMS_DEFAULT
+THETA = with_sensory(PARAMS_DEFAULT, sigma_canal=0.5, sigma_pos=0.2, sigma_vel=0.2)
 
 _C = {
     'head':   '#555555',
@@ -107,14 +107,16 @@ def demo_vor_cascade():
     T         = len(t)
     states    = simulate(THETA, t, head_vel_array=hv,
                          target_present_array=jnp.zeros(T),   # dark — no visible target
-                         max_steps=max_s, return_states=True)
+                         max_steps=max_s, return_states=True,
+                         key=jax.random.PRNGKey(0))
     sigs      = _extract_signals(THETA, t, hv, states)
     burst     = extract_burst(states, THETA)
 
     theta_no_vs = with_brain(THETA, tau_vs=0.1, K_vs=0.001)
     states_nv   = simulate(theta_no_vs, t, head_vel_array=hv,
                            target_present_array=jnp.zeros(T),
-                           max_steps=max_s, return_states=True)
+                           max_steps=max_s, return_states=True,
+                           key=jax.random.PRNGKey(0))
     sigs_nv     = _extract_signals(theta_no_vs, t, hv, states_nv)
 
     tau_eff = THETA.brain.tau_vs
@@ -238,7 +240,8 @@ def demo_okr_cascade():
                       # Fast phases are still driven by the implicit straight-ahead target:
                       # e_pos_delayed ≈ −x_p, so the saccade generator fires whenever the
                       # eye drifts from center — classic OKN nystagmus sawtooth.
-                      max_steps=max_s, return_states=True)
+                      max_steps=max_s, return_states=True,
+                      key=jax.random.PRNGKey(1))
     t_np   = np.array(t_arr)
     dt     = 1.0 / sr
     burst  = extract_burst(states, theta_okn)
@@ -259,7 +262,8 @@ def demo_okr_cascade():
                           v_scene_array=v_scene,
                           scene_present_array=scene_present,
                           target_present_array=jnp.zeros(T_okn),
-                          max_steps=max_s)[:, 0]
+                          max_steps=max_s,
+                          key=jax.random.PRNGKey(1))[:, 0]
     ev_no_vis  = np.gradient(np.array(eye_no_vis), dt)
 
     fig, axes = plt.subplots(8, 1, figsize=(12, 22), sharex=True)
@@ -380,11 +384,13 @@ def demo_vvor():
     states_dark = simulate(theta_dark, t_vv, head_vel_array=hv_3d,
                            scene_present_array=jnp.zeros(T),
                            target_present_array=jnp.zeros(T),  # dark — no visible target
-                           max_steps=max_sv, return_states=True)
+                           max_steps=max_sv, return_states=True,
+                           key=jax.random.PRNGKey(2))
     states_lit  = simulate(theta_lit, t_vv, head_vel_array=hv_3d,
                            scene_present_array=jnp.ones(T),
                            target_present_array=jnp.ones(T),   # lit — target visible
-                           max_steps=max_sv, return_states=True)
+                           max_steps=max_sv, return_states=True,
+                           key=jax.random.PRNGKey(2))
 
     t_vv     = np.array(t_vv)
     head_pos = np.cumsum(hv_vv) * dt_vv
