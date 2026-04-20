@@ -40,12 +40,11 @@ Per-body semantics
     head  : rot_* → semicircular canals (angular velocity).
              lin_* → otoliths (linear acceleration; future).
     target: Specified as 3-D world position in metres.
-             Use lin_x/y/z_0 for exact Cartesian placement.
-             Use rot_yaw_0 / rot_pitch_0 as angular shorthand: auto-converted
-             to lin_x/y = tan(angle_deg) × z_depth.  lin_z_0 default = 1 m.
-             Use rot_yaw_vel / rot_pitch_vel as angular-velocity shorthand
-             (converted to lin_x/y_vel = ang_vel × π/180 × z_depth).
-             Runner always projects 3-D target–head vector to retinal angles.
+             lin_x_0/y_0/z_0 — Cartesian position (m). Omit = carry forward.
+             lin_x_vel/y_vel/z_vel — velocity (m/s).
+             lin_z_0 = depth (default 1 m). To place at angle θ:
+             lin_x_0 = tan(θ_deg × π/180) × lin_z_0.
+             Runner projects 3-D target–head vector to retinal angles.
     scene : rot_yaw_vel → OKR / velocity-storage drive (angular velocity).
              lin_* → future linear-vection stimulation.
 """
@@ -372,8 +371,8 @@ class SimulationScenario(BaseModel):
 
     Saccade 20° right (2 s):
         head:   [{duration_s: 2}]
-        target: [{duration_s: 0.3, lin_z_0: 1.0},
-                 {duration_s: 1.7, rot_yaw_0: 20}]          ← shorthand for lin_x_0=0.364
+        target: [{duration_s: 0.3, lin_z_0: 1.0, lin_x_0: 0.0},
+                 {duration_s: 1.7, lin_x_0: 0.364}]         ← tan(20°) × 1 m
         scene:  [{duration_s: 2}]
         visual: [{duration_s: 2}]                            ← defaults: both present
 
@@ -456,9 +455,10 @@ class SimulationScenario(BaseModel):
     target: list[BodySegment] = Field(
         min_length=1,
         description=(
-            "Piecewise target kinematics. Specify in 3-D world coordinates (lin_*) in metres, "
-            "or use rot_yaw_0/rot_yaw_vel as angular shorthand (auto-converted to Cartesian). "
-            "lin_z_0 = viewing distance (default 1 m)."
+            "Piecewise target kinematics in 3-D world coordinates (metres). "
+            "lin_x_0/y_0/z_0 = position (m), lin_x_vel/y_vel/z_vel = velocity (m/s). "
+            "lin_z_0 = viewing distance (default 1 m). "
+            "To place at angle θ: lin_x_0 = tan(θ_deg × π/180) × lin_z_0."
         )
     )
     scene: list[BodySegment] = Field(

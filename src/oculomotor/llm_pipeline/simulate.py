@@ -78,25 +78,24 @@ time to settle and provides a clear pre-stimulus reference in the figure.
 
 ### target: list of segments   — 3-D world position (metres)
 
-  Target is specified in WORLD CARTESIAN COORDINATES (metres), not angles.
+  Target is specified in WORLD CARTESIAN COORDINATES (metres).
   The runner projects it geometrically to retinal coordinates for you.
 
-  lin_x_0    — lateral position (m, rightward +).  Default: 0 m (straight ahead).
-  lin_y_0    — vertical position (m, upward +).    Default: 0 m.
-  lin_z_0    — depth / viewing distance (m, +fwd). Default: 1 m.
-  lin_x_vel  — lateral velocity (m/s).  Pursuit drive ≈ lin_x_vel / lin_z_0 (deg/s).
-  lin_z_vel  — approaching/receding target velocity (m/s).
+  lin_x_0   — lateral position (m, rightward +).  Omit = carry forward from prev segment.
+  lin_y_0   — vertical position (m, upward +).    Omit = carry forward.
+  lin_z_0   — depth / viewing distance (m, +fwd). Omit = carry forward (default 1 m).
+  lin_x_vel — lateral velocity (m/s, rightward +). For smooth pursuit.
+  lin_y_vel — vertical velocity (m/s, upward +).
+  lin_z_vel — approaching (+) / receding (−) velocity (m/s).
 
-  ANGULAR SHORTHAND (auto-converted at z=lin_z_0 or 1 m):
-    rot_yaw_0    = target angle (deg)  →  lin_x_0 = tan(rot_yaw_0°) × z
-    rot_yaw_vel  = angular vel (deg/s) →  lin_x_vel ≈ rot_yaw_vel × π/180 × z
-    (same for pitch / y)
+  Conversion from degrees to metres at a given depth z:
+    lin_x_0 = tan(yaw_deg  × π/180) × z     lin_x_vel = yaw_vel_degs  × π/180 × z
+    lin_y_0 = tan(pitch_deg × π/180) × z    lin_y_vel = pitch_vel_degs × π/180 × z
 
-  Conversion table at z=1 m:
-    10°  → lin_x_0 ≈ 0.176 m       10 deg/s  → lin_x_vel ≈ 0.175 m/s
-    20°  → lin_x_0 ≈ 0.364 m       20 deg/s  → lin_x_vel ≈ 0.349 m/s
-    30°  → lin_x_0 ≈ 0.577 m       30 deg/s  → lin_x_vel ≈ 0.524 m/s
-    None (omit) = position/velocity continues from previous segment
+  Quick reference at z = 1 m:
+    5°  → 0.087 m    10° → 0.176 m    20° → 0.364 m    30° → 0.577 m
+    10 deg/s → 0.175 m/s    20 deg/s → 0.349 m/s    30 deg/s → 0.524 m/s
+  At other depths multiply by z (e.g. 20° at 0.5 m → 0.182 m).
 
 ### scene: list of segments   — visual background motion
 
@@ -119,12 +118,26 @@ time to settle and provides a clear pre-stimulus reference in the figure.
 
 ## Common recipes
 
-### Saccade 20° right (2 s):
+### Saccade 20° right at 1 m (2 s):
   head:   [{duration_s: 2}]
-  target: [{duration_s: 0.3, lin_z_0: 1.0},
-           {duration_s: 1.7, rot_yaw_0: 20}]
+  target: [{duration_s: 0.3, lin_z_0: 1.0, lin_x_0: 0.0},
+           {duration_s: 1.7, lin_x_0: 0.364}]   # tan(20°) × 1 m
   scene:  [{duration_s: 2}]
   visual: [{duration_s: 2}]
+
+### Saccade between near (0.5 m) and far (3 m) target — vergence + saccade (6 s):
+  # Each segment sets a new lin_z_0 (depth) and lin_x_0/lin_y_0 (lateral position).
+  # The runner re-projects each segment geometrically, so angular size and disparity
+  # change correctly with depth.
+  head:   [{duration_s: 6}]
+  target: [{duration_s: 1.0, lin_z_0: 0.5, lin_x_0: 0.0},
+           {duration_s: 1.0, lin_z_0: 3.0, lin_x_0: 0.0},
+           {duration_s: 1.0, lin_z_0: 0.5, lin_x_0: 0.0},
+           {duration_s: 1.0, lin_z_0: 3.0, lin_x_0: 0.0},
+           {duration_s: 2.0, lin_z_0: 0.5, lin_x_0: 0.0}]
+  scene:  [{duration_s: 6}]
+  visual: [{duration_s: 6}]
+  plot: {panels: ["visual_flags", "eye_position", "vergence"]}
 
 ### Rightward vHIT (2.5 s):
   head:   [{duration_s: 2.5, rot_yaw_vel: 200, rot_profile: "impulse"}]
@@ -170,8 +183,8 @@ time to settle and provides a clear pre-stimulus reference in the figure.
 
 ### Smooth pursuit 20 deg/s, onset 0.3 s (5 s):
   head:   [{duration_s: 5}]
-  target: [{duration_s: 0.3, lin_z_0: 1.0},
-           {duration_s: 4.7, rot_yaw_vel: 20}]
+  target: [{duration_s: 0.3, lin_z_0: 1.0, lin_x_0: 0.0},
+           {duration_s: 4.7, lin_x_vel: 0.349}]   # 20 deg/s × π/180 × 1 m
   scene:  [{duration_s: 5}]
   visual: [{duration_s: 5}]
 
@@ -191,7 +204,7 @@ time to settle and provides a clear pre-stimulus reference in the figure.
   head:   [{duration_s: 3}]
   target: [{duration_s: 1.0, lin_z_0: 1.0, lin_x_0: 0.0},
            {duration_s: 0.2},
-           {duration_s: 1.8, rot_yaw_0: 15}]
+           {duration_s: 1.8, lin_x_0: 0.268}]   # tan(15°) × 1 m
   scene:  [{duration_s: 3}]
   visual: [{duration_s: 1.0, scene_present: true, target_present: true},
            {duration_s: 0.2, scene_present: true, target_present: false},
