@@ -358,9 +358,10 @@ def _draw_panel(ax, panel_name: str, t: np.ndarray, sig: dict,
     pt = np.array(stim_kw['p_target_array'])           # (T, 3) Cartesian
     vt = np.array(stim_kw['v_target_array'])           # (T, 3) deg/s
     vs = np.array(stim_kw['v_scene_array'])            # (T, 3) deg/s
-    sp = np.array(stim_kw['scene_present_array'])      # (T,)
-    tpL = np.array(stim_kw['target_present_L_array'])  # (T,)
-    tpR = np.array(stim_kw['target_present_R_array'])  # (T,)
+    sp  = np.maximum(np.array(stim_kw['scene_present_L_array']),
+                     np.array(stim_kw['scene_present_R_array']))   # (T,)
+    tpL = np.array(stim_kw['target_present_L_array'])              # (T,)
+    tpR = np.array(stim_kw['target_present_R_array'])              # (T,)
 
     target_yaw_deg = np.degrees(np.arctan(pt[:, 0]))
 

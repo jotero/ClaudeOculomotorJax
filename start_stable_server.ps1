@@ -18,7 +18,6 @@ if (-not $branch) {
 # Create or refresh the worktree
 if (Test-Path $stable) {
     Write-Host "Updating stable worktree..."
-    git -C $stable checkout stable 2>$null
     git -C $stable reset --hard stable 2>$null
 } else {
     Write-Host "Creating stable worktree at $stable ..."
