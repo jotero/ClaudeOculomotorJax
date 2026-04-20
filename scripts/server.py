@@ -125,7 +125,7 @@ class RunResponse(BaseModel):
 
 class FeedbackRequest(BaseModel):
     run_id:        str
-    looks_correct: bool
+    looks_correct: str | None = None   # 'correct', 'incorrect', or None (not rated)
     comment:       str = ''
 
 
@@ -240,7 +240,7 @@ async def feedback_endpoint(req: FeedbackRequest):
     """Record user feedback (looks_correct + comment) for a run."""
     if req.run_id not in _log_entries:
         raise HTTPException(status_code=404, detail='run_id not found')
-    _log_entries[req.run_id]['looks_correct'] = str(req.looks_correct)
+    _log_entries[req.run_id]['looks_correct'] = req.looks_correct or ''
     _log_entries[req.run_id]['feedback']      = req.comment
     _rewrite_log()
     return {'status': 'ok'}

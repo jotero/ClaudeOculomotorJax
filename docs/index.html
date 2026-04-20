@@ -78,12 +78,12 @@
   }
   .feedback-section h3 { font-size: 0.9rem; color: #ccc; margin-bottom: 12px; }
   .feedback-row { display: flex; align-items: flex-start; gap: 16px; flex-wrap: wrap; }
-  .checkbox-label {
-    display: flex; align-items: center; gap: 7px;
-    font-size: 0.88rem; color: #aaa; cursor: pointer; user-select: none;
-    white-space: nowrap; padding-top: 6px;
+  .radio-group { display: flex; gap: 14px; padding-top: 6px; flex-shrink: 0; }
+  .radio-label {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 0.88rem; color: #aaa; cursor: pointer; user-select: none; white-space: nowrap;
   }
-  .checkbox-label input[type=checkbox] { width: 16px; height: 16px; accent-color: #4a6cf7; cursor: pointer; }
+  .radio-label input[type=radio] { accent-color: #4a6cf7; cursor: pointer; width: 15px; height: 15px; }
   .feedback-comment {
     flex: 1; min-width: 200px; background: #0f1117; border: 1px solid #2a2d3a;
     border-radius: 6px; color: #e0e0e0; font-size: 0.85rem; padding: 8px 10px;
@@ -201,9 +201,14 @@
     <div class="feedback-section" id="feedback-section">
       <h3>Feedback</h3>
       <div class="feedback-row">
-        <label class="checkbox-label">
-          <input type="checkbox" id="looks-correct"> Simulation looks correct
-        </label>
+        <div class="radio-group">
+          <label class="radio-label">
+            <input type="radio" name="looks-correct" value="correct"> Looks correct
+          </label>
+          <label class="radio-label">
+            <input type="radio" name="looks-correct" value="incorrect"> Looks incorrect
+          </label>
+        </div>
         <textarea class="feedback-comment" id="feedback-comment"
                   placeholder="Optional: notes on what looks right or wrong…"></textarea>
       </div>
@@ -258,7 +263,7 @@ async function run() {
   document.getElementById('avatar-section').style.display = 'none';
   document.getElementById('feedback-section').style.display = 'none';
   document.getElementById('feedback-confirm').style.display = 'none';
-  document.getElementById('looks-correct').checked = false;
+  document.querySelectorAll('input[name="looks-correct"]').forEach(r => r.checked = false);
   document.getElementById('feedback-comment').value = '';
   status.className = 'status';
   status.innerHTML = '<span class="spinner"></span>Thinking…';
@@ -282,7 +287,9 @@ async function run() {
       ? '<span class="mode-badge mode-comparison">comparison</span>'
       : '<span class="mode-badge mode-single">single</span>';
     const vtag = '<span class="version-tag">v' + data.version + '</span>';
-    status.innerHTML = badge + data.title + vtag;
+    const desc = (data.detail_json && data.detail_json.narrative)
+      ? data.detail_json.narrative : data.title;
+    status.innerHTML = badge + desc + vtag;
 
     document.getElementById('feedback-section').style.display = 'block';
     document.getElementById('download-btn').style.display =
@@ -314,7 +321,7 @@ async function submitFeedback() {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({
         run_id:        _currentRunId,
-        looks_correct: document.getElementById('looks-correct').checked,
+        looks_correct: (document.querySelector('input[name="looks-correct"]:checked') || {}).value || null,
         comment:       document.getElementById('feedback-comment').value,
       }),
     });
