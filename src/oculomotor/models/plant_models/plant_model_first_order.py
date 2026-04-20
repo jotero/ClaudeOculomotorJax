@@ -54,7 +54,7 @@ class PlantParams(NamedTuple):
 # ── State layout ───────────────────────────────────────────────────────────────
 
 N_STATES  = 6           # [x_p_L (3) | x_p_R (3)]  — binocular
-N_INPUTS  = 3
+N_INPUTS  = 6           # muscle activation vector from brain_model (6,)
 N_OUTPUTS = 3   # q_eye (position, per eye)
 
 # Index constants for the combined (6,) plant state
@@ -62,7 +62,7 @@ _IDX_P_L = slice(0, 3)  # left  eye rotation vector
 _IDX_P_R = slice(3, 6)  # right eye rotation vector
 
 
-def step(x_p, motor_cmd, plant_params):
+def step(x_p, motor_cmd, plant_params, decode_matrix=None):
     """Single ODE step: state derivative + eye position/velocity outputs.
 
     The orbital limit is enforced on dx_p (not the output): when x_p is at
@@ -71,9 +71,12 @@ def step(x_p, motor_cmd, plant_params):
     consistent with q_eye = x_p.
 
     Args:
-        x_p:          (3,)  plant state = eye rotation vector (deg), ∈ [−L, +L]
-        motor_cmd:    (3,)  pulse-step motor command from NI
-        plant_params: PlantParams
+        x_p:           (3,)   plant state = eye rotation vector (deg), ∈ [−L, +L]
+        motor_cmd:     (3,) or (6,)  pulse-step motor command (or muscle activations)
+        plant_params:  PlantParams
+        decode_matrix: (3, 6) or None.  If provided, applied first:
+                       motor_cmd_3 = decode_matrix @ motor_cmd_6.
+                       If None, motor_cmd is used directly (must be (3,)).
 
     Returns:
         dx_p:  (3,)  wall-clipped dx_p/dt
@@ -82,6 +85,10 @@ def step(x_p, motor_cmd, plant_params):
     """
     tau_p = plant_params.tau_p
     L     = plant_params.orbital_limit
+
+    # Decode 6-D muscle activations → 3-D effective motor command
+    if decode_matrix is not None:
+        motor_cmd = decode_matrix @ motor_cmd
 
     w_raw  = (motor_cmd - x_p) / tau_p
 

@@ -69,6 +69,7 @@ from oculomotor.models.brain_models.brain_model    import (
     BrainParams,
 )
 from oculomotor.models.plant_models.plant_model_first_order import PlantParams, _IDX_P_L, _IDX_P_R
+from oculomotor.models.plant_models.muscle_geometry import M_PLANT_EYE_L, M_PLANT_EYE_R
 from oculomotor.models.sensory_models import sensory_model
 from oculomotor.models.brain_models   import brain_model
 from oculomotor.models.plant_models   import plant_model_first_order as plant_model
@@ -311,10 +312,10 @@ def ODE_ocular_motor(t, state, args):
     # ── Brain: VS + NI + SG + EC + vergence ──────────────────────────────────
     dx_brain, motor_cmd_L, motor_cmd_R = brain_model.step(state.brain, sensory_out, theta.brain)
 
-    # ── Plant: per-eye commands (version ± ½ vergence) ───────────────────────
+    # ── Plant: decode muscle activations (6,) → effective command (3,) ─────────
     # dx_p is wall-clipped so x_p stays bounded; q_eye = x_p; w_eye = dx_p.
-    dx_p_L, q_eye_L, w_eye_L = plant_model.step(state.plant[_IDX_P_L], motor_cmd_L, theta.plant)
-    dx_p_R, q_eye_R, w_eye_R = plant_model.step(state.plant[_IDX_P_R], motor_cmd_R, theta.plant)
+    dx_p_L, q_eye_L, w_eye_L = plant_model.step(state.plant[_IDX_P_L], motor_cmd_L, theta.plant, M_PLANT_EYE_L)
+    dx_p_R, q_eye_R, w_eye_R = plant_model.step(state.plant[_IDX_P_R], motor_cmd_R, theta.plant, M_PLANT_EYE_R)
     dx_plant = jnp.concatenate([dx_p_L, dx_p_R])
 
     # ── Sensory: retinal signals + canal + otolith + visual delay cascades ────

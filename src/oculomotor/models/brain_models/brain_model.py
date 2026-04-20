@@ -84,6 +84,9 @@ from oculomotor.models.brain_models import pursuit             as pu
 from oculomotor.models.brain_models import vergence            as vg
 from oculomotor.models.sensory_models.sensory_model import SensoryOutput  # noqa: F401 (re-exported)
 from oculomotor.models.plant_models.readout import rotation_matrix
+from oculomotor.models.plant_models.muscle_geometry import (
+    M_NUCLEUS, M_NERVE_PROJ, G_NUCLEUS_DEFAULT, G_NERVE_DEFAULT,
+)
 
 
 # ── Brain parameters ────────────────────────────────────────────────────────────
@@ -160,6 +163,19 @@ class BrainParams(NamedTuple):
     tau_verg:              float        = 25.0            # vergence position leak TC (s)
     phoria:                jnp.ndarray  = jnp.zeros(3)    # resting vergence (deg); 0=orthophoria
                                                            # phoria[0]>0 esophoria, <0 exophoria
+
+    # Motor nucleus and nerve gains — two-stage encode (see muscle_geometry.py)
+    # Stage 1 — g_nucleus (12,): per-nucleus gain [0,1]. Zero = nucleus lesion.
+    #   Nucleus order: ABN_L(0), ABN_R(1), CN4_L(2), CN4_R(3),
+    #                  CN3_MR_L(4), CN3_MR_R(5), CN3_SR_L(6), CN3_SR_R(7),
+    #                  CN3_IR_L(8), CN3_IR_R(9), CN3_IO_L(10), CN3_IO_R(11)
+    #   ABN nucleus lesion affects LR (direct) + conjugate MR (via MLF) simultaneously.
+    # Stage 2 — g_nerve (12,): per-nerve gain [0,1]. Zero = nerve/fascicular lesion.
+    #   Nerve order: [LR_L,MR_L,SR_L,IR_L,SO_L,IO_L, LR_R,MR_R,SR_R,IR_R,SO_R,IO_R]
+    #   CN nerve lesion isolates individual muscles without affecting other nuclei.
+    # Healthy default: all ones → transparent round-trip through plant.
+    g_nucleus:             jnp.ndarray  = G_NUCLEUS_DEFAULT  # (12,) motor nucleus gains
+    g_nerve:               jnp.ndarray  = G_NERVE_DEFAULT    # (12,) per-nerve gains
 
 
 # ── State layout ───────────────────────────────────────────────────────────────
@@ -240,9 +256,9 @@ def step(x_brain, sensory_out, brain_params):
         brain_params: BrainParams   model parameters
 
     Returns:
-        dx_brain:    (144,)  dx_brain/dt
-        motor_cmd_L: (3,)    pulse-step motor command → left  plant
-        motor_cmd_R: (3,)    pulse-step motor command → right plant
+        dx_brain:    (156,)  dx_brain/dt
+        motor_cmd_L: (6,)    per-muscle activation vector → left  plant
+        motor_cmd_R: (6,)    per-muscle activation vector → right plant
     """
     x_vs      = x_brain[_IDX_VS]      # (9,): bilateral VS + null
     x_ni      = x_brain[_IDX_NI]      # (9,): bilateral NI + null
@@ -342,9 +358,16 @@ def step(x_brain, sensory_out, brain_params):
     # EC correction: add x_verg so that, when bino>0, e_pred = e_disp/(1+K_ph).
     dx_verg, u_verg = vg.step(x_verg, e_disp + x_verg, brain_params)
 
-    # Split vergence ±½ around the version command
-    motor_cmd_L = motor_cmd_version + 0.5 * u_verg
-    motor_cmd_R = motor_cmd_version - 0.5 * u_verg
+    # ── Two-stage motor nucleus encode → per-muscle nerve activations ────────
+    # Stage 1: [version, vergence] (6,) → nuclei (12,) via M_NUCLEUS
+    # Stage 2: nuclei → nerves (12,) via M_NERVE_PROJ (captures bilateral anatomy:
+    #          ABN → ipsilateral LR + contralateral MR via MLF; CN4 → contralateral SO)
+    # Split output: motor_cmd_L = nerves[:6], motor_cmd_R = nerves[6:]
+    version_vergence = jnp.concatenate([motor_cmd_version, u_verg])           # (6,)
+    nuclei   = jnp.diag(brain_params.g_nucleus) @ (M_NUCLEUS    @ version_vergence)  # (12,)
+    nerves   = jnp.diag(brain_params.g_nerve)   @ (M_NERVE_PROJ @ nuclei)            # (12,)
+    motor_cmd_L = nerves[:6]   # (6,) left  eye nerve activations
+    motor_cmd_R = nerves[6:]   # (6,) right eye nerve activations
 
     # ── Efference copy: advance delay cascade with version motor command ──────
     # Rotate (u_burst + u_pursuit) from head frame into eye frame before delaying.
