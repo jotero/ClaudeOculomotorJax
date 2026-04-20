@@ -268,8 +268,9 @@ def ODE_ocular_motor(t, state, args):
         args:  (theta, hv_interp, hp_interp, ha_interp, vs_interp, target_interp,
                 vt_interp, scene_present_L_interp, scene_present_R_interp,
                 target_present_L_interp, target_present_R_interp,
-                noise_canal_interp, noise_slip_interp,
-                noise_pos_L_interp, noise_pos_R_interp, noise_vel_interp)
+                noise_canal_interp, noise_slip_L_interp, noise_slip_R_interp,
+                noise_pos_L_interp, noise_pos_R_interp,
+                noise_vel_L_interp, noise_vel_R_interp)
 
     Returns:
         SimState of derivatives (dsensory, dbrain, dplant)
@@ -277,9 +278,9 @@ def ODE_ocular_motor(t, state, args):
     (theta, hv_interp, hp_interp, ha_interp, vs_interp, target_interp,
      vt_interp, scene_present_L_interp, scene_present_R_interp,
      target_present_L_interp, target_present_R_interp,
-     noise_canal_interp, noise_slip_interp,
+     noise_canal_interp, noise_slip_L_interp, noise_slip_R_interp,
      noise_pos_L_interp, noise_pos_R_interp,
-     noise_vel_interp) = args
+     noise_vel_L_interp, noise_vel_R_interp) = args
 
     # ── External inputs at time t ────────────────────────────────────────────
     w_head            = hv_interp.evaluate(t)                  # (3,) head angular velocity (deg/s)
@@ -293,22 +294,18 @@ def ODE_ocular_motor(t, state, args):
     target_present_L  = target_present_L_interp.evaluate(t)   # scalar: 0=L eye covered
     target_present_R  = target_present_R_interp.evaluate(t)   # scalar: 0=R eye covered
 
-    # ── Sensory: read bundled outputs for brain (averaged L+R) ───────────────
+    # ── Sensory: read raw per-eye cascade outputs ────────────────────────────
     sensory_out = sensory_model.read_outputs(state.sensory, theta.sensory)
 
     # ── Sensory noise ─────────────────────────────────────────────────────────
-    noise_slip  = noise_slip_interp.evaluate(t)        # (3,) scene-level slip noise
-    noise_vel   = noise_vel_interp.evaluate(t)         # (3,) target velocity noise
-    noise_pos_L = noise_pos_L_interp.evaluate(t)       # (3,) left  eye position OU drift
-    noise_pos_R = noise_pos_R_interp.evaluate(t)       # (3,) right eye position OU drift
     sensory_out = sensory_out._replace(
         canal   = sensory_out.canal  + noise_canal_interp.evaluate(t),
-        slip_L  = sensory_out.slip_L + noise_slip,
-        slip_R  = sensory_out.slip_R + noise_slip,
-        vel_L   = sensory_out.vel_L  + noise_vel,
-        vel_R   = sensory_out.vel_R  + noise_vel,
-        pos_L   = sensory_out.pos_L  + noise_pos_L,
-        pos_R   = sensory_out.pos_R  + noise_pos_R,
+        slip_L  = sensory_out.slip_L + noise_slip_L_interp.evaluate(t),
+        slip_R  = sensory_out.slip_R + noise_slip_R_interp.evaluate(t),
+        vel_L   = sensory_out.vel_L  + noise_vel_L_interp.evaluate(t),
+        vel_R   = sensory_out.vel_R  + noise_vel_R_interp.evaluate(t),
+        pos_L   = sensory_out.pos_L  + noise_pos_L_interp.evaluate(t),
+        pos_R   = sensory_out.pos_R  + noise_pos_R_interp.evaluate(t),
     )
 
     # ── Brain: VS + NI + SG + EC + vergence ──────────────────────────────────
@@ -493,11 +490,15 @@ def simulate(params, t_array_or_stimulus, head_vel_array=None,
     if key is None:
         key = jax.random.PRNGKey(0)
     k_canal, k_slip, k_pos, k_vel = jax.random.split(key, 4)
-    k_pos_L, k_pos_R = jax.random.split(k_pos, 2)
+    k_slip_L, k_slip_R = jax.random.split(k_slip, 2)
+    k_vel_L,  k_vel_R  = jax.random.split(k_vel,  2)
+    k_pos_L,  k_pos_R  = jax.random.split(k_pos,  2)
 
-    noise_canal = jax.random.normal(k_canal, (T, 6)) * params.sensory.sigma_canal  # (T, 6) deg/s
-    noise_slip  = jax.random.normal(k_slip,  (T, 3)) * params.sensory.sigma_slip   # (T, 3) deg/s
-    noise_vel   = jax.random.normal(k_vel,   (T, 3)) * params.sensory.sigma_vel    # (T, 3) deg/s
+    noise_canal   = jax.random.normal(k_canal,  (T, 6)) * params.sensory.sigma_canal
+    noise_slip_L  = jax.random.normal(k_slip_L, (T, 3)) * params.sensory.sigma_slip
+    noise_slip_R  = jax.random.normal(k_slip_R, (T, 3)) * params.sensory.sigma_slip
+    noise_vel_L   = jax.random.normal(k_vel_L,  (T, 3)) * params.sensory.sigma_vel
+    noise_vel_R   = jax.random.normal(k_vel_R,  (T, 3)) * params.sensory.sigma_vel
 
     # Retinal position drift — independent OU processes for L and R eyes.
     # OU with tau_pos_drift ~300ms accumulates slowly → sparse microsaccades.
@@ -549,20 +550,24 @@ def simulate(params, t_array_or_stimulus, head_vel_array=None,
         tg_R = _prepend(tg_R[:, None])[:, 0]
 
         # Noise: zeros during warmup (deterministic settling, not noise-driven)
-        noise_canal = jnp.concatenate([jnp.zeros((warmup_T, 6)), noise_canal], axis=0)
-        noise_slip  = jnp.concatenate([jnp.zeros((warmup_T, 3)), noise_slip],  axis=0)
-        noise_pos_L = jnp.concatenate([jnp.zeros((warmup_T, 3)), noise_pos_L], axis=0)
-        noise_pos_R = jnp.concatenate([jnp.zeros((warmup_T, 3)), noise_pos_R], axis=0)
-        noise_vel   = jnp.concatenate([jnp.zeros((warmup_T, 3)), noise_vel],   axis=0)
+        noise_canal  = jnp.concatenate([jnp.zeros((warmup_T, 6)), noise_canal],  axis=0)
+        noise_slip_L = jnp.concatenate([jnp.zeros((warmup_T, 3)), noise_slip_L], axis=0)
+        noise_slip_R = jnp.concatenate([jnp.zeros((warmup_T, 3)), noise_slip_R], axis=0)
+        noise_pos_L  = jnp.concatenate([jnp.zeros((warmup_T, 3)), noise_pos_L],  axis=0)
+        noise_pos_R  = jnp.concatenate([jnp.zeros((warmup_T, 3)), noise_pos_R],  axis=0)
+        noise_vel_L  = jnp.concatenate([jnp.zeros((warmup_T, 3)), noise_vel_L],  axis=0)
+        noise_vel_R  = jnp.concatenate([jnp.zeros((warmup_T, 3)), noise_vel_R],  axis=0)
     else:
         t_full   = t_array
         warmup_T = 0
 
     noise_canal_interp   = diffrax.LinearInterpolation(ts=t_full, ys=noise_canal)
-    noise_slip_interp    = diffrax.LinearInterpolation(ts=t_full, ys=noise_slip)
+    noise_slip_L_interp  = diffrax.LinearInterpolation(ts=t_full, ys=noise_slip_L)
+    noise_slip_R_interp  = diffrax.LinearInterpolation(ts=t_full, ys=noise_slip_R)
     noise_pos_L_interp   = diffrax.LinearInterpolation(ts=t_full, ys=noise_pos_L)
     noise_pos_R_interp   = diffrax.LinearInterpolation(ts=t_full, ys=noise_pos_R)
-    noise_vel_interp     = diffrax.LinearInterpolation(ts=t_full, ys=noise_vel)
+    noise_vel_L_interp   = diffrax.LinearInterpolation(ts=t_full, ys=noise_vel_L)
+    noise_vel_R_interp   = diffrax.LinearInterpolation(ts=t_full, ys=noise_vel_R)
 
     hv_interp                = diffrax.LinearInterpolation(ts=t_full, ys=hv3)
     hp_interp                = diffrax.LinearInterpolation(ts=t_full, ys=hp3)
@@ -604,8 +609,9 @@ def simulate(params, t_array_or_stimulus, head_vel_array=None,
         args=(params, hv_interp, hp_interp, ha_interp, vs_interp, target_interp,
               vt_interp, scene_present_L_interp, scene_present_R_interp,
               target_present_L_interp, target_present_R_interp,
-              noise_canal_interp, noise_slip_interp,
-              noise_pos_L_interp, noise_pos_R_interp, noise_vel_interp),
+              noise_canal_interp, noise_slip_L_interp, noise_slip_R_interp,
+              noise_pos_L_interp, noise_pos_R_interp,
+              noise_vel_L_interp, noise_vel_R_interp),
         stepsize_controller=diffrax.ConstantStepSize(),
         saveat=diffrax.SaveAt(ts=t_full),
         max_steps=max_steps,

@@ -83,6 +83,7 @@ from oculomotor.models.brain_models import gravity_estimator   as ge
 from oculomotor.models.brain_models import pursuit             as pu
 from oculomotor.models.brain_models import vergence            as vg
 from oculomotor.models.sensory_models.sensory_model import SensoryOutput  # noqa: F401 (re-exported)
+from oculomotor.models.plant_models.readout import rotation_matrix
 
 
 # ── Brain parameters ────────────────────────────────────────────────────────────
@@ -335,9 +336,16 @@ def step(x_brain, sensory_out, brain_params):
     motor_cmd_R = motor_cmd_version - 0.5 * u_verg
 
     # ── Efference copy: advance delay cascade with version motor command ──────
-    # EC tracks the conjugate (version) command: u_burst + u_pursuit.
-    # Vergence is disconjugate and does not contaminate VS or pursuit EC.
-    dx_ec, _ = ec.step(x_ec, u_burst + u_pursuit, brain_params)
+    # Rotate (u_burst + u_pursuit) from head frame into eye frame before delaying.
+    # slip_delayed is in eye frame (retinal_signals applies R_gaze_T); the EC must
+    # delay the SAME frame.  Rotating at cascade INPUT ensures motor_ec at readout
+    # carries R_eye_T(t−τ) @ u(t−τ), which matches slip_delayed(t) exactly —
+    # both use the gaze angle from the same past time t−τ.
+    # Approximation: R_head ≈ I (head stationary during saccades) → R_gaze_T ≈ R_eye_T.
+    # x_ni_net proxies current gaze; [yaw,pitch,roll] → permute for rotation_matrix.
+    _q2rv_ec = lambda q: jnp.array([-q[1], q[0], q[2]])
+    R_eye_T  = rotation_matrix(_q2rv_ec(x_ni_net)).T   # head → eye frame
+    dx_ec, _ = ec.step(x_ec, R_eye_T @ (u_burst + u_pursuit), brain_params)
 
     # ── Pack state derivative ─────────────────────────────────────────────────
     dx_brain = jnp.concatenate([dx_vs, dx_ni, dx_sg, dx_ec, dx_grav, dx_pursuit, dx_verg])

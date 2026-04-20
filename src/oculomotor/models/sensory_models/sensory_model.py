@@ -19,11 +19,11 @@ Binocular averaging is the brain's responsibility (brain_model.py).  This module
 only provides raw per-eye cascade readouts plus delayed visibility gates.
 
 Binocular state layout:
-    x_sensory = [x_c (12) | x_oto (6) | x_vis_L (480) | x_vis_R (480)]  — N_STATES = 978
+    x_sensory = [x_c (12) | x_oto (6) | x_vis_L (440) | x_vis_R (440)]  — N_STATES = 898
 
     x_vis_{L,R} layout:
         [x_scene_vel(120) | x_target_pos(120) | x_target_vel(120)
-         | x_target_in_vf(40) | x_scene_visible(40) | x_target_visible(40)]
+         | x_scene_visible(40) | x_target_visible(40)]
 
 Index constants (relative to x_sensory):
     _IDX_C     — canal states    (12,)
@@ -100,12 +100,11 @@ canal_nonlinearity = _canal.nonlinearity   # renamed in canal.py
 # Visual delay
 N_STAGES           = _retina.N_STAGES             # 40
 _N_PER_SIG         = _retina._N_PER_SIG           # 120
-C_slip             = _retina.C_slip               # (3, 480)  delayed scene velocity
-C_pos              = _retina.C_pos                # (3, 480)  delayed target position (raw)
-C_vel              = _retina.C_vel                # (3, 480)  delayed target velocity (raw)
-C_target_in_vf             = _retina.C_target_in_vf               # (1, 480)  delayed target_in_vf (geometric)
-C_scene_visible    = _retina.C_scene_visible      # (1, 480)  delayed scene_present
-C_target_visible   = _retina.C_target_visible     # (1, 480)  delayed target_present × target_in_vf
+C_slip             = _retina.C_slip               # (3, 440)  delayed scene velocity
+C_pos              = _retina.C_pos                # (3, 440)  delayed target position (raw)
+C_vel              = _retina.C_vel                # (3, 440)  delayed target velocity (raw)
+C_scene_visible    = _retina.C_scene_visible      # (1, 440)  delayed scene_present
+C_target_visible   = _retina.C_target_visible     # (1, 440)  delayed target_present × target_in_vf
 delay_cascade_step = _retina.delay_cascade_step
 delay_cascade_read = _retina.delay_cascade_read
 
@@ -113,7 +112,7 @@ delay_cascade_read = _retina.delay_cascade_read
 
 _N_CANAL_STATES  = _canal.N_STATES          # 12
 _N_OTO_STATES    = _otolith.N_STATES        #  6
-_N_VIS_STATES    = _retina.N_STATES         # 480  [x_scene_vel(120)|x_target_pos(120)|x_target_vel(120)|x_target_in_vf(40)|x_scene_visible(40)|x_target_visible(40)]
+_N_VIS_STATES    = _retina.N_STATES         # 440  [x_scene_vel(120)|x_target_pos(120)|x_target_vel(120)|x_scene_visible(40)|x_target_visible(40)]
 N_STATES         = _N_CANAL_STATES + _N_OTO_STATES + 2 * _N_VIS_STATES  # 12+6+480+480 = 978
 
 # Index constants — relative to x_sensory
@@ -122,9 +121,9 @@ _IDX_C     = slice(0,
 _IDX_OTO   = slice(_N_CANAL_STATES,
                    _N_CANAL_STATES + _N_OTO_STATES)                             # (6,)
 _IDX_VIS_L = slice(_N_CANAL_STATES + _N_OTO_STATES,
-                   _N_CANAL_STATES + _N_OTO_STATES + _N_VIS_STATES)             # (400,)
+                   _N_CANAL_STATES + _N_OTO_STATES + _N_VIS_STATES)             # (440,)
 _IDX_VIS_R = slice(_N_CANAL_STATES + _N_OTO_STATES + _N_VIS_STATES,
-                   _N_CANAL_STATES + _N_OTO_STATES + 2 * _N_VIS_STATES)         # (400,)
+                   _N_CANAL_STATES + _N_OTO_STATES + 2 * _N_VIS_STATES)         # (440,)
 _IDX_VIS   = _IDX_VIS_L   # backward-compatibility alias (left eye cascade)
 
 
@@ -261,10 +260,10 @@ def step(x_sensory, q_head, w_head, a_head, q_eye_L, w_eye_L, q_eye_R, w_eye_R,
     dx_oto, _ = _otolith.step(x_oto, jnp.concatenate([a_head, q_head]), sensory_params)
 
     dx_vis_L = _retina.step(
-        x_vis_L, scene_vel_L, target_pos_L, target_vel_L, target_in_vf_L,
+        x_vis_L, scene_vel_L, target_pos_L, target_vel_L,
         scene_visible_L, target_visible_L, sensory_params.tau_vis)
     dx_vis_R = _retina.step(
-        x_vis_R, scene_vel_R, target_pos_R, target_vel_R, target_in_vf_R,
+        x_vis_R, scene_vel_R, target_pos_R, target_vel_R,
         scene_visible_R, target_visible_R, sensory_params.tau_vis)
 
     dx_sensory = jnp.concatenate([dx_c, dx_oto, dx_vis_L, dx_vis_R])

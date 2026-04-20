@@ -30,7 +30,7 @@ from oculomotor.sim.simulator import (
     _IDX_VERG,
 )
 from oculomotor.models.brain_models import saccade_generator as sg_mod
-from oculomotor.models.sensory_models.sensory_model import C_slip, C_pos, C_vel, C_target_in_vf
+from oculomotor.models.sensory_models.sensory_model import C_slip, C_pos, C_vel, C_target_visible
 
 
 # ── Stimulus builder ──────────────────────────────────────────────────────────
@@ -243,8 +243,8 @@ def _extract_signals(states, params, t_np: np.ndarray) -> dict:
     x_ni  = x_ni_raw[:, :3] - x_ni_raw[:, 3:6]   # NI net  (T, 3)
 
     # Retinal signals — gate-weighted average consistent with sensory_model fix
-    gate_L = x_vis_L @ np.array(C_target_in_vf).T           # (T, 1)
-    gate_R = x_vis_R @ np.array(C_target_in_vf).T           # (T, 1)
+    gate_L = x_vis_L @ np.array(C_target_visible).T          # (T, 1)
+    gate_R = x_vis_R @ np.array(C_target_visible).T          # (T, 1)
     gate_sum = gate_L + gate_R + 1e-6               # (T, 1)
     pos_L  = x_vis_L @ np.array(C_pos).T            # (T, 3)
     pos_R  = x_vis_R @ np.array(C_pos).T            # (T, 3)
@@ -254,8 +254,8 @@ def _extract_signals(states, params, t_np: np.ndarray) -> dict:
     def _burst_at(state):
         x_vis_L_ = state.sensory[_IDX_VIS_L]
         x_vis_R_ = state.sensory[_IDX_VIS_R]
-        gL = (C_target_in_vf @ x_vis_L_)[0]
-        gR = (C_target_in_vf @ x_vis_R_)[0]
+        gL = (C_target_visible @ x_vis_L_)[0]
+        gR = (C_target_visible @ x_vis_R_)[0]
         norm = jnp.maximum(gL + gR, 1e-6)
         e_pd = (gL * (C_pos @ x_vis_L_) + gR * (C_pos @ x_vis_R_)) / norm
         gate = jnp.clip(gL + gR, 0.0, 1.0)

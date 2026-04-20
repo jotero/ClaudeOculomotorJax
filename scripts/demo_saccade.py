@@ -61,6 +61,7 @@ def _make_pt3(t_np, jumps_deg, T):
 def _extract(states, pt3_np, theta, t_np):
     """Extract signals from full state trajectory."""
     x_p    = np.array(states.plant[:, :3])   # (T, 3) left eye
+    x_p_R  = np.array(states.plant[:, 3:6])  # (T, 3) right eye
     x_ni   = ni_net(states)                  # (T, 3) net NI position
     x_vis  = np.array(states.sensory[:, _IDX_VIS])
     x_sg   = np.array(states.brain[:, _IDX_SG])
@@ -80,7 +81,7 @@ def _extract(states, pt3_np, theta, t_np):
 
     dt = float(t_np[1] - t_np[0])
     return dict(
-        eye_pos=x_p, x_ni=x_ni,
+        eye_pos=x_p, eye_pos_R=x_p_R, x_ni=x_ni,
         e_pos_delayed=e_pos_delayed[:, 0],
         e_held=e_held[:, 0],
         x_copy=x_copy[:, 0],
@@ -153,9 +154,10 @@ def demo_saccade_cascade():
         axes[0, ci].set_title(f'{amp:.1f}°', fontsize=10)
 
         # ── Row 0: position ────────────────────────────────────────────────────
-        axes[0, ci].plot(t_np, tgt_yaw,            color=_C['target'], lw=1.5, label='target pos')
-        axes[0, ci].plot(t_np, s['eye_pos'][:, 0], color=_C['eye'],    lw=1.5, label='eye pos')
-        axes[0, ci].plot(t_np, s['x_ni'][:, 0],    color=_C['ni'],     lw=0.9, ls='--', label='NI (eye hold signal)')
+        axes[0, ci].plot(t_np, tgt_yaw,              color=_C['target'], lw=1.5, label='target pos')
+        axes[0, ci].plot(t_np, s['eye_pos'][:, 0],   color=_C['eye'],    lw=1.5, label='eye L')
+        axes[0, ci].plot(t_np, s['eye_pos_R'][:, 0], color=_C['eye'],    lw=1.0, ls=':', label='eye R')
+        axes[0, ci].plot(t_np, s['x_ni'][:, 0],      color=_C['ni'],     lw=0.9, ls='--', label='NI (eye hold signal)')
         _vl(axes[0, ci]); ax_fmt(axes[0, ci])
         if ci == 0: axes[0, ci].legend(fontsize=6.5)
 

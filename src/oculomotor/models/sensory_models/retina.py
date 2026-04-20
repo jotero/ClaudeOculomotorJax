@@ -11,30 +11,28 @@ Two responsibilities:
      delay of tau_vis seconds.  With N_STAGES=40 and tau_vis=0.08 s:
          Mean delay = 0.08 s,  std ≈ 0.013 s,  −3 dB BW ≈ 66 Hz
 
-     Six signals are delayed independently:
+     Five signals are delayed independently:
          Signal 0 — scene_vel       (3,)  scene velocity on retina    → OKR / VS drive
          Signal 1 — target_pos      (3,)  target position on retina   → saccade error
          Signal 2 — target_vel      (3,)  target velocity on retina   → pursuit drive
-         Signal 3 — target_in_vf         (1,)  geometric visual-field gate → SG target select
-         Signal 4 — scene_visible   (1,)  delay(scene_present) — presence only, no geometry
-         Signal 5 — target_visible  (1,)  delay(target_present × target_in_vf) — presence × geometry
+         Signal 3 — scene_visible   (1,)  delay(scene_present) — presence only, no geometry
+         Signal 4 — target_visible  (1,)  delay(target_present × target_in_vf) — presence × geometry
 
-     All signals enter the cascade raw (no pre-gating).  Signals 4 and 5 are
+     All signals enter the cascade raw (no pre-gating).  Signals 3 and 4 are
      the delayed "observed" flags; sensory_model.read_outputs() multiplies
      them by the raw delayed signals at readout so that zero in the cascade
      unambiguously means "the signal was zero", not "it was unobserved".
 
-     State layout (480,):
+     State layout (440,):
          [x_scene_vel (120) | x_target_pos (120) | x_target_vel (120)
-          | x_target_in_vf (40) | x_scene_visible (40) | x_target_visible (40)]
+          | x_scene_visible (40) | x_target_visible (40)]
 
      Module-level readout matrices (exported for sensory_model / efference copy):
-         C_slip           (3, 480)  last stage of scene_vel cascade
-         C_pos            (3, 480)  last stage of target_pos cascade
-         C_vel            (3, 480)  last stage of target_vel cascade
-         C_target_in_vf           (1, 480)  last stage of target_in_vf cascade
-         C_scene_visible  (1, 480)  last stage of scene_visible cascade
-         C_target_visible (1, 480)  last stage of target_visible cascade
+         C_slip           (3, 440)  last stage of scene_vel cascade
+         C_pos            (3, 440)  last stage of target_pos cascade
+         C_vel            (3, 440)  last stage of target_vel cascade
+         C_scene_visible  (1, 440)  last stage of scene_visible cascade
+         C_target_visible (1, 440)  last stage of target_visible cascade
 """
 
 import jax
@@ -48,13 +46,12 @@ N_STAGES      = 40    # cascade depth (stages per signal)
 _N_SIG        = 3     # number of 3-D signals (scene_vel, target_pos, target_vel)
 _N_PER_SIG    = N_STAGES * 3     # 120  states per 3-D signal
 _N_SCALAR     = N_STAGES         # 40   states per scalar signal
-N_STATES      = _N_SIG * _N_PER_SIG + 3 * _N_SCALAR  # 360 + 120 = 480
+N_STATES      = _N_SIG * _N_PER_SIG + 2 * _N_SCALAR  # 360 + 80 = 440
 
 # ── State offsets ───────────────────────────────────────────────────────────────
 
-_OFF_GATE         = _N_SIG * _N_PER_SIG          # 360
-_OFF_SCENE_VIS    = _OFF_GATE + _N_SCALAR         # 400
-_OFF_TARGET_VIS   = _OFF_SCENE_VIS + _N_SCALAR    # 440
+_OFF_SCENE_VIS    = _N_SIG * _N_PER_SIG          # 360
+_OFF_TARGET_VIS   = _OFF_SCENE_VIS + _N_SCALAR    # 400
 
 # ── Readout matrices ────────────────────────────────────────────────────────────
 # Exported so sensory_model / efference_copy can read cascade outputs directly.
@@ -62,7 +59,6 @@ _OFF_TARGET_VIS   = _OFF_SCENE_VIS + _N_SCALAR    # 440
 C_slip           = jnp.zeros((3, N_STATES)).at[:, _N_PER_SIG-3       : _N_PER_SIG      ].set(jnp.eye(3))
 C_pos            = jnp.zeros((3, N_STATES)).at[:, 2*_N_PER_SIG-3     : 2*_N_PER_SIG    ].set(jnp.eye(3))
 C_vel            = jnp.zeros((3, N_STATES)).at[:, 3*_N_PER_SIG-3     : 3*_N_PER_SIG    ].set(jnp.eye(3))
-C_target_in_vf   = jnp.zeros((1, N_STATES)).at[0, _OFF_GATE + _N_SCALAR - 1             ].set(1.0)
 C_scene_visible  = jnp.zeros((1, N_STATES)).at[0, _OFF_SCENE_VIS + _N_SCALAR - 1        ].set(1.0)
 C_target_visible = jnp.zeros((1, N_STATES)).at[0, _OFF_TARGET_VIS + _N_SCALAR - 1       ].set(1.0)
 
@@ -116,9 +112,15 @@ def retinal_signals(p_target, eye_offset_head, q_head, w_head, q_eye, w_eye,
         target_in_vf:    scalar geometric visual-field gate ∈ [0, 1]
     """
     # ── Rotation matrices ─────────────────────────────────────────────────────
-    R_head   = rotation_matrix(q_head)      # world ← head
-    R_eye    = rotation_matrix(q_eye)       # head  ← eye
-    R_gaze_T = R_eye.T @ R_head.T          # world → eye frame
+    # q = [yaw, pitch, roll] but Rodrigues uses [x, y, z] axis components.
+    # In the world frame (x=right, y=up, z=fwd): yaw rotates around y-axis,
+    # pitch around x-axis.  Rodrigues R_x(+θ) maps forward [0,0,1] →
+    # [0,-sinθ,cosθ] (looks DOWN), so we negate pitch to get R_x(−pitch)
+    # which correctly maps [0,0,1] → [0,sinθ,cosθ] (looks UP for positive pitch).
+    def _q2rv(q): return jnp.array([-q[1], q[0], q[2]])
+    R_head   = rotation_matrix(_q2rv(q_head))   # world ← head
+    R_eye    = rotation_matrix(_q2rv(q_eye))    # head  ← eye
+    R_gaze_T = R_eye.T @ R_head.T              # world → eye frame
 
     # ── Target position in eye frame ──────────────────────────────────────────
     eye_world  = R_head @ eye_offset_head                    # eye position, world frame
@@ -185,43 +187,40 @@ def delay_cascade_read(x_cascade):
 
 # ── Combined visual delay step ───────────────────────────────────────────────────
 
-def step(x_vis, scene_vel, target_pos, target_vel, target_in_vf,
+def step(x_vis, scene_vel, target_pos, target_vel,
          scene_present, target_visible, tau_vis):
-    """Single ODE step for the full visual delay cascade (six signals).
+    """Single ODE step for the full visual delay cascade (five signals).
 
     All signals enter the cascade raw — no pre-gating.  Gating is applied at
     readout (sensory_model.read_outputs) using the delayed presence signals
     scene_visible and target_visible.
 
     State layout: [x_scene_vel(120) | x_target_pos(120) | x_target_vel(120)
-                   | x_target_in_vf(40) | x_scene_visible(40) | x_target_visible(40)]
+                   | x_scene_visible(40) | x_target_visible(40)]
 
     Args:
-        x_vis:          (480,)  visual cascade state
+        x_vis:          (440,)  visual cascade state
         scene_vel:      (3,)    scene velocity on retina, eye frame (deg/s)
         target_pos:     (3,)    target position on retina, eye frame (deg)
         target_vel:     (3,)    target velocity on retina, eye frame (deg/s)
-        target_in_vf:        scalar  geometric visual-field gate ∈ [0, 1]
         scene_present:  scalar  is scene physically present? ∈ {0, 1}
         target_visible: scalar  target_present × target_in_vf ∈ [0, 1]
         tau_vis:        float   total cascade delay (s)
 
     Returns:
-        dx_vis: (480,)  dx_vis/dt
+        dx_vis: (440,)  dx_vis/dt
     """
     x_scene_vel   = x_vis[                 :   _N_PER_SIG]
     x_target_pos  = x_vis[    _N_PER_SIG   : 2*_N_PER_SIG]
     x_target_vel  = x_vis[  2*_N_PER_SIG   : 3*_N_PER_SIG]
-    x_target_in_vf     = x_vis[ _OFF_GATE        : _OFF_SCENE_VIS]
     x_scene_vis   = x_vis[ _OFF_SCENE_VIS   : _OFF_TARGET_VIS]
     x_target_vis  = x_vis[ _OFF_TARGET_VIS  :]
 
     dx_scene_vel  = delay_cascade_step(x_scene_vel,  scene_vel,       tau_vis)
     dx_target_pos = delay_cascade_step(x_target_pos, target_pos,      tau_vis)
     dx_target_vel = delay_cascade_step(x_target_vel, target_vel,      tau_vis)
-    dx_target_in_vf    = delay_cascade_step(x_target_in_vf,    target_in_vf,         tau_vis)
     dx_scene_vis  = delay_cascade_step(x_scene_vis,  scene_present,   tau_vis)
     dx_target_vis = delay_cascade_step(x_target_vis, target_visible,  tau_vis)
 
     return jnp.concatenate([dx_scene_vel, dx_target_pos, dx_target_vel,
-                             dx_target_in_vf, dx_scene_vis, dx_target_vis])
+                             dx_scene_vis, dx_target_vis])

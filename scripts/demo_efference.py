@@ -37,7 +37,8 @@ import matplotlib.pyplot as plt
 
 from oculomotor.sim.simulator import (
     PARAMS_DEFAULT, with_brain, simulate,
-    _IDX_C, _IDX_NI, _IDX_SG, _IDX_VIS, _IDX_VS, _IDX_EC, _IDX_PURSUIT,
+    _IDX_C, _IDX_NI, _IDX_SG, _IDX_VIS, _IDX_VIS_L, _IDX_VIS_R,
+    _IDX_VS, _IDX_EC, _IDX_PURSUIT, _IDX_P_L, _IDX_P_R,
 )
 from oculomotor.models.sensory_models.sensory_model import C_slip
 from oculomotor.models.sensory_models.sensory_model import N_CANALS, canal_nonlinearity
@@ -446,6 +447,116 @@ def _run_tests():
     print('All tests passed.\n')
 
 
+# ── Figure 3: efference_large_saccade.png ─────────────────────────────────────
+
+def demo_efference_large_saccade(amplitudes=(10.0, 30.0)):
+    """Compare EC cancellation quality for small vs large saccades.
+
+    For each amplitude, shows:
+      Row 0 — eye position (L and R) vs target
+      Row 1 — raw burst command vs delayed EC copy (timing match)
+      Row 2 — retinal slip (eye frame) vs motor_ec (head frame) — frame mismatch check
+      Row 3 — corrected slip residual → VS + pursuit contamination (x_pursuit)
+
+    The EC cascade delays u_burst in HEAD frame.  Retinal slip is computed in EYE
+    frame (via R_gaze_T in retinal_signals).  For small saccades these nearly
+    coincide; for large saccades the frame difference leaves a residual.
+    """
+    dt, T_end, t_jump = 0.001, 0.8, 0.1
+    t    = jnp.arange(0.0, T_end, dt)
+    T    = len(t)
+    t_np = np.array(t)
+    max_s = int(T_end / dt) + 200
+
+    n_cols = len(amplitudes)
+    fig, axes = plt.subplots(4, n_cols, figsize=(5.5 * n_cols, 10), sharex=True)
+    if n_cols == 1:
+        axes = axes[:, None]
+    fig.suptitle('EC cancellation: small vs large saccade — retinal slip (eye frame) vs motor_ec (head frame)',
+                 fontsize=10)
+
+    row_labels = [
+        'Eye position (deg)',
+        'Burst cmd vs EC copy (deg/s)',
+        'Retinal slip vs motor_ec (deg/s)',
+        'Corrected slip & pursuit integrator (deg/s)',
+    ]
+    for r, lbl in enumerate(row_labels):
+        axes[r, 0].set_ylabel(lbl, fontsize=8)
+
+    C_slip_np = np.array(C_slip)
+
+    for ci, amp in enumerate(amplitudes):
+        pt3 = jnp.stack([
+            jnp.where(t >= t_jump, jnp.tan(jnp.radians(amp)), 0.0),
+            jnp.zeros(T), jnp.ones(T),
+        ], axis=1)
+
+        states = simulate(THETA_SAC, t, p_target_array=pt3,
+                          scene_present_array=jnp.ones(T),
+                          target_present_array=jnp.ones(T),
+                          max_steps=max_s, return_states=True)
+
+        x_p_L     = np.array(states.plant[:, _IDX_P_L])          # (T, 3) left eye pos
+        x_p_R     = np.array(states.plant[:, _IDX_P_R])          # (T, 3) right eye pos
+        u_burst   = extract_burst(states, THETA_SAC)              # (T, 3) raw burst
+        motor_ec  = np.array(states.brain[:, _IDX_EC])[:, -3:]   # (T, 3) delayed EC
+
+        # Retinal slip from the left eye visual cascade (eye frame)
+        x_vis_L   = np.array(states.sensory[:, _IDX_VIS_L])      # (T, 440)
+        slip_L    = (C_slip_np @ x_vis_L.T).T                    # (T, 3) left eye slip
+
+        cor_slip  = slip_L + motor_ec                             # (T, 3) corrected
+        x_pursuit = np.array(states.brain[:, _IDX_PURSUIT])      # (T, 3)
+        tgt_yaw   = np.degrees(np.arctan(np.array(pt3[:, 0])))
+
+        def _vl(ax): ax.axvline(t_jump, color='gray', lw=0.6, ls='--', alpha=0.4)
+
+        axes[0, ci].set_title(f'{amp:.0f}°', fontsize=11)
+
+        # Row 0: eye position L / R vs target
+        axes[0, ci].plot(t_np, tgt_yaw,        color=_C['target'],   lw=1.5, label='target')
+        axes[0, ci].plot(t_np, x_p_L[:, 0],    color=_C['eye_vel'],  lw=1.5, label='eye L')
+        axes[0, ci].plot(t_np, x_p_R[:, 0],    color=_C['eye_vel'],  lw=1.0, ls=':', label='eye R')
+        _vl(axes[0, ci]); ax_fmt(axes[0, ci])
+        if ci == 0: axes[0, ci].legend(fontsize=7)
+
+        # Row 1: raw burst vs EC copy (check delay + amplitude match)
+        axes[1, ci].plot(t_np, u_burst[:, 0],  color=_C['burst'],    lw=1.5, label='u_burst (raw)')
+        axes[1, ci].plot(t_np, -motor_ec[:, 0], color=_C['delayed'], lw=1.5, ls='--',
+                         label='-motor_ec (EC copy, ~80 ms lag)')
+        _vl(axes[1, ci]); ax_fmt(axes[1, ci])
+        if ci == 0: axes[1, ci].legend(fontsize=7)
+
+        # Row 2: retinal slip (eye frame) vs motor_ec (head frame) — the mismatch
+        axes[2, ci].plot(t_np, -slip_L[:, 0],   color='#555555',       lw=1.2,
+                         label='−retinal slip (eye frame, ~burst velocity)')
+        axes[2, ci].plot(t_np, motor_ec[:, 0],  color=_C['motor_ec'],  lw=1.5, ls='--',
+                         label='motor_ec (head frame)')
+        _vl(axes[2, ci]); ax_fmt(axes[2, ci])
+        if ci == 0: axes[2, ci].legend(fontsize=7)
+
+        # Row 3: corrected slip residual + pursuit contamination
+        axes[3, ci].plot(t_np, cor_slip[:, 0],    color=_C['corrected'], lw=1.5,
+                         label='corrected slip → VS')
+        axes[3, ci].plot(t_np, x_pursuit[:, 0],   color=_C['scene'],     lw=1.5, ls='--',
+                         label='x_pursuit (pursuit integrator)')
+        axes[3, ci].axhline(0, color='k', lw=0.5, alpha=0.3)
+        _vl(axes[3, ci]); ax_fmt(axes[3, ci])
+        if ci == 0: axes[3, ci].legend(fontsize=7)
+
+        axes[3, ci].set_xlabel('Time (s)')
+
+    fig.tight_layout()
+    path = os.path.join(OUTPUT_DIR, 'efference_large_saccade.png')
+    fig.savefig(path, dpi=150)
+    if SHOW:
+        plt.show()
+    else:
+        plt.close(fig)
+    print(f'  Saved {path}')
+
+
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 def main():
@@ -458,7 +569,10 @@ def main():
     print('\n2. Pursuit EC — does pursuit contaminate OKN?')
     demo_efference_pursuit()
 
-    print('\n3. Numerical tests')
+    print('\n3. Large-saccade EC diagnostic (10° vs 30°)')
+    demo_efference_large_saccade()
+
+    print('\n4. Numerical tests')
     _run_tests()
 
     print(f'\nDone. Plots saved to {OUTPUT_DIR}/')
