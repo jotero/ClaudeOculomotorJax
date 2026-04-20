@@ -86,6 +86,7 @@ from oculomotor.models.sensory_models.sensory_model import SensoryOutput  # noqa
 from oculomotor.models.plant_models.readout import rotation_matrix
 from oculomotor.models.plant_models.muscle_geometry import (
     M_NUCLEUS, M_NERVE_PROJ, G_NUCLEUS_DEFAULT, G_NERVE_DEFAULT,
+    ABN_L, ABN_R, MR_L, MR_R,
 )
 
 
@@ -176,6 +177,16 @@ class BrainParams(NamedTuple):
     # Healthy default: all ones → transparent round-trip through plant.
     g_nucleus:             jnp.ndarray  = G_NUCLEUS_DEFAULT  # (12,) motor nucleus gains
     g_nerve:               jnp.ndarray  = G_NERVE_DEFAULT    # (12,) per-nerve gains
+
+    # MLF (medial longitudinal fasciculus) integrity — internuclear pathway gains.
+    # These scale specific off-diagonal entries in M_NERVE_PROJ:
+    #   g_mlf_abdn_r: ABN_R → MR_L  (right ABN interneurons cross left, travel left MLF)
+    #                 0 = left INO  → left eye can't adduct on rightward gaze
+    #   g_mlf_abdn_l: ABN_L → MR_R  (left ABN interneurons cross right, travel right MLF)
+    #                 0 = right INO → right eye can't adduct on leftward gaze
+    #   BIMLF (bilateral INO): set both to 0.
+    g_mlf_abdn_r:          float        = 1.0   # ABN_R → MR_L  (left  MLF pathway)
+    g_mlf_abdn_l:          float        = 1.0   # ABN_L → MR_R  (right MLF pathway)
 
 
 # ── State layout ───────────────────────────────────────────────────────────────
@@ -364,8 +375,12 @@ def step(x_brain, sensory_out, brain_params):
     #          ABN → ipsilateral LR + contralateral MR via MLF; CN4 → contralateral SO)
     # Split output: motor_cmd_L = nerves[:6], motor_cmd_R = nerves[6:]
     version_vergence = jnp.concatenate([motor_cmd_version, u_verg])           # (6,)
-    nuclei   = jnp.diag(brain_params.g_nucleus) @ (M_NUCLEUS    @ version_vergence)  # (12,)
-    nerves   = jnp.diag(brain_params.g_nerve)   @ (M_NERVE_PROJ @ nuclei)            # (12,)
+    nuclei   = jnp.diag(brain_params.g_nucleus) @ (M_NUCLEUS @ version_vergence)    # (12,)
+    # Apply MLF gains: scale the two internuclear projection entries before projecting.
+    # Healthy: both = 1 → M_NERVE_PROJ unchanged.  INO: set one to 0.
+    m_np = M_NERVE_PROJ.at[MR_L, ABN_R].mul(brain_params.g_mlf_abdn_r)
+    m_np = m_np.at[MR_R, ABN_L].mul(brain_params.g_mlf_abdn_l)
+    nerves   = jnp.diag(brain_params.g_nerve)   @ (m_np @ nuclei)                   # (12,)
     motor_cmd_L = nerves[:6]   # (6,) left  eye nerve activations
     motor_cmd_R = nerves[6:]   # (6,) right eye nerve activations
 
