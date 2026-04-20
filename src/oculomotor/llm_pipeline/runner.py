@@ -554,15 +554,7 @@ def _build_figure(
     gs  = gridspec.GridSpec(n, 1, hspace=0.45)
 
     title = scenario.plot.title or scenario.description
-    has_narrative = bool(scenario.narrative)
-    fig.suptitle(title, fontsize=11, fontweight='bold', y=1.02 if has_narrative else 1.0)
-
-    if has_narrative:
-        import textwrap
-        wrapped = textwrap.fill(scenario.narrative, width=115)
-        fig.text(0.5, 1.0, wrapped, ha='center', va='top',
-                 fontsize=7.5, color='#444444', style='italic',
-                 transform=fig.transFigure)
+    fig.suptitle(title, fontsize=11, fontweight='bold', y=1.0)
 
     axes = [fig.add_subplot(gs[i]) for i in range(n)]
     for ax, panel in zip(axes, panels):
@@ -664,15 +656,7 @@ def _build_comparison_figure(
 
     fig = plt.figure(figsize=(10, 2.2 * n))
     gs  = gridspec.GridSpec(n, 1, hspace=0.45)
-    has_narrative = bool(comparison.narrative)
-    fig.suptitle(comparison.title, fontsize=11, fontweight='bold', y=1.02 if has_narrative else 1.0)
-
-    if has_narrative:
-        import textwrap
-        wrapped = textwrap.fill(comparison.narrative, width=115)
-        fig.text(0.5, 1.0, wrapped, ha='center', va='top',
-                 fontsize=7.5, color='#444444', style='italic',
-                 transform=fig.transFigure)
+    fig.suptitle(comparison.title, fontsize=11, fontweight='bold', y=1.0)
 
     axes = [fig.add_subplot(gs[i]) for i in range(n)]
 
