@@ -228,16 +228,14 @@ def step(x_brain, sensory_out, brain_params):
 
     Args:
         x_brain:     (156,)        brain state [x_vs (9) | x_ni (9) | x_sg | x_ec | x_grav | x_pursuit | x_verg]
-        sensory_out: SensoryOutput bundled canal afferents + delayed visual signals
+        sensory_out: SensoryOutput bundled canal afferents + per-eye raw signals
                        .canal          (6,)    canal afferent rates
-                       .slip_delayed   (3,)    delayed retinal slip (no EC correction yet)
-                       .pos_delayed    (3,)    L+R averaged delayed position error → SG
-                       .vel_delayed    (3,)    delayed target velocity on retina → pursuit
                        .f_otolith      (3,)    specific force in head frame (m/s²)
-                       .scene_visible  scalar  0=dark, 1=lit — gates EC slip correction
-                       .target_visible scalar  0=no target in field, 1=target visible (= target_in_vf)
-                       .pos_delayed_L  (3,)    left  eye delayed position error → vergence
-                       .pos_delayed_R  (3,)    right eye delayed position error → vergence
+                       .slip_L/R       (3,)    per-eye raw delayed scene velocity
+                       .pos_L/R        (3,)    per-eye raw delayed target position
+                       .vel_L/R        (3,)    per-eye raw delayed target velocity
+                       .scene_vis_L/R  scalar  delay(scene_present)
+                       .target_vis_L/R scalar  delay(target_present × target_in_vf)
         brain_params: BrainParams   model parameters
 
     Returns:
@@ -254,23 +252,38 @@ def step(x_brain, sensory_out, brain_params):
     x_pursuit = x_brain[_IDX_PURSUIT]
     x_verg    = x_brain[_IDX_VERG]
 
+    # ── Binocular combining — gate × signal, then visibility-weighted average ──
+    sv_L, sv_R = sensory_out.scene_vis_L, sensory_out.scene_vis_R
+    tv_L, tv_R = sensory_out.target_vis_L, sensory_out.target_vis_R
+
+    sv_sum  = sv_L + sv_R
+    tv_sum  = tv_L + tv_R
+    sv_norm = jnp.maximum(sv_sum, 1e-6)
+    tv_norm = jnp.maximum(tv_sum, 1e-6)
+
+    slip_delayed   = (sv_L * sensory_out.slip_L + sv_R * sensory_out.slip_R) / sv_norm
+    scene_visible  = 0.5 * sv_sum
+    pos_delayed    = (tv_L * sensory_out.pos_L + tv_R * sensory_out.pos_R) / tv_norm
+    vel_delayed    = (tv_L * sensory_out.vel_L + tv_R * sensory_out.vel_R) / tv_norm
+    target_visible = 0.5 * tv_sum
+    target_in_vf   = jnp.clip(tv_sum, 0.0, 1.0)
+    pos_delayed_L  = tv_L * sensory_out.pos_L   # per-eye gated positions for vergence
+    pos_delayed_R  = tv_R * sensory_out.pos_R
+
     # ── One EC, two corrections with separate gates ───────────────────────────
     # motor_ec = delay(u_burst + u_pursuit) — one cascade, read once, used twice.
     motor_ec = ec.read_delayed(x_ec)
 
     # OKR / VS: scene-gated — slip and EC correction both gated by scene_visible.
-    #   Parallel to the pursuit path (target_visible gates vel_delayed + motor_ec).
     #   When dark: zero visual input to VS; x_vs decays freely with τ_vs → clean OKAN.
     #   When lit:  slip_delayed ≈ −(u_burst+u_pursuit)(t−τ)  →  corrected ≈ 0 ✓
-    e_slip_corrected = sensory_out.scene_visible * (sensory_out.slip_delayed + motor_ec)
+    e_slip_corrected = scene_visible * (slip_delayed + motor_ec)
 
     # Pursuit: target-gated — foveal target slip only (excludes VOR, OKN, fixation)
-    #   Gate the *entire* signal by target_visible (= target_in_vf, delayed in-field gate).
-    #   When target_present=0 in retina step, target_in_vf → 0 → target_visible → 0.
-    #   EC cancellation still works: vel_delayed ≈ v_target − w_eye(t−τ),
-    #   motor_ec ≈ +w_eye(t−τ) → e_combined ≈ v_target ✓
+    #   Gate the *entire* signal by target_visible.
+    #   EC cancellation: vel_delayed ≈ v_target − w_eye(t−τ), motor_ec ≈ +w_eye(t−τ) ✓
     #   Smith predictor lives inside pu.step(): e_pred = (e_combined − x_p)/(1+K_ph)
-    e_combined = sensory_out.target_visible * (sensory_out.vel_delayed + motor_ec)
+    e_combined = target_visible * (vel_delayed + motor_ec)
     dx_pursuit, u_pursuit = pu.step(x_pursuit, e_combined, brain_params)
 
     # ── Velocity storage: canal + EC-corrected scene slip + g_hat → ω̂ ─────────
@@ -287,7 +300,7 @@ def step(x_brain, sensory_out, brain_params):
 
     # ── Saccade generator (target selection handled internally) ───────────────
     # x_ni_net is the brain's proxy for current eye position (avoids plant state dependency)
-    dx_sg, u_burst = sg.step(x_sg, sensory_out.pos_delayed, sensory_out.target_in_vf, x_ni_net, brain_params)
+    dx_sg, u_burst = sg.step(x_sg, pos_delayed, target_in_vf, x_ni_net, brain_params)
 
     # ── OCR / somatogravic: gravity-driven eye position command ───────────────
     # g_hat = specific force (+x upright).  Tilt signals are normalised components:
@@ -310,13 +323,11 @@ def step(x_brain, sensory_out, brain_params):
 
     # ── Vergence: binocular disparity → disconjugate eye commands ─────────────
     # Binocularity gate: vergence drive requires both eyes to see the target.
-    #   bino = target_in_vf_L * target_in_vf_R ≈ 1 when both eyes fuse, 0 when either covered.
-    # When bino = 0: e_disp = 0 → e_pred = (0 + x_verg − x_verg)/(1+K_ph) = 0
-    #   → dx_verg = −(x_verg − phoria)/τ_verg  (vergence leaks toward phoria) ✓
+    #   bino = tv_L * tv_R ≈ 1 when both eyes fuse, 0 when either covered.
+    # When bino = 0: e_disp = 0 → dx_verg = −(x_verg − phoria)/τ_verg ✓
     # EC correction: add x_verg so that, when bino>0, e_pred = e_disp/(1+K_ph).
-    #   Without: closed-loop gain ≈ 0.5;  With: gain ≈ 0.99
-    bino   = sensory_out.target_in_vf_L * sensory_out.target_in_vf_R
-    e_disp = bino * (sensory_out.pos_delayed_L - sensory_out.pos_delayed_R)
+    bino   = tv_L * tv_R
+    e_disp = bino * (pos_delayed_L - pos_delayed_R)
     dx_verg, u_verg = vg.step(x_verg, e_disp + x_verg, brain_params)
 
     # Split vergence ±½ around the version command

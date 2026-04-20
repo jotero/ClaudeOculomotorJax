@@ -28,7 +28,7 @@ from oculomotor.sim.simulator import (
     _IDX_C, _IDX_VS, _IDX_NI, _IDX_VIS, _IDX_SG,
 )
 from oculomotor.models.sensory_models.sensory_model import N_CANALS, FLOOR, _SOFTNESS, PINV_SENS
-from oculomotor.models.sensory_models.sensory_model import C_slip, C_pos, C_gate
+from oculomotor.models.sensory_models.sensory_model import C_slip, C_pos, C_target_in_vf
 from oculomotor.sim import stimuli as stim_mod
 from oculomotor.analysis import ax_fmt, extract_burst, vs_net, ni_net
 

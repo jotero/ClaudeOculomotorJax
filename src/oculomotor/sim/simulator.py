@@ -297,16 +297,18 @@ def ODE_ocular_motor(t, state, args):
     sensory_out = sensory_model.read_outputs(state.sensory, theta.sensory)
 
     # ── Sensory noise ─────────────────────────────────────────────────────────
-    noise_pos_L = noise_pos_L_interp.evaluate(t)   # (3,) left  eye position OU drift
-    noise_pos_R = noise_pos_R_interp.evaluate(t)   # (3,) right eye position OU drift
+    noise_slip  = noise_slip_interp.evaluate(t)        # (3,) scene-level slip noise
+    noise_vel   = noise_vel_interp.evaluate(t)         # (3,) target velocity noise
+    noise_pos_L = noise_pos_L_interp.evaluate(t)       # (3,) left  eye position OU drift
+    noise_pos_R = noise_pos_R_interp.evaluate(t)       # (3,) right eye position OU drift
     sensory_out = sensory_out._replace(
-        canal          = sensory_out.canal        + noise_canal_interp.evaluate(t),
-        slip_delayed   = sensory_out.slip_delayed + noise_slip_interp.evaluate(t),
-        vel_delayed    = sensory_out.vel_delayed  + noise_vel_interp.evaluate(t),
-        # Per-eye position noise then averaged for brain
-        pos_delayed_L  = sensory_out.pos_delayed_L + noise_pos_L,
-        pos_delayed_R  = sensory_out.pos_delayed_R + noise_pos_R,
-        pos_delayed    = sensory_out.pos_delayed   + 0.5 * (noise_pos_L + noise_pos_R),
+        canal   = sensory_out.canal  + noise_canal_interp.evaluate(t),
+        slip_L  = sensory_out.slip_L + noise_slip,
+        slip_R  = sensory_out.slip_R + noise_slip,
+        vel_L   = sensory_out.vel_L  + noise_vel,
+        vel_R   = sensory_out.vel_R  + noise_vel,
+        pos_L   = sensory_out.pos_L  + noise_pos_L,
+        pos_R   = sensory_out.pos_R  + noise_pos_R,
     )
 
     # ── Brain: VS + NI + SG + EC + vergence ──────────────────────────────────
@@ -541,7 +543,8 @@ def simulate(params, t_array_or_stimulus, head_vel_array=None,
         vs3  = _prepend(vs3)
         pt3  = _prepend(pt3)
         vt3  = _prepend(vt3)
-        sg1  = _prepend(sg1[:, None])[:, 0]
+        sg_L = _prepend(sg_L[:, None])[:, 0]
+        sg_R = _prepend(sg_R[:, None])[:, 0]
         tg_L = _prepend(tg_L[:, None])[:, 0]
         tg_R = _prepend(tg_R[:, None])[:, 0]
 
