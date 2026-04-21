@@ -53,24 +53,28 @@ N_INPUTS  = 3   # e_vel_delayed after saccade EC subtraction
 N_OUTPUTS = 3   # u_pursuit: velocity command → NI and VS
 
 
-def step(x_pursuit, e_combined, brain_params):
-    """Single ODE step: Smith predictor → pursuit derivative + output command.
+def step(x_pursuit, target_slip, motor_ec, target_visible, brain_params):
+    """Single ODE step: gating + Smith predictor → pursuit derivative + output command.
 
     Args:
-        x_pursuit:    (3,)   pursuit memory state (deg/s)
-        e_combined:   (3,)   EC-corrected target velocity error (≈ v_target)
-                             = vel_delayed + target_present · motor_ec
-                             Computed in brain_model.py before calling this function.
-        brain_params: BrainParams  (reads K_pursuit, K_phasic_pursuit, tau_pursuit)
+        x_pursuit:     (3,)   pursuit memory state (deg/s)
+        target_slip:   (3,)   delayed target velocity on retina (deg/s)
+        motor_ec:      (3,)   efference copy — cancels self-generated retinal velocity
+        target_visible: scalar  target gate [0, 1]; 0 when no foveal target
+        brain_params:  BrainParams  (reads K_pursuit, K_phasic_pursuit, tau_pursuit, v_max_pursuit)
 
     Returns:
         dx_pursuit: (3,)  dx_p/dt  (deg/s²)
         u_pursuit:  (3,)  pursuit velocity command (deg/s)
     """
     K_ph = brain_params.K_phasic_pursuit
+    # EC correction + target gate + MT/MST velocity saturation
+    e_combined = jnp.clip(
+        target_visible * (target_slip + motor_ec),
+        -brain_params.v_max_pursuit,
+         brain_params.v_max_pursuit,
+    )
     # Smith predictor: e_pred = (e_combined − x_pursuit) / (1 + K_phasic)
-    # Derivation: u_now = x + K_ph·e_pred;  e_pred = e_combined − u_now
-    #             → e_pred·(1+K_ph) = e_combined − x  → solved below
     e_pred = (e_combined - x_pursuit) / (1.0 + K_ph)
 
     A  = -(1.0 / brain_params.tau_pursuit) * jnp.eye(3)

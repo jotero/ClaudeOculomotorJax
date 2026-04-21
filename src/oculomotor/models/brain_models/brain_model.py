@@ -7,7 +7,7 @@ step() function.
 Signal flow:
     y_canals         (6,)   canal afferents                   → VS
     slip             (3,)   delayed raw retinal slip           → VS (after EC)
-    vel              (3,)   delayed target velocity on retina  → pursuit (Smith predictor)
+    target_slip      (3,)   delayed target velocity on retina  → pursuit (Smith predictor)
     e_cmd            (3,)   motor error command                → SG
     pos_L/R          (3,)   per-eye delayed position error     → vergence
 
@@ -15,11 +15,11 @@ One efference copy cascade (120 states), two uses with different gates:
     motor_ec = ec.read_delayed(x_ec)          # delay(u_burst + u_pursuit)
 
     OKR / VS correction  — scene-gated (full scene slip):
-        e_slip_corrected = scene_visible · (slip + motor_ec)
+        okr = scene_visible · (slip + motor_ec)
         slip ≈ −(u_burst+u_pursuit)(t−τ)  →  corrected ≈ 0  ✓
 
     Pursuit Smith predictor — target-gated (foveal target slip only):
-        e_combined = target_visible · (vel + motor_ec)   ≈ v_target when target on
+        e_combined = target_visible · (target_slip + motor_ec)   ≈ v_target when target on
         Full signal gated by target_visible → zero drive when no target in field
         e_vel_pred = (e_combined − x_pursuit) / (1 + K_phasic)
         → at onset:        ~45 % of v_target drives integrator  (less oscillation)
@@ -28,7 +28,7 @@ One efference copy cascade (120 states), two uses with different gates:
 
 Vergence:
     e_disp = pos_L − pos_R   (binocular disparity, deg)
-    Smith predictor identical to pursuit but position-driven:
+    PI controller (no efference copy / no Smith predictor — may be added later):
         e_pred = (e_disp − x_verg) / (1 + K_phasic_verg)
     dx_verg = −x_verg/τ_verg + K_verg · e_pred
     u_verg  = x_verg + K_phasic_verg · e_pred
@@ -82,6 +82,8 @@ from oculomotor.models.brain_models import efference_copy      as ec
 from oculomotor.models.brain_models import gravity_estimator   as ge
 from oculomotor.models.brain_models import pursuit             as pu
 from oculomotor.models.brain_models import vergence            as vg
+from oculomotor.models.brain_models import ocr                 as ocr_mod
+from oculomotor.models.brain_models import optokinetic         as okr_mod
 from oculomotor.models.sensory_models.sensory_model import SensoryOutput  # noqa: F401 (re-exported)
 from oculomotor.models.plant_models.readout import rotation_matrix
 from oculomotor.models.plant_models.muscle_geometry import (
@@ -151,18 +153,24 @@ class BrainParams(NamedTuple):
     # Otolith / gravity estimation — Laurens & Angelaki (2011, 2017)
     K_grav:                float = 0.5    # otolith correction gain (1/s); TC = 1/K_grav ≈ 2 s
     K_gd:                  float = 0.0    # gravity dumping gain (1/s); 0 = disabled
-    g_ocr:                 float = 0.0    # OCR gain (dimensionless); 0 = disabled until verified
+    g_ocr:                 float = 0.0    # OCR amplitude (deg); healthy ~10°; 0 = disabled until verified
 
     # Smooth pursuit — leaky integrator + direct feedthrough (Lisberger 1988)
     K_pursuit:             float = 4.0    # pursuit integration gain (1/s); rise TC ≈ 1/K_pursuit
     K_phasic_pursuit:      float = 5.0    # pursuit direct feedthrough (dim'less); fast onset
     tau_pursuit:           float = 40.0   # pursuit leak TC (s); ~40 s → ~97.5% gain at 1 Hz
+    v_max_pursuit:         float = 40.0   # MT/MST velocity saturation (deg/s); clip on e_combined
+    v_max_okr:             float = 80.0   # NOT/AOS velocity saturation (deg/s); clip on visual slip to VS
 
-    # Vergence — disparity-driven position integrator + Smith predictor (Patel et al. 1997)
-    K_verg:                float        = 4.0             # integration gain (1/s)
-    K_phasic_verg:         float        = 1.0             # direct feedthrough (dim'less)
-    tau_verg:              float        = 25.0            # vergence position leak TC (s)
-    phoria:                jnp.ndarray  = jnp.zeros(3)    # resting vergence (deg); 0=orthophoria
+    # Vergence — single leaky integrator with dual-range nonlinear drive (Schor 1979)
+    # Rashbass & Westheimer 1961; Jones 1980; Hung & Semmlow 1980; Judge & Miles 1985
+    K_verg:                float        = 5.0             # fusional integration gain (1/s); high gain for fine disparity
+    K_verg_prox:           float        = 1.0             # proximal integration gain (1/s); lower gain for full range
+    K_phasic_verg:         float        = 1.0             # phasic feedthrough (dim'less); applied to fusional clip only
+    tau_verg:              float        = 25.0            # vergence leak TC (s); leaks to phoria
+    disp_max_verg_fus:        float        = 1.0             # fusional disparity saturation (deg); Panum's ~±1 deg (Jones 1980)
+    disp_max_verg_prox:       float        = 20.0            # proximal disparity saturation (deg); full vergence range (Hung & Semmlow 1980)
+    phoria:                jnp.ndarray  = jnp.zeros(3)    # resting vergence (deg); tonic setpoint; 0=orthophoria
                                                            # phoria[0]>0 esophoria, <0 exophoria
 
     # Motor nucleus and nerve gains — two-stage encode (see muscle_geometry.py)
@@ -245,6 +253,8 @@ def make_x0(brain_params=None):
         # _IDX_VS_NULL stays at 0 (no initial adaptation)
         # NI: b_ni populations (b_ni=0 default → stays zero)
         # _IDX_NI_L/R/NULL all stay at 0
+        # Vergence: initialise to phoria — tau_verg=25s is too slow to settle from zero.
+        x0 = x0.at[_IDX_VERG].set(jnp.asarray(brain_params.phoria, dtype=jnp.float32))
     return x0
 
 
@@ -302,35 +312,30 @@ def step(x_brain, sensory_out, brain_params):
     pos_L = tv_L * sensory_out.pos_L
     pos_R = tv_R * sensory_out.pos_R
 
-    slip           = (sv_L * sensory_out.slip_L + sv_R * sensory_out.slip_R) / sv_norm
+    scene_slip     = (sv_L * sensory_out.slip_L + sv_R * sensory_out.slip_R) / sv_norm
     scene_visible  = jnp.clip(sv_sum, 0.0, 1.0)
     pos            = (pos_L + pos_R) / tv_norm
-    vel            = (tv_L * sensory_out.vel_L + tv_R * sensory_out.vel_R) / tv_norm
+    target_slip    = (tv_L * sensory_out.vel_L + tv_R * sensory_out.vel_R) / tv_norm
     target_visible = jnp.clip(tv_sum, 0.0, 1.0)
 
     bino   = tv_L * tv_R
     e_disp = bino * (pos_L - pos_R)
 
     # ── One EC, two corrections with separate gates ───────────────────────────
-    # motor_ec = delay(u_burst + u_pursuit) — one cascade, read once, used twice.
+    # motor_ec: efference copy of predicted eye velocity from saccades (u_burst) and smooth
+    #   pursuit (u_pursuit), delayed to match visual processing lag.  Used to cancel
+    #   self-generated retinal slip in both OKR (scene gate) and pursuit (target gate).
     motor_ec = ec.read_delayed(x_ec)
 
-    # OKR / VS: scene-gated — slip and EC correction both gated by scene_visible.
-    #   When dark: zero visual input to VS; x_vs decays freely with τ_vs → clean OKAN.
-    #   When lit:  slip ≈ −(u_burst+u_pursuit)(t−τ)  →  corrected ≈ 0 ✓
-    e_slip_corrected = scene_visible * (slip + motor_ec)
+    # ── Optokinetic: scene-gated EC-corrected slip → visual drive for VS ─────────
+    okr = okr_mod.compute(scene_slip, motor_ec, scene_visible, brain_params)
 
-    # Pursuit: target-gated — foveal target slip only (excludes VOR, OKN, fixation)
-    #   Gate the *entire* signal by target_visible.
-    #   EC cancellation: vel ≈ v_target − w_eye(t−τ), motor_ec ≈ +w_eye(t−τ) ✓
-    #   Smith predictor lives inside pu.step(): e_pred = (e_combined − x_p)/(1+K_ph)
-    e_combined = target_visible * (vel + motor_ec)
-    dx_pursuit, u_pursuit = pu.step(x_pursuit, e_combined, brain_params)
-
-    # ── Velocity storage: canal + EC-corrected scene slip + g_hat → ω̂ ─────────
+    # ── Velocity storage: combines VOR (canal) + OKR (visual) reflexes → ω̂ head ──
+    # Canal provides vestibular drive; OKR provides visual drive; together they give
+    # VS an estimate of head angular velocity that is more accurate than either alone.
     dx_vs, w_est = vs.step(
         x_vs,
-        jnp.concatenate([sensory_out.canal, e_slip_corrected, x_grav]),
+        jnp.concatenate([sensory_out.canal, okr, x_grav]),
         brain_params)
 
     # ── Gravity estimator: cross-product transport + otolith correction ────────
@@ -339,34 +344,26 @@ def step(x_brain, sensory_out, brain_params):
         jnp.concatenate([w_est, sensory_out.f_otolith]),
         brain_params)
 
+    # ── OCR: torsional counter-roll driven by head tilt ──────────────────────
+    ocr = ocr_mod.compute(g_hat, brain_params)
+
+    # ── Pursuit: target-gated EC-corrected velocity → pursuit integrator ─────────
+    dx_pursuit, u_pursuit = pu.step(x_pursuit, target_slip, motor_ec, target_visible, brain_params)
+
     # ── Saccade generator (target selection handled internally) ───────────────
     # x_ni_net is the brain's proxy for current eye position (avoids plant state dependency)
     dx_sg, u_burst = sg.step(x_sg, pos, target_visible, x_ni_net, brain_params)
 
-    # ── OCR / somatogravic: gravity-driven eye position command ───────────────
-    # g_hat = specific force (+x upright).  Tilt signals are normalised components:
-    #   tilt_roll  = g_hat[1]/|g_hat| < 0 for CW head roll → eye rolls CCW (−z) ✓
-    #   tilt_pitch = g_hat[2]/|g_hat| > 0 for nose-up tilt → eye pitches down (−y) ✓
-    # (g_ocr = 0 by default; set to ~0.3 to enable)
-    g_norm  = jnp.linalg.norm(g_hat) + 1e-9
-    ocr_pos = brain_params.g_ocr * (180.0 / jnp.pi) * jnp.array([
-        0.0,
-        -g_hat[2] / g_norm,   # pitch: nose-up tilt → eye pitches down (−y)
-         g_hat[1] / g_norm,   # roll:  CW tilt (g_hat[1]<0) → eye CCW (−z)
-    ])
-
     # ── Neural integrator: VOR + saccades + pursuit → version motor command ───
-    # ni.step takes (9,) x_ni [L|R|null] and returns (9,) dx + (3,) motor_cmd on net
-    dx_ni, motor_cmd_ni = ni.step(x_ni, -w_est + u_burst + u_pursuit, brain_params)
-
-    # Add OCR position offset directly to motor command (bypasses NI leak)
-    motor_cmd_version = motor_cmd_ni + ocr_pos
+    # ocr / tau_i is a tonic drive that settles the NI at ocr in steady
+    # state, acting as a torsional setpoint without bypassing the integrator leak.
+    dx_ni, motor_cmd_ni = ni.step(x_ni, -w_est + u_burst + u_pursuit + ocr / brain_params.tau_i, brain_params)
 
     # ── Vergence: binocular disparity → disconjugate eye commands ─────────────
     # bino = tv_L * tv_R ≈ 1 when both eyes fuse, 0 when either covered.
-    # When bino = 0: e_disp = 0 → dx_verg = −(x_verg − phoria)/τ_verg ✓
-    # EC correction: add x_verg so that, when bino>0, e_pred = e_disp/(1+K_ph).
-    dx_verg, u_verg = vg.step(x_verg, e_disp + x_verg, brain_params)
+    # When bino = 0: e_disp = 0 → x_verg drifts to phoria with TC = tau_verg.
+    # High K·τ ≈ 150 → CL gain ~99% without state correction.
+    dx_verg, u_verg = vg.step(x_verg, e_disp, brain_params)
 
     # ── Two-stage motor nucleus encode → per-muscle nerve activations ────────
     # Stage 1: [version, vergence] (6,) → nuclei (12,) via M_NUCLEUS
@@ -374,7 +371,7 @@ def step(x_brain, sensory_out, brain_params):
     #          all other projections ipsilateral)
     # Non-negative encoding: relu + factor-2 is exact for all antipodal pairs
     # (M_NUCLEUS rows are antipodal by construction — see muscle_geometry.py).
-    version_vergence = jnp.concatenate([motor_cmd_version, u_verg])               # (6,)
+    version_vergence = jnp.concatenate([motor_cmd_ni, u_verg])               # (6,)
     # Apply INO gains: scale version_yaw (col 0) of CN3_MR rows before projecting.
     m_nuc = M_NUCLEUS \
         .at[CN3_MR_L, 0].mul(brain_params.g_mlf_ver_L) \

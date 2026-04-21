@@ -239,7 +239,7 @@ class SimState(NamedTuple):
 
     Groups:
         sensory  (818)  Canal + otolith + two retinal delay cascades (L and R).
-        brain    (144)  Central computation: VS, NI, SG, EC, gravity, pursuit, vergence.
+        brain    (156)  Central computation: VS, NI, SG, EC, gravity, pursuit, vergence.
         plant      (6)  Two extraocular plants — [left (3) | right (3)] eye rotation (deg).
     """
     sensory: jnp.ndarray   # (818,)  [x_c (12) | x_oto (6) | x_vis_L (400) | x_vis_R (400)]
@@ -585,10 +585,7 @@ def simulate(params, t_array_or_stimulus, head_vel_array=None,
     sensory_x0 = sensory_x0.at[_IDX_OTO].set(_otolith.X0)   # otolith settled at gravity
 
     brain_x0 = brain_model.make_x0(params.brain)
-    # Vergence: initialise analytically to phoria — TC ~25 s is far too slow
-    # for the warmup period to settle it from zero.
-    brain_x0 = brain_x0.at[_IDX_VERG].set(
-        jnp.asarray(params.brain.phoria, dtype=jnp.float32))
+    # Vergence: x_fus=0, x_slow=phoria — handled in brain_model.make_x0().
 
     x0 = SimState(
         sensory = sensory_x0,                          # (818,) otolith init at [9.81,0,0, ...]
