@@ -71,58 +71,6 @@ def _resolve_target_angular_shorthand(segments):
     return resolved
 
 
-def _project_target_to_retina(
-    target_arrays: dict,
-    head_arrays: dict,
-    T: int,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Project 3-D world-frame target position to retinal stereographic coordinates.
-
-    Both arrays are in metres (world frame).  The eye is assumed to be at the
-    head origin for now; this function is the single place to add inter-ocular
-    baseline offsets when binocular support is added.
-
-    Returns
-    -------
-    p_target : (T, 3) float32
-        Stereographic target position [tan(yaw), tan(pitch), 1].
-    v_target : (T, 3) float32
-        Target angular velocity as seen from the head (deg/s).
-        Accounts for head translation: d/dt(arctan(rel_x / rel_z)).
-    """
-    target_pos = target_arrays['lin_pos']          # (T, 3) m
-    target_vel = target_arrays['lin_vel']          # (T, 3) m/s
-    head_pos   = head_arrays['lin_pos']            # (T, 3) m
-    head_vel   = head_arrays['lin_vel']            # (T, 3) m/s
-
-    # Vector from head/eye origin to target in world frame
-    rel_pos = target_pos - head_pos                # (T, 3) m
-    rel_vel = target_vel - head_vel                # (T, 3) m/s
-
-    # Depth (z), clipped to a physiological minimum (5 cm)
-    depth = np.maximum(rel_pos[:, 2], 0.05)       # (T,)
-
-    # Stereographic projection  p = [x/z, y/z, 1]
-    p_target = np.zeros((T, 3), dtype=np.float32)
-    p_target[:, 0] = (rel_pos[:, 0] / depth).astype(np.float32)
-    p_target[:, 1] = (rel_pos[:, 1] / depth).astype(np.float32)
-    p_target[:, 2] = 1.0
-
-    # Angular velocity of target as seen from head (deg/s)
-    # d/dt(arctan(x/z)) = (vx·z − x·vz) / (z² + x²)  [rad/s] × (180/π)
-    denom_x = depth ** 2 + rel_pos[:, 0] ** 2
-    denom_y = depth ** 2 + rel_pos[:, 1] ** 2
-    v_target = np.zeros((T, 3), dtype=np.float32)
-    v_target[:, 0] = (
-        (rel_vel[:, 0] * depth - rel_pos[:, 0] * rel_vel[:, 2]) / denom_x * (180.0 / np.pi)
-    ).astype(np.float32)
-    v_target[:, 1] = (
-        (rel_vel[:, 1] * depth - rel_pos[:, 1] * rel_vel[:, 2]) / denom_y * (180.0 / np.pi)
-    ).astype(np.float32)
-
-    return p_target, v_target
-
-
 def _build_stimulus(scenario: SimulationScenario) -> dict:
     """Convert BodySegment lists to simulator keyword arrays.
 
@@ -147,8 +95,19 @@ def _build_stimulus(scenario: SimulationScenario) -> dict:
     # Head angular velocity → semicircular canals
     head_vel = head_arr['rot_vel']                 # (T, 3) deg/s
 
-    # Target 3-D projection → retinal position + angular velocity
-    p_target, v_target = _project_target_to_retina(target_arr, head_arr, T)
+    # Target position in head frame (metres) — depth preserved for binocular disparity
+    rel_pos = target_arr['lin_pos'] - head_arr['lin_pos']   # (T, 3) m
+    rel_vel = target_arr['lin_vel'] - head_arr['lin_vel']   # (T, 3) m/s
+    p_target = rel_pos.astype(np.float32)
+
+    # Angular velocity of target as seen from head (deg/s)
+    # d/dt(arctan(x/z)) = (vx·z − x·vz) / (z² + x²)  [rad/s] × (180/π)
+    depth   = np.maximum(rel_pos[:, 2], 0.05)              # clip to 5 cm minimum
+    denom_x = depth ** 2 + rel_pos[:, 0] ** 2
+    denom_y = depth ** 2 + rel_pos[:, 1] ** 2
+    v_target = np.zeros((T, 3), dtype=np.float32)
+    v_target[:, 0] = ((rel_vel[:, 0] * depth - rel_pos[:, 0] * rel_vel[:, 2]) / denom_x * (180.0 / np.pi))
+    v_target[:, 1] = ((rel_vel[:, 1] * depth - rel_pos[:, 1] * rel_vel[:, 2]) / denom_y * (180.0 / np.pi))
 
     # Scene angular velocity → OKR / velocity storage
     v_scene = scene_arr['rot_vel']                 # (T, 3) deg/s
