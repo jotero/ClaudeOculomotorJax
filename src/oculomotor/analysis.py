@@ -88,7 +88,7 @@ def ni_null(states):
 
 # ── Canal ──────────────────────────────────────────────────────────────────────
 
-def extract_canal(states):
+def extract_canal(states, params=None):
     """Canal head-velocity estimate (yaw) from a SimState trajectory.
 
     Applies the same push-pull nonlinearity as canal.nonlinearity() but in
@@ -96,13 +96,15 @@ def extract_canal(states):
 
     Args:
         states: SimState with .sensory of shape (T, N_SENSORY_STATES)
+        params: Params NamedTuple (reads sensory.canal_floor); uses FLOOR=80 if None
 
     Returns:
         (T,) array  yaw canal estimate (deg/s); positive = head rotating right.
     """
     x_c  = np.array(states.sensory[:, :N_CANALS * 2])   # (T, 12)
     x2   = x_c[:, N_CANALS:]                             # inertia states
-    k, f = float(_SOFTNESS), float(FLOOR)
+    k    = float(_SOFTNESS)
+    f    = float(params.sensory.canal_floor) if params is not None else float(FLOOR)
     y_c  = -f + _sp_softplus(k * (x2 + f)) / k + _sp_softplus(k * (x2 - f)) / k
     pinv = np.array(PINV_SENS)
     return (pinv @ y_c.T).T[:, 0]                        # yaw component (T,)

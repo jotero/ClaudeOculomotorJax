@@ -68,6 +68,8 @@ class SensoryParams(NamedTuple):
     tau_c:              float       = 5.0    # cupula adaptation TC (s); HP corner ≈ 0.03 Hz
     tau_s:              float       = 0.005  # endolymph inertia TC (s); LP corner ≈ 32 Hz
     canal_gains:        jnp.ndarray = jnp.ones(6)  # (6,) per-canal scale; 1=intact, 0=paresis
+    canal_floor:        float       = 80.0   # resting discharge (deg/s); inhibitory saturation point
+                                             # (Goldberg & Fernandez 1971 J Neurophysiol 34:635)
 
     # Otolith — first-order LP adaptation (Fernandez & Goldberg 1976)
     tau_oto:            float       = 100.0  # otolith adaptation TC (s); large → near-DC pass
@@ -178,7 +180,7 @@ def read_outputs(x_sensory, sensory_params):
     x_vis_L = x_sensory[_IDX_VIS_L]
     x_vis_R = x_sensory[_IDX_VIS_R]
 
-    canal_out = _canal.nonlinearity(x_c, sensory_params.canal_gains)
+    canal_out = _canal.nonlinearity(x_c, sensory_params.canal_gains, sensory_params.canal_floor)
     f_gia     = _otolith.PINV_SENS @ x_oto
 
     return SensoryOutput(

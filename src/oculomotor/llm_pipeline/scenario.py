@@ -229,7 +229,9 @@ class Patient(BaseModel):
         )
     )
     tau_vs: float = Field(default=20.0, description="Velocity storage TC (s). Healthy 20 s. Nodulus/uvula lesion → 1–3 s. OKN/OKAN decay TC.")
-    K_vs:   float = Field(default=0.1,  description="Canal→VS charging gain (1/s). Healthy 0.1. Reduce with tau_vs for nodulus lesions.")
+    g_vor:     float = Field(default=1.0,  description="VOR central gain (dim'less). Healthy 1.0. Reduce for hypofunction (e.g., 0.5 = 50% gain loss). Increase for gain-up adaptation. Distinct from canal_gains (peripheral transduction).")
+    v_max_vor: float = Field(default=400.0, description="Canal afferent saturation (deg/s). Healthy 400. Rarely needs changing — only for extreme rotational stimuli.")
+    K_vs:      float = Field(default=0.1,  description="Canal→VS integration gain (1/s). Healthy 0.1. Reduce with tau_vs for nodulus lesions.")
     K_vis:  float = Field(default=0.1,  description="Visual→VS charging gain (1/s). Healthy 0.1. OKR/OKAN drive. 0 = no OKR.")
     g_vis:  float = Field(default=0.6,  description="Direct visual feedthrough gain (Raphan 1979). Healthy 0.6. Fast OKR onset component. OKR inner-loop stable when g_vis < 1.")
     tau_i:  float = Field(default=25.0,
@@ -271,8 +273,8 @@ class Patient(BaseModel):
         description="Vergence integrator gain (1/s). Healthy ~4. Reduce for convergence insufficiency.")
     K_phasic_verg: float              = Field(default=1.0,
         description="Vergence direct feedthrough (dim'less). Healthy ~1. Controls fast vergence onset.")
-    tau_verg:      float              = Field(default=25.0,
-        description="Vergence position leak TC (s). Healthy >20 s. Short → vergence doesn't hold.")
+    tau_verg:      float              = Field(default=6.0,
+        description="Vergence position leak TC (s). Healthy ~5–7 s [Semmlow 1986]. Short → fast phoria drift when fusion breaks.")
     phoria: Annotated[list[float], Field(min_length=3, max_length=3)] = Field(
         default=[0.0, 0.0, 0.0],
         description=(
@@ -398,7 +400,7 @@ class Patient(BaseModel):
             raise ValueError(f'g_burst={v} is physiologically unrealistic (max ~700)')
         return v
 
-    @field_validator('K_vs', 'K_vis', 'K_pursuit', 'K_phasic_pursuit', 'K_grav',
+    @field_validator('g_vor', 'K_vs', 'K_vis', 'K_pursuit', 'K_phasic_pursuit', 'K_grav',
                      'K_verg', 'K_phasic_verg')
     @classmethod
     def _check_nonneg_gains(cls, v, info):

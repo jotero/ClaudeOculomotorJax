@@ -156,6 +156,8 @@ def _build_params(patient: Patient):
     params = with_brain(params,
         b_vs            = b_vs,
         tau_vs          = patient.tau_vs,
+        g_vor           = patient.g_vor,
+        v_max_vor       = patient.v_max_vor,
         K_vs            = patient.K_vs,
         K_vis           = patient.K_vis,
         g_vis           = patient.g_vis,

@@ -98,8 +98,31 @@ class BrainParams(NamedTuple):
     """Learnable central parameters — fit to patient eye-movement data."""
 
     # Velocity storage — Raphan, Matsuo & Cohen (1979)
+    # Bilateral push-pull (L/R VN populations); net = x_L − x_R; OKAN decays with tau_vs.
     tau_vs:                float = 20.0   # storage / OKAN TC (s); ~20 s monkey (Cohen 1977)
-    K_vs:                  float = 0.1    # canal-to-VS gain (1/s); controls charging speed
+    b_vs:                  float = 100.0  # VN resting bias AND population gain (deg/s).
+                                          # Scalar broadcasts to all 6 states; pass a (6,) array for asymmetry.
+                                          # velocity_storage scales canal drive by b_vs / B_NOMINAL, so b_vs
+                                          # simultaneously sets the equilibrium firing rate and the input
+                                          # responsiveness of each population — one parameter controls both.
+    tau_vs_adapt:          float = 600.0  # VS null adaptation TC (s); >> tau_vs → negligible in normal demos
+                                          # reduce to ~30–60 s to engage PAN-like slow oscillation
+
+    # Vestibular reflex (VOR) — semicircular canal drive to velocity storage
+    g_vor:                 float = 1.0    # VOR central gain (dim'less); scales canal bypass to VS output.
+                                          # 1.0 = healthy; <1 = hypofunction / adaptation down;
+                                          # >1 = adaptation up. Distinct from peripheral canal_gains
+                                          # (SensoryParams), which reflect transduction sensitivity.
+    v_max_vor:             float = 400.0  # excitatory canal afferent saturation (deg/s).
+                                          # Inhibitory saturation (~80 deg/s, Ewald's 2nd law) is already
+                                          # implemented as FLOOR in canal.nonlinearity() — not modelled here.
+                                          # Excitatory ceiling ~300–600 deg/s (Goldberg & Fernández 1971
+                                          # J Neurophysiol 34:635); 400 is conservative.
+                                          # At typical stimulus velocities (<200 deg/s) this clip is inert.
+    K_vs:                  float = 0.1    # canal-to-VS integration gain (1/s); controls charging speed
+
+    # Optokinetic reflex (OKR/OKAN) — NOT/AOS visual drive to velocity storage
+    # Pathways: direct (g_vis, fast) + integrating (K_vis → VS, slow OKAN buildup)
     K_vis:                 float = 0.1    # visual-to-VS gain (1/s); OKR / OKAN charging
                                           # OKN SS gain ≈ (2·K_vis·τ_vs + g_vis)/(1 + 2·K_vis·τ_vs + g_vis)
                                           # K_vis=0.1, g_vis=0.6 → SS gain ≈ 0.82  (Raphan 1979)
@@ -108,13 +131,10 @@ class BrainParams(NamedTuple):
                                           # g_vis=1.0 → zero gain margin → sustained ~6 Hz onset ringing
                                           # g_vis=0.6 → τ_decay = τ_vis/ln(1/0.6) ≈ 157 ms (~1 cycle, acceptable)
                                           # SS OKN: gain ≈ 0.82, INT/SPV ≈ 0.87
-    b_vs:                  float = 100.0  # VN resting bias AND population gain (deg/s).
-                                          # Scalar broadcasts to all 6 states; pass a (6,) array for asymmetry.
-                                          # velocity_storage scales canal drive by b_vs / B_NOMINAL, so b_vs
-                                          # simultaneously sets the equilibrium firing rate and the input
-                                          # responsiveness of each population — one parameter controls both.
-    tau_vs_adapt:          float = 600.0  # VS null adaptation TC (s); >> tau_vs → negligible in normal demos
-                                          # reduce to ~30–60 s to engage PAN-like slow oscillation
+    v_max_okr:             float = 80.0   # NOT/AOS velocity saturation (deg/s); clip on visual slip to VS
+                                          # NOT neurons saturate ~80 deg/s (Hoffmann 1979 Exp Brain Res).
+                                          # OKR gain ≈1 below 30 deg/s, half-max ~60 deg/s, near-zero ~100 deg/s
+                                          # (Cohen, Matsuo & Raphan 1977 J Neurophysiol; Demer & Zee 1984 J Neurophysiol).
 
     # Neural integrator — bilateral push-pull + null adaptation (Robinson 1975; rebound: Zee et al. 1980)
     tau_i:                 float = 25.0   # leak TC (s); healthy >20 s (Cannon & Robinson 1985)
@@ -155,25 +175,21 @@ class BrainParams(NamedTuple):
     K_gd:                  float = 0.0    # gravity dumping gain (1/s); 0 = disabled
     g_ocr:                 float = 0.0    # OCR amplitude (deg); healthy ~10°; 0 = disabled until verified
 
-    # Smooth pursuit — leaky integrator + direct feedthrough (Lisberger 1988)
+    # Smooth pursuit — leaky integrator + Smith predictor (Lisberger 1988)
     K_pursuit:             float = 4.0    # pursuit integration gain (1/s); rise TC ≈ 1/K_pursuit
     K_phasic_pursuit:      float = 5.0    # pursuit direct feedthrough (dim'less); fast onset
     tau_pursuit:           float = 40.0   # pursuit leak TC (s); ~40 s → ~97.5% gain at 1 Hz
-    v_max_pursuit:         float = 40.0   # MT/MST velocity saturation (deg/s); clip on e_combined
+    v_max_pursuit:         float = 40.0   # MT/MST velocity saturation (deg/s); clip on target slip + EC
                                            # Pursuit gain ≈1 up to ~30–40 deg/s, then falls (Fuchs 1967 J Physiol;
                                            # Lisberger & Westbrook 1985 J Neurosci). MT tuned 10–64 deg/s
                                            # (Newsome et al. 1988 J Neurosci); 40 deg/s is conservative.
-    v_max_okr:             float = 80.0   # NOT/AOS velocity saturation (deg/s); clip on visual slip to VS
-                                           # NOT neurons saturate ~80 deg/s (Hoffmann 1979 Exp Brain Res).
-                                           # OKR gain ≈1 below 30 deg/s, half-max ~60 deg/s, near-zero ~100 deg/s
-                                           # (Cohen, Matsuo & Raphan 1977 J Neurophysiol; Demer & Zee 1984 J Neurophysiol).
 
     # Vergence — single leaky integrator with dual-range nonlinear drive (Schor 1979)
     # Rashbass & Westheimer 1961; Jones 1980; Hung & Semmlow 1980; Judge & Miles 1985
     K_verg:                float        = 5.0             # fusional integration gain (1/s); high gain for fine disparity
     K_verg_prox:           float        = 1.0             # proximal integration gain (1/s); lower gain for full range
     K_phasic_verg:         float        = 1.0             # phasic feedthrough (dim'less); applied to fusional clip only
-    tau_verg:              float        = 25.0            # vergence leak TC (s); leaks to phoria
+    tau_verg:              float        = 6.0             # vergence leak TC (s); leaks to phoria [Semmlow 1986: ~5–7 s]
     disp_max_verg_fus:        float        = 1.0             # fusional disparity saturation (deg); Panum's ~±1 deg (Jones 1980)
     disp_max_verg_prox:       float        = 20.0            # proximal disparity saturation (deg); full vergence range (Hung & Semmlow 1980)
     phoria:                jnp.ndarray  = jnp.zeros(3)    # resting vergence (deg); tonic setpoint; 0=orthophoria

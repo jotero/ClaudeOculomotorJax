@@ -114,7 +114,7 @@ def step(x_vs, u, brain_params):
     x_null = x_vs[_IDX_NULL] # (3,) adapted null
     x_pop  = x_vs[:6]        # (6,) bilateral populations (for ABCD)
 
-    canal_in = u[:N_CANALS]             # (6,)
+    canal_in = jnp.clip(u[:N_CANALS], -brain_params.v_max_vor, brain_params.v_max_vor)  # (6,)
     slip_in  = u[N_CANALS:N_CANALS+3]  # (3,)
     g_hat    = u[N_CANALS+3:]          # (3,)
     u_lin    = jnp.concatenate([canal_in, slip_in])   # (9,) linear inputs
@@ -147,7 +147,7 @@ def step(x_vs, u, brain_params):
     C = jnp.concatenate([jnp.eye(3), -jnp.eye(3)], axis=1)
 
     # D (3×9): feedthrough on net output — canal + visual
-    D = jnp.concatenate([PINV_SENS, -brain_params.g_vis * jnp.eye(3)], axis=1)
+    D = jnp.concatenate([brain_params.g_vor * PINV_SENS, -brain_params.g_vis * jnp.eye(3)], axis=1)
 
     # ── Gravity dumping — nonlinear correction, outside ABCD core ─────────────
     g_norm_sq = jnp.dot(g_hat, g_hat) + 1e-9

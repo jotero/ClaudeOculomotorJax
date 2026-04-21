@@ -56,7 +56,7 @@ ORIENTATIONS = jnp.array([
 N_CANALS  = ORIENTATIONS.shape[0]   # 6
 N_STATES  = N_CANALS * 2            # 12  [x1 (6) | x2 (6)]
 
-FLOOR     = 80.0   # deg/s — resting discharge (Goldberg & Fernandez 1971)
+FLOOR     = 80.0   # deg/s — default resting discharge (Goldberg & Fernandez 1971); used as SensoryParams default
 _SOFTNESS = 0.5    # nonlinearity sharpness (s/deg)
 
 # Pseudo-inverse: maps (6,) afferents → (3,) angular velocity estimate
@@ -65,19 +65,20 @@ PINV_SENS = jnp.linalg.pinv(ORIENTATIONS)   # (3, 6)
 
 # ── Nonlinearity ───────────────────────────────────────────────────────────────
 
-def nonlinearity(x_c, gains):
+def nonlinearity(x_c, gains, floor):
     """Soft push-pull rectification: maps inertia states → afferent firing rates.
 
     Args:
         x_c:   (12,)        canal state [x1 (6) | x2 (6)]
         gains: (N_CANALS,)  per-canal scale; 0 = complete paresis
+        floor: scalar       resting discharge (deg/s); inhibitory saturation point
 
     Returns:
         y: (N_CANALS,)  absolute afferent firing rate (deg/s equivalent)
     """
     x2   = x_c[N_CANALS:]                              # inertia states (6,)
     k    = _SOFTNESS
-    f    = FLOOR
+    f    = floor
     y_nl = -f + softplus(k * (x2 + f)) / k + softplus(k * (x2 - f)) / k
     return gains * (y_nl + f)
 
@@ -110,5 +111,5 @@ def step(x_c, w_head, sensory_params):
                          ORIENTATIONS/tau_s], axis=0)       # (12, 3)
 
     dx_c     = A @ x_c + B @ w_head
-    y_canals = nonlinearity(x_c, sensory_params.canal_gains)
+    y_canals = nonlinearity(x_c, sensory_params.canal_gains, sensory_params.canal_floor)
     return dx_c, y_canals

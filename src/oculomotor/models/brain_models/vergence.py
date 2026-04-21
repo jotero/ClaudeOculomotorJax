@@ -27,7 +27,7 @@ Phasic term (K_phasic · e_fus):
 
 Steady-state gain (approximate, within fusional range):
     CL gain ≈ G / (1 + G)   where G ≈ (K_verg + K_verg_prox) · τ + K_phasic
-    With K_verg=5, K_verg_prox=1, τ=25, K_phasic=1:  G ≈ 151 → gain > 99 %
+    With K_verg=5, K_verg_prox=1, τ=6, K_phasic=1:  G ≈ 37 → gain ~97 %
 
 State:
     x_verg = [H_verg, V_verg, torsional_verg]  (3,)  deg
@@ -42,8 +42,10 @@ Parameters:
                      [Judge & Miles 1985: slow vergence ~500 ms–1 s]
     K_phasic_verg  — phasic feedthrough (dim'less); default 1.
                      Applied to fusional clip only → fast onset for small steps.
-    tau_verg       — leak TC (s); default 25 s.  Stable vergence hold; drifts to phoria
-                     slowly when fusion is lost. [Schor 1979]
+    tau_verg       — leak TC (s); default 6 s.  Tonic vergence hold; drifts to phoria
+                     when fusion is lost. [Semmlow et al. 1986: ~5–7 s]
+                     (Schor 1979 reports ~25 s for slow fusional *adaptation*, not
+                     the integrator TC itself.)
     disp_max_verg_fus  — fusional disparity saturation (deg); default 1 deg.
                          Panum's fusional area ~±0.5–1 deg horizontally. [Jones 1980]
     disp_max_verg_prox — proximal disparity saturation (deg); default 20 deg.
@@ -58,6 +60,7 @@ References:
     Jones R (1980) Am J Optom Physiol Opt 57:636–645  — fusional range ~±1 deg
     Hung GK, Semmlow JL (1980) IEEE Trans Biomed Eng 27:722–728  — vergence dynamics
     Judge SJ, Miles FA (1985) Exp Brain Res 60:184–203  — proximal/tonic TC ~500 ms
+    Semmlow JL et al. (1986) Invest Ophthalmol Vis Sci 27:558–564  — tonic vergence TC ~5–7 s
 """
 
 import jax.numpy as jnp
