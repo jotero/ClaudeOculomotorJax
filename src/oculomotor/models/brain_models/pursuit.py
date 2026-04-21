@@ -68,11 +68,12 @@ def step(x_pursuit, target_slip, motor_ec, target_visible, brain_params):
         u_pursuit:  (3,)  pursuit velocity command (deg/s)
     """
     K_ph = brain_params.K_phasic_pursuit
-    # EC correction + target gate + MT/MST velocity saturation
-    e_combined = jnp.clip(
-        target_visible * (target_slip + motor_ec),
-        -brain_params.v_max_pursuit,
-         brain_params.v_max_pursuit,
+    # MT/MST velocity saturation applied separately to sensory slip and EC,
+    # then gated by target visibility.  clip(e) + clip(ec) keeps each signal
+    # within the sensory range independently before they combine.
+    e_combined = target_visible * (
+        jnp.clip(target_slip, -brain_params.v_max_pursuit, brain_params.v_max_pursuit)
+        + jnp.clip(motor_ec,  -brain_params.v_max_pursuit, brain_params.v_max_pursuit)
     )
     # Smith predictor: e_pred = (e_combined − x_pursuit) / (1 + K_phasic)
     e_pred = (e_combined - x_pursuit) / (1.0 + K_ph)

@@ -160,7 +160,13 @@ class BrainParams(NamedTuple):
     K_phasic_pursuit:      float = 5.0    # pursuit direct feedthrough (dim'less); fast onset
     tau_pursuit:           float = 40.0   # pursuit leak TC (s); ~40 s → ~97.5% gain at 1 Hz
     v_max_pursuit:         float = 40.0   # MT/MST velocity saturation (deg/s); clip on e_combined
+                                           # Pursuit gain ≈1 up to ~30–40 deg/s, then falls (Fuchs 1967 J Physiol;
+                                           # Lisberger & Westbrook 1985 J Neurosci). MT tuned 10–64 deg/s
+                                           # (Newsome et al. 1988 J Neurosci); 40 deg/s is conservative.
     v_max_okr:             float = 80.0   # NOT/AOS velocity saturation (deg/s); clip on visual slip to VS
+                                           # NOT neurons saturate ~80 deg/s (Hoffmann 1979 Exp Brain Res).
+                                           # OKR gain ≈1 below 30 deg/s, half-max ~60 deg/s, near-zero ~100 deg/s
+                                           # (Cohen, Matsuo & Raphan 1977 J Neurophysiol; Demer & Zee 1984 J Neurophysiol).
 
     # Vergence — single leaky integrator with dual-range nonlinear drive (Schor 1979)
     # Rashbass & Westheimer 1961; Jones 1980; Hung & Semmlow 1980; Judge & Miles 1985

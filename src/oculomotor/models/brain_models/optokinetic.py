@@ -42,8 +42,10 @@ def compute(slip, motor_ec, scene_visible, brain_params):
     Returns:
         e_slip_corrected: (3,)  visual drive to VS (deg/s)
     """
-    return jnp.clip(
-        scene_visible * (slip + motor_ec),
-        -brain_params.v_max_okr,
-         brain_params.v_max_okr,
+    # NOT/AOS velocity saturation applied separately to scene slip and EC,
+    # then gated by scene visibility.  clip(e) + clip(ec) keeps each signal
+    # within the sensory range independently before they combine.
+    return scene_visible * (
+        jnp.clip(slip,     -brain_params.v_max_okr, brain_params.v_max_okr)
+        + jnp.clip(motor_ec, -brain_params.v_max_okr, brain_params.v_max_okr)
     )
