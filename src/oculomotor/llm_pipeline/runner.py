@@ -212,6 +212,10 @@ def _build_params(patient: Patient):
         K_phasic_verg   = patient.K_phasic_verg,
         tau_verg        = patient.tau_verg,
         phoria          = jnp.array(patient.phoria, dtype=float),
+        g_nucleus       = jnp.array(patient.g_nucleus, dtype=jnp.float32),
+        g_nerve         = jnp.array(patient.g_nerve,   dtype=jnp.float32),
+        g_mlf_ver_L     = patient.g_mlf_ver_L,
+        g_mlf_ver_R     = patient.g_mlf_ver_R,
     )
     return params
 
@@ -376,11 +380,25 @@ def _draw_panel(ax, panel_name: str, t: np.ndarray, sig: dict,
         ep_L = sig['eye_pos_L']
         ep_R = sig['eye_pos_R']
         bino_spread = np.max(np.abs(ep_L[:, 0] - ep_R[:, 0]))
+
+        # Show gaze in world frame only when head actually moves (displacement > 2 deg).
+        dt_val = t[1] - t[0] if len(t) > 1 else 0.001
+        head_angle = np.cumsum(hv[:, 0]) * dt_val   # integrated head yaw (deg)
+        head_moves = np.max(np.abs(head_angle)) > 2.0
+
         if bino_spread > 0.5:
-            ax.plot(t, ep_L[:, 0], color='#2166ac', lw=1.2, label='L eye')
-            ax.plot(t, ep_R[:, 0], color='#d6604d', lw=1.2, label='R eye')
+            lbl_L = 'L eye (head)' if head_moves else 'L eye'
+            lbl_R = 'R eye (head)' if head_moves else 'R eye'
+            ax.plot(t, ep_L[:, 0], color='#2166ac', lw=1.2, label=lbl_L)
+            ax.plot(t, ep_R[:, 0], color='#d6604d', lw=1.2, label=lbl_R)
         else:
-            ax.plot(t, ep[:, 0], color=_C['eye'], lw=1.2, label='Eye yaw (version)')
+            lbl_eye = 'Eye (head frame)' if head_moves else 'Eye position'
+            ax.plot(t, ep[:, 0], color=_C['eye'], lw=1.2, label=lbl_eye)
+
+        if head_moves:
+            gaze = ep[:, 0] + head_angle
+            ax.plot(t, gaze, color=_C['head'], lw=1.2, ls='--', label='Gaze (world)')
+
         # Target: solid when visible, dashed+faded when absent
         ax.plot(t, np.where(tp_combined > 0.5, target_yaw_deg, np.nan),
                 color=_C['target'], lw=1.2, ls='-', label='Target (visible)')
@@ -677,8 +695,15 @@ def _build_comparison_figure(
             target_yaw = np.degrees(np.arctan(pt[:, 0]))
 
             if panel == 'eye_position':
-                ax.plot(t, ep[:, 0], color=color, ls=ls, lw=1.5, label=label)
-                if idx == 0:  # target is the same across conditions — draw once
+                dt_val = t[1] - t[0] if len(t) > 1 else 0.001
+                head_angle = np.cumsum(hv[:, 0]) * dt_val
+                head_moves = np.max(np.abs(head_angle)) > 2.0
+                ax.plot(t, ep[:, 0], color=color, ls=ls, lw=1.5,
+                        label=f'{label} (head)' if head_moves else label)
+                if head_moves:
+                    ax.plot(t, ep[:, 0] + head_angle, color=color, ls=ls, lw=0.9,
+                            alpha=0.55, label=f'{label} (world)')
+                if idx == 0:
                     ax.plot(t, target_yaw, color=_C['target'], lw=1.0, ls=':', label='Target')
                 ax.set_ylabel('Eye / target position (deg)', fontsize=8)
 

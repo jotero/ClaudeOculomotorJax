@@ -284,12 +284,102 @@ class Patient(BaseModel):
         )
     )
 
+    # ── Motor nucleus gains (Stage 1) ──────────────────────────────────────────
+    g_nucleus: Annotated[list[float], Field(min_length=12, max_length=12)] = Field(
+        default=[1.0] * 12,
+        description=(
+            "Per-nucleus gains [0=complete lesion, 1=intact]. 12 values in order:\n"
+            "  [0] ABN_L   — left  abducens nucleus  (CN VI, drives LR_L)\n"
+            "  [1] ABN_R   — right abducens nucleus  (CN VI, drives LR_R)\n"
+            "  [2] CN4_L   — left  trochlear nucleus (CN IV, drives contralateral SO_R)\n"
+            "  [3] CN4_R   — right trochlear nucleus (CN IV, drives contralateral SO_L)\n"
+            "  [4] CN3_MR_L — left  CN III medial rectus subnucleus (drives MR_L)\n"
+            "  [5] CN3_MR_R — right CN III medial rectus subnucleus (drives MR_R)\n"
+            "  [6] CN3_SR_L — left  CN III superior rectus subnucleus\n"
+            "  [7] CN3_SR_R — right CN III superior rectus subnucleus\n"
+            "  [8] CN3_IR_L — left  CN III inferior rectus subnucleus\n"
+            "  [9] CN3_IR_R — right CN III inferior rectus subnucleus\n"
+            " [10] CN3_IO_L — left  CN III inferior oblique subnucleus\n"
+            " [11] CN3_IO_R — right CN III inferior oblique subnucleus\n"
+            "Examples:\n"
+            "  CN VI nucleus palsy (R): index 1 → 0  → right LR paralysed\n"
+            "  CN IV nucleus palsy (R): index 3 → 0  → left SO paralysed (contralateral projection)\n"
+            "  CN III nucleus palsy (R): indices 5,7,9,11 → 0  → right MR/SR/IR/IO paralysed"
+        )
+    )
+
+    # ── Per-nerve (fascicular / peripheral) gains (Stage 2) ────────────────────
+    g_nerve: Annotated[list[float], Field(min_length=12, max_length=12)] = Field(
+        default=[1.0] * 12,
+        description=(
+            "Per-nerve gains [0=complete palsy, 1=intact]. 12 values in order:\n"
+            "Left-eye nerves (indices 0–5):\n"
+            "  [0] LR_L  — left lateral rectus  (CN VI nerve)\n"
+            "  [1] MR_L  — left medial rectus   (CN III nerve)\n"
+            "  [2] SR_L  — left superior rectus (CN III nerve)\n"
+            "  [3] IR_L  — left inferior rectus (CN III nerve)\n"
+            "  [4] SO_L  — left superior oblique (CN IV nerve)\n"
+            "  [5] IO_L  — left inferior oblique (CN III nerve)\n"
+            "Right-eye nerves (indices 6–11):\n"
+            "  [6] LR_R  — right lateral rectus  (CN VI nerve)\n"
+            "  [7] MR_R  — right medial rectus   (CN III nerve)\n"
+            "  [8] SR_R  — right superior rectus (CN III nerve)\n"
+            "  [9] IR_R  — right inferior rectus (CN III nerve)\n"
+            " [10] SO_R  — right superior oblique (CN IV nerve)\n"
+            " [11] IO_R  — right inferior oblique (CN III nerve)\n"
+            "Examples:\n"
+            "  CN VI nerve palsy (R):  index 6 → 0   → right LR only\n"
+            "  CN III nerve palsy (R): indices 7,8,9,11 → 0  → right eye fixed lateral/down\n"
+            "  CN IV nerve palsy (R):  index 10 → 0  → right SO: hypertropia in adduction\n"
+            "  Partial palsy (e.g. recovering CN VI): index 6 → 0.4"
+        )
+    )
+
+    # ── MLF (medial longitudinal fasciculus) integrity ─────────────────────────
+    g_mlf_ver_L: float = Field(
+        default=1.0,
+        description=(
+            "Version-yaw gain for the left MR subnucleus (CN3_MR_L). "
+            "Models the MLF internuclear pathway from right ABN → left MR. "
+            "0 = left INO: left eye adduction is absent on rightward conjugate gaze; "
+            "convergence (vergence component) is preserved. "
+            "Partial values (0.3–0.7) = incomplete INO / recovering INO. "
+            "Healthy = 1.0."
+        )
+    )
+    g_mlf_ver_R: float = Field(
+        default=1.0,
+        description=(
+            "Version-yaw gain for the right MR subnucleus (CN3_MR_R). "
+            "Models the MLF internuclear pathway from left ABN → right MR. "
+            "0 = right INO: right eye adduction absent on leftward conjugate gaze; "
+            "convergence preserved. "
+            "Set both g_mlf_ver_L=0 and g_mlf_ver_R=0 for bilateral INO (BIMLF). "
+            "Healthy = 1.0."
+        )
+    )
+
     @field_validator('canal_gains')
     @classmethod
     def _check_canal_gains(cls, v):
         for i, g in enumerate(v):
             if not (0.0 <= g <= 1.0):
                 raise ValueError(f'canal_gains[{i}]={g} out of range [0, 1]')
+        return v
+
+    @field_validator('g_nucleus', 'g_nerve')
+    @classmethod
+    def _check_nerve_gains(cls, v, info):
+        for i, g in enumerate(v):
+            if not (0.0 <= g <= 1.0):
+                raise ValueError(f'{info.field_name}[{i}]={g} out of range [0, 1]')
+        return v
+
+    @field_validator('g_mlf_ver_L', 'g_mlf_ver_R')
+    @classmethod
+    def _check_mlf(cls, v, info):
+        if not (0.0 <= v <= 1.0):
+            raise ValueError(f'{info.field_name}={v} out of range [0, 1]')
         return v
 
     @field_validator('tau_vs', 'tau_i', 'tau_pursuit', 'tau_verg', 'tau_vs_adapt', 'tau_ni_adapt')
@@ -429,6 +519,44 @@ class SimulationScenario(BaseModel):
     Gaze-evoked nystagmus (dark — leaky NI alone is sufficient):
         visual: [{duration_s: 10, scene_present: false, target_present: false}]
         patient: {tau_i: 4.0}                                 ← pursuit irrelevant in dark
+
+    ## CN lesion recipes (9-positions or saccade trajectory)
+
+    CN VI nerve palsy (right LR only):
+        patient: {g_nerve: [1,1,1,1,1,1, 0,1,1,1,1,1]}      ← index 6 = LR_R = 0
+        plot: {panels: ['eye_position', 'eye_velocity']}
+
+    CN VI nucleus palsy (right abducens nucleus → right LR only):
+        patient: {g_nucleus: [1,0,1,1,1,1,1,1,1,1,1,1]}      ← index 1 = ABN_R = 0
+        Note: in this model ABN nucleus lesion only affects ipsilateral LR (no MLF
+        modelled at this level). For a full horizontal gaze palsy with conjugate
+        MR involvement, model with both CN VI nerve AND right CN3_MR_R zeroed.
+
+    CN III nerve palsy (right):
+        patient: {g_nerve: [1,1,1,1,1,1, 1,0,0,0,1,0]}       ← MR_R(7), SR_R(8), IR_R(9), IO_R(11) = 0
+        Right eye will sit lateral (LR unopposed) and slightly depressed (SO intact).
+
+    CN IV nerve palsy (right SO palsy):
+        patient: {g_nerve: [1,1,1,1,1,1, 1,1,1,1,0,1]}       ← index 10 = SO_R = 0
+        Right hypertropia worst in left gaze and left head tilt.
+
+    Left INO (right eye adducts normally, LEFT eye adduction lag on rightward gaze):
+        patient: {g_mlf_ver_L: 0.0}
+        Use rightward saccade stimulus. Left eye yaw will be slow/absent.
+        Convergence is preserved (vrg component intact).
+
+    Right INO (left eye adducts normally, RIGHT eye adduction lag on leftward gaze):
+        patient: {g_mlf_ver_R: 0.0}
+
+    Bilateral INO / BIMLF:
+        patient: {g_mlf_ver_L: 0.0, g_mlf_ver_R: 0.0}
+
+    Partial CN VI nerve palsy (incomplete, recovering):
+        patient: {g_nerve: [1,1,1,1,1,1, 0.3,1,1,1,1,1]}     ← LR_R at 30%
+
+    Horizontal gaze palsy (CN VI nucleus + conjugate MR, simulated):
+        patient: {g_nucleus: [1,0,1,1,1,1,1,1,1,1,1,1],
+                  g_nerve:   [1,1,1,1,1,1, 1,0,1,1,1,1]}      ← ABN_R=0, MR_R nerve=0
     """
 
     description: str = Field(description="One-sentence plain-English description (used as figure title).")

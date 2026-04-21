@@ -235,11 +235,26 @@ All defaults match the healthy model. Only specify parameters that differ from h
 | tau_verg (s) | 25.0 | Vergence leak TC. Short → vergence can't hold |
 | phoria [H,V,T] (deg) | [0,0,0] | Resting vergence at rest. >0 = esophoria, <0 = exophoria |
 
-The parameter descriptions above are sufficient to map any disorder to parameters — use them.
-The table below is a set of **worked examples** to illustrate common mappings:
+### Cranial nerve and MLF lesions — use ONLY the parameters below, not VN/cerebellar params
 
-| Clinical condition (example) | Parameter changes |
-|-----------------------------|-------------------|
+**g_nucleus** — 12-element list [0=paralysed, 1=intact]:
+  [ABN_L, ABN_R, CN4_L, CN4_R, CN3_MR_L, CN3_MR_R, CN3_SR_L, CN3_SR_R, CN3_IR_L, CN3_IR_R, CN3_IO_L, CN3_IO_R]
+
+**g_nerve** — 12-element list [0=paralysed, 1=intact]:
+  Left eye indices 0–5: [LR_L, MR_L, SR_L, IR_L, SO_L, IO_L]
+  Right eye indices 6–11: [LR_R, MR_R, SR_R, IR_R, SO_R, IO_R]
+
+**g_mlf_ver_L** — float [0–1]. 0 = left INO (left eye cannot adduct on rightward gaze; convergence intact).
+**g_mlf_ver_R** — float [0–1]. 0 = right INO (right eye cannot adduct on leftward gaze; convergence intact).
+
+INO is NOT a vestibular and NOT a cerebellar lesion. Do NOT set b_vs_L/R, canal_gains, tau_i, or
+K_pursuit for INO. The only parameter that changes is g_mlf_ver_L or g_mlf_ver_R.
+Complete patient block for left INO: `"patient": { "g_mlf_ver_L": 0.0 }`
+
+The table below maps all conditions to parameters — use it:
+
+| Clinical condition | Parameter changes |
+|-------------------|-------------------|
 | Healthy | all defaults |
 | Left vestibular neuritis | canal_gains=[0,0,0,1,1,1], b_vs_L=70 |
 | Right vestibular neuritis | canal_gains=[1,1,1,0,0,0], b_vs_R=70 |
@@ -251,9 +266,20 @@ The table below is a set of **worked examples** to illustrate common mappings:
 | Complete saccadic palsy | g_burst=0.0 |
 | Slow saccades (PSP, SCA) | g_burst=250 |
 | Pursuit deficit (cerebellar) | K_pursuit=0.3, K_phasic_pursuit=1.0, tau_pursuit=8 |
-| Rebound nystagmus | tau_ni_adapt=10.0 (strong rebound) |
-| PAN (periodic alt. nystagmus) | tau_vs_adapt=45.0 |
+| Rebound nystagmus | tau_ni_adapt=10.0 |
+| PAN | tau_vs_adapt=45.0 |
 | Esophoria / cover test | phoria=[8,0,0] |
+| Left INO | g_mlf_ver_L=0.0 |
+| Right INO | g_mlf_ver_R=0.0 |
+| Bilateral INO | g_mlf_ver_L=0.0, g_mlf_ver_R=0.0 |
+| CN VI nerve palsy (R) | g_nerve=[1,1,1,1,1,1,0,1,1,1,1,1] |
+| CN VI nucleus palsy (R) | g_nucleus=[1,0,1,1,1,1,1,1,1,1,1,1] |
+| CN III nerve palsy (R) | g_nerve=[1,1,1,1,1,1,1,0,0,0,1,0] |
+| CN IV nerve palsy (R) | g_nerve=[1,1,1,1,1,1,1,1,1,1,0,1] |
+| Partial CN VI palsy (recovering) | g_nerve=[1,1,1,1,1,1,0.4,1,1,1,1,1] |
+
+For INO stimulus: rightward saccade for left INO, leftward for right INO.
+Panels: ['eye_position', 'eye_velocity'].
 
 ## Panel selection — include visual_flags whenever scene or target visibility changes
 

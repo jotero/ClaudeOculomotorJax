@@ -240,7 +240,7 @@ function getBackend() {
   // Auto-detect: local dev vs remote (GitHub Pages / shared link)
   const isLocal = ['localhost', '127.0.0.1'].includes(window.location.hostname);
   return isLocal
-    ? 'http://localhost:8000'
+    ? window.location.origin
     : 'https://giggling-confused-thriving.ngrok-free.dev';
 }
 
@@ -385,9 +385,7 @@ const headCam  = new THREE.PerspectiveCamera(28, W() / 2 / H(), 0.001, 10000);
 
 function resize() {
   renderer.setSize(W(), H(), false);
-  const a = W() / 2 / H();
-  worldCam.aspect = a; worldCam.updateProjectionMatrix();
-  headCam.aspect  = a; headCam.updateProjectionMatrix();
+  // Camera aspect ratios are set per-frame in renderViewports() based on _headMoves
 }
 new ResizeObserver(resize).observe(canvas);
 resize();
@@ -487,6 +485,7 @@ let _traj      = null;
 let _frame     = 0;
 let _playing   = false;
 let _lastRafTs = null;
+let _headMoves = false;
 
 function updateTimeDisplay(fi) {
   if (!_traj) return;
@@ -498,9 +497,20 @@ window.loadEyeTrajectory = function(traj) {
   _traj    = traj;
   _frame   = 0;
   _playing = false;
-  console.log('Trajectory loaded — frames:', traj.n_frames, 'has head:', !!traj.head,
-              'head[0]:', traj.head ? traj.head[0] : 'none',
-              'head max yaw:', traj.head ? Math.max(...traj.head.map(h => Math.abs(h[0]))).toFixed(1) : 'n/a');
+
+  // Detect meaningful head movement (any axis > 1 deg peak displacement)
+  _headMoves = false;
+  if (traj.head) {
+    const maxDisp = Math.max(
+      ...traj.head.map(h => Math.sqrt(h[0]*h[0] + h[1]*h[1] + h[2]*h[2]))
+    );
+    _headMoves = maxDisp > 1.0;
+  }
+
+  // Show/hide world-view label
+  const labels = document.querySelectorAll('.avatar-labels span');
+  if (labels[0]) labels[0].style.display = _headMoves ? '' : 'none';
+
   document.getElementById('play-btn').textContent = '▶';
   document.getElementById('scrubber').max         = traj.n_frames - 1;
   document.getElementById('scrubber').value       = 0;
@@ -529,23 +539,40 @@ window._avatarOnScrub = function(val) {
 
 // ── Render loop (scissor split) ───────────────────────────────────────────────
 function renderViewports() {
-  const w = W(), h = H(), hw = Math.floor(w / 2);
+  const w = W(), h = H();
   const fi = Math.min(Math.floor(_frame), _traj ? _traj.n_frames - 1 : 0);
 
   renderer.clear();
 
-  // Left — world view: restore head rotation for this frame
-  applyFrame(fi);
-  renderer.setViewport(0, 0, hw, h);
-  renderer.setScissor(0, 0, hw, h);
-  renderer.setScissorTest(true);
-  renderer.render(scene, worldCam);
+  if (_headMoves) {
+    // Split: left = world view, right = head-fixed view
+    const hw = Math.floor(w / 2);
+    const a  = hw / h;
+    worldCam.aspect = a; worldCam.updateProjectionMatrix();
+    headCam.aspect  = a; headCam.updateProjectionMatrix();
 
-  // Right — head-fixed view: head bone at rest, eyes unchanged
-  if (headBone && restHead) headBone.rotation.copy(restHead);
-  renderer.setViewport(hw, 0, w - hw, h);
-  renderer.setScissor(hw, 0, w - hw, h);
-  renderer.render(scene, headCam);
+    // Left — world view: apply head rotation
+    applyFrame(fi);
+    renderer.setViewport(0, 0, hw, h);
+    renderer.setScissor(0, 0, hw, h);
+    renderer.setScissorTest(true);
+    renderer.render(scene, worldCam);
+
+    // Right — head-fixed view: head bone at rest, eyes unchanged
+    if (headBone && restHead) headBone.rotation.copy(restHead);
+    renderer.setViewport(hw, 0, w - hw, h);
+    renderer.setScissor(hw, 0, w - hw, h);
+    renderer.render(scene, headCam);
+  } else {
+    // No head movement — single full-width head-fixed view
+    headCam.aspect = w / h; headCam.updateProjectionMatrix();
+    applyFrame(fi);
+    if (headBone && restHead) headBone.rotation.copy(restHead);
+    renderer.setViewport(0, 0, w, h);
+    renderer.setScissor(0, 0, w, h);
+    renderer.setScissorTest(true);
+    renderer.render(scene, headCam);
+  }
 }
 
 function animate(ts) {
