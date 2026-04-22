@@ -35,7 +35,7 @@ Index constants (relative to x_sensory):
 SensoryOutput fields:
     Shared:
         canal:        (6,)  canal afferent rates
-        f_otolith:    (3,)  LP-filtered GIA
+        otolith:    (3,)  LP-filtered GIA
     Per-eye raw cascade readouts (un-gated):
         slip_L/R:     (3,)  delayed scene velocity
         pos_L/R:      (3,)  delayed target position
@@ -140,7 +140,7 @@ class SensoryOutput(NamedTuple):
 
     Shared:
         canal:        (6,)   canal afferent rates
-        f_otolith:    (3,)   LP-filtered GIA → gravity estimator
+        otolith:    (3,)   LP-filtered GIA → gravity estimator
     Per-eye raw (un-gated) delayed signals:
         slip_L/R:     (3,)   delayed scene velocity    → VS / OKR after gating
         pos_L/R:      (3,)   delayed target position   → SG after gating
@@ -151,7 +151,7 @@ class SensoryOutput(NamedTuple):
         strobe_delayed_L/R: scalar  delay(target_strobed) — brain uses to gate EC in pursuit
     """
     canal:           jnp.ndarray   # (6,)
-    f_otolith:       jnp.ndarray   # (3,)
+    otolith:       jnp.ndarray   # (3,)
     slip_L:          jnp.ndarray   # (3,)
     slip_R:          jnp.ndarray   # (3,)
     pos_L:           jnp.ndarray   # (3,)
@@ -190,7 +190,7 @@ def read_outputs(x_sensory, sensory_params):
 
     return SensoryOutput(
         canal        = canal_out,
-        f_otolith    = f_gia,
+        otolith    = f_gia,
         slip_L       = _retina.C_slip @ x_vis_L,
         slip_R       = _retina.C_slip @ x_vis_R,
         pos_L        = _retina.C_pos  @ x_vis_L,

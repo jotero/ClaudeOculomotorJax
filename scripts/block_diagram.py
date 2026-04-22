@@ -1,0 +1,51 @@
+"""Block diagram of the oculomotor model using Graphviz."""
+import graphviz
+
+g = graphviz.Digraph("oculomotor", format="png")
+g.attr(rankdir="LR", splines="ortho", nodesep="0.5", ranksep="0.8")
+g.attr("node", shape="box", style="rounded,filled", fillcolor="white",
+       fontname="Helvetica", fontsize="11")
+g.attr("edge", fontname="Helvetica", fontsize="9")
+
+# ── Nodes ────────────────────────────────────────────────────────────────────
+g.node("HEAD",  "Head motion")
+g.node("CANAL", "Canals")
+g.node("VOR",   "Vestibular\nReflex")
+g.node("VS",    "Velocity\nStorage")
+g.node("NI",    "Version\nIntegrator")
+g.node("PLANT", "Plant")
+g.node("EYE",   "Eye motion")
+g.node("RET",   "Retina")
+g.node("VIS",   "Visual\nSystem")
+g.node("OKR",   "Optokinetic\nReflex")
+g.node("SG",    "Saccade Gen")
+g.node("PUR",   "Pursuit")
+g.node("VER",   "Vergence")
+g.node("VNI",   "Vergence\nIntegrator")
+g.node("EC",    "Efference\nCopy")
+
+# ── Edges ────────────────────────────────────────────────────────────────────
+g.edge("HEAD",  "CANAL")
+g.edge("CANAL", "VOR")
+g.edge("VOR",   "VS")
+g.edge("VS",    "NI")
+g.edge("NI",    "PLANT")
+g.edge("PLANT", "EYE")
+g.edge("HEAD",  "RET")
+g.edge("EYE",   "RET")
+g.edge("RET",   "VIS")
+g.edge("VIS",   "OKR")
+g.edge("OKR",   "VS")
+g.edge("VIS",   "SG")
+g.edge("VIS",   "PUR")
+g.edge("VIS",   "VER")
+g.edge("VER",   "VNI")
+g.edge("VNI",   "PLANT")
+g.edge("SG",    "NI")
+g.edge("PUR",   "NI")
+g.edge("SG",    "EC")
+g.edge("PUR",   "EC")
+g.edge("EC",    "VIS")
+
+out = g.render("docs/block_diagram", cleanup=True)
+print(f"Saved: {out}")

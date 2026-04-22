@@ -1,0 +1,48 @@
+digraph oculomotor {
+	nodesep=0.5 rankdir=LR ranksep=0.8 splines=ortho
+	node [fillcolor=white fontname=Helvetica fontsize=11 shape=box style="rounded,filled"]
+	edge [fontname=Helvetica fontsize=9]
+	HEAD [label="Head motion"]
+	CANAL [label=Canals]
+	VOR [label="Vestibular
+Reflex"]
+	VS [label="Velocity
+Storage"]
+	NI [label="Version
+Integrator"]
+	PLANT [label=Plant]
+	EYE [label="Eye motion"]
+	RET [label=Retina]
+	VIS [label="Visual
+System"]
+	OKR [label="Optokinetic
+Reflex"]
+	SG [label="Saccade Gen"]
+	PUR [label=Pursuit]
+	VER [label=Vergence]
+	VNI [label="Vergence
+Integrator"]
+	EC [label="Efference
+Copy"]
+	HEAD -> CANAL
+	CANAL -> VOR
+	VOR -> VS
+	VS -> NI
+	NI -> PLANT
+	PLANT -> EYE
+	HEAD -> RET
+	EYE -> RET
+	RET -> VIS
+	VIS -> OKR
+	OKR -> VS
+	VIS -> SG
+	VIS -> PUR
+	VIS -> VER
+	VER -> VNI
+	VNI -> PLANT
+	SG -> NI
+	PUR -> NI
+	SG -> EC
+	PUR -> EC
+	EC -> VIS
+}

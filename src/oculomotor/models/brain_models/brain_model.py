@@ -191,10 +191,11 @@ class BrainParams(NamedTuple):
     K_verg_prox:           float        = 1.0             # proximal integration gain (1/s); lower gain for full range
     K_phasic_verg:         float        = 1.0             # phasic feedthrough (dim'less); applied to fusional clip only
     tau_verg:              float        = 6.0             # vergence leak TC (s); leaks to phoria [Semmlow 1986: ~5–7 s]
-    disp_max_verg_fus:        float        = 1.0             # fusional disparity saturation (deg); Panum's ~±1 deg (Jones 1980)
-    disp_max_verg_prox:       float        = 20.0            # proximal disparity saturation (deg); full vergence range (Hung & Semmlow 1980)
+    disp_max_verg_fus:     float        = 2.0             # fusional disparity saturation (deg); Panum's ~±1 deg (Jones 1980)
+    disp_max_verg_prox:    float        = 20.0            # proximal disparity saturation (deg); full vergence range (Hung & Semmlow 1980)
+    eye_dominant:          float        = 1.0             # 1.0 = right dominant, 0.0 = left dominant
     phoria:                jnp.ndarray  = jnp.zeros(3)    # resting vergence (deg); tonic setpoint; 0=orthophoria
-                                                           # phoria[0]>0 esophoria, <0 exophoria
+                                                          # phoria[0]>0 esophoria, <0 exophoria
 
     # Accommodation — Schor dual-interaction model (Schor 1979; Schor & Ciuffreda 1983)
     # Cross-coupled to vergence via AC/A and CA/C ratios.
@@ -300,6 +301,102 @@ def make_x0(brain_params=None):
     return x0
 
 
+# ── Binocular perception ───────────────────────────────────────────────────────
+
+class CyclopeanPercept(NamedTuple):
+    scene_slip:            jnp.ndarray   # (3,)  OKR / VS drive
+    scene_visible:         jnp.ndarray   # ()    scene presence gate
+    target_pos:            jnp.ndarray   # (3,)  SG position error (cyclopean)
+    target_slip:           jnp.ndarray   # (3,)  pursuit velocity drive
+    target_visible:        jnp.ndarray   # ()    target presence gate
+    target_motion_visible: jnp.ndarray   # ()    pursuit gate (visible + continuous)
+    target_disparity:      jnp.ndarray   # (3,)  vergence disparity (bino-gated)
+
+
+def _cyclopean_percept(sensory_out, brain_params) -> CyclopeanPercept:
+    """Combine per-eye retinal signals into cyclopean percepts.
+
+    Each signal is weighted by per-eye visibility and divided by the number of
+    visible eyes so monocular and binocular viewing produce the same amplitude.
+    When disparity exceeds diplopia_limit, the non-dominant eye is suppressed
+    and version signals come from the dominant eye only.
+    """
+    # ── Visibility gates ──────────────────────────────────────────────────────
+    sv_L, sv_R = sensory_out.scene_vis_L,  sensory_out.scene_vis_R
+    tv_L, tv_R = sensory_out.target_vis_L, sensory_out.target_vis_R
+
+    # ── Diplopia suppression ──────────────────────────────────────────────────
+    # Smooth gate: fuse=1 when disparity < diplopia_limit, fuse→0 when diplopic.
+    disp_mag = jnp.linalg.norm(sensory_out.pos_L - sensory_out.pos_R)
+    fuse     = 1.0 / (1.0 + jnp.exp(10.0 * (disp_mag - brain_params.disp_max_verg_fus)))
+    dom_L    = 1.0 - brain_params.eye_dominant
+    dom_R    = brain_params.eye_dominant
+    sv_L = fuse * sv_L + (1.0 - fuse) * sv_L * dom_L
+    sv_R = fuse * sv_R + (1.0 - fuse) * sv_R * dom_R
+    tv_L = fuse * tv_L + (1.0 - fuse) * tv_L * dom_L
+    tv_R = fuse * tv_R + (1.0 - fuse) * tv_R * dom_R
+
+    sv_norm = jnp.maximum(sv_L + sv_R, 1e-6)
+    tv_norm = jnp.maximum(tv_L + tv_R, 1e-6)
+    bino    = tv_L * tv_R   # ≈ 1 only when both eyes fuse; gates disparity
+
+    # ── Scene slip — retinal coordinates, version average (OKR / VS drive) ───
+    scene_slip    = (sv_L * sensory_out.slip_L + sv_R * sensory_out.slip_R) / sv_norm
+    scene_visible = jnp.clip(sv_L + sv_R, 0.0, 1.0)
+
+    # ── Version target position error — retinal coordinates (SG drive) ───────
+    pos_L = tv_L * sensory_out.pos_L
+    pos_R = tv_R * sensory_out.pos_R
+    target_pos = (pos_L + pos_R) / tv_norm
+
+    # ── Version target velocity — retinal coordinates (pursuit drive) ─────────
+    target_slip    = (tv_L * sensory_out.vel_L + tv_R * sensory_out.vel_R) / tv_norm
+    target_visible = jnp.clip(tv_L + tv_R, 0.0, 1.0)
+    strobe         = jnp.clip(
+        (tv_L * sensory_out.strobe_delayed_L + tv_R * sensory_out.strobe_delayed_R) / tv_norm,
+        0.0, 1.0)
+    target_motion_visible = target_visible * (1.0 - strobe)
+
+    # ── Disparity target position error — retinal coordinates (vergence drive) ─
+    target_disparity = bino * (pos_L - pos_R)
+
+    return CyclopeanPercept(
+        scene_slip=scene_slip, scene_visible=scene_visible,
+        target_pos=target_pos, target_slip=target_slip,
+        target_visible=target_visible, target_motion_visible=target_motion_visible,
+        target_disparity=target_disparity,
+    )
+
+
+# ── Self-motion perception ─────────────────────────────────────────────────────
+
+class SelfMotionEstimate(NamedTuple):
+    dx_vs:   jnp.ndarray   # (9,)  VS state derivative
+    dx_grav: jnp.ndarray   # (3,)  gravity estimator state derivative
+    w_est:   jnp.ndarray   # (3,)  head angular velocity estimate (deg/s)
+    ocr:     jnp.ndarray   # (3,)  torsional counter-roll command (deg)
+
+
+def _self_motion_perception(x_vs, x_grav, canal, otolith, okr, brain_params) -> SelfMotionEstimate:
+    """Estimate head angular velocity from vestibular and visual inputs.
+
+    Combines canal (VOR) and optokinetic (OKR) drives in velocity storage,
+    then propagates through the gravity estimator to get OCR.
+
+    Args:
+        x_vs:        (9,)  VS state
+        x_grav:      (3,)  gravity estimator state
+        canal:       (6,)  canal afferent rates
+        otolith:     (3,)  specific force in head frame (m/s²)
+        okr:         (3,)  optokinetic drive (scene-gated, EC-corrected)
+        brain_params: BrainParams
+    """
+    dx_vs,   w_est  = vs.step(x_vs,   jnp.concatenate([canal, okr, x_grav]), brain_params)
+    dx_grav, g_hat  = ge.step(x_grav, jnp.concatenate([w_est, otolith]),     brain_params)
+    ocr             = ocr_mod.compute(g_hat, brain_params)
+    return SelfMotionEstimate(dx_vs=dx_vs, dx_grav=dx_grav, w_est=w_est, ocr=ocr)
+
+
 # ── Step function ──────────────────────────────────────────────────────────────
 
 def step(x_brain, sensory_out, brain_params):
@@ -309,7 +406,7 @@ def step(x_brain, sensory_out, brain_params):
         x_brain:     (156,)        brain state [x_vs (9) | x_ni (9) | x_sg | x_ec | x_grav | x_pursuit | x_verg]
         sensory_out: SensoryOutput bundled canal afferents + per-eye raw signals
                        .canal          (6,)    canal afferent rates
-                       .f_otolith      (3,)    specific force in head frame (m/s²)
+                       .otolith      (3,)    specific force in head frame (m/s²)
                        .slip_L/R       (3,)    per-eye raw delayed scene velocity
                        .pos_L/R        (3,)    per-eye raw delayed target position
                        .vel_L/R        (3,)    per-eye raw delayed target velocity
@@ -333,42 +430,7 @@ def step(x_brain, sensory_out, brain_params):
     x_acc     = x_brain[_IDX_ACC]     # (2,): [x_fast, x_slow] diopters
 
     # ── Binocular combining — version (average) and vergence (difference) ────────
-    # Each signal is gated by the per-eye delayed visibility (tv_L/R or sv_L/R),
-    # then summed and divided by the number of eyes that can see (1 or 2).
-    # scene/target_visible clip to [0,1] so they act as binary presence gates.
-    # Vergence (e_disp) uses the difference of the per-eye gated positions,
-    # further gated by bino = tv_L * tv_R so it is only active when both eyes
-    # see the target (binocular fusion required for disparity).
-    # TODO (diplopia): when disparity is too large the two retinal images are not
-    # fused and the version error from each eye may diverge. In that regime the
-    # weighted average is ambiguous — one option is to fall back to the dominant
-    # eye's signal (e.g. whichever has higher tv) and suppress the other, similar
-    # to what happens perceptually during suppression of the non-dominant eye.
-    sv_L, sv_R = sensory_out.scene_vis_L, sensory_out.scene_vis_R
-    tv_L, tv_R = sensory_out.target_vis_L, sensory_out.target_vis_R
-
-    sv_sum  = sv_L + sv_R
-    tv_sum  = tv_L + tv_R
-    sv_norm = jnp.maximum(sv_sum, 1e-6)
-    tv_norm = jnp.maximum(tv_sum, 1e-6)
-
-    pos_L = tv_L * sensory_out.pos_L
-    pos_R = tv_R * sensory_out.pos_R
-
-    scene_slip     = (sv_L * sensory_out.slip_L + sv_R * sensory_out.slip_R) / sv_norm
-    scene_visible  = jnp.clip(sv_sum, 0.0, 1.0)
-    pos            = (pos_L + pos_R) / tv_norm
-    target_slip    = (tv_L * sensory_out.vel_L + tv_R * sensory_out.vel_R) / tv_norm
-    target_visible = jnp.clip(tv_sum, 0.0, 1.0)
-    # Strobe gate: 1 when target is continuous, 0 when strobed (position only).
-    # Weighted average over whichever eyes see the target; negated so continuous=1, strobed=0.
-    strobe_combined = jnp.clip(
-        (tv_L * sensory_out.strobe_delayed_L + tv_R * sensory_out.strobe_delayed_R) / tv_norm,
-        0.0, 1.0)
-    target_motion_visible = target_visible * (1.0 - strobe_combined)
-
-    bino   = tv_L * tv_R
-    e_disp = bino * (pos_L - pos_R)
+    percept = _cyclopean_percept(sensory_out, brain_params)
 
     # ── One EC, two corrections with separate gates ───────────────────────────
     # motor_ec: efference copy of predicted eye velocity from saccades (u_burst) and smooth
@@ -377,49 +439,35 @@ def step(x_brain, sensory_out, brain_params):
     motor_ec = ec.read_delayed(x_ec)
 
     # ── Optokinetic: scene-gated EC-corrected slip → visual drive for VS ─────────
-    okr = okr_mod.compute(scene_slip, motor_ec*scene_visible, brain_params)
+    okr = okr_mod.compute(percept.scene_slip, motor_ec*percept.scene_visible, brain_params)
 
-    # ── Velocity storage: combines VOR (canal) + OKR (visual) reflexes → ω̂ head ──
-    # Canal provides vestibular drive; OKR provides visual drive; together they give
-    # VS an estimate of head angular velocity that is more accurate than either alone.
-    dx_vs, w_est = vs.step(
-        x_vs,
-        jnp.concatenate([sensory_out.canal, okr, x_grav]),
-        brain_params)
-
-    # ── Gravity estimator: cross-product transport + otolith correction ────────
-    dx_grav, g_hat = ge.step(
-        x_grav,
-        jnp.concatenate([w_est, sensory_out.f_otolith]),
-        brain_params)
-
-    # ── OCR: torsional counter-roll driven by head tilt ──────────────────────
-    ocr = ocr_mod.compute(g_hat, brain_params)
+    # ── Self-motion perception: VS + gravity estimator + OCR ─────────────────
+    smp = _self_motion_perception(
+        x_vs, x_grav, sensory_out.canal, sensory_out.otolith, okr, brain_params)
 
     # ── Pursuit: target-gated EC-corrected velocity → pursuit integrator ─────────
     # Strobe gate: when target is strobed, EC is also zeroed — stroboscopic illumination
     # provides no continuous motion signal, so eye-movement EC would create a spurious drive.
     # strobe_delayed matches the timing of the already-zeroed target_slip (same delay cascade).
-    dx_pursuit, u_pursuit = pu.step(x_pursuit, target_slip, motor_ec*target_motion_visible, brain_params)
+    dx_pursuit, u_pursuit = pu.step(x_pursuit, percept.target_slip, motor_ec*percept.target_motion_visible, brain_params)
 
     # ── Saccade generator (target selection handled internally) ───────────────
     # x_ni_net is the brain's proxy for current eye position (avoids plant state dependency)
-    dx_sg, u_burst = sg.step(x_sg, pos, target_visible, x_ni_net, brain_params)
+    dx_sg, u_burst = sg.step(x_sg, percept.target_pos, percept.target_visible, x_ni_net, brain_params)
 
     # ── Neural integrator: VOR + saccades + pursuit → version motor command ───
     # ocr / tau_i is a tonic drive that settles the NI at ocr in steady
     # state, acting as a torsional setpoint without bypassing the integrator leak.
-    dx_ni, motor_cmd_ni = ni.step(x_ni, -w_est + u_burst + u_pursuit + ocr / brain_params.tau_i, brain_params)
+    dx_ni, motor_cmd_ni = ni.step(x_ni, -smp.w_est + u_burst + u_pursuit + smp.ocr / brain_params.tau_i, brain_params)
 
-    # ── Accommodation: blur-driven lens adjustment + AC/A → vergence drive ────
-    dx_acc, x_acc_total = acc_mod.step(
-        x_acc, sensory_out.acc_demand, x_verg[0], brain_params)
-    aca_drive = acc_mod.ac_a_drive(x_acc_total, brain_params)   # deg, horizontal
+    # ── Accommodation: blur-driven lens adjustment (AC/A and CA/C cross-links disabled) ──
+    # TODO: re-enable cross-links once accommodation–vergence interaction is validated.
+    dx_acc, _ = acc_mod.step(
+        x_acc, sensory_out.acc_demand, 0.0, brain_params)   # 0.0: CA/C off
 
-    # ── Vergence: binocular disparity + AC/A drive → disconjugate eye commands
+    # ── Vergence: binocular disparity only (AC/A drive disconnected) ─────────
     # bino = tv_L * tv_R ≈ 1 when both eyes fuse, 0 when either covered.
-    # When bino = 0: e_disp = 0 but AC/A drive persists → prevents runaway divergence.
-    dx_verg, u_verg = vg.step(x_verg, e_disp, aca_drive, brain_params)
+    dx_verg, u_verg = vg.step(x_verg, percept.target_disparity, 0.0, brain_params)   # 0.0: AC/A off
 
     # ── Two-stage motor nucleus encode → per-muscle nerve activations ────────
     # Stage 1: [version, vergence] (6,) → nuclei (12,) via M_NUCLEUS
@@ -451,6 +499,6 @@ def step(x_brain, sensory_out, brain_params):
     dx_ec, _ = ec.step(x_ec, R_eye_T @ (u_burst + u_pursuit), brain_params)
 
     # ── Pack state derivative ─────────────────────────────────────────────────
-    dx_brain = jnp.concatenate([dx_vs, dx_ni, dx_sg, dx_ec, dx_grav, dx_pursuit, dx_verg, dx_acc])
+    dx_brain = jnp.concatenate([smp.dx_vs, dx_ni, dx_sg, dx_ec, smp.dx_grav, dx_pursuit, dx_verg, dx_acc])
 
     return dx_brain, motor_cmd_L, motor_cmd_R
