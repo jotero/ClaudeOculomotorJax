@@ -82,6 +82,7 @@ from oculomotor.models.brain_models import efference_copy      as ec
 from oculomotor.models.brain_models import gravity_estimator   as ge
 from oculomotor.models.brain_models import pursuit             as pu
 from oculomotor.models.brain_models import vergence            as vg
+from oculomotor.models.brain_models import accommodation       as acc_mod
 from oculomotor.models.brain_models import ocr                 as ocr_mod
 from oculomotor.models.brain_models import optokinetic         as okr_mod
 from oculomotor.models.sensory_models.sensory_model import SensoryOutput  # noqa: F401 (re-exported)
@@ -195,6 +196,20 @@ class BrainParams(NamedTuple):
     phoria:                jnp.ndarray  = jnp.zeros(3)    # resting vergence (deg); tonic setpoint; 0=orthophoria
                                                            # phoria[0]>0 esophoria, <0 exophoria
 
+    # Accommodation — Schor dual-interaction model (Schor 1979; Schor & Ciuffreda 1983)
+    # Cross-coupled to vergence via AC/A and CA/C ratios.
+    tau_acc_fast:          float = 0.3    # fast (phasic) lens TC (s) [Hung & Semmlow 1980]
+    tau_acc_slow:          float = 30.0   # slow tonic adaptation TC (s) [Schor 1979]
+    K_acc_fast:            float = 1.5    # fast blur-to-accommodation gain (1/s)
+    K_acc_slow:            float = 0.3    # slow integration gain (1/s)
+    AC_A:                  float = 5.0    # AC/A ratio (prism diopters / diopter); typical 4–6
+                                          # At 40 cm (2.5 D): AC/A drive ≈ 5×0.573×2.5 ≈ 7.2°
+                                          # At   6 m (0.17 D): drive ≈ 0.5° — explains why
+                                          # IXT decompensates preferentially at distance.
+    CA_C:                  float = 0.4    # CA/C ratio (diopters / prism diopter); typical 0.3–0.5
+                                          # Drives accommodation when vergence is disparity-driven;
+                                          # reduces defocus during vergence eye movements.
+
     # Motor nucleus and nerve gains — two-stage encode (see muscle_geometry.py)
     # Stage 1 — g_nucleus (12,): per-nucleus gain [0,1]. Zero = nucleus lesion.
     #   Nucleus order: ABN_L(0), ABN_R(1), CN4_L(2), CN4_R(3),
@@ -220,8 +235,8 @@ class BrainParams(NamedTuple):
 
 # ── State layout ───────────────────────────────────────────────────────────────
 
-N_STATES = vs.N_STATES + ni.N_STATES + sg.N_STATES + ec.N_STATES + ge.N_STATES + pu.N_STATES + vg.N_STATES
-#        = 9 + 9 + 9 + 120 + 3 + 3 + 3 = 156
+N_STATES = vs.N_STATES + ni.N_STATES + sg.N_STATES + ec.N_STATES + ge.N_STATES + pu.N_STATES + vg.N_STATES + acc_mod.N_STATES
+#        = 9 + 9 + 9 + 120 + 3 + 3 + 3 + 2 = 158
 
 # ── Index constants — relative to x_brain ─────────────────────────────────────
 # Computed from module N_STATES to stay in sync automatically.
@@ -250,8 +265,10 @@ _IDX_NI_NULL = slice(_o_ni + 6, _o_ni + 9)   # (3,) null adaptation
 _IDX_SG      = slice(_o_sg, _o_sg + sg.N_STATES)   # (9,)
 _IDX_EC      = slice(_o_ec, _o_ec + ec.N_STATES)   # (120,)
 _IDX_GRAV    = slice(_o_gv, _o_gv + ge.N_STATES)   # (3,)
-_IDX_PURSUIT = slice(_o_pu, _o_pu + pu.N_STATES)   # (3,)
-_IDX_VERG    = slice(_o_vg, N_STATES)               # (3,)
+_IDX_PURSUIT = slice(_o_pu, _o_pu + pu.N_STATES)           # (3,)
+_IDX_VERG    = slice(_o_vg, _o_vg + vg.N_STATES)          # (3,)
+_o_acc       = _o_vg + vg.N_STATES                        # 156
+_IDX_ACC     = slice(_o_acc, _o_acc + acc_mod.N_STATES)   # (2,)
 
 
 def make_x0(brain_params=None):
@@ -275,8 +292,11 @@ def make_x0(brain_params=None):
         # _IDX_VS_NULL stays at 0 (no initial adaptation)
         # NI: b_ni populations (b_ni=0 default → stays zero)
         # _IDX_NI_L/R/NULL all stay at 0
-        # Vergence: initialise to phoria — tau_verg=25s is too slow to settle from zero.
+        # Vergence: initialise to phoria — tau_verg too slow to settle from zero.
         x0 = x0.at[_IDX_VERG].set(jnp.asarray(brain_params.phoria, dtype=jnp.float32))
+        # Accommodation: initialise fast component at 1 D (1 m target), slow at 0.
+        # Warmup will settle both to the correct steady state for the actual target depth.
+        x0 = x0.at[_IDX_ACC].set(jnp.array([1.0, 0.0]))
     return x0
 
 
@@ -310,6 +330,7 @@ def step(x_brain, sensory_out, brain_params):
     x_grav    = x_brain[_IDX_GRAV]
     x_pursuit = x_brain[_IDX_PURSUIT]
     x_verg    = x_brain[_IDX_VERG]
+    x_acc     = x_brain[_IDX_ACC]     # (2,): [x_fast, x_slow] diopters
 
     # ── Binocular combining — version (average) and vergence (difference) ────────
     # Each signal is gated by the per-eye delayed visibility (tv_L/R or sv_L/R),
@@ -390,11 +411,15 @@ def step(x_brain, sensory_out, brain_params):
     # state, acting as a torsional setpoint without bypassing the integrator leak.
     dx_ni, motor_cmd_ni = ni.step(x_ni, -w_est + u_burst + u_pursuit + ocr / brain_params.tau_i, brain_params)
 
-    # ── Vergence: binocular disparity → disconjugate eye commands ─────────────
+    # ── Accommodation: blur-driven lens adjustment + AC/A → vergence drive ────
+    dx_acc, x_acc_total = acc_mod.step(
+        x_acc, sensory_out.acc_demand, x_verg[0], brain_params)
+    aca_drive = acc_mod.ac_a_drive(x_acc_total, brain_params)   # deg, horizontal
+
+    # ── Vergence: binocular disparity + AC/A drive → disconjugate eye commands
     # bino = tv_L * tv_R ≈ 1 when both eyes fuse, 0 when either covered.
-    # When bino = 0: e_disp = 0 → x_verg drifts to phoria with TC = tau_verg.
-    # High K·τ ≈ 150 → CL gain ~99% without state correction.
-    dx_verg, u_verg = vg.step(x_verg, e_disp, brain_params)
+    # When bino = 0: e_disp = 0 but AC/A drive persists → prevents runaway divergence.
+    dx_verg, u_verg = vg.step(x_verg, e_disp, aca_drive, brain_params)
 
     # ── Two-stage motor nucleus encode → per-muscle nerve activations ────────
     # Stage 1: [version, vergence] (6,) → nuclei (12,) via M_NUCLEUS
@@ -426,6 +451,6 @@ def step(x_brain, sensory_out, brain_params):
     dx_ec, _ = ec.step(x_ec, R_eye_T @ (u_burst + u_pursuit), brain_params)
 
     # ── Pack state derivative ─────────────────────────────────────────────────
-    dx_brain = jnp.concatenate([dx_vs, dx_ni, dx_sg, dx_ec, dx_grav, dx_pursuit, dx_verg])
+    dx_brain = jnp.concatenate([dx_vs, dx_ni, dx_sg, dx_ec, dx_grav, dx_pursuit, dx_verg, dx_acc])
 
     return dx_brain, motor_cmd_L, motor_cmd_R

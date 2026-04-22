@@ -65,7 +65,7 @@ from oculomotor.models.sensory_models               import otolith as _otolith
 from oculomotor.models.brain_models.brain_model    import (
     _IDX_VS, _IDX_VS_L, _IDX_VS_R, _IDX_VS_NULL,
     _IDX_NI, _IDX_NI_L, _IDX_NI_R, _IDX_NI_NULL,
-    _IDX_SG, _IDX_EC, _IDX_GRAV, _IDX_PURSUIT, _IDX_VERG,
+    _IDX_SG, _IDX_EC, _IDX_GRAV, _IDX_PURSUIT, _IDX_VERG, _IDX_ACC,
     BrainParams,
 )
 from oculomotor.models.plant_models.plant_model_first_order import PlantParams, _IDX_P_L, _IDX_P_R
@@ -223,7 +223,7 @@ __all__ = [
     '_IDX_C', '_IDX_OTO', '_IDX_VIS', '_IDX_VIS_L', '_IDX_VIS_R',
     '_IDX_VS', '_IDX_VS_L', '_IDX_VS_R', '_IDX_VS_NULL',
     '_IDX_NI', '_IDX_NI_L', '_IDX_NI_R', '_IDX_NI_NULL',
-    '_IDX_SG', '_IDX_EC', '_IDX_GRAV', '_IDX_PURSUIT', '_IDX_VERG',
+    '_IDX_SG', '_IDX_EC', '_IDX_GRAV', '_IDX_PURSUIT', '_IDX_VERG', '_IDX_ACC',
     '_IDX_P_L', '_IDX_P_R',
     # params
     'Params', 'SimConfig', 'SensoryParams', 'PlantParams', 'BrainParams',
@@ -299,6 +299,10 @@ def ODE_ocular_motor(t, state, args):
 
     # ── Sensory: read raw per-eye cascade outputs ────────────────────────────
     sensory_out = sensory_model.read_outputs(state.sensory, theta.sensory)
+
+    # Accommodation demand: 1/z_depth (diopters). Guard against z≤0.
+    sensory_out = sensory_out._replace(
+        acc_demand=1.0 / jnp.maximum(p_target[2], 0.05))
 
     # ── Sensory noise ─────────────────────────────────────────────────────────
     sensory_out = sensory_out._replace(

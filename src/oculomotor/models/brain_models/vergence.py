@@ -70,13 +70,16 @@ N_INPUTS  = 3   # e_disp = pos_delayed_L − pos_delayed_R (deg)
 N_OUTPUTS = 3   # u_verg: vergence position command (deg)
 
 
-def step(x_verg, e_disp, brain_params):
+def step(x_verg, e_disp, ac_a_drive, brain_params):
     """Single-integrator vergence controller with dual-range nonlinear drive.
 
     Args:
         x_verg:       (3,)   vergence position memory (deg); positive = converged
         e_disp:       (3,)   binocular disparity = pos_delayed_L − pos_delayed_R (deg)
-                             Gated by target_present via the retinal cascade.
+                             Gated by bino = tv_L × tv_R; zero when one eye is suppressed.
+        ac_a_drive:   scalar  accommodative convergence drive (deg) from accommodation.py.
+                             Active even when e_disp=0 (suppressed / monocular) — this
+                             is the primary re-fusion mechanism in intermittent exotropia.
         brain_params: BrainParams  (reads K_verg, K_verg_prox, K_phasic_verg, tau_verg,
                                          disp_max_verg_fus, disp_max_verg_prox, phoria)
 
@@ -84,22 +87,23 @@ def step(x_verg, e_disp, brain_params):
         dx_verg: (3,)  dx_verg/dt  (deg/s)
         u_verg:  (3,)  vergence position command (deg) → split ±½ in brain_model
     """
+    # ── AC/A + disparity: total vergence error ────────────────────────────────
+    # ac_a_drive acts on the horizontal axis only; broadcast to (3,) for uniform clipping.
+    # The dual-range nonlinearity then clips the combined signal appropriately.
+    e_total = e_disp + jnp.array([ac_a_drive, 0.0, 0.0])
+
     # ── Dual-range nonlinear gain ───────────────────────────────────────────────
-    # e_disp > 0: need to converge more (target closer than current fixation).
-    # e_disp < 0: need to diverge (target farther).
-    # x_verg > 0: currently commanding convergence (motor output to plant).
+    # e_total > 0: need to converge more (disparity or AC/A demand).
+    # e_total < 0: need to diverge.
     #
-    # e_fus:  disparity clipped to fusional range (±disp_max_verg_fus, ~±1 deg).
-    #         High-gain path: drives fast convergence for fine disparity.
-    # e_prox: disparity clipped to full vergence range (±disp_max_verg_prox, ~±20 deg).
-    #         Low-gain path: drives slow convergence for large depth steps.
+    # e_fus:  clipped to fusional range (±disp_max_verg_fus, ~±1 deg) — high-gain path.
+    # e_prox: clipped to full range (±disp_max_verg_prox, ~±20 deg) — low-gain path.
     #
-    # Gain profile (effective deg/s per deg of disparity):
-    #   |e_disp| < 1 deg:   K_verg + K_verg_prox ≈ 6/s  → TC ~160 ms  [Rashbass & Westheimer 1961]
-    #   1 < |e_disp| < 20:  K_verg_prox          ≈ 1/s  → TC ~1 s     [Judge & Miles 1985]
-    # CL gain ≈ K_total·τ / (K_total·τ + 1 + K_phasic) ≈ 150/152 ≈ 99 % without state correction.
-    e_fus  = jnp.clip(e_disp, -brain_params.disp_max_verg_fus,  brain_params.disp_max_verg_fus)
-    e_prox = jnp.clip(e_disp, -brain_params.disp_max_verg_prox, brain_params.disp_max_verg_prox)
+    # Gain profile:
+    #   |e_total| < 1 deg:   K_verg + K_verg_prox ≈ 6/s  → TC ~160 ms [Rashbass 1961]
+    #   1 < |e_total| < 20:  K_verg_prox          ≈ 1/s  → TC ~1 s    [Judge 1985]
+    e_fus  = jnp.clip(e_total, -brain_params.disp_max_verg_fus,  brain_params.disp_max_verg_fus)
+    e_prox = jnp.clip(e_total, -brain_params.disp_max_verg_prox, brain_params.disp_max_verg_prox)
 
     e_pred = brain_params.K_verg * e_fus + brain_params.K_verg_prox * e_prox
 

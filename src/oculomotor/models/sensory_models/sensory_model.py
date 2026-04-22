@@ -164,6 +164,7 @@ class SensoryOutput(NamedTuple):
     target_vis_R:    jnp.ndarray   # scalar
     strobe_delayed_L: jnp.ndarray  # scalar — delayed target_strobed
     strobe_delayed_R: jnp.ndarray  # scalar — delayed target_strobed
+    acc_demand:       float = 0.0  # 1/z_depth (D) — instantaneous blur demand; set in ODE
 
 
 def read_outputs(x_sensory, sensory_params):
