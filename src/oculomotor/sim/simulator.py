@@ -279,6 +279,7 @@ def ODE_ocular_motor(t, state, args):
     (theta, hv_interp, hp_interp, ha_interp, vs_interp, target_interp,
      vt_interp, scene_present_L_interp, scene_present_R_interp,
      target_present_L_interp, target_present_R_interp,
+     target_strobed_interp,
      noise_canal_interp, noise_slip_L_interp, noise_slip_R_interp,
      noise_pos_L_interp, noise_pos_R_interp,
      noise_vel_L_interp, noise_vel_R_interp) = args
@@ -292,8 +293,9 @@ def ODE_ocular_motor(t, state, args):
     v_target          = vt_interp.evaluate(t)                  # (3,) target angular velocity (deg/s)
     scene_present_L   = scene_present_L_interp.evaluate(t)     # scalar: 0=dark, 1=lit (L eye)
     scene_present_R   = scene_present_R_interp.evaluate(t)     # scalar: 0=dark, 1=lit (R eye)
-    target_present_L  = target_present_L_interp.evaluate(t)   # scalar: 0=L eye covered
-    target_present_R  = target_present_R_interp.evaluate(t)   # scalar: 0=R eye covered
+    target_present_L  = target_present_L_interp.evaluate(t)    # scalar: 0=L eye covered
+    target_present_R  = target_present_R_interp.evaluate(t)    # scalar: 0=R eye covered
+    target_strobed    = target_strobed_interp.evaluate(t)       # scalar: 1=stroboscopic
 
     # ── Sensory: read raw per-eye cascade outputs ────────────────────────────
     sensory_out = sensory_model.read_outputs(state.sensory, theta.sensory)
@@ -323,7 +325,7 @@ def ODE_ocular_motor(t, state, args):
     dx_sensory = sensory_model.step(
         state.sensory, q_head, w_head, a_head, q_eye_L, w_eye_L, q_eye_R, w_eye_R,
         w_scene, v_target, p_target, scene_present_L, scene_present_R,
-        target_present_L, target_present_R, theta.sensory)
+        target_present_L, target_present_R, target_strobed, theta.sensory)
 
     return SimState(
         sensory = dx_sensory,
@@ -345,6 +347,7 @@ def simulate(params, t_array_or_stimulus, head_vel_array=None,
              target_present_array=None,
              target_present_L_array=None,
              target_present_R_array=None,
+             target_strobed_array=None,
              max_steps=10000, sim_config=None,
              return_states=False,
              key=None):
@@ -487,6 +490,9 @@ def simulate(params, t_array_or_stimulus, head_vel_array=None,
     tg_L = jnp.asarray(target_present_L_array, dtype=jnp.float32) if target_present_L_array is not None else tg_both
     tg_R = jnp.asarray(target_present_R_array, dtype=jnp.float32) if target_present_R_array is not None else tg_both
 
+    # ── Strobe flag (0 = continuous, 1 = strobed → velocity absent) ──────────
+    ts = jnp.asarray(target_strobed_array, dtype=jnp.float32) if target_strobed_array is not None else jnp.zeros(T, dtype=jnp.float32)
+
     # ── Sensory noise arrays (pre-generated; zero when sigma=0) ──────────────
     if key is None:
         key = jax.random.PRNGKey(0)
@@ -580,6 +586,7 @@ def simulate(params, t_array_or_stimulus, head_vel_array=None,
     scene_present_R_interp   = diffrax.LinearInterpolation(ts=t_full, ys=sg_R)
     target_present_L_interp  = diffrax.LinearInterpolation(ts=t_full, ys=tg_L)
     target_present_R_interp  = diffrax.LinearInterpolation(ts=t_full, ys=tg_R)
+    target_strobed_interp    = diffrax.LinearInterpolation(ts=t_full, ys=ts)
 
     sensory_x0 = jnp.zeros(sensory_model.N_STATES)
     sensory_x0 = sensory_x0.at[_IDX_OTO].set(_otolith.X0)   # otolith settled at gravity
@@ -607,6 +614,7 @@ def simulate(params, t_array_or_stimulus, head_vel_array=None,
         args=(params, hv_interp, hp_interp, ha_interp, vs_interp, target_interp,
               vt_interp, scene_present_L_interp, scene_present_R_interp,
               target_present_L_interp, target_present_R_interp,
+              target_strobed_interp,
               noise_canal_interp, noise_slip_L_interp, noise_slip_R_interp,
               noise_pos_L_interp, noise_pos_R_interp,
               noise_vel_L_interp, noise_vel_R_interp),

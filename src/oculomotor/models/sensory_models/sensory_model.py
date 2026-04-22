@@ -102,11 +102,12 @@ canal_nonlinearity = _canal.nonlinearity   # renamed in canal.py
 # Visual delay
 N_STAGES           = _retina.N_STAGES             # 40
 _N_PER_SIG         = _retina._N_PER_SIG           # 120
-C_slip             = _retina.C_slip               # (3, 440)  delayed scene velocity
-C_pos              = _retina.C_pos                # (3, 440)  delayed target position (raw)
-C_vel              = _retina.C_vel                # (3, 440)  delayed target velocity (raw)
-C_scene_visible    = _retina.C_scene_visible      # (1, 440)  delayed scene_present
-C_target_visible   = _retina.C_target_visible     # (1, 440)  delayed target_present × target_in_vf
+C_slip             = _retina.C_slip               # (3, 480)  delayed scene velocity
+C_pos              = _retina.C_pos                # (3, 480)  delayed target position (raw)
+C_vel              = _retina.C_vel                # (3, 480)  delayed target velocity (raw)
+C_scene_visible    = _retina.C_scene_visible      # (1, 480)  delayed scene_present
+C_target_visible   = _retina.C_target_visible     # (1, 480)  delayed target_present × target_in_vf
+C_strobed          = _retina.C_strobed            # (1, 480)  delayed target_strobed
 delay_cascade_step = _retina.delay_cascade_step
 delay_cascade_read = _retina.delay_cascade_read
 
@@ -114,7 +115,7 @@ delay_cascade_read = _retina.delay_cascade_read
 
 _N_CANAL_STATES  = _canal.N_STATES          # 12
 _N_OTO_STATES    = _otolith.N_STATES        #  6
-_N_VIS_STATES    = _retina.N_STATES         # 440  [x_scene_vel(120)|x_target_pos(120)|x_target_vel(120)|x_scene_visible(40)|x_target_visible(40)]
+_N_VIS_STATES    = _retina.N_STATES         # 480  [x_scene_vel(120)|x_target_pos(120)|x_target_vel(120)|x_scene_visible(40)|x_target_visible(40)|x_strobed(40)]
 N_STATES         = _N_CANAL_STATES + _N_OTO_STATES + 2 * _N_VIS_STATES  # 12+6+480+480 = 978
 
 # Index constants — relative to x_sensory
@@ -123,9 +124,9 @@ _IDX_C     = slice(0,
 _IDX_OTO   = slice(_N_CANAL_STATES,
                    _N_CANAL_STATES + _N_OTO_STATES)                             # (6,)
 _IDX_VIS_L = slice(_N_CANAL_STATES + _N_OTO_STATES,
-                   _N_CANAL_STATES + _N_OTO_STATES + _N_VIS_STATES)             # (440,)
+                   _N_CANAL_STATES + _N_OTO_STATES + _N_VIS_STATES)             # (480,)
 _IDX_VIS_R = slice(_N_CANAL_STATES + _N_OTO_STATES + _N_VIS_STATES,
-                   _N_CANAL_STATES + _N_OTO_STATES + 2 * _N_VIS_STATES)         # (440,)
+                   _N_CANAL_STATES + _N_OTO_STATES + 2 * _N_VIS_STATES)         # (480,)
 _IDX_VIS   = _IDX_VIS_L   # backward-compatibility alias (left eye cascade)
 
 
@@ -145,21 +146,24 @@ class SensoryOutput(NamedTuple):
         pos_L/R:      (3,)   delayed target position   → SG after gating
         vel_L/R:      (3,)   delayed target velocity   → pursuit after gating
     Per-eye delayed visibility gates:
-        scene_vis_L/R:  scalar  delay(scene_present)
-        target_vis_L/R: scalar  delay(target_present × target_in_vf)
+        scene_vis_L/R:    scalar  delay(scene_present)
+        target_vis_L/R:   scalar  delay(target_present × target_in_vf)
+        strobe_delayed_L/R: scalar  delay(target_strobed) — brain uses to gate EC in pursuit
     """
-    canal:         jnp.ndarray   # (6,)
-    f_otolith:     jnp.ndarray   # (3,)
-    slip_L:        jnp.ndarray   # (3,)
-    slip_R:        jnp.ndarray   # (3,)
-    pos_L:         jnp.ndarray   # (3,)
-    pos_R:         jnp.ndarray   # (3,)
-    vel_L:         jnp.ndarray   # (3,)
-    vel_R:         jnp.ndarray   # (3,)
-    scene_vis_L:   jnp.ndarray   # scalar
-    scene_vis_R:   jnp.ndarray   # scalar
-    target_vis_L:  jnp.ndarray   # scalar
-    target_vis_R:  jnp.ndarray   # scalar
+    canal:           jnp.ndarray   # (6,)
+    f_otolith:       jnp.ndarray   # (3,)
+    slip_L:          jnp.ndarray   # (3,)
+    slip_R:          jnp.ndarray   # (3,)
+    pos_L:           jnp.ndarray   # (3,)
+    pos_R:           jnp.ndarray   # (3,)
+    vel_L:           jnp.ndarray   # (3,)
+    vel_R:           jnp.ndarray   # (3,)
+    scene_vis_L:     jnp.ndarray   # scalar
+    scene_vis_R:     jnp.ndarray   # scalar
+    target_vis_L:    jnp.ndarray   # scalar
+    target_vis_R:    jnp.ndarray   # scalar
+    strobe_delayed_L: jnp.ndarray  # scalar — delayed target_strobed
+    strobe_delayed_R: jnp.ndarray  # scalar — delayed target_strobed
 
 
 def read_outputs(x_sensory, sensory_params):
@@ -192,10 +196,12 @@ def read_outputs(x_sensory, sensory_params):
         pos_R        = _retina.C_pos  @ x_vis_R,
         vel_L        = _retina.C_vel  @ x_vis_L,
         vel_R        = _retina.C_vel  @ x_vis_R,
-        scene_vis_L  = (_retina.C_scene_visible  @ x_vis_L)[0],
-        scene_vis_R  = (_retina.C_scene_visible  @ x_vis_R)[0],
-        target_vis_L = (_retina.C_target_visible @ x_vis_L)[0],
-        target_vis_R = (_retina.C_target_visible @ x_vis_R)[0],
+        scene_vis_L      = (_retina.C_scene_visible  @ x_vis_L)[0],
+        scene_vis_R      = (_retina.C_scene_visible  @ x_vis_R)[0],
+        target_vis_L     = (_retina.C_target_visible @ x_vis_L)[0],
+        target_vis_R     = (_retina.C_target_visible @ x_vis_R)[0],
+        strobe_delayed_L = (_retina.C_strobed        @ x_vis_L)[0],
+        strobe_delayed_R = (_retina.C_strobed        @ x_vis_R)[0],
     )
 
 
@@ -203,7 +209,7 @@ def read_outputs(x_sensory, sensory_params):
 
 def step(x_sensory, q_head, w_head, a_head, q_eye_L, w_eye_L, q_eye_R, w_eye_R,
          w_scene, v_target, p_target, scene_present_L, scene_present_R,
-         target_present_L, target_present_R,
+         target_present_L, target_present_R, target_strobed,
          sensory_params):
     """Single ODE step for the sensory subsystem (canal + otolith + visual delay).
 
@@ -226,6 +232,8 @@ def step(x_sensory, q_head, w_head, a_head, q_eye_L, w_eye_L, q_eye_R, w_eye_R,
         scene_present_R:  scalar  0=R eye dark, 1=R eye lit
         target_present_L: scalar  0=L eye covered, 1=L eye sees target — gates e_vel/e_pos/target_in_vf L
         target_present_R: scalar  0=R eye covered, 1=R eye sees target — gates e_vel/e_pos/target_in_vf R
+        target_strobed:   scalar  1=stroboscopic illumination — zeros target_vel before retinal cascade;
+                                  position (saccades) preserved, velocity (pursuit) absent
         sensory_params:   SensoryParams  model parameters
 
     Returns:
@@ -263,10 +271,10 @@ def step(x_sensory, q_head, w_head, a_head, q_eye_L, w_eye_L, q_eye_R, w_eye_R,
 
     dx_vis_L = _retina.step(
         x_vis_L, scene_vel_L, target_pos_L, target_vel_L,
-        scene_visible_L, target_visible_L, sensory_params.tau_vis)
+        scene_visible_L, target_visible_L, target_strobed, sensory_params.tau_vis)
     dx_vis_R = _retina.step(
         x_vis_R, scene_vel_R, target_pos_R, target_vel_R,
-        scene_visible_R, target_visible_R, sensory_params.tau_vis)
+        scene_visible_R, target_visible_R, target_strobed, sensory_params.tau_vis)
 
     dx_sensory = jnp.concatenate([dx_c, dx_oto, dx_vis_L, dx_vis_R])
     return dx_sensory

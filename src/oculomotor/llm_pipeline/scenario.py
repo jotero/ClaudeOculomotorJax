@@ -165,6 +165,8 @@ class VisualFlagsSegment(BaseModel):
     Smooth pursuit:        scene_present=True,  target_present=True
     Cover test (R covered):scene_present=True,  target_present=True,
                            target_present_L=True, target_present_R=False
+    Stroboscopic pursuit:  scene_present=True,  target_present=True, target_strobed=True
+                           (position visible → saccades; velocity absent → no pursuit drive)
     """
     duration_s:       float          = Field(gt=0, le=120, description="Duration of this segment (s).")
     scene_present:    bool           = Field(default=True,  description="Both-eye shorthand: True = lit room → OKR active for both eyes.")
@@ -173,6 +175,7 @@ class VisualFlagsSegment(BaseModel):
     target_present:   bool           = Field(default=True,  description="Both-eye shorthand: True = target visible for both eyes.")
     target_present_L: Optional[bool] = Field(default=None,  description="L-eye override. None = inherit target_present. False = cover L eye.")
     target_present_R: Optional[bool] = Field(default=None,  description="R-eye override. None = inherit target_present. False = cover R eye.")
+    target_strobed:   bool           = Field(default=False, description="Stroboscopic illumination: True = position signal present but velocity signal absent. Blocks pursuit drive while preserving saccadic targeting.")
 
 
 # ── Patient (unchanged) ────────────────────────────────────────────────────────

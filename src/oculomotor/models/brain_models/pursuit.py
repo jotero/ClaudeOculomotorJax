@@ -22,11 +22,10 @@ Dynamics:
 
 where:
     x_p       (3,)   pursuit velocity memory (deg/s)
-    e_combined (3,)  EC-corrected target velocity error from brain_model.py:
-                         e_combined = vel_delayed + target_present · motor_ec  ≈ v_target
-                     Gated by target_present (not scene_present) so that OKN
-                     (full-field scene motion without a foveal target) does not
-                     drive the pursuit integrator.
+    e_combined (3,)  EC-corrected target velocity error, assembled in brain_model.py:
+                         target_slip already gated (target_visible × (1−strobed) at retina)
+                         motor_ec pre-gated by target_motion_visible before call
+                     Ensures OKN (no foveal target) does not drive the pursuit integrator.
     u_pursuit (3,)   pursuit velocity command → NI
 
 Predictor effect:
@@ -53,26 +52,23 @@ N_INPUTS  = 3   # e_vel_delayed after saccade EC subtraction
 N_OUTPUTS = 3   # u_pursuit: velocity command → NI and VS
 
 
-def step(x_pursuit, target_slip, motor_ec, target_visible, brain_params):
+def step(x_pursuit, target_slip, motor_ec, brain_params):
     """Single ODE step: gating + Smith predictor → pursuit derivative + output command.
 
     Args:
-        x_pursuit:     (3,)   pursuit memory state (deg/s)
-        target_slip:   (3,)   delayed target velocity on retina (deg/s)
-        motor_ec:      (3,)   efference copy — cancels self-generated retinal velocity
-        target_visible: scalar  target gate [0, 1]; 0 when no foveal target
-        brain_params:  BrainParams  (reads K_pursuit, K_phasic_pursuit, tau_pursuit, v_max_pursuit)
+        x_pursuit:    (3,)   pursuit memory state (deg/s)
+        target_slip:  (3,)   delayed target velocity on retina (deg/s); already gated by
+                             target_visible × (1 − strobed) at retinal cascade input
+        motor_ec:     (3,)   efference copy pre-gated by target_motion_visible at call site
+        brain_params: BrainParams  (reads K_pursuit, K_phasic_pursuit, tau_pursuit, v_max_pursuit)
 
     Returns:
         dx_pursuit: (3,)  dx_p/dt  (deg/s²)
         u_pursuit:  (3,)  pursuit velocity command (deg/s)
     """
     K_ph = brain_params.K_phasic_pursuit
-    # MT/MST velocity saturation applied separately to sensory slip and EC,
-    # then gated by target visibility.  clip(e) + clip(ec) keeps each signal
-    # within the sensory range independently before they combine.
-    e_combined = target_visible * (
-        jnp.clip(target_slip, -brain_params.v_max_pursuit, brain_params.v_max_pursuit)
+    # MT/MST velocity saturation: clip slip and EC independently before combining.
+    e_combined = (jnp.clip(target_slip, -brain_params.v_max_pursuit, brain_params.v_max_pursuit)
         + jnp.clip(motor_ec,  -brain_params.v_max_pursuit, brain_params.v_max_pursuit)
     )
     # Smith predictor: e_pred = (e_combined − x_pursuit) / (1 + K_phasic)

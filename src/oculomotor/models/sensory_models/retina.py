@@ -11,28 +11,29 @@ Two responsibilities:
      delay of tau_vis seconds.  With N_STAGES=40 and tau_vis=0.08 s:
          Mean delay = 0.08 s,  std ≈ 0.013 s,  −3 dB BW ≈ 66 Hz
 
-     Five signals are delayed independently:
+     Six signals are delayed independently:
          Signal 0 — scene_vel       (3,)  scene velocity on retina    → OKR / VS drive
          Signal 1 — target_pos      (3,)  target position on retina   → saccade error
          Signal 2 — target_vel      (3,)  target velocity on retina   → pursuit drive
          Signal 3 — scene_visible   (1,)  delay(scene_present) — presence only, no geometry
          Signal 4 — target_visible  (1,)  delay(target_present × target_in_vf) — presence × geometry
+         Signal 5 — target_strobed  (1,)  delay(target_strobed) — stroboscopic flag,
+                                          used by brain to gate EC alongside delayed velocity
 
-     All signals enter the cascade raw (no pre-gating).  Signals 3 and 4 are
-     the delayed "observed" flags; sensory_model.read_outputs() multiplies
-     them by the raw delayed signals at readout so that zero in the cascade
-     unambiguously means "the signal was zero", not "it was unobserved".
+     All signals enter the cascade raw.  Signal 5 is delayed so the brain can gate
+     the efference copy at exactly the time the (already-zeroed) velocity arrives.
 
-     State layout (440,):
+     State layout (480,):
          [x_scene_vel (120) | x_target_pos (120) | x_target_vel (120)
-          | x_scene_visible (40) | x_target_visible (40)]
+          | x_scene_visible (40) | x_target_visible (40) | x_strobed (40)]
 
      Module-level readout matrices (exported for sensory_model / efference copy):
-         C_slip           (3, 440)  last stage of scene_vel cascade
-         C_pos            (3, 440)  last stage of target_pos cascade
-         C_vel            (3, 440)  last stage of target_vel cascade
-         C_scene_visible  (1, 440)  last stage of scene_visible cascade
-         C_target_visible (1, 440)  last stage of target_visible cascade
+         C_slip           (3, 480)  last stage of scene_vel cascade
+         C_pos            (3, 480)  last stage of target_pos cascade
+         C_vel            (3, 480)  last stage of target_vel cascade
+         C_scene_visible  (1, 480)  last stage of scene_visible cascade
+         C_target_visible (1, 480)  last stage of target_visible cascade
+         C_strobed        (1, 480)  last stage of strobed cascade
 """
 
 import jax
@@ -46,12 +47,13 @@ N_STAGES      = 40    # cascade depth (stages per signal)
 _N_SIG        = 3     # number of 3-D signals (scene_vel, target_pos, target_vel)
 _N_PER_SIG    = N_STAGES * 3     # 120  states per 3-D signal
 _N_SCALAR     = N_STAGES         # 40   states per scalar signal
-N_STATES      = _N_SIG * _N_PER_SIG + 2 * _N_SCALAR  # 360 + 80 = 440
+N_STATES      = _N_SIG * _N_PER_SIG + 3 * _N_SCALAR  # 360 + 120 = 480
 
 # ── State offsets ───────────────────────────────────────────────────────────────
 
 _OFF_SCENE_VIS    = _N_SIG * _N_PER_SIG          # 360
 _OFF_TARGET_VIS   = _OFF_SCENE_VIS + _N_SCALAR    # 400
+_OFF_STROBED      = _OFF_TARGET_VIS + _N_SCALAR   # 440
 
 # ── Readout matrices ────────────────────────────────────────────────────────────
 # Exported so sensory_model / efference_copy can read cascade outputs directly.
@@ -61,6 +63,7 @@ C_pos            = jnp.zeros((3, N_STATES)).at[:, 2*_N_PER_SIG-3     : 2*_N_PER_
 C_vel            = jnp.zeros((3, N_STATES)).at[:, 3*_N_PER_SIG-3     : 3*_N_PER_SIG    ].set(jnp.eye(3))
 C_scene_visible  = jnp.zeros((1, N_STATES)).at[0, _OFF_SCENE_VIS + _N_SCALAR - 1        ].set(1.0)
 C_target_visible = jnp.zeros((1, N_STATES)).at[0, _OFF_TARGET_VIS + _N_SCALAR - 1       ].set(1.0)
+C_strobed        = jnp.zeros((1, N_STATES)).at[0, _OFF_STROBED    + _N_SCALAR - 1       ].set(1.0)
 
 
 # ── Geometry ────────────────────────────────────────────────────────────────────
@@ -188,39 +191,48 @@ def delay_cascade_read(x_cascade):
 # ── Combined visual delay step ───────────────────────────────────────────────────
 
 def step(x_vis, scene_vel, target_pos, target_vel,
-         scene_present, target_visible, tau_vis):
-    """Single ODE step for the full visual delay cascade (five signals).
+         scene_present, target_visible, target_strobed, tau_vis):
+    """Single ODE step for the full visual delay cascade (six signals).
 
-    All signals enter the cascade raw — no pre-gating.  Gating is applied at
-    readout (sensory_model.read_outputs) using the delayed presence signals
-    scene_visible and target_visible.
+    Signals are gated at the cascade input so delayed outputs are already clean:
+        scene_vel   × scene_present                          → OKR / VS
+        target_pos  × target_visible                         → saccade error
+        target_vel  × target_visible × (1 − target_strobed) → pursuit drive
+    Presence flags and strobe are delayed raw so the brain has timing information.
 
     State layout: [x_scene_vel(120) | x_target_pos(120) | x_target_vel(120)
-                   | x_scene_visible(40) | x_target_visible(40)]
+                   | x_scene_visible(40) | x_target_visible(40) | x_strobed(40)]
 
     Args:
-        x_vis:          (440,)  visual cascade state
-        scene_vel:      (3,)    scene velocity on retina, eye frame (deg/s)
-        target_pos:     (3,)    target position on retina, eye frame (deg)
-        target_vel:     (3,)    target velocity on retina, eye frame (deg/s)
-        scene_present:  scalar  is scene physically present? ∈ {0, 1}
-        target_visible: scalar  target_present × target_in_vf ∈ [0, 1]
-        tau_vis:        float   total cascade delay (s)
+        x_vis:           (480,)  visual cascade state
+        scene_vel:       (3,)    scene velocity on retina, eye frame (deg/s)
+        target_pos:      (3,)    target position on retina, eye frame (deg)
+        target_vel:      (3,)    target velocity on retina, eye frame (deg/s)
+        scene_present:   scalar  is scene physically present? ∈ {0, 1}
+        target_visible:  scalar  target_present × target_in_vf ∈ [0, 1]
+        target_strobed:  scalar  1 = stroboscopic illumination ∈ {0, 1}
+        tau_vis:         float   total cascade delay (s)
 
     Returns:
-        dx_vis: (440,)  dx_vis/dt
+        dx_vis: (480,)  dx_vis/dt
     """
-    x_scene_vel   = x_vis[                 :   _N_PER_SIG]
-    x_target_pos  = x_vis[    _N_PER_SIG   : 2*_N_PER_SIG]
-    x_target_vel  = x_vis[  2*_N_PER_SIG   : 3*_N_PER_SIG]
-    x_scene_vis   = x_vis[ _OFF_SCENE_VIS   : _OFF_TARGET_VIS]
-    x_target_vis  = x_vis[ _OFF_TARGET_VIS  :]
+    x_scene_vel   = x_vis[              :   _N_PER_SIG]
+    x_target_pos  = x_vis[ _N_PER_SIG   : 2*_N_PER_SIG]
+    x_target_vel  = x_vis[2*_N_PER_SIG  : 3*_N_PER_SIG]
+    x_scene_vis   = x_vis[_OFF_SCENE_VIS : _OFF_TARGET_VIS]
+    x_target_vis  = x_vis[_OFF_TARGET_VIS: _OFF_STROBED]
+    x_strobed     = x_vis[_OFF_STROBED   :]
 
-    dx_scene_vel  = delay_cascade_step(x_scene_vel,  scene_vel,       tau_vis)
-    dx_target_pos = delay_cascade_step(x_target_pos, target_pos,      tau_vis)
-    dx_target_vel = delay_cascade_step(x_target_vel, target_vel,      tau_vis)
-    dx_scene_vis  = delay_cascade_step(x_scene_vis,  scene_present,   tau_vis)
-    dx_target_vis = delay_cascade_step(x_target_vis, target_visible,  tau_vis)
+    scene_vel_in  = scene_vel  * scene_present
+    target_pos_in = target_pos * target_visible
+    target_vel_in = target_vel * target_visible * (1.0 - target_strobed)
+
+    dx_scene_vel  = delay_cascade_step(x_scene_vel,  scene_vel_in,   tau_vis)
+    dx_target_pos = delay_cascade_step(x_target_pos, target_pos_in,  tau_vis)
+    dx_target_vel = delay_cascade_step(x_target_vel, target_vel_in,  tau_vis)
+    dx_scene_vis  = delay_cascade_step(x_scene_vis,  scene_present,  tau_vis)
+    dx_target_vis = delay_cascade_step(x_target_vis, target_visible, tau_vis)
+    dx_strobed    = delay_cascade_step(x_strobed,    target_strobed, tau_vis)
 
     return jnp.concatenate([dx_scene_vel, dx_target_pos, dx_target_vel,
-                             dx_scene_vis, dx_target_vis])
+                             dx_scene_vis, dx_target_vis, dx_strobed])

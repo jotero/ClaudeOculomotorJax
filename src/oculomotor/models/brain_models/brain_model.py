@@ -339,6 +339,7 @@ def step(x_brain, sensory_out, brain_params):
     pos            = (pos_L + pos_R) / tv_norm
     target_slip    = (tv_L * sensory_out.vel_L + tv_R * sensory_out.vel_R) / tv_norm
     target_visible = jnp.clip(tv_sum, 0.0, 1.0)
+    target_motion_visible = target_visible*sensory_out.strobe_delayed_L * sensory_out.strobe_delayed_R
 
     bino   = tv_L * tv_R
     e_disp = bino * (pos_L - pos_R)
@@ -350,7 +351,7 @@ def step(x_brain, sensory_out, brain_params):
     motor_ec = ec.read_delayed(x_ec)
 
     # ── Optokinetic: scene-gated EC-corrected slip → visual drive for VS ─────────
-    okr = okr_mod.compute(scene_slip, motor_ec, scene_visible, brain_params)
+    okr = okr_mod.compute(scene_slip, motor_ec*scene_visible, brain_params)
 
     # ── Velocity storage: combines VOR (canal) + OKR (visual) reflexes → ω̂ head ──
     # Canal provides vestibular drive; OKR provides visual drive; together they give
@@ -370,7 +371,10 @@ def step(x_brain, sensory_out, brain_params):
     ocr = ocr_mod.compute(g_hat, brain_params)
 
     # ── Pursuit: target-gated EC-corrected velocity → pursuit integrator ─────────
-    dx_pursuit, u_pursuit = pu.step(x_pursuit, target_slip, motor_ec, target_visible, brain_params)
+    # Strobe gate: when target is strobed, EC is also zeroed — stroboscopic illumination
+    # provides no continuous motion signal, so eye-movement EC would create a spurious drive.
+    # strobe_delayed matches the timing of the already-zeroed target_slip (same delay cascade).
+    dx_pursuit, u_pursuit = pu.step(x_pursuit, target_slip, motor_ec*target_motion_visible, brain_params)
 
     # ── Saccade generator (target selection handled internally) ───────────────
     # x_ni_net is the brain's proxy for current eye position (avoids plant state dependency)

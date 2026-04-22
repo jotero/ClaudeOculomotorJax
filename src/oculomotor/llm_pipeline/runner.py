@@ -112,8 +112,8 @@ def _build_stimulus(scenario: SimulationScenario) -> dict:
     # Scene angular velocity → OKR / velocity storage
     v_scene = scene_arr['rot_vel']                 # (T, 3) deg/s
 
-    # Visual flags — per-eye scene_present and target_present
-    spL, spR, tpL, tpR = stim.build_visual_flags(scenario.visual, T, dt)
+    # Visual flags — per-eye scene_present, target_present, and strobe flag
+    spL, spR, tpL, tpR, ts = stim.build_visual_flags(scenario.visual, T, dt)
 
     # Head linear acceleration in world frame → simulator adds gravity rotation to get
     # specific force in head frame (already done inside ODE_ocular_motor)
@@ -130,6 +130,7 @@ def _build_stimulus(scenario: SimulationScenario) -> dict:
         scene_present_R_array   = jnp.array(spR),
         target_present_L_array  = jnp.array(tpL),
         target_present_R_array  = jnp.array(tpR),
+        target_strobed_array    = jnp.array(ts),
         # 6-DOF arrays stored for plotting (stripped before passing to ODE)
         _head_lin_pos           = head_arr['lin_pos'],
         _head_lin_vel           = head_arr['lin_vel'],
