@@ -339,7 +339,12 @@ def step(x_brain, sensory_out, brain_params):
     pos            = (pos_L + pos_R) / tv_norm
     target_slip    = (tv_L * sensory_out.vel_L + tv_R * sensory_out.vel_R) / tv_norm
     target_visible = jnp.clip(tv_sum, 0.0, 1.0)
-    target_motion_visible = target_visible*sensory_out.strobe_delayed_L * sensory_out.strobe_delayed_R
+    # Strobe gate: 1 when target is continuous, 0 when strobed (position only).
+    # Weighted average over whichever eyes see the target; negated so continuous=1, strobed=0.
+    strobe_combined = jnp.clip(
+        (tv_L * sensory_out.strobe_delayed_L + tv_R * sensory_out.strobe_delayed_R) / tv_norm,
+        0.0, 1.0)
+    target_motion_visible = target_visible * (1.0 - strobe_combined)
 
     bino   = tv_L * tv_R
     e_disp = bino * (pos_L - pos_R)

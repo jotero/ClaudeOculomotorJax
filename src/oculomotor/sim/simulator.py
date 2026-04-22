@@ -555,6 +555,7 @@ def simulate(params, t_array_or_stimulus, head_vel_array=None,
         sg_R = _prepend(sg_R[:, None])[:, 0]
         tg_L = _prepend(tg_L[:, None])[:, 0]
         tg_R = _prepend(tg_R[:, None])[:, 0]
+        ts   = _prepend(ts[:, None])[:, 0]
 
         # Noise: zeros during warmup (deterministic settling, not noise-driven)
         noise_canal  = jnp.concatenate([jnp.zeros((warmup_T, 6)), noise_canal],  axis=0)

@@ -107,14 +107,22 @@ time to settle and provides a clear pre-stimulus reference in the figure.
   scene_present  = lit room?  True → OKR active. False → darkness.
   target_present = discrete foveal target?  True → pursuit + saccades active.
 
-  | Paradigm              | scene_present | target_present |
-  |-----------------------|:---:|:---:|
-  | VOR in the dark       | False | False |
-  | HIT (fixating dot)    | False | True  |
-  | VVOR / saccades       | True  | True  |
-  | OKN drum (no dot)     | True  | False |
-  | Smooth pursuit        | True  | True  |
-  | Pursuit in darkness   | False | True  |
+  | Paradigm              | scene_present | target_present | target_strobed |
+  |-----------------------|:---:|:---:|:---:|
+  | VOR in the dark       | False | False | False |
+  | HIT (fixating dot)    | False | True  | False |
+  | VVOR / saccades       | True  | True  | False |
+  | OKN drum (no dot)     | True  | False | False |
+  | Smooth pursuit        | True  | True  | False |
+  | Pursuit in darkness   | False | True  | False |
+  | Stroboscopic / flashing / intermittent target | True | True | **True** |
+
+  **target_strobed = True** — Use whenever the user says the target is "flashing",
+  "stroboscopic", "intermittent", "pulsed", or "strobed".
+  Effect: position signal is present (saccades can target it) but the velocity signal
+  is absent (no pursuit drive, no efference-copy contamination of the smooth-eye pathway).
+  This is distinct from target_present=False (target completely gone) — the target is
+  still visible as a flash, just not continuously illuminated.
 
 ## Common recipes
 
@@ -199,6 +207,18 @@ time to settle and provides a clear pre-stimulus reference in the figure.
   target: [{duration_s: 3, lin_x_0: 0.0, lin_z_0: 1.0}]
   scene:  [{duration_s: 3}]
   visual: [{duration_s: 3, scene_present: false, target_present: true}]
+
+### Stroboscopic / flashing target pursuit 20 deg/s (5 s):
+  # Target moves continuously but is only visible as flashes → position for saccades,
+  # no velocity signal → pursuit integrator gets no drive.
+  head:   [{duration_s: 5}]
+  target: [{duration_s: 0.3, lin_z_0: 1.0, lin_x_0: 0.0},
+           {duration_s: 4.7, lin_x_vel: 0.349}]   # 20 deg/s × π/180 × 1 m
+  scene:  [{duration_s: 5}]
+  visual: [{duration_s: 0.3, scene_present: true, target_present: true, target_strobed: false},
+           {duration_s: 4.7, scene_present: true, target_present: true, target_strobed: true}]
+  # Use panels: ['visual_flags', 'target_velocity', 'eye_position', 'eye_velocity', 'pursuit_drive', 'saccade_burst']
+  # Compare with target_strobed: false to show pursuit vs. saccade-only tracking
 
 ### Gap paradigm (fixation → 200 ms gap → saccade):
   head:   [{duration_s: 3}]
@@ -292,6 +312,7 @@ HIT + unilateral neuritis:     ['visual_flags', 'head_velocity', 'eye_velocity',
 OKN / OKAN:                    ['visual_flags', 'eye_velocity', 'eye_position', 'velocity_storage']
 Saccades:                      ['visual_flags', 'target_position', 'eye_position', 'eye_velocity', 'saccade_burst']
 Smooth pursuit:                ['visual_flags', 'target_velocity', 'eye_position', 'eye_velocity', 'pursuit_drive']
+Stroboscopic / flashing target:['visual_flags', 'target_velocity', 'eye_position', 'eye_velocity', 'pursuit_drive', 'saccade_burst']
 GEN (gaze-evoked nystagmus):   ['visual_flags', 'eye_position', 'eye_velocity', 'neural_integrator']
 Rebound nystagmus:             ['visual_flags', 'eye_position', 'eye_velocity', 'neural_integrator']
 Vergence / cover test:         ['visual_flags', 'eye_position', 'vergence']

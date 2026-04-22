@@ -33,7 +33,9 @@ import matplotlib.pyplot as plt
 
 from oculomotor.sim.simulator import (
     PARAMS_DEFAULT, SimConfig, simulate,
+    _IDX_PURSUIT, _IDX_VERG,
 )
+from oculomotor.analysis import extract_burst
 
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), '..', 'outputs')
 
@@ -126,31 +128,46 @@ def main():
             print(f'  {cond}, {occ} eye occluded ...')
             results[(cond, occ)] = run_condition(t_np, cond, occ)
 
-    # ── Figure: 2 rows × 3 cols ─────────────────────────────────────────────
+    # ── Figure: 5 rows × 3 cols ─────────────────────────────────────────────
     # Row 0: left  eye yaw
     # Row 1: right eye yaw
+    # Row 2: vergence angle (L yaw − R yaw)
+    # Row 3: pursuit yaw command (x_pursuit)
+    # Row 4: saccade burst yaw (u_burst)
     # Columns: dark | strobed | continuous
     # Per panel: L-occluded (solid blue) and R-occluded (dashed red)
     # dark: one trace (grey, both eyes lose)
 
-    fig, axes = plt.subplots(2, 3, figsize=(13, 6), sharex=True)
+    N_ROWS = 5
+    fig, axes = plt.subplots(N_ROWS, 3, figsize=(13, 14), sharex=True)
     fig.suptitle(
         'Monocular occlusion — binocular fixation at 15 cm, dark room\n'
         'Vertical line = occlusion onset (t = 5 s)',
         fontsize=10,
     )
 
-    axes[0, 0].set_ylabel('Left eye  yaw (deg)', fontsize=9)
-    axes[1, 0].set_ylabel('Right eye yaw (deg)', fontsize=9)
+    row_labels = [
+        'Left eye yaw (deg)',
+        'Right eye yaw (deg)',
+        'Vergence  L−R (deg)',
+        'Pursuit cmd (deg/s)',
+        'Saccade burst (deg/s)',
+    ]
+    for r, lbl in enumerate(row_labels):
+        axes[r, 0].set_ylabel(lbl, fontsize=8.5)
 
     for ci, cond in enumerate(conditions):
         axes[0, ci].set_title(COND_LABELS[cond], fontsize=9)
-        axes[1, ci].set_xlabel('Time (s)', fontsize=8)
+        axes[N_ROWS - 1, ci].set_xlabel('Time (s)', fontsize=8)
 
         for occ in ['left', 'right']:
-            st     = results[(cond, occ)]
-            eye_L  = np.array(st.plant[:, 0])   # left  eye yaw (deg)
-            eye_R  = np.array(st.plant[:, 3])   # right eye yaw (deg)
+            st = results[(cond, occ)]
+
+            eye_L   = np.array(st.plant[:, 0])         # left  eye yaw
+            eye_R   = np.array(st.plant[:, 3])         # right eye yaw
+            vergence = eye_L - eye_R                   # positive = converged
+            pursuit  = np.array(st.brain[:, _IDX_PURSUIT])[:, 0]  # pursuit yaw
+            burst    = np.array(extract_burst(st, PARAMS))[:, 0]   # burst yaw
 
             if cond == 'dark':
                 color, ls, lbl = _C_DARK, '-', 'both occluded'
@@ -159,22 +176,35 @@ def main():
             else:
                 color, ls, lbl = _C_ROCC, '--', 'R eye occluded'
 
-            axes[0, ci].plot(t_np, eye_L, color=color, lw=1.5, ls=ls, label=lbl)
-            axes[1, ci].plot(t_np, eye_R, color=color, lw=1.5, ls=ls, label=lbl)
+            kw = dict(color=color, lw=1.5, ls=ls, label=lbl)
+            axes[0, ci].plot(t_np, eye_L,    **kw)
+            axes[1, ci].plot(t_np, eye_R,    **kw)
+            axes[2, ci].plot(t_np, vergence, **kw)
+            axes[3, ci].plot(t_np, pursuit,  **kw)
+            axes[4, ci].plot(t_np, burst,    **kw)
 
             if cond == 'dark':
                 break   # symmetric — plot only once
 
-        # Occlusion-onset marker and legend
-        for row in range(2):
-            axes[row, ci].axvline(T_FIX, color='gray', lw=0.8, ls='--', alpha=0.5)
-            axes[row, ci].grid(True, alpha=0.15)
-            ylo, yhi = axes[row, ci].get_ylim()
+        # Per-column formatting
+        for row in range(N_ROWS):
+            ax = axes[row, ci]
+            ax.axvline(T_FIX, color='gray', lw=0.8, ls='--', alpha=0.5)
+            ax.grid(True, alpha=0.15)
+            ylo, yhi = ax.get_ylim()
             span = max(yhi - ylo, 3.0)
             mid  = 0.5 * (ylo + yhi)
-            axes[row, ci].set_ylim(mid - span / 2, mid + span / 2)
+            ax.set_ylim(mid - span / 2, mid + span / 2)
             if ci == 0:
-                axes[row, ci].legend(fontsize=7.5)
+                ax.legend(fontsize=7)
+
+        # Burst panel: enforce minimum range so noise doesn't autoscale
+        for ci2 in range(3):
+            ax = axes[4, ci2]
+            ylo, yhi = ax.get_ylim()
+            span = max(yhi - ylo, 20.0)
+            mid  = 0.5 * (ylo + yhi)
+            axes[4, ci2].set_ylim(mid - span / 2, mid + span / 2)
 
     fig.tight_layout()
     path = os.path.join(OUTPUT_DIR, 'occlusion.png')
