@@ -4,16 +4,16 @@ Two populations (Left, Right) model the bilateral vestibular nucleus (VN)
 Type I / Type II neuron organization.
 
 State:  x_vs = [x_L (3,) | x_R (3,)]                        (6,)
-Input:  u    = [y_canals (6,) | e_slip_delayed (3,) | g_hat (3,)]  (12,)
+Input:  u    = [y_canals (6,) | e_slip_delayed (3,) | g_est (3,)]  (12,)
 Output: w_est = ω̂  (3,)  — net head-velocity estimate → NI
 
 ABCD system (linear core):
 ────────────────────────────────────────────────────────────────────────
-    dx/dt  = A @ (x − b)  +  B @ u_lin  +  gd(x, g_hat)
+    dx/dt  = A @ (x − b)  +  B @ u_lin  +  gd(x, g_est)
     w_est  = C @ x        +  D @ u_lin
 
     u_lin  = [y_canals (6,) | e_slip_delayed (3,)]  (9,)   linear inputs
-    g_hat  is handled separately in gd() — nonlinear, outside ABCD core
+    g_est  is handled separately in gd() — nonlinear, outside ABCD core
 
     A  (6×6)  =  −(1/τ_vs) · I₆
                  diagonal; one TC for both populations.
@@ -86,7 +86,7 @@ import jax.numpy as jnp
 from oculomotor.models.sensory_models.sensory_model import PINV_SENS, N_CANALS
 
 N_STATES  = 9   # x_L(3) + x_R(3) + x_null(3)
-N_INPUTS  = N_CANALS + 3 + 3   # 6 canal afferents + 3 slip + 3 g_hat
+N_INPUTS  = N_CANALS + 3 + 3   # 6 canal afferents + 3 slip + 3 g_est
 N_OUTPUTS = 3   # w_est (3,)
 
 # Sub-index slices (relative to x_vs)
@@ -102,7 +102,7 @@ def step(x_vs, u, brain_params):
 
     Args:
         x_vs:         (9,)   VS state [x_L (3,) | x_R (3,) | x_null (3,)]
-        u:            (12,)  [y_canals (6,) | e_slip_delayed (3,) | g_hat (3,)]
+        u:            (12,)  [y_canals (6,) | e_slip_delayed (3,) | g_est (3,)]
         brain_params: BrainParams
 
     Returns:
@@ -116,7 +116,7 @@ def step(x_vs, u, brain_params):
 
     canal_in = jnp.clip(u[:N_CANALS], -brain_params.v_max_vor, brain_params.v_max_vor)  # (6,)
     slip_in  = u[N_CANALS:N_CANALS+3]  # (3,)
-    g_hat    = u[N_CANALS+3:]          # (3,)
+    g_est    = u[N_CANALS+3:]          # (3,)
     u_lin    = jnp.concatenate([canal_in, slip_in])   # (9,) linear inputs
 
     # Population equilibria: b_vs bias ± half-null shift
@@ -150,10 +150,10 @@ def step(x_vs, u, brain_params):
     D = jnp.concatenate([brain_params.g_vor * PINV_SENS, -brain_params.g_vis * jnp.eye(3)], axis=1)
 
     # ── Gravity dumping — nonlinear correction, outside ABCD core ─────────────
-    g_norm_sq = jnp.dot(g_hat, g_hat) + 1e-9
+    g_norm_sq = jnp.dot(g_est, g_est) + 1e-9
     dev   = x_pop - b_eff
-    gd_L  = brain_params.K_gd * jnp.cross(g_hat, jnp.cross(g_hat, dev[:3])) / g_norm_sq
-    gd_R  = brain_params.K_gd * jnp.cross(g_hat, jnp.cross(g_hat, dev[3:])) / g_norm_sq
+    gd_L  = brain_params.K_gd * jnp.cross(g_est, jnp.cross(g_est, dev[:3])) / g_norm_sq
+    gd_R  = brain_params.K_gd * jnp.cross(g_est, jnp.cross(g_est, dev[3:])) / g_norm_sq
     gd    = jnp.concatenate([gd_L, gd_R])
 
     # ── Bilateral dynamics: leak toward adapted bias ───────────────────────────

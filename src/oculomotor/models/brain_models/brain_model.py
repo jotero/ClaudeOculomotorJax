@@ -44,7 +44,7 @@ Internal flow:
     Pursuit → u_pursuit  (→ NI + EC cascade)
     EC  →  delays (u_burst + u_pursuit) by tau_vis
            read used for: VS (scene-gated) and pursuit (target-gated)
-    GE  →  g_hat (gravity estimate, cross-product dynamics)
+    GE  →  g_est (gravity estimate, cross-product dynamics)
     Vergence → u_verg → split ±½ to L/R motor commands
 
 State vector  x_brain = [x_vs (9) | x_ni (9) | x_sg (9) | x_ec (120) | x_grav (3) | x_pursuit (3) | x_verg (3)]
@@ -83,14 +83,51 @@ from oculomotor.models.brain_models import gravity_estimator   as ge
 from oculomotor.models.brain_models import pursuit             as pu
 from oculomotor.models.brain_models import vergence            as vg
 from oculomotor.models.brain_models import accommodation       as acc_mod
-from oculomotor.models.brain_models import ocr                 as ocr_mod
-from oculomotor.models.brain_models import optokinetic         as okr_mod
+
 from oculomotor.models.sensory_models.sensory_model import SensoryOutput  # noqa: F401 (re-exported)
 from oculomotor.models.plant_models.readout import rotation_matrix
 from oculomotor.models.plant_models.muscle_geometry import (
     M_NUCLEUS, M_NERVE_PROJ, G_NUCLEUS_DEFAULT, G_NERVE_DEFAULT,
     CN3_MR_L, CN3_MR_R,
 )
+
+
+# ── State layout ───────────────────────────────────────────────────────────────
+
+N_STATES = vs.N_STATES + ni.N_STATES + sg.N_STATES + ec.N_STATES + ge.N_STATES + pu.N_STATES + vg.N_STATES + acc_mod.N_STATES
+#        = 9 + 9 + 9 + 120 + 3 + 3 + 3 + 2 = 158
+
+# ── Index constants — relative to x_brain ─────────────────────────────────────
+# Computed from module N_STATES to stay in sync automatically.
+
+_o_vs  = 0
+_o_ni  = _o_vs + vs.N_STATES   # 9
+_o_sg  = _o_ni + ni.N_STATES   # 18
+_o_ec  = _o_sg + sg.N_STATES   # 27
+_o_gv  = _o_ec + ec.N_STATES   # 147
+_o_pu  = _o_gv + ge.N_STATES   # 150
+_o_vg  = _o_pu + pu.N_STATES   # 153
+
+# Velocity storage (9 states: L pop + R pop + null)
+_IDX_VS      = slice(_o_vs,     _o_vs + 9)   # (9,)
+_IDX_VS_L    = slice(_o_vs,     _o_vs + 3)   # (3,) left  VN pop
+_IDX_VS_R    = slice(_o_vs + 3, _o_vs + 6)   # (3,) right VN pop
+_IDX_VS_NULL = slice(_o_vs + 6, _o_vs + 9)   # (3,) null adaptation
+
+# Neural integrator (9 states: L pop + R pop + null)
+_IDX_NI      = slice(_o_ni,     _o_ni + 9)   # (9,)
+_IDX_NI_L    = slice(_o_ni,     _o_ni + 3)   # (3,) left  NPH pop
+_IDX_NI_R    = slice(_o_ni + 3, _o_ni + 6)   # (3,) right NPH pop
+_IDX_NI_NULL = slice(_o_ni + 6, _o_ni + 9)   # (3,) null adaptation
+
+# Remaining subsystems
+_IDX_SG      = slice(_o_sg, _o_sg + sg.N_STATES)   # (9,)
+_IDX_EC      = slice(_o_ec, _o_ec + ec.N_STATES)   # (120,)
+_IDX_GRAV    = slice(_o_gv, _o_gv + ge.N_STATES)   # (3,)
+_IDX_PURSUIT = slice(_o_pu, _o_pu + pu.N_STATES)           # (3,)
+_IDX_VERG    = slice(_o_vg, _o_vg + vg.N_STATES)          # (3,)
+_o_acc       = _o_vg + vg.N_STATES                        # 156
+_IDX_ACC     = slice(_o_acc, _o_acc + acc_mod.N_STATES)   # (2,)
 
 
 # ── Brain parameters ────────────────────────────────────────────────────────────
@@ -234,43 +271,7 @@ class BrainParams(NamedTuple):
     g_mlf_ver_R:           float        = 1.0   # version_yaw gain for CN3_MR_R
 
 
-# ── State layout ───────────────────────────────────────────────────────────────
-
-N_STATES = vs.N_STATES + ni.N_STATES + sg.N_STATES + ec.N_STATES + ge.N_STATES + pu.N_STATES + vg.N_STATES + acc_mod.N_STATES
-#        = 9 + 9 + 9 + 120 + 3 + 3 + 3 + 2 = 158
-
-# ── Index constants — relative to x_brain ─────────────────────────────────────
-# Computed from module N_STATES to stay in sync automatically.
-
-_o_vs  = 0
-_o_ni  = _o_vs + vs.N_STATES   # 9
-_o_sg  = _o_ni + ni.N_STATES   # 18
-_o_ec  = _o_sg + sg.N_STATES   # 27
-_o_gv  = _o_ec + ec.N_STATES   # 147
-_o_pu  = _o_gv + ge.N_STATES   # 150
-_o_vg  = _o_pu + pu.N_STATES   # 153
-
-# Velocity storage (9 states: L pop + R pop + null)
-_IDX_VS      = slice(_o_vs,     _o_vs + 9)   # (9,)
-_IDX_VS_L    = slice(_o_vs,     _o_vs + 3)   # (3,) left  VN pop
-_IDX_VS_R    = slice(_o_vs + 3, _o_vs + 6)   # (3,) right VN pop
-_IDX_VS_NULL = slice(_o_vs + 6, _o_vs + 9)   # (3,) null adaptation
-
-# Neural integrator (9 states: L pop + R pop + null)
-_IDX_NI      = slice(_o_ni,     _o_ni + 9)   # (9,)
-_IDX_NI_L    = slice(_o_ni,     _o_ni + 3)   # (3,) left  NPH pop
-_IDX_NI_R    = slice(_o_ni + 3, _o_ni + 6)   # (3,) right NPH pop
-_IDX_NI_NULL = slice(_o_ni + 6, _o_ni + 9)   # (3,) null adaptation
-
-# Remaining subsystems
-_IDX_SG      = slice(_o_sg, _o_sg + sg.N_STATES)   # (9,)
-_IDX_EC      = slice(_o_ec, _o_ec + ec.N_STATES)   # (120,)
-_IDX_GRAV    = slice(_o_gv, _o_gv + ge.N_STATES)   # (3,)
-_IDX_PURSUIT = slice(_o_pu, _o_pu + pu.N_STATES)           # (3,)
-_IDX_VERG    = slice(_o_vg, _o_vg + vg.N_STATES)          # (3,)
-_o_acc       = _o_vg + vg.N_STATES                        # 156
-_IDX_ACC     = slice(_o_acc, _o_acc + acc_mod.N_STATES)   # (2,)
-
+# ── Initialization ─────────────────────────────────────────────────────────────
 
 def make_x0(brain_params=None):
     """Default initial brain state.
@@ -318,47 +319,66 @@ def _cyclopean_percept(sensory_out, brain_params) -> CyclopeanPercept:
 
     Each signal is weighted by per-eye visibility and divided by the number of
     visible eyes so monocular and binocular viewing produce the same amplitude.
-    When disparity exceeds diplopia_limit, the non-dominant eye is suppressed
-    and version signals come from the dominant eye only.
+    When target disparity exceeds disp_max_verg_fus, the non-dominant eye is
+    suppressed and version signals come from the dominant eye only.
     """
-    # ── Visibility gates ──────────────────────────────────────────────────────
     sv_L, sv_R = sensory_out.scene_vis_L,  sensory_out.scene_vis_R
     tv_L, tv_R = sensory_out.target_vis_L, sensory_out.target_vis_R
 
-    # ── Diplopia suppression ──────────────────────────────────────────────────
-    # Smooth gate: fuse=1 when disparity < diplopia_limit, fuse→0 when diplopic.
-    disp_mag = jnp.linalg.norm(sensory_out.pos_L - sensory_out.pos_R)
-    fuse     = 1.0 / (1.0 + jnp.exp(10.0 * (disp_mag - brain_params.disp_max_verg_fus)))
-    dom_L    = 1.0 - brain_params.eye_dominant
-    dom_R    = brain_params.eye_dominant
-    sv_L = fuse * sv_L + (1.0 - fuse) * sv_L * dom_L
-    sv_R = fuse * sv_R + (1.0 - fuse) * sv_R * dom_R
-    tv_L = fuse * tv_L + (1.0 - fuse) * tv_L * dom_L
-    tv_R = fuse * tv_R + (1.0 - fuse) * tv_R * dom_R
+    # ── Binocular gate — both eyes must see the target ────────────────────────
+    bino_raw = tv_L * tv_R   # 1 only when both eyes see target
 
-    sv_norm = jnp.maximum(sv_L + sv_R, 1e-6)
-    tv_norm = jnp.maximum(tv_L + tv_R, 1e-6)
-    bino    = tv_L * tv_R   # ≈ 1 only when both eyes fuse; gates disparity
+    # ── Target disparity — vergence drive (uses raw binocular gate, unaffected by suppression) ─
+    # Position disparity only. A velocity disparity term (vel_L − vel_R, gated by bino_raw)
+    # could be added as a phasic drive (cf. Schor dual-mode model; Hung & Semmlow 1980;
+    # Regan & Beverley looming channel). Evidence is weaker than for pursuit: vergence
+    # responds faster to ramp than step stimuli, and MT/MST carry disparity-velocity
+    # signals (Bradley et al. 1995), but the motor contribution is hard to isolate and
+    # position error alone fits most vergence dynamics. Add if ramp responses are too sluggish.
+    target_disparity = bino_raw * (sensory_out.pos_L - sensory_out.pos_R)
 
-    # ── Scene slip — retinal coordinates, version average (OKR / VS drive) ───
+    # ── Scene — average both eyes by scene visibility (independent of target fusion) ─
+    sv_norm       = jnp.maximum(sv_L + sv_R, 1e-6)
     scene_slip    = (sv_L * sensory_out.slip_L + sv_R * sensory_out.slip_R) / sv_norm
     scene_visible = jnp.clip(sv_L + sv_R, 0.0, 1.0)
 
-    # ── Version target position error — retinal coordinates (SG drive) ───────
-    pos_L = tv_L * sensory_out.pos_L
-    pos_R = tv_R * sensory_out.pos_R
-    target_pos = (pos_L + pos_R) / tv_norm
+    # ── Version position and velocity — binocular average (unsuppressed) ────────
+    # Direction of version saccades/pursuit uses the cyclopean average regardless of
+    # diplopia: in a symmetric vergence step pos_L and pos_R point opposite directions
+    # and cancel to zero — suppressing one eye would create a spurious version error.
+    tv_norm     = jnp.maximum(tv_L + tv_R, 1e-6)
+    target_pos  = (tv_L * sensory_out.pos_L + tv_R * sensory_out.pos_R) / tv_norm
+    target_slip = (tv_L * sensory_out.vel_L  + tv_R * sensory_out.vel_R)  / tv_norm
 
-    # ── Version target velocity — retinal coordinates (pursuit drive) ─────────
-    target_slip    = (tv_L * sensory_out.vel_L + tv_R * sensory_out.vel_R) / tv_norm
-    target_visible = jnp.clip(tv_L + tv_R, 0.0, 1.0)
+    # ── Diplopia suppression — gates only (not direction) ─────────────────────
+    # Smooth gate: fuse=1 when disparity < disp_max_verg_fus (Panum's area), fuse→0 when diplopic.
+    # Monocular viewing (bino_raw=0) → disp_mag=0 → fuse=1 → no suppression.
+    # Suppression controls WHETHER to trigger (visibility), not WHERE to look (direction).
+    #
+    # TODO: temporal suppression buildup — replace instantaneous fuse with a low-pass state x_supp:
+    #   dx_supp = ((1 - fuse) - x_supp) / tau_supp     tau_supp ~ 0.5 s
+    #   suppression = x_supp   (instead of 1 - fuse directly)
+    # Rationale: if vergence corrects the disparity within ~200–400 ms (Rashbass & Westheimer
+    # 1961 J Physiol), x_supp never builds and both eyes remain visible. If vergence fails
+    # (large strabismus, muscle palsy), suppression accumulates over tau_supp and the dominant
+    # eye takes over version — consistent with clinical strabismus (von Noorden & Campos 2002).
+    # The instantaneous model is adequate for short simulations; tau_supp matters mainly for
+    # strabismus modelling where sustained diplopia drives the fixation shift.
+    # Hysteresis in fusion (Fender & Julesz 1967 J Opt Soc Am) also implies a temporal process:
+    # re-fusion requires smaller disparity than fusion break, suggesting suppression is not
+    # reset instantly once it builds.
+    fuse   = 1.0 / (1.0 + jnp.exp(10.0 * (jnp.linalg.norm(target_disparity) - brain_params.disp_max_verg_fus)))
+    dom_L  = 1.0 - brain_params.eye_dominant
+    dom_R  = brain_params.eye_dominant
+    tv_L_s = fuse * tv_L + (1.0 - fuse) * tv_L * dom_L   # suppressed visibility
+    tv_R_s = fuse * tv_R + (1.0 - fuse) * tv_R * dom_R
+
+    tv_norm_s      = jnp.maximum(tv_L_s + tv_R_s, 1e-6)
+    target_visible = jnp.clip(tv_L_s + tv_R_s, 0.0, 1.0)
     strobe         = jnp.clip(
-        (tv_L * sensory_out.strobe_delayed_L + tv_R * sensory_out.strobe_delayed_R) / tv_norm,
+        (tv_L_s * sensory_out.strobe_delayed_L + tv_R_s * sensory_out.strobe_delayed_R) / tv_norm_s,
         0.0, 1.0)
     target_motion_visible = target_visible * (1.0 - strobe)
-
-    # ── Disparity target position error — retinal coordinates (vergence drive) ─
-    target_disparity = bino * (pos_L - pos_R)
 
     return CyclopeanPercept(
         scene_slip=scene_slip, scene_visible=scene_visible,
@@ -366,35 +386,6 @@ def _cyclopean_percept(sensory_out, brain_params) -> CyclopeanPercept:
         target_visible=target_visible, target_motion_visible=target_motion_visible,
         target_disparity=target_disparity,
     )
-
-
-# ── Self-motion perception ─────────────────────────────────────────────────────
-
-class SelfMotionEstimate(NamedTuple):
-    dx_vs:   jnp.ndarray   # (9,)  VS state derivative
-    dx_grav: jnp.ndarray   # (3,)  gravity estimator state derivative
-    w_est:   jnp.ndarray   # (3,)  head angular velocity estimate (deg/s)
-    ocr:     jnp.ndarray   # (3,)  torsional counter-roll command (deg)
-
-
-def _self_motion_perception(x_vs, x_grav, canal, otolith, okr, brain_params) -> SelfMotionEstimate:
-    """Estimate head angular velocity from vestibular and visual inputs.
-
-    Combines canal (VOR) and optokinetic (OKR) drives in velocity storage,
-    then propagates through the gravity estimator to get OCR.
-
-    Args:
-        x_vs:        (9,)  VS state
-        x_grav:      (3,)  gravity estimator state
-        canal:       (6,)  canal afferent rates
-        otolith:     (3,)  specific force in head frame (m/s²)
-        okr:         (3,)  optokinetic drive (scene-gated, EC-corrected)
-        brain_params: BrainParams
-    """
-    dx_vs,   w_est  = vs.step(x_vs,   jnp.concatenate([canal, okr, x_grav]), brain_params)
-    dx_grav, g_hat  = ge.step(x_grav, jnp.concatenate([w_est, otolith]),     brain_params)
-    ocr             = ocr_mod.compute(g_hat, brain_params)
-    return SelfMotionEstimate(dx_vs=dx_vs, dx_grav=dx_grav, w_est=w_est, ocr=ocr)
 
 
 # ── Step function ──────────────────────────────────────────────────────────────
@@ -438,12 +429,13 @@ def step(x_brain, sensory_out, brain_params):
     #   self-generated retinal slip in both OKR (scene gate) and pursuit (target gate).
     motor_ec = ec.read_delayed(x_ec)
 
-    # ── Optokinetic: scene-gated EC-corrected slip → visual drive for VS ─────────
-    okr = okr_mod.compute(percept.scene_slip, motor_ec*percept.scene_visible, brain_params)
-
-    # ── Self-motion perception: VS + gravity estimator + OCR ─────────────────
-    smp = _self_motion_perception(
-        x_vs, x_grav, sensory_out.canal, sensory_out.otolith, okr, brain_params)
+    # ── Velocity storage + gravity estimator + OCR ───────────────────────────
+    # NOT/AOS saturation: clip slip and EC independently before combining (Hoffmann 1979).
+    okr    = (jnp.clip(percept.scene_slip,               -brain_params.v_max_okr, brain_params.v_max_okr)
+            + jnp.clip(motor_ec * percept.scene_visible, -brain_params.v_max_okr, brain_params.v_max_okr))
+    dx_vs,   w_est = vs.step(x_vs,   jnp.concatenate([sensory_out.canal, okr, x_grav]), brain_params)
+    dx_grav, g_est = ge.step(x_grav, jnp.concatenate([w_est, sensory_out.otolith]),     brain_params)
+    ocr            = jnp.array([0.0, 0.0, brain_params.g_ocr * g_est[1]])
 
     # ── Pursuit: target-gated EC-corrected velocity → pursuit integrator ─────────
     # Strobe gate: when target is strobed, EC is also zeroed — stroboscopic illumination
@@ -458,7 +450,7 @@ def step(x_brain, sensory_out, brain_params):
     # ── Neural integrator: VOR + saccades + pursuit → version motor command ───
     # ocr / tau_i is a tonic drive that settles the NI at ocr in steady
     # state, acting as a torsional setpoint without bypassing the integrator leak.
-    dx_ni, motor_cmd_ni = ni.step(x_ni, -smp.w_est + u_burst + u_pursuit + smp.ocr / brain_params.tau_i, brain_params)
+    dx_ni, motor_cmd_ni = ni.step(x_ni, -w_est + u_burst + u_pursuit + ocr / brain_params.tau_i, brain_params)
 
     # ── Accommodation: blur-driven lens adjustment (AC/A and CA/C cross-links disabled) ──
     # TODO: re-enable cross-links once accommodation–vergence interaction is validated.
@@ -499,6 +491,6 @@ def step(x_brain, sensory_out, brain_params):
     dx_ec, _ = ec.step(x_ec, R_eye_T @ (u_burst + u_pursuit), brain_params)
 
     # ── Pack state derivative ─────────────────────────────────────────────────
-    dx_brain = jnp.concatenate([smp.dx_vs, dx_ni, dx_sg, dx_ec, smp.dx_grav, dx_pursuit, dx_verg, dx_acc])
+    dx_brain = jnp.concatenate([dx_vs, dx_ni, dx_sg, dx_ec, dx_grav, dx_pursuit, dx_verg, dx_acc])
 
     return dx_brain, motor_cmd_L, motor_cmd_R

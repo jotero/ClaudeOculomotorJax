@@ -53,13 +53,7 @@ def rotation_vector(q):
 # ── Rotation matrix via Rodrigues' formula ─────────────────────────────────────
 
 def rotation_matrix(q_deg):
-    """Rotation matrix R from a rotation vector q (deg).
-
-    Uses Rodrigues' formula:
-        R = I + sinc(θ) · [q]×  +  (1−cos(θ))/θ²  · [q]×²
-
-    where [q]× is the skew-symmetric cross-product matrix and θ = |q| in rad.
-    Numerically safe at θ → 0 via sinc and (1−cosθ)/θ² limits.
+    """Rotation matrix R from a rotation vector q (deg) via Rodrigues' formula.
 
     Args:
         q_deg: (3,) rotation vector in degrees
@@ -67,11 +61,10 @@ def rotation_matrix(q_deg):
     Returns:
         R: (3, 3) rotation matrix
     """
-    q   = jnp.radians(q_deg)
-    th  = jnp.linalg.norm(q)
-    # safe sinc and (1-cos)/th^2
-    sinc  = jnp.where(th < 1e-7, 1.0 - th**2 / 6.0, jnp.sin(th) / th)
-    cosc  = jnp.where(th < 1e-7, 0.5  - th**2 / 24., (1.0 - jnp.cos(th)) / th**2)
+    q    = jnp.radians(q_deg)
+    th   = jnp.linalg.norm(q)
+    sinc = jnp.sinc(th / jnp.pi)              # sin(th)/th,       = 1   at th=0
+    cosc = jnp.sinc(th / (2 * jnp.pi))**2 / 2 # (1-cos(th))/th², = 0.5 at th=0
     qx, qy, qz = q[0], q[1], q[2]
     skew = jnp.array([
         [  0., -qz,  qy],

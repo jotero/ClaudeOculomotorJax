@@ -51,9 +51,9 @@ X0 = jnp.array([G0, 0.0, 0.0])
 
 # ── State layout ────────────────────────────────────────────────────────────────
 
-N_STATES  = 3   # [g_hat_x, g_hat_y, g_hat_z]
+N_STATES  = 3   # [g_est_x, g_est_y, g_est_z]
 N_INPUTS  = 6   # [w_est (3,) | f_otolith (3,)]
-N_OUTPUTS = 3   # g_hat
+N_OUTPUTS = 3   # g_est
 
 
 def step(x_grav, u, brain_params):
@@ -66,20 +66,20 @@ def step(x_grav, u, brain_params):
 
     Returns:
         dx_grav: (3,)  dĝ/dt  (m/s³)
-        g_hat:   (3,)  current gravity estimate ĝ (= x_grav, passed through)
+        g_est:   (3,)  current gravity estimate ĝ (= x_grav, passed through)
     """
     w_est    = u[:3]     # angular velocity estimate (deg/s)
     f_otolith = u[3:]    # otolith specific force (m/s²)
-    g_hat    = x_grav    # gravity estimate (m/s²)
+    g_est    = x_grav    # gravity estimate (m/s²)
 
     # Convert angular velocity to rad/s for cross product (ĝ is in m/s²)
     w_rad = w_est * (jnp.pi / 180.0)
 
     # Transport: rotate gravity estimate with head motion (canal-driven)
-    transport = -jnp.cross(w_rad, g_hat)
+    transport = -jnp.cross(w_rad, g_est)
 
     # Correction: pull toward otolith measurement
-    correction = brain_params.K_grav * (f_otolith - g_hat)
+    correction = brain_params.K_grav * (f_otolith - g_est)
 
     dx_grav = transport + correction
-    return dx_grav, g_hat
+    return dx_grav, g_est
