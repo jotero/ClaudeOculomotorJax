@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OculomotorJax — Benchmark Report</title>
+  <style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+       background: #f5f5f5; color: #222; display: flex; }
+nav  { width: 200px; min-height: 100vh; background: #1a1a2e; color: #eee;
+       padding: 20px 0; position: sticky; top: 0; flex-shrink: 0; }
+nav h2  { font-size: 13px; padding: 0 16px 12px; color: #aaa;
+          text-transform: uppercase; letter-spacing: 0.05em; }
+nav a   { display: block; padding: 8px 16px; color: #ccc; text-decoration: none;
+          font-size: 13px; border-left: 3px solid transparent; }
+nav a:hover { background: #2a2a4e; color: #fff; border-left-color: #4a90d9; }
+main { flex: 1; padding: 32px; max-width: 1400px; }
+h1   { font-size: 22px; margin-bottom: 4px; }
+.meta { font-size: 12px; color: #888; margin-bottom: 32px; }
+.section    { margin-bottom: 48px; }
+.section h2 { font-size: 18px; margin-bottom: 6px; border-bottom: 2px solid #ddd;
+              padding-bottom: 6px; }
+.section > p { font-size: 13px; color: #555; margin-bottom: 16px; }
+.fig-grid   { display: grid; grid-template-columns: repeat(auto-fill, minmax(580px, 1fr));
+              gap: 20px; }
+.fig-card   { background: #fff; border: 1px solid #e0e0e0; border-radius: 8px;
+              padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+.fig-card a img { width: 100%; border-radius: 4px; display: block;
+                  border: 1px solid #eee; cursor: zoom-in; }
+.fig-card h3 { font-size: 14px; margin: 12px 0 6px; }
+.fig-card .desc { font-size: 12px; color: #555; margin-bottom: 8px; }
+.expected   { background: #fffbea; border-left: 3px solid #f6c90e;
+              padding: 8px 10px; font-size: 12px; border-radius: 0 4px 4px 0;
+              margin-bottom: 8px; }
+.expected strong { display: block; font-size: 11px; color: #888;
+                   text-transform: uppercase; margin-bottom: 2px; }
+.citation   { font-size: 11px; color: #888; font-style: italic; }
+.badge      { display: inline-block; padding: 2px 8px; border-radius: 12px;
+              font-size: 10px; font-weight: 600; letter-spacing: 0.04em;
+              text-transform: uppercase; margin-top: 8px; }
+.badge.behavior { background: #d4edda; color: #155724; }
+.badge.cascade  { background: #cce5ff; color: #004085; }
+</style>
+</head>
+<body>
+  <nav>
+    <h2>Sections</h2>
+    <a href="#saccades">1. Saccades</a>
+    <a href="#vor_okr">2. VOR / OKR</a>
+    <a href="#tilt_translation">3. Tilt / Translation</a>
+    <a href="#pursuit">4. Smooth Pursuit</a>
+    <a href="#vergence">5. Vergence</a>
+    <a href="#fixation">6. Fixation</a>
+    <a href="#efference">7. Efference Copy</a>
+  </nav>
+  <main>
+    <h1>OculomotorJax — Benchmark Report</h1>
+    <p class="meta">
+      Generated: <strong>2026-04-23 14:25</strong> &nbsp;|&nbsp;
+      Version: <strong>b13d605-dirty</strong> &nbsp;|&nbsp;
+      <a href="../BENCHMARKS.md">BENCHMARKS.md</a>
+    </p>
+
+  <section class="section" id="saccades">
+    <h2>1. Saccades</h2>
+    <p>Saccade kinematics and internal signal cascade. Tests main sequence (amplitude–velocity), oblique trajectory linearity, double-step refractoriness, and the full Robinson cascade.</p>
+    <div class="fig-grid">
+      
+    <div class="fig-card">
+      <a href="figures/saccade_main_sequence.png" target="_blank"><img src="figures/saccade_main_sequence.png" alt="Saccade Main Sequence"></a>
+      <h3>Saccade Main Sequence</h3>
+      <p class="desc">Peak velocity vs amplitude scatter (left) and aligned eye traces (right) for amplitudes 0.5–20°.</p>
+      <div class="expected">
+        <strong>Expected behavior</strong>
+        All data within ±20% of 700(1−e^{−A/7}). Peak ≈660 deg/s at 20°.
+      </div>
+      <p class="citation">&#128214; Bahill et al. (1975) Science; Robinson (1975) J Neurophysiol</p>
+      <span class="badge behavior">behavior</span>
+    </div>
+
+    <div class="fig-card">
+      <a href="figures/saccade_oblique.png" target="_blank"><img src="figures/saccade_oblique.png" alt="Oblique Saccades"></a>
+      <h3>Oblique Saccades</h3>
+      <p class="desc">Sequence of saccades to 5 oblique targets. Left: 2D trajectory. Center/right: H and V components.</p>
+      <div class="expected">
+        <strong>Expected behavior</strong>
+        Straight 2D trajectories. H and V components synchronised (end together).
+      </div>
+      <p class="citation">&#128214; Smit et al. (1990) J Neurophysiol</p>
+      <span class="badge behavior">behavior</span>
+    </div>
+
+    <div class="fig-card">
+      <a href="figures/saccade_refractoriness.png" target="_blank"><img src="figures/saccade_refractoriness.png" alt="Saccade Double-Step Refractoriness"></a>
+      <h3>Saccade Double-Step Refractoriness</h3>
+      <p class="desc">Double-step paradigm: target jumps 0→10° then 10→20° after variable ISI. Short ISIs produce a single amended saccade (refractory); longer ISIs produce two.</p>
+      <div class="expected">
+        <strong>Expected behavior</strong>
+        ISI < 100 ms: only 1 saccade. ISI > 150 ms: 2 separate saccades.
+      </div>
+      <p class="citation">&#128214; Becker & Jürgens (1979) Vision Res</p>
+      <span class="badge behavior">behavior</span>
+    </div>
+
+    <div class="fig-card">
+      <a href="figures/saccade_cascade.png" target="_blank"><img src="figures/saccade_cascade.png" alt="Saccade Signal Cascade (Internal)"></a>
+      <h3>Saccade Signal Cascade (Internal)</h3>
+      <p class="desc">Row-by-row signal flow for 1°, 5°, 20° saccades: position, visual cascade + hold, accumulator/latch, residual error, burst, eye velocity, refractory state.</p>
+      <div class="expected">
+        <strong>Expected behavior</strong>
+        e_held freezes at saccade onset; burst proportional to e_res; z_ref locks out next saccade for ~150 ms.
+      </div>
+      <p class="citation">&#128214; Robinson (1975) J Neurophysiol; Scudder et al. (2002)</p>
+      <span class="badge cascade">cascade</span>
+    </div>
+    </div>
+  </section>
+
+  <section class="section" id="vor_okr">
+    <h2>2. VOR / OKR</h2>
+    <p>Vestibulo-ocular reflex and optokinetic response. Replicates Raphan et al. (1979) Fig.9: VOR in dark, OKN+OKAN, and VVOR. Tests post-rotatory and OKAN time constants, VVOR gain, and nystagmus waveform.</p>
+    <div class="fig-grid">
+      
+    <div class="fig-card">
+      <a href="figures/vor_raphan_fig9.png" target="_blank"><img src="figures/vor_raphan_fig9.png" alt="Raphan 1979 Fig. 9 Replication"></a>
+      <h3>Raphan 1979 Fig. 9 Replication</h3>
+      <p class="desc">Slow-phase velocity for (A) VOR in dark: step rotation 30 deg/s ON 30 s then dark; (C) OKN + OKAN: scene 30 deg/s ON 30 s then dark; (E) VVOR: head rotating in lit stationary scene. Exponential TC fits overlaid on post-stimulus decay.</p>
+      <div class="expected">
+        <strong>Expected behavior</strong>
+        VOR post-rot TC: 10–30 s; OKAN TC: 10–30 s; VVOR gain during rotation > 0.85.
+      </div>
+      <p class="citation">&#128214; Raphan, Matsuo & Cohen (1979) Exp Brain Res 35:229–248</p>
+      <span class="badge behavior">behavior</span>
+    </div>
+
+    <div class="fig-card">
+      <a href="figures/okn_nystagmus_zoom.png" target="_blank"><img src="figures/okn_nystagmus_zoom.png" alt="OKN Nystagmus Zoom"></a>
+      <h3>OKN Nystagmus Zoom</h3>
+      <p class="desc">First 15 s of OKN at 30 deg/s. Top: eye position showing sawtooth waveform. Bottom: raw eye velocity (fast phases visible) and SPV (fast phases removed).</p>
+      <div class="expected">
+        <strong>Expected behavior</strong>
+        Clear sawtooth; SPV ≈ 30 deg/s during slow phases; fast phases reset periodically.
+      </div>
+      <p class="citation">&#128214; Raphan et al. (1979)</p>
+      <span class="badge behavior">behavior</span>
+    </div>
+
+    <div class="fig-card">
+      <a href="figures/vor_tc_comparison.png" target="_blank"><img src="figures/vor_tc_comparison.png" alt="VOR Time-Constant Extension"></a>
+      <h3>VOR Time-Constant Extension</h3>
+      <p class="desc">SPV decay after step rotation: with VS (tau_vs=20 s) vs without VS (tau_vs≈0). Bottom: velocity storage state trajectory during and after rotation.</p>
+      <div class="expected">
+        <strong>Expected behavior</strong>
+        Without VS: TC ≈ 5 s (canal); with VS: TC ≈ 15–25 s (velocity storage extends it ~4×).
+      </div>
+      <p class="citation">&#128214; Cohen, Matsuo & Raphan (1977) J Neurophysiol</p>
+      <span class="badge behavior">behavior</span>
+    </div>
+
+    <div class="fig-card">
+      <a href="figures/vor_okr_cascade.png" target="_blank"><img src="figures/vor_okr_cascade.png" alt="VOR / OKR Signal Cascade (Internal)"></a>
+      <h3>VOR / OKR Signal Cascade (Internal)</h3>
+      <p class="desc">Left column (VOR in dark): head velocity → canal afferents → VS state → NI state → eye velocity. Right column (OKN): scene velocity → delayed retinal slip → VS → NI → eye velocity.</p>
+      <div class="expected">
+        <strong>Expected behavior</strong>
+        VOR: canal signal decays (TC ~5 s), VS extends it. OKR: slip_delayed drives VS and NI until eye velocity matches scene.
+      </div>
+      <p class="citation">&#128214; Raphan et al. (1979); Robinson (1975)</p>
+      <span class="badge cascade">cascade</span>
+    </div>
+    </div>
+  </section>
+
+  <section class="section" id="tilt_translation">
+    <h2>3. Tilt / Translation</h2>
+    <p>Otolith-driven eye movements: ocular counterroll (OCR) and OVAR. OCR is simulated with g_ocr=0.13 (13% physiological gain). OVAR requires the gravity estimator K_gd coupling to VS — placeholder.</p>
+    <div class="fig-grid">
+      
+    <div class="fig-card">
+      <a href="figures/tilt_ocr.png" target="_blank"><img src="figures/tilt_ocr.png" alt="Ocular Counterroll (OCR)"></a>
+      <h3>Ocular Counterroll (OCR)</h3>
+      <p class="desc">Head rolls 30° and holds. Otolith → gravity estimator → torsional OCR via g_ocr parameter. NOTE: gravity estimator not yet validated.</p>
+      <div class="expected">
+        <strong>Expected behavior</strong>
+        OCR ≈ −3.9° (counter-rolling, 30° tilt, 13% gain). Settling TC ≈ 2 s (1/K_grav). g_est y → G₀ sin(30°) = 4.9 m/s².
+      </div>
+      <p class="citation">&#128214; Boff, Kaufman & Thomas (1986); Tweed et al. (1994)</p>
+      <span class="badge behavior">behavior</span>
+    </div>
+
+    <div class="fig-card">
+      <a href="figures/tilt_ovar.png" target="_blank"><img src="figures/tilt_ovar.png" alt="OVAR — Off-Vertical Axis Rotation"></a>
+      <h3>OVAR — Off-Vertical Axis Rotation</h3>
+      <p class="desc">Head rotates at constant velocity around a tilted axis. Canal component is constant; otolith modulates nystagmus SPV sinusoidally.</p>
+      <div class="expected">
+        <strong>Expected behavior</strong>
+        Sinusoidal modulation of SPV with period = rotation period. Amplitude proportional to tilt angle. Requires K_gd (gravity → VS coupling) to be validated.
+      </div>
+      <p class="citation">&#128214; Raphan et al. (1981); Angelaki & Hess (1994) J Neurophysiol</p>
+      <span class="badge behavior">behavior</span>
+    </div>
+    </div>
+  </section>
+
+  <section class="section" id="pursuit">
+    <h2>4. Smooth Pursuit</h2>
+    <p>Smooth pursuit and catch-up saccades. Tests velocity gain at multiple speeds, sinusoidal tracking, and the pursuit integrator + saccade interaction cascade.</p>
+    <div class="fig-grid">
+      
+    <div class="fig-card">
+      <a href="figures/pursuit_velocity_range.png" target="_blank"><img src="figures/pursuit_velocity_range.png" alt="Smooth Pursuit — Velocity Range"></a>
+      <h3>Smooth Pursuit — Velocity Range</h3>
+      <p class="desc">Step-ramp target at 5, 10, 20, 40 deg/s. Blue: smooth pursuit enabled. Gray: saccades only (pursuit off). Rows: position, velocity, pursuit integrator state.</p>
+      <div class="expected">
+        <strong>Expected behavior</strong>
+        At 5–10 deg/s: pursuit tracks closely, steady-state gain > 0.8. At higher velocities: catch-up saccades + partial pursuit.
+      </div>
+      <p class="citation">&#128214; Lisberger & Westbrook (1985) J Neurosci; Rashbass (1961)</p>
+      <span class="badge behavior">behavior</span>
+    </div>
+
+    <div class="fig-card">
+      <a href="figures/pursuit_sinusoidal.png" target="_blank"><img src="figures/pursuit_sinusoidal.png" alt="Sinusoidal Pursuit (H + V)"></a>
+      <h3>Sinusoidal Pursuit (H + V)</h3>
+      <p class="desc">Horizontal sinusoidal target at 0.2, 0.5, 1.0 Hz (peak 15 deg/s). Vertical at 2× horizontal frequency for Lissajous trajectory. Rows: H position, V position, 2D trajectory.</p>
+      <div class="expected">
+        <strong>Expected behavior</strong>
+        Low freq (0.2 Hz): near-unity gain, small phase lag. High freq (1.0 Hz): gain < 1, larger lag, catch-up saccades.
+      </div>
+      <p class="citation">&#128214; Lisberger et al. (1981) J Neurophysiol</p>
+      <span class="badge behavior">behavior</span>
+    </div>
+
+    <div class="fig-card">
+      <a href="figures/pursuit_cascade.png" target="_blank"><img src="figures/pursuit_cascade.png" alt="Smooth Pursuit Signal Cascade (Internal)"></a>
+      <h3>Smooth Pursuit Signal Cascade (Internal)</h3>
+      <p class="desc">Full signal chain for 20 deg/s pursuit: position, velocity, pursuit integrator state, visual cascade error, accumulator/latch for catch-up saccades, burst, refractory state.</p>
+      <div class="expected">
+        <strong>Expected behavior</strong>
+        Pursuit integrator charges to target velocity; catch-up saccades fire when positional error exceeds threshold; saccade refractory period visible between bursts.
+      </div>
+      <p class="citation">&#128214; Lisberger & Westbrook (1985)</p>
+      <span class="badge cascade">cascade</span>
+    </div>
+    </div>
+  </section>
+
+  <section class="section" id="vergence">
+    <h2>5. Vergence</h2>
+    <p>Binocular vergence eye movements driven by disparity. Symmetric convergence isolates vergence dynamics. Asymmetric vergence combines a version saccade with a depth change.</p>
+    <div class="fig-grid">
+      
+    <div class="fig-card">
+      <a href="figures/vergence_symmetric.png" target="_blank"><img src="figures/vergence_symmetric.png" alt="Symmetric Vergence (Convergence)"></a>
+      <h3>Symmetric Vergence (Convergence)</h3>
+      <p class="desc">Both eyes converge symmetrically when a near target appears at midline. Saccades disabled to isolate vergence dynamics.</p>
+      <div class="expected">
+        <strong>Expected behavior</strong>
+        Δvergence ≈ 11.0° (far→near; IPD=6 mm). Version ≈ 0. Rise TC: fast phasic component + slow integration (τ ≈ 400 ms within Panum's area).
+      </div>
+      <p class="citation">&#128214; Mays (1984) J Neurophysiol; Cumming & Judge (1986) J Physiol</p>
+      <span class="badge behavior">behavior</span>
+    </div>
+
+    <div class="fig-card">
+      <a href="figures/vergence_asymmetric.png" target="_blank"><img src="figures/vergence_asymmetric.png" alt="Asymmetric Vergence"></a>
+      <h3>Asymmetric Vergence</h3>
+      <p class="desc">Target moves 10° rightward AND closer (2 m → 0.5 m). Version (conjugate) and vergence (disconjugate) should separate.</p>
+      <div class="expected">
+        <strong>Expected behavior</strong>
+        Version ≈ 10° (saccade). Vergence ≈ 7.3° (near). Components independent (saccade TC ~ 50–70 ms; vergence TC ~ 400 ms).
+      </div>
+      <p class="citation">&#128214; Collewijn et al. (1988) J Physiol; Zee et al. (1992)</p>
+      <span class="badge behavior">behavior</span>
+    </div>
+    </div>
+  </section>
+
+  <section class="section" id="fixation">
+    <h2>6. Fixation</h2>
+    <p>Fixational eye movements driven by different noise sources. Tests canal noise filtering, retinal position OU drift (microsaccades), and retinal velocity noise (pursuit-like drift).</p>
+    <div class="fig-grid">
+      
+    <div class="fig-card">
+      <a href="figures/fixation_noise_comparison.png" target="_blank"><img src="figures/fixation_noise_comparison.png" alt="Fixational Eye Movements — Noise Source Comparison"></a>
+      <h3>Fixational Eye Movements — Noise Source Comparison</h3>
+      <p class="desc">5-column comparison: noiseless, canal noise only, retinal position OU drift, retinal velocity noise, and all three combined. Rows: eye position, velocity, saccade burst, noise signal.</p>
+      <div class="expected">
+        <strong>Expected behavior</strong>
+        Noiseless: eye stays at 0°. Canal noise: slow drift + rare microsaccades. Pos noise: OU drift → corrective microsaccades when error exceeds threshold. Vel noise: smooth pursuit-like drift.
+      </div>
+      <p class="citation">&#128214; Rolfs (2009) Neurosci Biobehav Rev 33:1597–1627</p>
+      <span class="badge behavior">behavior</span>
+    </div>
+    </div>
+  </section>
+
+  <section class="section" id="efference">
+    <h2>7. Efference Copy</h2>
+    <p>Tests that self-generated motor commands (saccades, pursuit) do not contaminate velocity storage or pursuit integrator via retinal slip. EC-corrected slip ≈ 0 during saccades; VS stays flat in stationary scene.</p>
+    <div class="fig-grid">
+      
+    <div class="fig-card">
+      <a href="figures/efference_saccade.png" target="_blank"><img src="figures/efference_saccade.png" alt="EC — Saccade in Lit Scene"></a>
+      <h3>EC — Saccade in Lit Scene</h3>
+      <p class="desc">20° saccade in stationary lit scene. Row-by-row: eye velocity, burst command, raw retinal slip (spikes during saccade), motor EC (delayed opposing signal), corrected slip (raw + EC), VS net + pursuit state (both should stay near 0).</p>
+      <div class="expected">
+        <strong>Expected behavior</strong>
+        slip_raw spikes during burst. motor_ec provides equal/opposite delayed correction. slip_corr ≈ 0. VS net and pursuit state remain flat (< 1 deg/s) post-saccade.
+      </div>
+      <p class="citation">&#128214; Henn et al. (1974); Robinson (1977)</p>
+      <span class="badge cascade">cascade</span>
+    </div>
+
+    <div class="fig-card">
+      <a href="figures/efference_pursuit_limit.png" target="_blank"><img src="figures/efference_pursuit_limit.png" alt="EC — Large Pursuit to Orbital Limit"></a>
+      <h3>EC — Large Pursuit to Orbital Limit</h3>
+      <p class="desc">40 deg/s ramp pursuit. Eye tracks target until orbital limit (±50°), then stops. VS net and pursuit state shown.</p>
+      <div class="expected">
+        <strong>Expected behavior</strong>
+        Eye tracks at 40 deg/s until ~50°, then stops cleanly. VS net stays near 0 (pursuit EC prevents OKR contamination). No runaway pursuit state after hitting the limit.
+      </div>
+      <p class="citation">&#128214; Collewijn & Tamminga (1984)</p>
+      <span class="badge behavior">behavior</span>
+    </div>
+
+    <div class="fig-card">
+      <a href="figures/efference_okn_orbital.png" target="_blank"><img src="figures/efference_okn_orbital.png" alt="EC — OKN to Orbital Limit"></a>
+      <h3>EC — OKN to Orbital Limit</h3>
+      <p class="desc">30 deg/s full-field scene. OKN sawtooth nystagmus; fast phases reset eye at orbital limit. EC-corrected slip tracks scene velocity during slow phases.</p>
+      <div class="expected">
+        <strong>Expected behavior</strong>
+        VS charges smoothly to ~30 deg/s despite fast phases. slip_corr ≈ 30 deg/s during slow phases, drops to ~0 during fast phases (EC cancels). VS should not show spikes locked to fast phases.
+      </div>
+      <p class="citation">&#128214; Raphan et al. (1979)</p>
+      <span class="badge behavior">behavior</span>
+    </div>
+    </div>
+  </section>
+  </main>
+  
+<div id="lb" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;
+     background:rgba(0,0,0,.85);z-index:1000;cursor:zoom-out;align-items:center;
+     justify-content:center;">
+  <img id="lb-img" style="max-width:95vw;max-height:95vh;border-radius:4px;">
+</div>
+<script>
+(function(){
+  var lb=document.getElementById('lb'),
+      li=document.getElementById('lb-img');
+  document.querySelectorAll('.fig-card a').forEach(function(a){
+    a.addEventListener('click',function(e){
+      e.preventDefault();
+      li.src=a.href; lb.style.display='flex';
+    });
+  });
+  lb.addEventListener('click',function(){ lb.style.display='none'; });
+})();
+</script>
+
+</body>
+</html>

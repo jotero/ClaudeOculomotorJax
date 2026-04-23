@@ -479,16 +479,12 @@ def step(x_brain, sensory_out, brain_params):
     motor_cmd_R = nerves[6:]   # (6,) right eye nerve activations
 
     # ── Efference copy: advance delay cascade with version motor command ──────
-    # Rotate (u_burst + u_pursuit) from head frame into eye frame before delaying.
-    # slip is in eye frame (retinal_signals applies R_gaze_T); the EC must
-    # delay the SAME frame.  Rotating at cascade INPUT ensures motor_ec at readout
-    # carries R_eye_T(t−τ) @ u(t−τ), which matches slip(t) exactly —
-    # both use the gaze angle from the same past time t−τ.
-    # Approximation: R_head ≈ I (head stationary during saccades) → R_gaze_T ≈ R_eye_T.
-    # x_ni_net proxies current gaze; [yaw,pitch,roll] → permute for rotation_matrix.
-    _q2rv_ec = lambda q: jnp.array([-q[1], q[0], q[2]])
-    R_eye_T  = rotation_matrix(_q2rv_ec(x_ni_net)).T   # head → eye frame
-    dx_ec, _ = ec.step(x_ec, R_eye_T @ (u_burst + u_pursuit), brain_params)
+    # Delay (u_burst + u_pursuit) to match visual processing lag (tau_vis).
+    # motor_ec ≈ −slip at readout, cancelling self-generated retinal slip in VS and pursuit.
+    # Frame rotation omitted: at small-to-moderate gaze angles the cross-axis error
+    # (R ≈ I) is smaller than the catch-up term (x_ni−x_p)/tau_p which is inherently
+    # unmatched — adding an approximate rotation worsens post-saccadic residual.
+    dx_ec, _ = ec.step(x_ec, u_burst + u_pursuit, brain_params)
 
     # ── Pack state derivative ─────────────────────────────────────────────────
     dx_brain = jnp.concatenate([dx_vs, dx_ni, dx_sg, dx_ec, dx_grav, dx_pursuit, dx_verg, dx_acc])
