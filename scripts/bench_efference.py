@@ -23,6 +23,7 @@ from oculomotor.sim.simulator import (
     PARAMS_DEFAULT, with_brain, with_sensory, simulate,
     _IDX_EC, _IDX_VIS_L, _IDX_PURSUIT,
 )
+from oculomotor.sim import kinematics as km
 from oculomotor.models.sensory_models.retina import C_slip
 from oculomotor.models.brain_models import efference_copy as ec_mod
 from oculomotor.analysis import ax_fmt, extract_burst, extract_spv, vs_net
@@ -35,13 +36,14 @@ THETA = with_sensory(PARAMS_DEFAULT, sigma_canal=0.0, sigma_pos=0.0, sigma_vel=0
 def _run(theta, t_np, p_target=None, v_target=None, v_scene=None,
          scene_present=None, target_present=None, key=0):
     T  = len(t_np)
-    pt = p_target if p_target is not None else jnp.tile(jnp.array([0., 0., 1.]), (T, 1))
-    vt = v_target if v_target is not None else jnp.zeros((T, 3))
-    vs = v_scene  if v_scene  is not None else jnp.zeros((T, 3))
+    pt = np.array(p_target) if p_target is not None else None
+    sv = np.array(v_scene)  if v_scene  is not None else np.zeros((T, 3), np.float32)
     sp = scene_present  if scene_present  is not None else jnp.ones(T)
     tp = target_present if target_present is not None else jnp.ones(T)
+    tgt = km.build_target(t_np, lin_pos=pt) if pt is not None else None
     return simulate(theta, jnp.array(t_np),
-                    p_target_array=pt, v_target_array=vt, v_scene_array=vs,
+                    target=tgt,
+                    scene=km.build_kinematics(t_np, rot_vel=sv),
                     scene_present_array=sp, target_present_array=tp,
                     max_steps=int(T * 1.05) + 500,
                     return_states=True, key=jax.random.PRNGKey(key))

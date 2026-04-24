@@ -46,9 +46,7 @@ def _run_fixation(sigma_canal, sigma_pos, sigma_vel, seed, T):
                           sigma_vel=sigma_vel)
     t      = jnp.arange(0.0, TEND, DT)
     T_act  = len(t)
-    pt3    = jnp.tile(jnp.array([0.0, 0.0, 1.0]), (T_act, 1))
     states = simulate(params, t,
-                      p_target_array=pt3,
                       scene_present_array=jnp.ones(T_act),
                       target_present_array=jnp.ones(T_act),
                       max_steps=int(TEND / DT) + 2000,

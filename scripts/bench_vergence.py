@@ -20,6 +20,7 @@ if '--show' not in sys.argv:
 import matplotlib.pyplot as plt
 
 from oculomotor.sim.simulator import PARAMS_DEFAULT, with_brain, simulate, _IDX_VERG
+from oculomotor.sim import kinematics as km
 from oculomotor.analysis import ax_fmt
 
 SHOW = '--show' in sys.argv
@@ -53,7 +54,8 @@ def _symmetric(show):
 
     # Disable saccades to isolate vergence; lit scene so target is visible
     params = with_brain(PARAMS_DEFAULT, g_burst=0.0)
-    st     = simulate(params, t, p_target_array=pt,
+    st     = simulate(params, t,
+                      target=km.build_target(t, lin_pos=pt),
                       scene_present_array=np.ones(T),
                       return_states=True)
 
@@ -123,7 +125,8 @@ def _asymmetric(show):
     pt     = np.where((t >= T_STEP)[:, None], p_near, p_far)
 
     params = PARAMS_DEFAULT
-    st     = simulate(params, t, p_target_array=pt,
+    st     = simulate(params, t,
+                      target=km.build_target(t, lin_pos=pt),
                       scene_present_array=np.ones(T),
                       return_states=True)
 

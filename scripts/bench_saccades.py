@@ -18,6 +18,7 @@ if '--show' not in sys.argv:
 import matplotlib.pyplot as plt
 
 from oculomotor.sim.simulator import PARAMS_DEFAULT, with_brain, with_sensory, simulate
+from oculomotor.sim import kinematics as km
 from oculomotor.analysis import ax_fmt, extract_burst, extract_sg, ni_net
 
 DT    = 0.001
@@ -37,10 +38,13 @@ def _pt3(t_np, amp_h_deg, amp_v_deg=0.0, t_jump=0.1):
 
 
 def _run(t_np, pt3, key=0, max_s=None):
-    t = jnp.array(t_np)
-    T = len(t)
+    t  = jnp.array(t_np)
+    T  = len(t)
     ms = max_s or int((t_np[-1] - t_np[0]) / DT) + 300
-    return simulate(THETA, t, p_target_array=pt3,
+    pt3_np = np.array(pt3)
+    return simulate(THETA, t,
+                    target=km.build_target(t_np, lin_pos=pt3_np,
+                                           lin_vel=np.zeros_like(pt3_np)),
                     scene_present_array=jnp.ones(T),
                     max_steps=ms, return_states=True,
                     key=jax.random.PRNGKey(key))

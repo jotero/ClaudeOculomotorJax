@@ -4,7 +4,7 @@ Figures
 ───────
     vor_cascade.png  — 9-panel VOR signal cascade in dark (+ burst panel)
     okr_cascade.png  — 7-panel OKN signal cascade (+ burst panel)
-    vvor.png         — 4-panel VVOR dark vs lit (+ burst panel)
+    vvor.png         — 6-panel VVOR dark vs lit
 
 Usage
 -----
@@ -27,9 +27,9 @@ from oculomotor.sim.simulator import (
     PARAMS_DEFAULT, with_brain, with_sensory, simulate,
     _IDX_C, _IDX_VS, _IDX_NI, _IDX_VIS, _IDX_SG,
 )
+from oculomotor.sim import kinematics as km
 from oculomotor.models.sensory_models.sensory_model import N_CANALS, FLOOR, _SOFTNESS, PINV_SENS
 from oculomotor.models.sensory_models.sensory_model import C_slip, C_pos
-from oculomotor.sim import stimuli as stim_mod
 from oculomotor.analysis import ax_fmt, extract_burst, vs_net, ni_net
 
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), '..', 'outputs')
@@ -47,21 +47,24 @@ _C = {
 
 # ── Utilities ──────────────────────────────────────────────────────────────────
 
-def _sustained_rotation(v_deg_s=30.0, rest_dur=5.0, rotate_dur=15.0, coast_dur=60.0, sample_rate=100.0):
+def _build_vor_head(v_deg_s=30.0, rest_dur=5.0, rotate_dur=15.0, coast_dur=60.0,
+                    sample_rate=100.0):
+    """Build head KinematicTrajectory: rest → constant yaw → coast."""
     total = rest_dur + rotate_dur + coast_dur
-    t  = jnp.arange(0.0, total, 1.0 / sample_rate)
-    hv = jnp.where((t >= rest_dur) & (t < rest_dur + rotate_dur), v_deg_s, 0.0)
-    return t, hv
+    t     = km.make_time(total, dt=1.0 / sample_rate)
+    vel1d = np.where((t >= rest_dur) & (t < rest_dur + rotate_dur),
+                     v_deg_s, 0.0).astype(np.float32)
+    return t, km.build_kinematics(t, rot_vel=km._pad3(vel1d, 'yaw'))
 
 
-def _extract_signals(theta, t_array, head_vel_1d, states):
+def _extract_signals(theta, t_array, head, states):
     """Reconstruct intermediate signals from saved state trajectory."""
     from scipy.special import softplus as sp_softplus
-    hv   = np.array(head_vel_1d)
+    hv   = np.array(head.rot_vel[:, 0])   # yaw only
     x_c  = np.array(states.sensory[:, _IDX_C])
     x_vs = np.array(states.brain[:, _IDX_VS])
     x_ni = np.array(states.brain[:, _IDX_NI])
-    x_p  = np.array(states.plant[:, :3])   # (T, 3) left eye (version ≈ R)
+    x_p  = np.array(states.plant[:, :3])   # (T, 3) left eye
 
     nc  = N_CANALS
     x1  = x_c[:, :nc]
@@ -85,11 +88,9 @@ def _extract_signals(theta, t_array, head_vel_1d, states):
         x2_c0=x2[:, 0], x2_c1=x2[:, 1],
         y_c0=y_c[:, 0], y_c1=y_c[:, 1],
         u_canal=u_canal[:, 0], x_vs=x_vs_net[:, 0],
-        w_est=w_est[:, 0], x_ni=u_p[:, 0],  # net NI output (pulse-step)
+        w_est=w_est[:, 0], x_ni=u_p[:, 0],
         u_p=u_p[:, 0], eye_pos=eye_pos, eye_vel=eye_vel,
     )
-
-
 
 
 # ── Plot 1: VOR in the dark — 9-panel signal cascade ──────────────────────────
@@ -99,28 +100,27 @@ def demo_vor_cascade():
     rest_dur   = 5.0
     rotate_dur = 15.0
     coast_dur  = 60.0
-    t, hv = _sustained_rotation(v_deg_s=30.0, rest_dur=rest_dur,
-                                 rotate_dur=rotate_dur, coast_dur=coast_dur)
-    t_np  = np.array(t)
-    max_s = int((float(t[-1]) - float(t[0])) / 0.001) + 500
+    t_np, head = _build_vor_head(v_deg_s=30.0, rest_dur=rest_dur,
+                                  rotate_dur=rotate_dur, coast_dur=coast_dur)
+    t_np  = np.array(t_np)
+    max_s = int((t_np[-1] - t_np[0]) / 0.001) + 500
+    T     = len(t_np)
 
-    T         = len(t)
-    states    = simulate(THETA, t, head_vel_array=hv,
-                         target_present_array=jnp.zeros(T),   # dark — no visible target
+    states    = simulate(THETA, t_np, head=head,
+                         target_present_array=jnp.zeros(T),
                          max_steps=max_s, return_states=True,
                          key=jax.random.PRNGKey(0))
-    sigs      = _extract_signals(THETA, t, hv, states)
+    sigs      = _extract_signals(THETA, t_np, head, states)
     burst     = extract_burst(states, THETA)
 
     theta_no_vs = with_brain(THETA, tau_vs=0.1, K_vs=0.001)
-    states_nv   = simulate(theta_no_vs, t, head_vel_array=hv,
+    states_nv   = simulate(theta_no_vs, t_np, head=head,
                            target_present_array=jnp.zeros(T),
                            max_steps=max_s, return_states=True,
                            key=jax.random.PRNGKey(0))
-    sigs_nv     = _extract_signals(theta_no_vs, t, hv, states_nv)
+    sigs_nv     = _extract_signals(theta_no_vs, t_np, head, states_nv)
 
     tau_eff = THETA.brain.tau_vs
-    _floor  = float(FLOOR)
 
     fig, axes = plt.subplots(10, 1, figsize=(24, 27), sharex=True)
     fig.suptitle(f'VOR in the dark — step rotation  ({rotate_dur:.0f} s @ 30 deg/s)\n'
@@ -128,11 +128,9 @@ def demo_vor_cascade():
                  fontsize=11)
 
     vline_kw = dict(color='k', lw=0.8, ls='--', alpha=0.4)
-    t_onset  = rest_dur
-    t_offset = rest_dur + rotate_dur
     for ax in axes:
-        ax.axvline(t_onset,  **vline_kw)
-        ax.axvline(t_offset, **vline_kw)
+        ax.axvline(rest_dur,              **vline_kw)
+        ax.axvline(rest_dur + rotate_dur, **vline_kw)
         ax_fmt(ax)
 
     axes[0].plot(t_np, sigs['head_vel'], color=_C['head'], lw=1.5)
@@ -191,28 +189,26 @@ def demo_vor_cascade():
                      label=f'±orbital limit ({orbital_limit:.0f}°)')
     axes[8].axhline(-orbital_limit, color='tomato', lw=1.0, ls='--', alpha=0.8)
     axes[8].set_ylabel('Eye pos\n(deg)')
-    axes[8].set_title('Eye position  (should stay within orbital limits during VOR)')
+    axes[8].set_title('Eye position')
     axes[8].legend(fontsize=8)
 
     axes[9].plot(t_np, burst[:, 0], color=_C['burst'], lw=1.2)
     axes[9].set_ylabel('Burst\n(deg/s)')
     axes[9].set_xlabel('Time (s)')
-    axes[9].set_title('Saccade burst u_burst  (oscillations above = corrective saccades to straight-ahead target)')
+    axes[9].set_title('Saccade burst u_burst')
 
     fig.tight_layout()
     path = os.path.join(OUTPUT_DIR, 'vor_cascade.png')
     fig.savefig(path, dpi=150)
-    if SHOW:
-        plt.show()
-    else:
-        plt.close(fig)
+    if SHOW: plt.show()
+    else:    plt.close(fig)
     print(f'  Saved {path}')
 
 
 # ── Plot 2: OKR cascade ────────────────────────────────────────────────────────
 
 def demo_okr_cascade():
-    """7-panel OKN cascade: scene → slip → VS → eye velocity → burst."""
+    """8-panel OKN cascade: scene → slip → VS → eye velocity → burst."""
     sr        = 200.0
     on_dur    = 30.0
     off_dur   = 40.0
@@ -222,24 +218,17 @@ def demo_okr_cascade():
     theta_okn    = with_brain(THETA, g_burst=600.0)
     theta_no_vis = with_brain(THETA, K_vis=0.0, g_vis=0.0)
 
-    t_arr    = jnp.arange(0.0, total_dur, 1.0 / sr)
-    v_sc     = jnp.where(t_arr < on_dur, scene_vel, 0.0)
-    v_scene  = jnp.zeros((len(t_arr), 3)).at[:, 0].set(v_sc)
-    # scene_present: 1 while scene moves, 0 after scene off (darkness → pure OKAN at tau_vs).
-    # Without this, scene_gain=1 with v_scene=0 creates retinal slip from OKAN eye motion,
-    # causing visual suppression of OKAN (TC ≈ 3 s instead of 20 s).
-    scene_present = jnp.where(t_arr < on_dur, 1.0, 0.0)
-    max_s    = int(total_dur / 0.001) + 500
+    t_arr = km.make_time(total_dur, dt=1.0 / sr)
+    scene = km.scene_rotation_step(scene_vel, on_dur=on_dur, total_dur=total_dur,
+                                    dt=1.0 / sr, axis='yaw')
+    # scene_present: 1 while scene moves, 0 after scene off (pure OKAN at tau_vs)
+    scene_present = jnp.where(jnp.array(t_arr) < on_dur, 1.0, 0.0)
+    max_s = int(total_dur / 0.001) + 500
+    T_okn = len(t_arr)
 
-    T_okn  = len(t_arr)
-    states = simulate(theta_okn, t_arr,
-                      v_scene_array=v_scene,
+    states = simulate(theta_okn, t_arr, scene=scene,
                       scene_present_array=scene_present,
-                      target_present_array=jnp.zeros(T_okn),  # OKN: no foveal target
-                      # No explicit fixation target (OKN: distributed scene, no single target).
-                      # Fast phases are still driven by the implicit straight-ahead target:
-                      # e_pos_delayed ≈ −x_p, so the saccade generator fires whenever the
-                      # eye drifts from center — classic OKN nystagmus sawtooth.
+                      target_present_array=jnp.zeros(T_okn),
                       max_steps=max_s, return_states=True,
                       key=jax.random.PRNGKey(1))
     t_np   = np.array(t_arr)
@@ -247,23 +236,21 @@ def demo_okr_cascade():
     burst  = extract_burst(states, theta_okn)
 
     x_vis    = np.array(states.sensory[:, _IDX_VIS])
-    x_vs_net = vs_net(states)    # (T, 3) x_L − x_R
-    x_ni     = ni_net(states)    # (T, 3) net NI position
-    x_p      = np.array(states.plant[:, :3])   # (T, 3) left eye
+    x_vs_net = vs_net(states)
+    x_ni     = ni_net(states)
+    x_p      = np.array(states.plant[:, :3])
 
     w_scene_np   = np.where(t_np < on_dur, scene_vel, 0.0)
     eye_vel      = np.gradient(x_p[:, 0], dt)
     e_delayed    = (x_vis @ np.array(C_slip).T)[:, 0]
     u_vis_direct = THETA.brain.g_vis * e_delayed
-    SPV_CLIP     = 80.0   # deg/s; clips fast-phase peaks (>80), shows slow phase between
+    SPV_CLIP     = 80.0
     spv          = np.where(np.abs(eye_vel) < SPV_CLIP, eye_vel, np.nan)
 
-    eye_no_vis = simulate(theta_no_vis, t_arr,
-                          v_scene_array=v_scene,
+    eye_no_vis = simulate(theta_no_vis, t_arr, scene=scene,
                           scene_present_array=scene_present,
                           target_present_array=jnp.zeros(T_okn),
-                          max_steps=max_s,
-                          key=jax.random.PRNGKey(1))[:, 0]
+                          max_steps=max_s, key=jax.random.PRNGKey(1))[:, 0]
     ev_no_vis  = np.gradient(np.array(eye_no_vis), dt)
 
     fig, axes = plt.subplots(8, 1, figsize=(12, 22), sharex=True)
@@ -282,19 +269,19 @@ def demo_okr_cascade():
     axes[0].set_title('Input: visual scene velocity')
 
     axes[1].plot(t_np, e_delayed, color='darkorange', lw=1.5,
-                 label=f'e_delayed  (efference-copy corrected, tau_vis={THETA.sensory.tau_vis} s)')
+                 label=f'e_delayed  (tau_vis={THETA.sensory.tau_vis} s)')
     axes[1].set_ylabel('Delayed slip\n(deg/s)')
-    axes[1].set_title('Visual delay cascade output  (efference copy suppresses saccade artefacts)')
+    axes[1].set_title('Visual delay cascade output')
     axes[1].legend(fontsize=8)
 
     axes[2].plot(t_np, x_vs_net[:, 0], color='steelblue', lw=1.5,
                  label=f'x_vs  (tau_vs = {THETA.brain.tau_vs} s)')
     axes[2].set_ylabel('VS state\n(deg/s)')
-    axes[2].set_title('Velocity storage  (charges during OKN, sustains OKAN)')
+    axes[2].set_title('Velocity storage')
     axes[2].legend(fontsize=8)
 
     axes[3].plot(t_np, u_vis_direct,    color=_C['scene'],  lw=1.5,
-                 label=f'g_vis * e_delayed  (direct, g_vis={THETA.brain.g_vis})')
+                 label=f'g_vis * e_delayed  (g_vis={THETA.brain.g_vis})')
     axes[3].plot(t_np, -x_vs_net[:, 0], color='steelblue', lw=1.5, ls='--',
                  label='-x_vs  (VS contribution)')
     axes[3].set_ylabel('Visual drive\n(deg/s)')
@@ -316,15 +303,13 @@ def demo_okr_cascade():
                      label=f'±orbital limit ({orbital_limit_okn:.0f}°)')
     axes[5].axhline(-orbital_limit_okn, color='tomato', lw=0.8, ls='--', alpha=0.7)
     axes[5].set_ylabel('Eye pos\n(deg)')
-    axes[5].set_title('Eye position  (sawtooth = nystagmus slow + fast phases)')
+    axes[5].set_title('Eye position')
     axes[5].legend(fontsize=8)
 
-    axes[6].plot(t_np, x_ni[:, 0], color='darkorchid', lw=1.0, label='x_ni  (NI position command)')
-    axes[6].plot(t_np, x_p[:, 0],  color=_C['eye'],    lw=0.8, ls='--', alpha=0.6, label='x_p  (eye pos)')
-    axes[6].axhline( orbital_limit_okn, color='tomato', lw=0.8, ls='--', alpha=0.5)
-    axes[6].axhline(-orbital_limit_okn, color='tomato', lw=0.8, ls='--', alpha=0.5)
+    axes[6].plot(t_np, x_ni[:, 0], color='darkorchid', lw=1.0, label='x_ni')
+    axes[6].plot(t_np, x_p[:, 0],  color=_C['eye'],    lw=0.8, ls='--', alpha=0.6, label='x_p')
     axes[6].set_ylabel('NI / pos\n(deg)')
-    axes[6].set_title('Neural integrator state x_ni vs eye position  (x_ni exceeding ±limit → drift)')
+    axes[6].set_title('Neural integrator state vs eye position')
     axes[6].legend(fontsize=8)
 
     axes[7].plot(t_np, burst[:, 0], color=_C['burst'], lw=1.0)
@@ -335,60 +320,39 @@ def demo_okr_cascade():
     fig.tight_layout()
     path = os.path.join(OUTPUT_DIR, 'okr_cascade.png')
     fig.savefig(path, dpi=150)
-    if SHOW:
-        plt.show()
-    else:
-        plt.close(fig)
+    if SHOW: plt.show()
+    else:    plt.close(fig)
     print(f'  Saved {path}')
 
 
 # ── Plot 3: VVOR ───────────────────────────────────────────────────────────────
 
 def demo_vvor():
-    """6-panel VVOR: dark vs lit across a rotation large enough to reach the orbital limit.
-
-    Stimulus: 30 deg/s for 30 s → head travels 900 deg total.
-    Expected behavior (once orbital limits + target selector are implemented):
-      Dark  — VOR drives eye counter to head; canal adapts; velocity storage
-              extends TC.  As eye approaches orbital limit, target selector
-              fires orbital-reset fast phases back toward center → nystagmus
-              throughout (like VOR nystagmus in the dark).
-      Lit   — OKR keeps gaze on the stationary target while eye is within the
-              orbital limit → eye position stays near zero, gaze error ≈ 0.
-              Once the visual target exits the orbital range (eye can no longer
-              reach it), target selector switches to orbital-reset mode →
-              nystagmus kicks in just as in the dark condition.
-
-    Panels:
-        0 — Eye velocity: dark vs lit, head vel reference
-        1 — Eye position: dark vs lit, ±orbital_limit shaded
-        2 — Gaze error: head_pos + eye_pos (0 = perfect stabilization)
-        3 — Retinal error (e_pos_delayed) — goes to zero in lit while on target
-        4 — Saccade burst: dark vs lit (fast-phase resets visible in dark)
-        5 — z_sac: dark vs lit (when the latch fires = when fast phases occur)
-    """
+    """6-panel VVOR: dark vs lit across a rotation large enough to reach orbital limit."""
     sr         = 200.0
-    v_head     = 30.0    # deg/s  — fast enough to build up orbital pressure
-    rotate_dur = 30.0    # s      — long enough to reach orbital limit
-    coast_dur  = 20.0    # s      — observe decay after rotation stops
+    v_head     = 30.0
+    rotate_dur = 30.0
+    coast_dur  = 20.0
     dt_vv      = 1.0 / sr
-    t_vv, hv_3d = stim_mod.rotation_step(v_head, rotate_dur=rotate_dur,
-                                         coast_dur=coast_dur, dt=dt_vv)
-    max_sv     = int((rotate_dur + coast_dur) / 0.001) + 500
-    T          = len(t_vv)
-    hv_vv      = hv_3d[:, 0]
 
-    theta_dark = with_brain(THETA, K_vis=0.0, g_vis=0.0)   # no visual drive
-    theta_lit  = THETA                                      # full visual drive
+    head  = km.head_rotation_step(v_head, rotate_dur=rotate_dur,
+                                   coast_dur=coast_dur, dt=dt_vv)
+    t_vv  = head.t
+    hv_vv = head.rot_vel[:, 0]
+    T     = len(t_vv)
+    max_sv = int((rotate_dur + coast_dur) / 0.001) + 500
 
-    states_dark = simulate(theta_dark, t_vv, head_vel_array=hv_3d,
+    theta_dark = with_brain(THETA, K_vis=0.0, g_vis=0.0)
+    theta_lit  = THETA
+
+    states_dark = simulate(theta_dark, t_vv, head=head,
                            scene_present_array=jnp.zeros(T),
-                           target_present_array=jnp.zeros(T),  # dark — no visible target
+                           target_present_array=jnp.zeros(T),
                            max_steps=max_sv, return_states=True,
                            key=jax.random.PRNGKey(2))
-    states_lit  = simulate(theta_lit, t_vv, head_vel_array=hv_3d,
+    states_lit  = simulate(theta_lit, t_vv, head=head,
                            scene_present_array=jnp.ones(T),
-                           target_present_array=jnp.ones(T),   # lit — target visible
+                           target_present_array=jnp.ones(T),
                            max_steps=max_sv, return_states=True,
                            key=jax.random.PRNGKey(2))
 
@@ -408,8 +372,8 @@ def demo_vvor():
     burst_dark = extract_burst(states_dark, theta_dark)
     burst_lit  = extract_burst(states_lit,  theta_lit)
 
-    sg_dark = np.array(states_dark.brain[:, _IDX_SG])
-    sg_lit  = np.array(states_lit.brain[:,  _IDX_SG])
+    sg_dark   = np.array(states_dark.brain[:, _IDX_SG])
+    sg_lit    = np.array(states_lit.brain[:,  _IDX_SG])
     z_sac_dark = sg_dark[:, 7]
     z_sac_lit  = sg_lit[:,  7]
 
@@ -418,8 +382,7 @@ def demo_vvor():
     fig, axes = plt.subplots(6, 1, figsize=(14, 18), sharex=True)
     fig.suptitle(
         f'VVOR — {rotate_dur:.0f} s @ {v_head:.0f} deg/s, stationary world target\n'
-        f'Dark: VOR → orbital nystagmus when eye hits limit   |   '
-        f'Lit: OKR keeps gaze on target → orbital nystagmus when target out of range',
+        f'Dark: VOR → orbital nystagmus   |   Lit: OKR keeps gaze on target',
         fontsize=10)
 
     vline_kw = dict(color='k', lw=0.8, ls='--', alpha=0.4)
@@ -427,60 +390,48 @@ def demo_vvor():
         ax.axvline(rotate_dur, **vline_kw)
         ax_fmt(ax)
 
-    # ── Row 0: eye velocity ────────────────────────────────────────────────────
     axes[0].plot(t_vv, -hv_vv,   color='gray',      lw=1.0, ls=':', alpha=0.6,
                  label='-head vel  (ideal VOR)')
-    axes[0].plot(t_vv, ev_dark,  color=_C['no_vs'], lw=1.0, alpha=0.7,
-                 label='Eye vel (dark)')
-    axes[0].plot(t_vv, ev_lit,   color=_C['eye'],   lw=1.0, alpha=0.7,
-                 label='Eye vel (lit)')
+    axes[0].plot(t_vv, ev_dark,  color=_C['no_vs'], lw=1.0, alpha=0.7, label='Eye vel (dark)')
+    axes[0].plot(t_vv, ev_lit,   color=_C['eye'],   lw=1.0, alpha=0.7, label='Eye vel (lit)')
     axes[0].set_ylabel('Eye vel (deg/s)')
-    axes[0].set_title('Eye velocity  (fast phases = sawtooth spikes)')
+    axes[0].set_title('Eye velocity')
     axes[0].legend(fontsize=8)
 
-    # ── Row 1: eye position with orbital limit bands ───────────────────────────
-    axes[1].axhspan( orbital_limit,  orbital_limit + 20, color='tomato', alpha=0.08)
-    axes[1].axhspan(-orbital_limit - 20, -orbital_limit, color='tomato', alpha=0.08)
+    axes[1].axhspan( orbital_limit,       orbital_limit + 20, color='tomato', alpha=0.08)
+    axes[1].axhspan(-orbital_limit - 20, -orbital_limit,      color='tomato', alpha=0.08)
     axes[1].axhline( orbital_limit, color='tomato', lw=1.0, ls='--', alpha=0.7,
                      label=f'±orbital limit ({orbital_limit:.0f}°)')
     axes[1].axhline(-orbital_limit, color='tomato', lw=1.0, ls='--', alpha=0.7)
-    axes[1].plot(t_vv, eye_dark, color=_C['no_vs'], lw=1.5, ls='--',
-                 label='Eye pos (dark)')
-    axes[1].plot(t_vv, eye_lit,  color=_C['eye'],   lw=1.5,
-                 label='Eye pos (lit)')
+    axes[1].plot(t_vv, eye_dark, color=_C['no_vs'], lw=1.5, ls='--', label='Eye pos (dark)')
+    axes[1].plot(t_vv, eye_lit,  color=_C['eye'],   lw=1.5,          label='Eye pos (lit)')
     axes[1].set_ylabel('Eye pos (deg)')
-    axes[1].set_title('Eye position  (dark: drifts toward limit; lit: held near zero while on target)')
+    axes[1].set_title('Eye position')
     axes[1].legend(fontsize=8)
 
-    # ── Row 2: gaze error ─────────────────────────────────────────────────────
-    axes[2].plot(t_vv, head_pos + eye_dark, color=_C['no_vs'], lw=1.5, ls='--',
-                 label='Gaze error (dark)')
-    axes[2].plot(t_vv, head_pos + eye_lit,  color=_C['eye'],   lw=1.5,
-                 label='Gaze error (lit)')
+    axes[2].plot(t_vv, head_pos + eye_dark, color=_C['no_vs'], lw=1.5, ls='--', label='Gaze (dark)')
+    axes[2].plot(t_vv, head_pos + eye_lit,  color=_C['eye'],   lw=1.5,          label='Gaze (lit)')
     axes[2].axhline(0, color='k', lw=0.8)
     axes[2].set_ylabel('Gaze error (deg)')
     axes[2].set_title('Gaze error  (head pos + eye pos;  0 = perfect stabilisation)')
     axes[2].legend(fontsize=8)
 
-    # ── Row 3: retinal position error (from visual delay cascade) ─────────────
     axes[3].plot(t_vv, e_delayed_dark, color=_C['no_vs'], lw=1.0, ls='--', alpha=0.7,
-                 label='e_pos_delayed (dark — no visual drive)')
+                 label='e_pos_delayed (dark)')
     axes[3].plot(t_vv, e_delayed_lit,  color=_C['eye'],   lw=1.0, alpha=0.7,
-                 label='e_pos_delayed (lit — drives OKR + saccade trigger)')
+                 label='e_pos_delayed (lit)')
     axes[3].set_ylabel('Retinal error (deg)')
-    axes[3].set_title('Delayed retinal position error  (near-zero in lit while on target → spike at each fast phase)')
+    axes[3].set_title('Delayed retinal position error')
     axes[3].legend(fontsize=8)
 
-    # ── Row 4: burst ─────────────────────────────────────────────────────────
     axes[4].plot(t_vv, burst_dark[:, 0], color=_C['no_vs'], lw=1.0, ls='--', alpha=0.8,
                  label='Burst (dark)')
     axes[4].plot(t_vv, burst_lit[:, 0],  color=_C['eye'],   lw=1.0, alpha=0.8,
                  label='Burst (lit)')
     axes[4].set_ylabel('Burst (deg/s)')
-    axes[4].set_title('Saccade burst u_burst  (dark: orbital reset fast phases; lit: foveation + orbital reset)')
+    axes[4].set_title('Saccade burst u_burst')
     axes[4].legend(fontsize=8)
 
-    # ── Row 5: z_sac (latch) ─────────────────────────────────────────────────
     axes[5].plot(t_vv, z_sac_dark, color=_C['no_vs'], lw=1.0, ls='--', alpha=0.8,
                  label='z_sac (dark)')
     axes[5].plot(t_vv, z_sac_lit,  color=_C['eye'],   lw=1.0, alpha=0.8,
@@ -488,17 +439,15 @@ def demo_vvor():
     axes[5].set_ylim(-0.05, 1.15)
     axes[5].set_ylabel('z_sac')
     axes[5].set_xlabel('Time (s)')
-    axes[5].set_title('Saccade latch z_sac  (1 = burst active; each pulse = one fast phase)')
+    axes[5].set_title('Saccade latch z_sac')
     axes[5].legend(fontsize=8)
     axes[5].grid(True, alpha=0.2)
 
     fig.tight_layout()
     path = os.path.join(OUTPUT_DIR, 'vvor.png')
     fig.savefig(path, dpi=150)
-    if SHOW:
-        plt.show()
-    else:
-        plt.close(fig)
+    if SHOW: plt.show()
+    else:    plt.close(fig)
     print(f'  Saved {path}')
 
 

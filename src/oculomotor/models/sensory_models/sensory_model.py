@@ -208,8 +208,12 @@ def read_outputs(x_sensory, sensory_params):
 
 # ── Combined step ───────────────────────────────────────────────────────────────
 
-def step(x_sensory, q_head, w_head, a_head, q_eye_L, w_eye_L, q_eye_R, w_eye_R,
-         w_scene, v_target, p_target, scene_present_L, scene_present_R,
+def step(x_sensory,
+         q_head, w_head, x_head, v_head, a_head,
+         q_eye_L, w_eye_L, q_eye_R, w_eye_R,
+         q_scene, w_scene, x_scene, v_scene,
+         v_target, p_target,
+         scene_present_L, scene_present_R,
          target_present_L, target_present_R, target_strobed,
          sensory_params):
     """Single ODE step for the sensory subsystem (canal + otolith + visual delay).
@@ -217,30 +221,35 @@ def step(x_sensory, q_head, w_head, a_head, q_eye_L, w_eye_L, q_eye_R, w_eye_R,
     Computes retinal signals for each eye using IPD geometry, then advances
     the canal, otolith, and two visual delay cascades (one per eye).
 
+    World-frame convention: x=right, y=up, z=forward.
+
     Args:
         x_sensory:        (978,)  sensory state [x_c(12)|x_oto(6)|x_vis_L(480)|x_vis_R(480)]
-        q_head:           (3,)    head angular position (deg)
-        w_head:           (3,)    head angular velocity (deg/s)
-        a_head:           (3,)    head linear acceleration (m/s²)
-        q_eye_L:          (3,)    left  eye angular position — plant state (deg)
-        w_eye_L:          (3,)    left  eye angular velocity — plant derivative (deg/s)
-        q_eye_R:          (3,)    right eye angular position — plant state (deg)
-        w_eye_R:          (3,)    right eye angular velocity — plant derivative (deg/s)
-        w_scene:          (3,)    scene angular velocity (deg/s)
-        v_target:         (3,)    target angular velocity in world frame (deg/s)
-        p_target:         (3,)    Cartesian target position (world frame)
+        q_head:           (3,)    head rotation vector [yaw,pitch,roll] (deg)
+        w_head:           (3,)    head angular velocity [yaw,pitch,roll] (deg/s)
+        x_head:           (3,)    head linear position  [x,y,z] (m, world frame)
+        v_head:           (3,)    head linear velocity  [x,y,z] (m/s, world frame)
+        a_head:           (3,)    head linear acceleration [x,y,z] (m/s², world frame)
+        q_eye_L:          (3,)    left  eye rotation vector (deg, head frame)
+        w_eye_L:          (3,)    left  eye angular velocity (deg/s, head frame)
+        q_eye_R:          (3,)    right eye rotation vector (deg, head frame)
+        w_eye_R:          (3,)    right eye angular velocity (deg/s, head frame)
+        q_scene:          (3,)    scene rotation vector (deg, world frame) — future optostatic torsion
+        w_scene:          (3,)    scene angular velocity (deg/s, world frame) → OKR drive
+        x_scene:          (3,)    scene linear position (m, world frame) — future parallax
+        v_scene:          (3,)    scene linear velocity (m/s, world frame) — future parallax
+        v_target:         (3,)    target angular velocity [yaw,pitch,roll] (deg/s, world frame)
+                                  = _rv2q(cross(p_target, dp_target/dt) / |p_target|²)
+        p_target:         (3,)    target 3-D position [x,y,z] (m, world frame)
         scene_present_L:  scalar  0=L eye dark, 1=L eye lit
         scene_present_R:  scalar  0=R eye dark, 1=R eye lit
-        target_present_L: scalar  0=L eye covered, 1=L eye sees target — gates e_vel/e_pos/target_in_vf L
-        target_present_R: scalar  0=R eye covered, 1=R eye sees target — gates e_vel/e_pos/target_in_vf R
-        target_strobed:   scalar  1=stroboscopic illumination — zeros target_vel before retinal cascade;
-                                  position (saccades) preserved, velocity (pursuit) absent
-        sensory_params:   SensoryParams  model parameters
+        target_present_L: scalar  0=L eye covered, 1=L eye sees target
+        target_present_R: scalar  0=R eye covered, 1=R eye sees target
+        target_strobed:   scalar  1=stroboscopic — zeros target_vel before delay cascade
+        sensory_params:   SensoryParams
 
     Returns:
-        dx_sensory: (818,)  dx_sensory/dt
-
-    Brain-facing outputs are read via read_outputs() from the updated state.
+        dx_sensory: (978,)  dx_sensory/dt
     """
     x_c     = x_sensory[_IDX_C]
     x_oto   = x_sensory[_IDX_OTO]
@@ -248,17 +257,19 @@ def step(x_sensory, q_head, w_head, a_head, q_eye_L, w_eye_L, q_eye_R, w_eye_R,
     x_vis_R = x_sensory[_IDX_VIS_R]
 
     # Eye offsets in head frame — all geometry handled inside retinal_signals.
-    ipd_half     = sensory_params.ipd * 0.5
-    eye_off_L    = jnp.array([-ipd_half, 0.0, 0.0])   # left  eye in head frame
-    eye_off_R    = jnp.array([ ipd_half, 0.0, 0.0])   # right eye in head frame
+    ipd_half  = sensory_params.ipd * 0.5
+    eye_off_L = jnp.array([-ipd_half, 0.0, 0.0])   # left  eye in head frame
+    eye_off_R = jnp.array([ ipd_half, 0.0, 0.0])   # right eye in head frame
 
     # Retinal signals per eye (all raw — no pre-gating; gating happens at readout)
     target_pos_L, scene_vel_L, target_vel_L, target_in_vf_L = _retina.retinal_signals(
-        p_target, eye_off_L, q_head, w_head, q_eye_L, w_eye_L, w_scene, v_target,
+        p_target, eye_off_L, q_head, w_head, x_head, v_head,
+        q_eye_L, w_eye_L, w_scene, v_target,
         sensory_params.visual_field_limit, sensory_params.k_visual_field)
 
     target_pos_R, scene_vel_R, target_vel_R, target_in_vf_R = _retina.retinal_signals(
-        p_target, eye_off_R, q_head, w_head, q_eye_R, w_eye_R, w_scene, v_target,
+        p_target, eye_off_R, q_head, w_head, x_head, v_head,
+        q_eye_R, w_eye_R, w_scene, v_target,
         sensory_params.visual_field_limit, sensory_params.k_visual_field)
 
     # Visibility of scene and target. Both dependent of presence, target depends on field of view too.

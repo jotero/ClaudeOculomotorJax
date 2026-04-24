@@ -68,25 +68,31 @@ C_strobed        = jnp.zeros((1, N_STATES)).at[0, _OFF_STROBED    + _N_SCALAR - 
 
 # ── Geometry ────────────────────────────────────────────────────────────────────
 
-def retinal_signals(p_target, eye_offset_head, q_head, w_head, q_eye, w_eye,
-                    w_scene, v_target, vf_limit, k_vf):
+def retinal_signals(p_target, eye_offset_head, q_head, w_head, x_head, v_head,
+                    q_eye, w_eye, w_scene, v_target, vf_limit, k_vf):
     """Compute instantaneous retinal signals and visual-field gate.
 
     All outputs are in EYE coordinates [yaw, pitch, roll] (deg or deg/s).
     All head and eye geometry is handled here — sensory_model only passes
     anatomical offsets (eye_offset_head) and does not touch rotation matrices.
 
+    World-frame convention: x=right, y=up, z=forward.
+
     Inputs
     ------
-    p_target:        world frame, HCR origin (stereographic, x=right y=up z=fwd)
+    p_target:        target 3-D position in world frame (m)  [x=right, y=up, z=fwd]
     eye_offset_head: this eye's fixed position in head frame (m)
                      left=[-ipd/2,0,0]  right=[+ipd/2,0,0]
-    q_head:          head rotation vector (deg, world frame)
-    w_head:          head angular velocity (deg/s, world frame)
+    q_head:          head rotation vector [yaw,pitch,roll]  (deg, world frame)
+    w_head:          head angular velocity [yaw,pitch,roll]  (deg/s, world frame)
+    x_head:          head linear position  [x,y,z]           (m, world frame)
+    v_head:          head linear velocity  [x,y,z]           (m/s, world frame)
+                     stored for future looming estimation; not used in current geometry
     q_eye:           eye rotation vector relative to head (deg, head frame)
     w_eye:           eye angular velocity relative to head (deg/s, head frame)
-    w_scene:         scene angular velocity (deg/s, world frame)
-    v_target:        target angular velocity (deg/s, world frame)
+    w_scene:         scene angular velocity [yaw,pitch,roll] (deg/s, world frame)
+    v_target:        target angular velocity [yaw,pitch,roll] (deg/s, world frame)
+                     = _rv2q( cross(p_target, dp_target/dt) / |p_target|² )
     vf_limit:        visual field half-width (deg)
     k_vf:            visual field gate sigmoid steepness (1/deg)
 
@@ -97,9 +103,9 @@ def retinal_signals(p_target, eye_offset_head, q_head, w_head, q_eye, w_eye,
     R_gaze = R_head @ R_eye : world ← eye
 
     Target position in eye frame (exact, no small-angle approximation):
-        eye_world  = R_head @ eye_offset_head     eye position in world frame
-        p_from_eye = p_target − eye_world         target direction from this eye
-        p_eye      = R_gaze.T @ p_hat             target direction in eye frame
+        eye_world  = x_head + R_head @ eye_offset_head   eye position in world frame
+        p_from_eye = p_target − eye_world                target direction from this eye
+        p_eye      = R_gaze.T @ p_hat                   target direction in eye frame
         target_pos = [arctan2(x,z), arctan2(y,√(x²+z²)), 0]  (deg, eye frame)
 
     Retinal velocities in eye frame (exact):
@@ -109,25 +115,24 @@ def retinal_signals(p_target, eye_offset_head, q_head, w_head, q_eye, w_eye,
 
     Returns  (all in eye coordinates)
     -----------------------------------
-        target_pos: (3,)   target direction [yaw, pitch, 0] (deg)
-        scene_vel:  (3,)   full-field scene velocity on retina (deg/s)
-        target_vel: (3,)   target velocity on retina (deg/s)
-        target_in_vf:    scalar geometric visual-field gate ∈ [0, 1]
+        target_pos:   (3,)   target direction [yaw, pitch, 0] (deg)
+        scene_vel:    (3,)   full-field scene velocity on retina (deg/s)
+        target_vel:   (3,)   target velocity on retina (deg/s)
+        target_in_vf: scalar geometric visual-field gate ∈ [0, 1]
     """
     # ── Rotation matrices ─────────────────────────────────────────────────────
-    # q = [yaw, pitch, roll] but Rodrigues uses [x, y, z] axis components.
-    # In the world frame (x=right, y=up, z=fwd): yaw rotates around y-axis,
-    # pitch around x-axis.  Rodrigues R_x(+θ) maps forward [0,0,1] →
-    # [0,-sinθ,cosθ] (looks DOWN), so we negate pitch to get R_x(−pitch)
-    # which correctly maps [0,0,1] → [0,sinθ,cosθ] (looks UP for positive pitch).
-    def _q2rv(q): return jnp.array([-q[1], q[0], q[2]])      # [yaw,pitch,roll] → xyz
-    def _rv2q(v): return jnp.array([v[1], -v[0], v[2]])     # xyz → [yaw,pitch,roll]
+    # World frame: x=right, y=up, z=fwd.
+    # [yaw,pitch,roll] → xyz rotation vector: yaw→y, pitch→-x, roll→z.
+    # Rodrigues R_x(+θ) maps [0,0,1] → [0,-sinθ,cosθ] (looks DOWN), so negate
+    # pitch to get R_x(−pitch) which maps [0,0,1]→[0,sinθ,cosθ] (looks UP).
+    def _q2rv(q): return jnp.array([-q[1], q[0], q[2]])   # [yaw,pitch,roll] → xyz
+    def _rv2q(v): return jnp.array([v[1], -v[0], v[2]])   # xyz → [yaw,pitch,roll]
     R_head   = rotation_matrix(_q2rv(q_head))   # world ← head
     R_eye    = rotation_matrix(_q2rv(q_eye))    # head  ← eye
     R_gaze_T = R_eye.T @ R_head.T              # world → eye frame
 
     # ── Target position in eye frame ──────────────────────────────────────────
-    eye_world  = R_head @ eye_offset_head                    # eye position, world frame
+    eye_world  = x_head + R_head @ eye_offset_head           # eye position, world frame
     p_from_eye = p_target - eye_world                        # target from this eye, world frame
     p_hat      = p_from_eye / (jnp.linalg.norm(p_from_eye) + 1e-9)
     p_eye      = R_gaze_T @ p_hat                            # target direction, eye frame

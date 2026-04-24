@@ -21,6 +21,7 @@ from oculomotor.sim.simulator import (
     PARAMS_DEFAULT, with_brain, with_sensory, simulate,
     _IDX_SG, _IDX_VIS, _IDX_PURSUIT,
 )
+from oculomotor.sim import kinematics as km
 from oculomotor.models.sensory_models.sensory_model import C_pos
 from oculomotor.analysis import ax_fmt, extract_burst, extract_sg, ni_net
 
@@ -40,11 +41,11 @@ def _ramp(t_np, vel, t_jump=0.2):
 
 
 def _run(theta, t_np, pt3, vt3=None, target_present=True, key=0):
-    t = jnp.array(t_np)
-    T = len(t)
+    t  = jnp.array(t_np)
+    T  = len(t)
     tp = jnp.ones(T) if target_present else jnp.zeros(T)
-    return simulate(theta, t, p_target_array=pt3,
-                    v_target_array=vt3 if vt3 is not None else jnp.zeros((T, 3)),
+    return simulate(theta, t,
+                    target=km.build_target(t_np, lin_pos=np.array(pt3)),
                     scene_present_array=jnp.ones(T), target_present_array=tp,
                     max_steps=int(len(t_np) * 1.05) + 500,
                     return_states=True, key=jax.random.PRNGKey(key))

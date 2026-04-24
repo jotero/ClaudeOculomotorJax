@@ -22,11 +22,11 @@ Physical signal
         g_head  — gravity resolved into head frame = R(q_head)ᵀ · g_world
         a_head  — head linear acceleration (m/s²)
 
-    Axis convention (matching canal.py and gravity_estimator.py):
-        x = vertical/yaw axis — specific force is +x when head is upright
-        g_world = [+9.81, 0, 0] m/s²
+    Axis convention (world frame: x=right, y=up, z=forward):
+        specific force is +y when head is upright (y=up)
+        g_world = [0, +9.81, 0] m/s²
 
-    At rest, upright: f = g_world = [+9.81, 0, 0] m/s²
+    At rest, upright: f = g_world = [0, +9.81, 0] m/s²
 
 ──────────────────────────────────────────────────────────────────────────
 SSM interface (follows canal.py convention)
@@ -57,7 +57,7 @@ from oculomotor.models.plant_models.readout import rotation_matrix
 # ── Sensor geometry ────────────────────────────────────────────────────────────
 
 G0        = 9.81   # standard gravity (m/s²)
-G_WORLD   = jnp.array([G0, 0., 0.])   # gravity in world frame, x=up (canal.py convention)
+G_WORLD   = jnp.array([0., G0, 0.])   # specific force at rest, world frame (y=up)
 
 # Sensitivity matrices (per side): full 3-D, identity (all axes equally sensitive)
 SENS_LEFT  = jnp.eye(3)   # (3, 3)
@@ -106,12 +106,17 @@ def step(x_oto, u, sensory_params):
     x_L = x_oto[_IDX_L]   # (3,) left  adaptation state
     x_R = x_oto[_IDX_R]   # (3,) right adaptation state
 
-    # Gravity resolved into the current head frame
-    R      = rotation_matrix(q_head)   # (3, 3) head-to-world rotation matrix
-    g_head = R.T @ G_WORLD             # (3,) gravity in head frame
+    # Rotate q_head [yaw,pitch,roll] → xyz rotation vector for rotation_matrix.
+    # Convention: yaw→y, pitch→-x, roll→z  (matches retina.py _q2rv).
+    q_xyz = jnp.array([-q_head[1], q_head[0], q_head[2]])
+    R      = rotation_matrix(q_xyz)    # (3,3) world←head rotation
+    g_head = R.T @ G_WORLD             # (3,) specific force in head frame
+
+    # Rotate world-frame linear acceleration to head frame
+    a_head_frame = R.T @ a_head
 
     # Gravitoinertial acceleration (GIA) = gravity component + linear acceleration
-    f = g_head + a_head
+    f = g_head + a_head_frame
 
     # LP adaptation dynamics: low-pass filter the raw GIA
     tau  = sensory_params.tau_oto

@@ -24,7 +24,7 @@ from oculomotor.sim.simulator import (
 from oculomotor.models.sensory_models.sensory_model import (
     N_CANALS, FLOOR, _SOFTNESS, PINV_SENS, C_slip,
 )
-from oculomotor.sim import stimuli as stim_mod
+from oculomotor.sim import kinematics as km
 from oculomotor.analysis import ax_fmt, extract_burst, extract_canal, vs_net, vs_null, ni_net, fit_tc, extract_spv
 
 SHOW  = '--show' in sys.argv
@@ -34,14 +34,16 @@ THETA = with_sensory(PARAMS_DEFAULT, sigma_canal=0.0, sigma_pos=0.0, sigma_vel=0
 
 def _simulate(theta, t_arr, head_vel=None, scene_vel=None, scene_present=None,
               target_present=None, key=0):
-    T = len(t_arr)
-    hv  = head_vel if head_vel is not None else jnp.zeros((T, 3))
-    sv  = scene_vel if scene_vel is not None else jnp.zeros((T, 3))
-    sp  = scene_present if scene_present is not None else jnp.zeros(T)
+    T   = len(t_arr)
+    t   = np.array(t_arr)
+    hv  = np.array(head_vel)  if head_vel  is not None else np.zeros((T, 3), np.float32)
+    sv  = np.array(scene_vel) if scene_vel is not None else np.zeros((T, 3), np.float32)
+    sp  = scene_present  if scene_present  is not None else jnp.zeros(T)
     tp  = target_present if target_present is not None else jnp.zeros(T)
     ms  = int(len(t_arr) * 1.05) + 500
     return simulate(theta, t_arr,
-                    head_vel_array=hv, v_scene_array=sv,
+                    head=km.build_kinematics(t, rot_vel=hv),
+                    scene=km.build_kinematics(t, rot_vel=sv),
                     scene_present_array=sp, target_present_array=tp,
                     max_steps=ms, return_states=True,
                     key=jax.random.PRNGKey(key))
@@ -61,8 +63,8 @@ def _raphan(show):
     theta = THETA
 
     # ── A/B: VOR in dark ──────────────────────────────────────────────────────
-    t_rot, hv_3d = stim_mod.rotation_step(V_STIM, rotate_dur=ON_DUR,
-                                           coast_dur=OFF_DUR, dt=DT)
+    _head = km.head_rotation_step(V_STIM, rotate_dur=ON_DUR, coast_dur=OFF_DUR, dt=DT)
+    t_rot, hv_3d = _head.t, _head.rot_vel
     t_vor   = np.concatenate([np.arange(1 - B, 1) * DT - DT, np.array(t_rot)])
     hv_full = np.concatenate([np.zeros((B, 3)), np.array(hv_3d)])
     T_vor   = len(t_vor)
@@ -274,8 +276,8 @@ def _vor_tc(show):
     BASELINE = 3.0
 
     B = int(BASELINE / DT)
-    t_rot, hv_3d = stim_mod.rotation_step(V_STIM, rotate_dur=ROT,
-                                           coast_dur=COAST, dt=DT)
+    _head = km.head_rotation_step(V_STIM, rotate_dur=ROT, coast_dur=COAST, dt=DT)
+    t_rot, hv_3d = _head.t, _head.rot_vel
     t_np    = np.concatenate([np.arange(1 - B, 1) * DT - DT, np.array(t_rot)])
     hv_full = np.concatenate([np.zeros((B, 3)), np.array(hv_3d)])
     T       = len(t_np)
@@ -347,8 +349,8 @@ def _cascade(show):
     from scipy.special import softplus as _spf
 
     # ── VOR cascade ───────────────────────────────────────────────────────────
-    t_rot, hv_3d = stim_mod.rotation_step(30.0, rotate_dur=15.0,
-                                           coast_dur=15.0, dt=DT)
+    _head = km.head_rotation_step(30.0, rotate_dur=15.0, coast_dur=15.0, dt=DT)
+    t_rot, hv_3d = _head.t, _head.rot_vel
     t_vor = np.array(t_rot); T_vor = len(t_vor)
     st_v  = _simulate(THETA, jnp.array(t_rot), head_vel=jnp.array(hv_3d),
                       scene_present=jnp.zeros(T_vor),

@@ -32,6 +32,7 @@ import matplotlib.pyplot as plt
 from oculomotor.sim.simulator import (
     PARAMS_DEFAULT, with_brain, simulate, SimConfig, _IDX_GRAV,
 )
+from oculomotor.sim import kinematics as km
 from oculomotor.analysis import ax_fmt, vs_net, fit_tc, extract_burst, extract_spv
 
 SHOW  = '--show' in sys.argv
@@ -67,7 +68,9 @@ def _ocr(show):
     head_roll_pos = np.cumsum(hv_roll) * DT
 
     params = with_brain(PARAMS_DEFAULT, g_ocr=0.13, g_burst=0.0)
-    st     = simulate(params, t, head_vel_array=head_vel, return_states=True)
+    st     = simulate(params, t,
+                      head=km.build_kinematics(t, rot_vel=head_vel),
+                      return_states=True)
 
     eye_roll   = (np.array(st.plant[:, 2]) + np.array(st.plant[:, 5])) / 2.0
     g_est      = np.array(st.brain[:, _IDX_GRAV])
@@ -146,7 +149,9 @@ def _ovar(show):
 
     # K_gd links gravity estimate to VS dumping; no saccades; dark room
     params = with_brain(PARAMS_DEFAULT, K_gd=K_GD, g_burst=0.0)
-    st     = simulate(params, t, head_vel_array=head_vel, return_states=True)
+    st     = simulate(params, t,
+                      head=km.build_kinematics(t, rot_vel=head_vel),
+                      return_states=True)
 
     eye_yaw_pos = (np.array(st.plant[:, 0]) + np.array(st.plant[:, 3])) / 2.0
     eye_vel_yaw = np.gradient(eye_yaw_pos, DT)
@@ -235,7 +240,8 @@ def _tilt_suppression(show):
     t_u  = np.arange(0.0, BASE_T + ROT_T + COAST_T, DT)
     T_u  = len(t_u)
     hv_u = np.where((t_u >= BASE_T) & (t_u < BASE_T + ROT_T), ROT_VEL, 0.0)
-    st_u = simulate(params, t_u, head_vel_array=hv_u,
+    st_u = simulate(params, t_u,
+                    head=km.build_kinematics(t_u, rot_vel=km._pad3(hv_u, 'yaw')),
                     scene_present_array=np.zeros(T_u),
                     sim_config=cfg, return_states=True)
 
@@ -250,7 +256,8 @@ def _tilt_suppression(show):
     hv_roll = np.where(t_tilt < TILT_T, 90.0, 0.0)
     hv_yaw  = np.where((t_tilt >= T_pre) & (t_tilt < T_pre + ROT_T), ROT_VEL, 0.0)
     hv_3d   = np.stack([hv_yaw, np.zeros_like(t_tilt), hv_roll], axis=1)
-    st_tilt = simulate(params, t_tilt, head_vel_array=hv_3d,
+    st_tilt = simulate(params, t_tilt,
+                       head=km.build_kinematics(t_tilt, rot_vel=hv_3d),
                        scene_present_array=np.zeros(T_tilt),
                        sim_config=cfg, return_states=True)
 
