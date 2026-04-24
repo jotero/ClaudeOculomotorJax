@@ -120,7 +120,8 @@ def retinal_signals(p_target, eye_offset_head, q_head, w_head, q_eye, w_eye,
     # pitch around x-axis.  Rodrigues R_x(+θ) maps forward [0,0,1] →
     # [0,-sinθ,cosθ] (looks DOWN), so we negate pitch to get R_x(−pitch)
     # which correctly maps [0,0,1] → [0,sinθ,cosθ] (looks UP for positive pitch).
-    def _q2rv(q): return jnp.array([-q[1], q[0], q[2]])
+    def _q2rv(q): return jnp.array([-q[1], q[0], q[2]])      # [yaw,pitch,roll] → xyz
+    def _rv2q(v): return jnp.array([v[1], -v[0], v[2]])     # xyz → [yaw,pitch,roll]
     R_head   = rotation_matrix(_q2rv(q_head))   # world ← head
     R_eye    = rotation_matrix(_q2rv(q_eye))    # head  ← eye
     R_gaze_T = R_eye.T @ R_head.T              # world → eye frame
@@ -141,7 +142,6 @@ def retinal_signals(p_target, eye_offset_head, q_head, w_head, q_eye, w_eye,
     # operations so the transformation is correct at large head angles.
     # Without this, sustained rotation (e.g. 90° cumulative yaw) rotates the
     # yaw velocity into the pitch/roll directions, causing OKR to fight VOR.
-    _rv2q       = lambda v: jnp.array([v[1], -v[0], v[2]])  # xyz → [yaw,pitch,roll]
     w_head_xyz  = _q2rv(w_head)
     w_eye_xyz   = _q2rv(w_eye)
     w_scene_xyz = _q2rv(w_scene)
