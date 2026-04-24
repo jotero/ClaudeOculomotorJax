@@ -46,6 +46,7 @@ Parameters:
 """
 
 import jax.numpy as jnp
+from oculomotor.models.nonlinearities import velocity_saturation
 
 N_STATES  = 3   # x_p: pursuit velocity memory (deg/s, one per axis)
 N_INPUTS  = 3   # e_vel_delayed after saccade EC subtraction
@@ -67,10 +68,11 @@ def step(x_pursuit, target_slip, motor_ec, brain_params):
         u_pursuit:  (3,)  pursuit velocity command (deg/s)
     """
     K_ph = brain_params.K_phasic_pursuit
-    # MT/MST velocity saturation: clip slip and EC independently before combining.
-    e_combined = (jnp.clip(target_slip, -brain_params.v_max_pursuit, brain_params.v_max_pursuit)
-        + jnp.clip(motor_ec,  -brain_params.v_max_pursuit, brain_params.v_max_pursuit)
-    )
+    # EC correction first, then MT/MST saturation on the combined signal.
+    # Combining before saturation preserves the small residual pursuit drive
+    # when target_slip and motor_ec are large but nearly cancel each other.
+    v_sat      = brain_params.v_max_pursuit
+    e_combined = velocity_saturation(target_slip + motor_ec, v_sat)
     # Smith predictor: e_pred = (e_combined − x_pursuit) / (1 + K_phasic)
     e_pred = (e_combined - x_pursuit) / (1.0 + K_ph)
 

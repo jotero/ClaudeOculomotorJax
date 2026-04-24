@@ -18,13 +18,24 @@ if '--show' not in sys.argv:
 import matplotlib.pyplot as plt
 
 from oculomotor.sim.simulator import PARAMS_DEFAULT, with_brain, with_sensory, simulate
+from oculomotor.sim.simulator import _IDX_VIS_L, _IDX_EC, _IDX_PURSUIT
 from oculomotor.sim import kinematics as km
-from oculomotor.analysis import ax_fmt, extract_burst, extract_sg, ni_net
+from oculomotor.analysis import ax_fmt, extract_burst, extract_sg, ni_net, vs_net
+from oculomotor.models.sensory_models.sensory_model import C_vel as C_vel_sm, C_slip as C_slip_sm
 
 DT    = 0.001
 THETA = with_sensory(PARAMS_DEFAULT, sigma_canal=0.5, sigma_pos=0.2, sigma_vel=0.2)
 THETA = with_brain(THETA, g_burst=700.0)
 SHOW  = '--show' in sys.argv
+
+
+def _vel_sat_np(v_arr, v_sat):
+    """Batch numpy cosine-rolloff saturation matching nonlinearities.velocity_saturation."""
+    v_zero  = 2.0 * v_sat
+    speeds  = np.linalg.norm(v_arr, axis=1, keepdims=True)
+    t       = np.clip((speeds - v_sat) / (v_zero - v_sat), 0.0, 1.0)
+    gain    = 0.5 * (1.0 + np.cos(np.pi * t))
+    return v_arr * gain
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -41,10 +52,8 @@ def _run(t_np, pt3, key=0, max_s=None):
     t  = jnp.array(t_np)
     T  = len(t)
     ms = max_s or int((t_np[-1] - t_np[0]) / DT) + 300
-    pt3_np = np.array(pt3)
     return simulate(THETA, t,
-                    target=km.build_target(t_np, lin_pos=pt3_np,
-                                           lin_vel=np.zeros_like(pt3_np)),
+                    target=km.build_target(t_np, lin_pos=np.array(pt3)),
                     scene_present_array=jnp.ones(T),
                     max_steps=ms, return_states=True,
                     key=jax.random.PRNGKey(key))
@@ -249,7 +258,7 @@ def _cascade(show):
     t_np = np.arange(0.0, T_end, DT)
     T    = len(t_np)
 
-    n_rows, n_cols = 7, len(amplitudes)
+    n_rows, n_cols = 8, len(amplitudes)
     fig, axes = plt.subplots(n_rows, n_cols,
                              figsize=(4.5 * n_cols, 2.2 * n_rows), sharex=True)
     fig.suptitle('Saccade Signal Cascade  ·  '
@@ -257,8 +266,9 @@ def _cascade(show):
                  fontsize=11)
 
     row_labels = ['Eye + target pos (deg)', 'Cascade output + hold (deg)',
-                  'Accumulator / latch', 'Residual error (deg)',
-                  'Burst command (deg/s)', 'Eye velocity (deg/s)', 'Refractory z_ref']
+                  'Accum / latch + refractory', 'Residual error (deg)',
+                  'Burst (deg/s) + eye velocity', 'Tgt vel + scene slip (deg/s)',
+                  'EC-corrected + sat (deg/s)', 'u_pursuit + VS/OKR (deg/s)']
     for r, lbl in enumerate(row_labels):
         axes[r, 0].set_ylabel(lbl, fontsize=8)
 
@@ -285,9 +295,13 @@ def _cascade(show):
         ax_fmt(axes[1, ci])
         if ci == 0: axes[1, ci].legend(fontsize=7)
 
+        # Row 2: accumulator / latch + refractory (all 0–1 scale, same axis)
         axes[2, ci].plot(t_np, sg['z_acc'], color='#e08214', lw=1.5, label='z_acc')
         axes[2, ci].plot(t_np, sg['z_sac'], color='#1b7837', lw=1.5, label='z_sac')
-        axes[2, ci].axhline(THETA.brain.threshold_acc, color='#e08214', lw=0.8, ls=':')
+        axes[2, ci].plot(t_np, sg['z_ref'], color=utils.C['refractory'], lw=1.2, ls='--', label='z_ref')
+        axes[2, ci].axhline(THETA.brain.threshold_acc,         color='#e08214',             lw=0.8, ls=':')
+        axes[2, ci].axhline(THETA.brain.threshold_sac_release, color=utils.C['refractory'], lw=0.8, ls=':')
+        axes[2, ci].axhline(THETA.brain.threshold_ref,         color='#c2a5cf',             lw=0.8, ls=':')
         axes[2, ci].set_ylim(-0.05, 1.15)
         if ci == 0: axes[2, ci].legend(fontsize=7)
 
@@ -296,20 +310,43 @@ def _cascade(show):
         ax_fmt(axes[3, ci])
         if ci == 0: axes[3, ci].legend(fontsize=7)
 
-        axes[4, ci].plot(t_np, sg['u_burst'][:,0], color=utils.C['burst'], lw=1.5, label='burst')
+        # Row 4: eye velocity first, then burst on top
+        axes[4, ci].plot(t_np, vel,                color=utils.C['eye'],   lw=1.4, label='eye vel')
+        axes[4, ci].plot(t_np, sg['u_burst'][:,0], color=utils.C['burst'], lw=1.5, label='burst', zorder=3)
         ax_fmt(axes[4, ci])
         if ci == 0: axes[4, ci].legend(fontsize=7)
 
-        axes[5, ci].plot(t_np, vel, color=utils.C['eye'], lw=1.2, label='eye vel')
+        # ── Pursuit / OKR signal chain (rows 5–7) ────────────────────────────
+        x_vis_L  = np.array(st.sensory[:, _IDX_VIS_L])         # (T, 480)
+        vel_del  = x_vis_L @ np.array(C_vel_sm).T               # (T, 3) delayed target vel
+        slip_del = x_vis_L @ np.array(C_slip_sm).T              # (T, 3) delayed scene slip
+        motor_ec = np.array(st.brain[:, _IDX_EC])[:, 117:]      # (T, 3) EC delayed readout
+        x_purs   = np.array(st.brain[:, _IDX_PURSUIT])          # (T, 3) pursuit memory
+
+        # Row 5: raw delayed velocities
+        axes[5, ci].plot(t_np, vel_del[:, 0],  color='darkorange', lw=1.2, label='tgt_vel')
+        axes[5, ci].plot(t_np, slip_del[:, 0], color='teal',       lw=1.2, label='scene_slip')
         ax_fmt(axes[5, ci])
         if ci == 0: axes[5, ci].legend(fontsize=7)
 
-        axes[6, ci].plot(t_np, sg['z_ref'], color=utils.C['refractory'], lw=1.5, label='z_ref')
-        axes[6, ci].axhline(THETA.brain.threshold_sac_release, color=utils.C['refractory'], lw=0.8, ls=':')
-        axes[6, ci].axhline(THETA.brain.threshold_ref,         color='#c2a5cf',             lw=0.8, ls=':')
-        axes[6, ci].set_ylim(-0.05, 1.15)
-        axes[6, ci].set_xlabel('Time (s)', fontsize=8)
+        # Row 6: EC-corrected + saturated (pursuit path and OKR path)
+        tgt_ec_sat   = _vel_sat_np(vel_del  + motor_ec, THETA.brain.v_max_pursuit)
+        scene_ec_sat = _vel_sat_np(slip_del + motor_ec, THETA.brain.v_max_okr)
+        axes[6, ci].plot(t_np, tgt_ec_sat[:, 0],   color='#7b2d8b', lw=1.2, label='tgt−EC (sat)')
+        axes[6, ci].plot(t_np, scene_ec_sat[:, 0],  color='#1a7a4a', lw=1.2, label='scene−EC (sat)')
+        ax_fmt(axes[6, ci])
         if ci == 0: axes[6, ci].legend(fontsize=7)
+
+        # Row 7: pursuit output u_pursuit + VS net (OKR-driven since no head movement)
+        K_ph = float(THETA.brain.K_phasic_pursuit)
+        e_pred     = (tgt_ec_sat - x_purs) / (1.0 + K_ph)
+        u_purs_arr = x_purs + K_ph * e_pred
+        vs_out     = vs_net(st)                                  # (T, 3) VS net x_L−x_R
+        axes[7, ci].plot(t_np, u_purs_arr[:, 0], color='steelblue',  lw=1.5, label='u_pursuit')
+        axes[7, ci].plot(t_np, vs_out[:, 0],     color='#d45500',    lw=1.2, label='VS/OKR')
+        ax_fmt(axes[7, ci])
+        axes[7, ci].set_xlabel('Time (s)', fontsize=8)
+        if ci == 0: axes[7, ci].legend(fontsize=7)
 
     fig.tight_layout()
     path, rp = utils.save_fig(fig, 'saccade_cascade', show=show)

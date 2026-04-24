@@ -75,6 +75,7 @@ from typing import NamedTuple
 
 import jax.numpy as jnp
 
+from oculomotor.models.nonlinearities import velocity_saturation
 from oculomotor.models.brain_models import velocity_storage    as vs
 from oculomotor.models.brain_models import neural_integrator   as ni
 from oculomotor.models.brain_models import saccade_generator   as sg
@@ -436,8 +437,8 @@ def step(x_brain, sensory_out, brain_params):
     # rate nonlinearity).  Sum slip + EC first, then clip — preserves the small OKN
     # maintenance drive (~2 deg/s) during large fast phases where separate clipping
     # would cancel both to ±80 → okr = 0, causing VS to drift across many cycles.
-    okr    = jnp.clip(percept.scene_slip + motor_ec * percept.scene_visible,
-                      -brain_params.v_max_okr, brain_params.v_max_okr)
+    okr    = velocity_saturation(percept.scene_slip + motor_ec * percept.scene_visible,
+                                 brain_params.v_max_okr)
     dx_vs,   w_est = vs.step(x_vs,   jnp.concatenate([sensory_out.canal, okr, x_grav]), brain_params)
     # Canal velocity (not VS output) for gravity transport: canal decays with tau_c~5s so
     # sustained yaw rotation won't drive g_est[z] to large values and break tilt dumping.
