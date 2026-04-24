@@ -50,130 +50,164 @@ def _simulate(theta, t_arr, head_vel=None, scene_vel=None, scene_present=None,
 # ── Figure 1: Raphan 1979 Fig.9 replication ───────────────────────────────────
 
 def _raphan(show):
-    """3-panel SPV comparison: VOR dark, OKN+OKAN, VVOR."""
-    V_STIM    = 30.0   # deg/s stimulus velocity
-    ON_DUR    = 30.0   # s  stimulus ON
-    OFF_DUR   = 50.0   # s  coast/dark
-    TOTAL     = ON_DUR + OFF_DUR
-    BASELINE  = 3.0    # s  stationary before stimulus
-
+    """3×2 Raphan 1979 Fig.9 replication: SPV (left col) + CUP/INT/SPV (right col)."""
+    V_STIM   = 30.0
+    ON_DUR   = 30.0
+    OFF_DUR  = 50.0
+    TOTAL    = ON_DUR + OFF_DUR
+    BASELINE = 3.0
     B = int(BASELINE / DT)
 
-    # ── A: VOR in dark ────────────────────────────────────────────────────────
+    theta = THETA
+
+    # ── A/B: VOR in dark ──────────────────────────────────────────────────────
     t_rot, hv_3d = stim_mod.rotation_step(V_STIM, rotate_dur=ON_DUR,
                                            coast_dur=OFF_DUR, dt=DT)
-    t_vor  = np.concatenate([np.arange(1 - B, 1) * DT - DT, np.array(t_rot)])
+    t_vor   = np.concatenate([np.arange(1 - B, 1) * DT - DT, np.array(t_rot)])
     hv_full = np.concatenate([np.zeros((B, 3)), np.array(hv_3d)])
     T_vor   = len(t_vor)
-    st_vor  = _simulate(THETA, jnp.array(t_vor), head_vel=jnp.array(hv_full),
+    st_vor  = _simulate(theta, jnp.array(t_vor), head_vel=jnp.array(hv_full),
                         scene_present=jnp.zeros(T_vor),
                         target_present=jnp.zeros(T_vor), key=0)
+    ev_vor    = np.gradient(np.array(st_vor.plant[:, 0]), DT)
+    burst_vor = extract_burst(st_vor, theta)[:, 0]
+    spv_vor_d = -extract_spv(t_vor, ev_vor, burst_vor)   # negate: compensatory = positive
+    cup_vor   = extract_canal(st_vor)
+    int_vor   = vs_net(st_vor)[:, 0]                     # x_L−x_R > 0 during rightward VOR
+    ni_vor    = ni_net(st_vor)[:, 0]
     eye_vor   = np.array(st_vor.plant[:, 0])
-    ev_vor    = np.gradient(eye_vor, DT)
-    burst_vor = extract_burst(st_vor, THETA)[:, 0]
-    spv_vor   = extract_spv(t_vor, ev_vor, burst_vor)
     hv_1d     = hv_full[:, 0]
 
     tau_vor, t_fit_vor, y_fit_vor = fit_tc(
-        t_vor, spv_vor, t_start=ON_DUR + 1.0, t_end=ON_DUR + OFF_DUR - 5.0,
+        t_vor, spv_vor_d, t_start=ON_DUR + 1.0, t_end=ON_DUR + OFF_DUR - 5.0,
         label='VOR post-rot TC')
 
-    # ── B: OKN + OKAN ─────────────────────────────────────────────────────────
-    t_stim = jnp.arange(0.0, TOTAL, DT)
-    t_okn  = np.concatenate([np.arange(1 - B, 1) * DT - DT, np.array(t_stim)])
-    T_okn  = len(t_okn)
+    # ── C/D: OKN + OKAN ───────────────────────────────────────────────────────
+    t_stim  = jnp.arange(0.0, TOTAL, DT)
+    t_okn   = np.concatenate([np.arange(1 - B, 1) * DT - DT, np.array(t_stim)])
+    T_okn   = len(t_okn)
     t_okn_j = jnp.array(t_okn)
-    sv  = jnp.zeros((T_okn, 3)).at[:, 0].set(
-              jnp.where((t_okn_j >= 0.0) & (t_okn_j < ON_DUR), V_STIM, 0.0))
-    sp  = jnp.where((t_okn_j >= 0.0) & (t_okn_j < ON_DUR), 1.0, 0.0)
-    st_okn  = _simulate(THETA, t_okn_j, scene_vel=sv,
+    sv = jnp.zeros((T_okn, 3)).at[:, 0].set(
+             jnp.where((t_okn_j >= 0.0) & (t_okn_j < ON_DUR), V_STIM, 0.0))
+    sp = jnp.where((t_okn_j >= 0.0) & (t_okn_j < ON_DUR), 1.0, 0.0)
+    st_okn  = _simulate(theta, t_okn_j, scene_vel=sv,
                         scene_present=sp, target_present=jnp.zeros(T_okn), key=1)
+    ev_okn    = np.gradient(np.array(st_okn.plant[:, 0]), DT)
+    burst_okn = extract_burst(st_okn, theta)[:, 0]
+    spv_okn_d = extract_spv(t_okn, ev_okn, burst_okn)    # positive: eye tracks scene
+    int_okn   = -vs_net(st_okn)[:, 0]                    # x_L−x_R < 0 → negate for display
+    ni_okn    = ni_net(st_okn)[:, 0]
     eye_okn   = np.array(st_okn.plant[:, 0])
-    ev_okn    = np.gradient(eye_okn, DT)
-    burst_okn = extract_burst(st_okn, THETA)[:, 0]
-    spv_okn   = extract_spv(t_okn, ev_okn, burst_okn)
 
     tau_okan, t_fit_okan, y_fit_okan = fit_tc(
-        t_okn, spv_okn, t_start=ON_DUR + 1.0, t_end=TOTAL - 5.0,
+        t_okn, spv_okn_d, t_start=ON_DUR + 1.0, t_end=TOTAL - 5.0,
         label='OKAN TC')
 
-    # ── C: VVOR (head rotation in lit stationary scene) ───────────────────────
-    t_vor_j = jnp.array(t_vor)
-    st_vvor  = _simulate(THETA, t_vor_j, head_vel=jnp.array(hv_full),
-                         scene_present=jnp.where((t_vor_j >= 0.0) & (t_vor_j < ON_DUR), 1.0, 0.0),
-                         target_present=jnp.where((t_vor_j >= 0.0) & (t_vor_j < ON_DUR), 1.0, 0.0),
-                         key=2)
+    # ── E/F: VVOR (rotation in lit stationary scene, stop in dark) ────────────
+    # target_present=0: no fixation target (Raphan paradigm — sees room, no foveal target)
+    t_vor_j   = jnp.array(t_vor)
+    scene_vvor = jnp.where((t_vor_j >= 0.0) & (t_vor_j < ON_DUR), 1.0, 0.0)
+    st_vvor   = _simulate(theta, t_vor_j, head_vel=jnp.array(hv_full),
+                          scene_present=scene_vvor,
+                          target_present=jnp.zeros(T_vor),
+                          key=2)
+    ev_vvor    = np.gradient(np.array(st_vvor.plant[:, 0]), DT)
+    burst_vvor = extract_burst(st_vvor, theta)[:, 0]
+    spv_vvor_d = -extract_spv(t_vor, ev_vvor, burst_vvor)
+    cup_vvor   = extract_canal(st_vvor)
+    int_vvor   = vs_net(st_vvor)[:, 0]
+    ni_vvor    = ni_net(st_vvor)[:, 0]
     eye_vvor   = np.array(st_vvor.plant[:, 0])
-    ev_vvor    = np.gradient(eye_vvor, DT)
-    burst_vvor = extract_burst(st_vvor, THETA)[:, 0]
-    spv_vvor   = extract_spv(t_vor, ev_vvor, burst_vvor)
 
-    mask_ss  = (t_vor > 10.0) & (t_vor < 25.0)
-    vvor_gain = (np.mean(np.abs(spv_vvor[mask_ss])) /
+    mask_ss   = (t_vor > 10.0) & (t_vor < 25.0)
+    vvor_gain = (np.mean(np.abs(spv_vvor_d[mask_ss])) /
                  (np.mean(np.abs(hv_1d[mask_ss])) + 1e-6))
 
-    # ── Plotting ──────────────────────────────────────────────────────────────
-    fig, axes = plt.subplots(3, 1, figsize=(13, 10), sharex=False)
-    fig.suptitle(f'Raphan et al. (1979) Fig. 9 — Replication\n'
-                 f'Stimulus: {V_STIM:.0f} deg/s for {ON_DUR:.0f} s then coast/dark for {OFF_DUR:.0f} s',
-                 fontsize=11)
+    cup_okn  = extract_canal(st_okn)
+    cup_vvor = extract_canal(st_vvor)
 
-    panel_labels = ['A  VOR in dark', 'C  OKN + OKAN', 'E  VVOR (lit stationary scene)']
+    # ── Plotting: 3×2 layout matching Raphan Fig.9 ───────────────────────────
+    # Left col (A, C, E): SPV only.  Right col (B, D, F): SPV + Cupula + Integrator.
+    fig, axes = plt.subplots(3, 2, figsize=(12, 11))
+    fig.suptitle(
+        'Raphan, Matsuo & Cohen (1979) Fig. 9 — Replication\n'
+        'Left: slow-phase velocity  |  Right: S.P.VEL + Cupula + Integrator (VS)',
+        fontsize=10, fontweight='bold')
     xlim = (-BASELINE, TOTAL)
-    vl = dict(color='k', lw=0.8, ls='--', alpha=0.5)
+    vl   = dict(color='k', lw=0.8, ls='--', alpha=0.5)
 
-    # ── Row 0: VOR dark ───────────────────────────────────────────────────────
-    ax = axes[0]
-    ax.plot(t_vor, -hv_1d, color=utils.C['head'], lw=1.0, ls=':', alpha=0.7,
-            label='−head vel (ideal)')
-    ax.plot(t_vor, spv_vor, color=utils.C['eye'], lw=1.8, label='SPV')
+    def _lbl(ax, letter):
+        ax.text(0.02, 0.92, letter, transform=ax.transAxes,
+                fontsize=12, fontweight='bold', va='top')
+
+    # A — VOR dark: SPV only
+    ax = axes[0, 0]
+    ax.plot(t_vor, -hv_1d,    color=utils.C['head'], lw=1.0, ls=':', alpha=0.7, label='−head vel')
+    ax.plot(t_vor, spv_vor_d, color=utils.C['spv'],  lw=1.8, label='S.P.VEL')
     if tau_vor is not None:
-        ax.plot(t_fit_vor, y_fit_vor, color='tomato', lw=1.5, ls='--',
-                label=f'fit τ = {tau_vor:.1f} s')
-    ax.axvline(0.0,    **vl)
-    ax.axvline(ON_DUR, **vl)
-    ax.set_ylabel('Slow-phase vel (deg/s)')
-    ax.set_title(f'{panel_labels[0]}   [post-rot TC = {tau_vor:.1f} s]' if tau_vor else panel_labels[0])
-    ax.legend(fontsize=9); ax_fmt(ax); ax.set_xlim(*xlim)
+        ax.plot(t_fit_vor, y_fit_vor, color='tomato', lw=1.5, ls='--', label=f'fit τ={tau_vor:.1f}s')
+    ax.axvline(0.0, **vl); ax.axvline(ON_DUR, **vl)
+    ax.set_ylabel('deg/s'); ax.set_title(f'Step rotation {V_STIM:.0f} deg/s — darkness')
+    ax.legend(fontsize=7); ax_fmt(ax); ax.set_xlim(*xlim); _lbl(ax, 'A')
 
-    # ── Row 1: OKN + OKAN ────────────────────────────────────────────────────
-    ax = axes[1]
+    # B — VOR dark: SPV + Cupula + Integrator
+    ax = axes[0, 1]
+    ax.plot(t_vor, spv_vor_d, color=utils.C['spv'],  lw=1.8, label='S.P.VEL')
+    ax.plot(t_vor, cup_vor,   color=utils.C['canal'], lw=1.2, ls='--', label='Cupula')
+    ax.plot(t_vor, int_vor,   color=utils.C['vs'],    lw=1.2, ls='-.',  label='Integrator (VS)')
+    ax.axvline(0.0, **vl); ax.axvline(ON_DUR, **vl)
+    ax.set_ylabel('deg/s'); ax.set_title('VOR dark: S.P.VEL + Cupula + Integrator')
+    ax.legend(fontsize=7); ax_fmt(ax); ax.set_xlim(*xlim); _lbl(ax, 'B')
+
+    # C — OKN + OKAN: SPV only
+    ax = axes[1, 0]
     scene_ref = np.where((t_okn >= 0.0) & (t_okn < ON_DUR), V_STIM, 0.0)
-    ax.plot(t_okn, scene_ref, color=utils.C['scene'], lw=1.0, ls=':', alpha=0.7,
-            label='scene vel')
-    ax.plot(t_okn, spv_okn, color=utils.C['eye'], lw=1.8, label='SPV')
+    ax.plot(t_okn, scene_ref,  color=utils.C['scene'], lw=1.0, ls=':', alpha=0.7, label='scene vel')
+    ax.plot(t_okn, spv_okn_d,  color=utils.C['spv'],   lw=1.8, label='S.P.VEL')
     if tau_okan is not None:
-        ax.plot(t_fit_okan, y_fit_okan, color='tomato', lw=1.5, ls='--',
-                label=f'OKAN fit τ = {tau_okan:.1f} s')
-    ax.axvline(0.0,    **vl)
-    ax.axvline(ON_DUR, **vl)
-    ax.set_ylabel('Slow-phase vel (deg/s)')
-    ax.set_title(f'{panel_labels[1]}   [OKAN TC = {tau_okan:.1f} s]' if tau_okan else panel_labels[1])
-    ax.legend(fontsize=9); ax_fmt(ax); ax.set_xlim(*xlim)
+        ax.plot(t_fit_okan, y_fit_okan, color='tomato', lw=1.5, ls='--', label=f'OKAN τ={tau_okan:.1f}s')
+    ax.axvline(0.0, **vl); ax.axvline(ON_DUR, **vl)
+    ax.set_ylabel('deg/s'); ax.set_title(f'Surround velocity {V_STIM:.0f} deg/s — OKN then OKAN')
+    ax.legend(fontsize=7); ax_fmt(ax); ax.set_xlim(-BASELINE, TOTAL); _lbl(ax, 'C')
 
-    # ── Row 2: VVOR ──────────────────────────────────────────────────────────
-    ax = axes[2]
-    ax.plot(t_vor, -hv_1d,   color=utils.C['head'], lw=1.0, ls=':', alpha=0.7,
-            label='−head vel (ideal)')
-    ax.plot(t_vor,  spv_vvor, color=utils.C['eye'], lw=1.8, label='SPV (VVOR)')
-    ax.plot(t_vor,  spv_vor,  color=utils.C['dark'], lw=1.2, ls='--', alpha=0.7,
-            label='SPV (VOR dark)')
-    ax.axvline(0.0,    **vl)
-    ax.axvline(ON_DUR, **vl)
-    ax.set_ylabel('Slow-phase vel (deg/s)')
-    ax.set_xlabel('Time (s)')
-    ax.set_title(f'{panel_labels[2]}   [VVOR gain = {vvor_gain:.2f}]')
-    ax.legend(fontsize=9); ax_fmt(ax); ax.set_xlim(*xlim)
+    # D — OKN + OKAN: SPV + Cupula (≈0) + Integrator
+    ax = axes[1, 1]
+    ax.plot(t_okn, spv_okn_d, color=utils.C['spv'],   lw=1.8, label='S.P.VEL')
+    ax.plot(t_okn, cup_okn,   color=utils.C['canal'],  lw=1.2, ls='--', label='Cupula')
+    ax.plot(t_okn, int_okn,   color=utils.C['vs'],     lw=1.2, ls='-.',  label='Integrator (VS)')
+    ax.axvline(0.0, **vl); ax.axvline(ON_DUR, **vl)
+    ax.set_ylabel('deg/s'); ax.set_title('OKN: S.P.VEL + Cupula + Integrator')
+    ax.legend(fontsize=7); ax_fmt(ax); ax.set_xlim(-BASELINE, TOTAL); _lbl(ax, 'D')
+
+    # E — VVOR: SPV only
+    ax = axes[2, 0]
+    ax.plot(t_vor, -hv_1d,    color=utils.C['head'], lw=1.0, ls=':', alpha=0.7, label='−head vel')
+    ax.plot(t_vor, spv_vvor_d, color=utils.C['spv'],  lw=1.8, label=f'S.P.VEL (gain={vvor_gain:.2f})')
+    ax.axvline(0.0, **vl); ax.axvline(ON_DUR, **vl)
+    ax.set_ylabel('deg/s'); ax.set_xlabel('Time (s)')
+    ax.set_title(f'Rotation {V_STIM:.0f} deg/s in light → stop in dark')
+    ax.legend(fontsize=7); ax_fmt(ax); ax.set_xlim(*xlim); _lbl(ax, 'E')
+
+    # F — VVOR: SPV + Cupula + Integrator
+    ax = axes[2, 1]
+    ax.plot(t_vor, spv_vvor_d, color=utils.C['spv'],   lw=1.8, label='S.P.VEL')
+    ax.plot(t_vor, cup_vvor,   color=utils.C['canal'],  lw=1.2, ls='--', label='Cupula')
+    ax.plot(t_vor, int_vvor,   color=utils.C['vs'],     lw=1.2, ls='-.',  label='Integrator (VS)')
+    ax.axvline(0.0, **vl); ax.axvline(ON_DUR, **vl)
+    ax.set_ylabel('deg/s'); ax.set_xlabel('Time (s)')
+    ax.set_title('VVOR: S.P.VEL + Cupula + Integrator')
+    ax.legend(fontsize=7); ax_fmt(ax); ax.set_xlim(*xlim); _lbl(ax, 'F')
 
     fig.tight_layout()
     path, rp = utils.save_fig(fig, 'vor_raphan_fig9', show=show)
     return utils.fig_meta(path, rp,
         title='Raphan 1979 Fig. 9 Replication',
-        description='Slow-phase velocity for (A) VOR in dark: step rotation 30 deg/s ON 30 s then dark; '
-                    '(C) OKN + OKAN: scene 30 deg/s ON 30 s then dark; '
-                    '(E) VVOR: head rotating in lit stationary scene. '
-                    'Exponential TC fits overlaid on post-stimulus decay.',
-        expected='VOR post-rot TC: 10–30 s; OKAN TC: 10–30 s; VVOR gain during rotation > 0.85.',
+        description='Panels A–F matching Raphan et al. (1979) Fig.9. Left col: SPV only. '
+                    'Right col: CUP (canal estimate), INT (velocity storage), SPV overlaid. '
+                    'A/B: VOR in dark. C/D: OKN+OKAN. E/F: VVOR (light→dark).',
+        expected='A: post-rot SPV TC 10–30 s. C: OKN gain~1, OKAN TC~20 s. '
+                 'E: VVOR gain>0.85 during rotation; post-rot TC similar to A. '
+                 'B/D/F: INT follows SPV; CUP decays at canal TC (~5 s).',
         citation='Raphan, Matsuo & Cohen (1979) Exp Brain Res 35:229–248',
         fig_type='behavior')
 

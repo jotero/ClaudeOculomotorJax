@@ -274,9 +274,9 @@ def _okn_orbital(show):
         title='EC — OKN to Orbital Limit',
         description='30 deg/s full-field scene. OKN sawtooth nystagmus; fast phases reset eye at '
                     'orbital limit. EC-corrected slip tracks scene velocity during slow phases.',
-        expected='VS charges smoothly to ~30 deg/s despite fast phases. '
-                 'slip_corr ≈ 30 deg/s during slow phases, drops to ~0 during fast phases (EC cancels). '
-                 'VS should not show spikes locked to fast phases.',
+        expected='VS state converges toward OKN SS (~−21 deg/s; eye SPV ≈ 24 deg/s, gain ≈ 0.8). '
+                 'slip_corr ≈ 5–8 deg/s throughout (residual OKN drive after EC cancellation). '
+                 'VS should not show spikes or large drift locked to fast phases.',
         citation='Raphan et al. (1979)',
         fig_type='behavior')
 

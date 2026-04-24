@@ -84,7 +84,7 @@ from oculomotor.models.brain_models import pursuit             as pu
 from oculomotor.models.brain_models import vergence            as vg
 from oculomotor.models.brain_models import accommodation       as acc_mod
 
-from oculomotor.models.sensory_models.sensory_model import SensoryOutput  # noqa: F401 (re-exported)
+from oculomotor.models.sensory_models.sensory_model import SensoryOutput, PINV_SENS  # noqa: F401 (re-exported)
 from oculomotor.models.plant_models.readout import rotation_matrix
 from oculomotor.models.plant_models.muscle_geometry import (
     M_NUCLEUS, M_NERVE_PROJ, G_NUCLEUS_DEFAULT, G_NERVE_DEFAULT,
@@ -158,10 +158,12 @@ class BrainParams(NamedTuple):
                                           # J Neurophysiol 34:635); 400 is conservative.
                                           # At typical stimulus velocities (<200 deg/s) this clip is inert.
     K_vs:                  float = 0.1    # canal-to-VS integration gain (1/s); controls charging speed
+                                          # Bilateral push-pull: effective net gain = 2·K_vs = 0.2.
 
     # Optokinetic reflex (OKR/OKAN) — NOT/AOS visual drive to velocity storage
     # Pathways: direct (g_vis, fast) + integrating (K_vis → VS, slow OKAN buildup)
     K_vis:                 float = 0.1    # visual-to-VS gain (1/s); OKR / OKAN charging
+                                          # Bilateral push-pull: effective net gain = 2·K_vis = 0.2
                                           # OKN SS gain ≈ (2·K_vis·τ_vs + g_vis)/(1 + 2·K_vis·τ_vs + g_vis)
                                           # K_vis=0.1, g_vis=0.6 → SS gain ≈ 0.82  (Raphan 1979)
     g_vis:                 float = 0.6    # direct visual pathway gain (Raphan 1979, Fig. 8: gl = 0.6)
@@ -430,11 +432,17 @@ def step(x_brain, sensory_out, brain_params):
     motor_ec = ec.read_delayed(x_ec)
 
     # ── Velocity storage + gravity estimator + OCR ───────────────────────────
-    # NOT/AOS saturation: clip slip and EC independently before combining (Hoffmann 1979).
-    okr    = (jnp.clip(percept.scene_slip,               -brain_params.v_max_okr, brain_params.v_max_okr)
-            + jnp.clip(motor_ec * percept.scene_visible, -brain_params.v_max_okr, brain_params.v_max_okr))
+    # EC cancellation happens before NOT/AOS saturation (postsynaptic summation precedes
+    # rate nonlinearity).  Sum slip + EC first, then clip — preserves the small OKN
+    # maintenance drive (~2 deg/s) during large fast phases where separate clipping
+    # would cancel both to ±80 → okr = 0, causing VS to drift across many cycles.
+    okr    = jnp.clip(percept.scene_slip + motor_ec * percept.scene_visible,
+                      -brain_params.v_max_okr, brain_params.v_max_okr)
     dx_vs,   w_est = vs.step(x_vs,   jnp.concatenate([sensory_out.canal, okr, x_grav]), brain_params)
-    dx_grav, g_est = ge.step(x_grav, jnp.concatenate([w_est, sensory_out.otolith]),     brain_params)
+    # Canal velocity (not VS output) for gravity transport: canal decays with tau_c~5s so
+    # sustained yaw rotation won't drive g_est[z] to large values and break tilt dumping.
+    canal_vel       = PINV_SENS @ sensory_out.canal
+    dx_grav, g_est = ge.step(x_grav, jnp.concatenate([canal_vel, sensory_out.otolith]), brain_params)
     ocr            = jnp.array([0.0, 0.0, brain_params.g_ocr * g_est[1]])
 
     # ── Pursuit: target-gated EC-corrected velocity → pursuit integrator ─────────
@@ -479,12 +487,16 @@ def step(x_brain, sensory_out, brain_params):
     motor_cmd_R = nerves[6:]   # (6,) right eye nerve activations
 
     # ── Efference copy: advance delay cascade with version motor command ──────
-    # Delay (u_burst + u_pursuit) to match visual processing lag (tau_vis).
-    # motor_ec ≈ −slip at readout, cancelling self-generated retinal slip in VS and pursuit.
-    # Frame rotation omitted: at small-to-moderate gaze angles the cross-axis error
-    # (R ≈ I) is smaller than the catch-up term (x_ni−x_p)/tau_p which is inherently
-    # unmatched — adding an approximate rotation worsens post-saccadic residual.
-    dx_ec, _ = ec.step(x_ec, u_burst + u_pursuit, brain_params)
+    # Rotate (u_burst + u_pursuit) from head frame into eye frame before delaying.
+    # slip is in eye frame (retinal_signals applies R_gaze_T); the EC must
+    # delay the SAME frame.  Rotating at cascade INPUT ensures motor_ec at readout
+    # carries R_eye_T(t−τ) @ u(t−τ), which matches slip(t) exactly —
+    # both use the gaze angle from the same past time t−τ.
+    # Approximation: R_head ≈ I (head stationary during saccades) → R_gaze_T ≈ R_eye_T.
+    # x_ni_net proxies current gaze; [yaw,pitch,roll] → permute for rotation_matrix.
+    _q2rv_ec = lambda q: jnp.array([-q[1], q[0], q[2]])
+    R_eye_T  = rotation_matrix(_q2rv_ec(x_ni_net)).T   # head → eye frame
+    dx_ec, _ = ec.step(x_ec, R_eye_T @ (u_burst + u_pursuit), brain_params)
 
     # ── Pack state derivative ─────────────────────────────────────────────────
     dx_brain = jnp.concatenate([dx_vs, dx_ni, dx_sg, dx_ec, dx_grav, dx_pursuit, dx_verg, dx_acc])

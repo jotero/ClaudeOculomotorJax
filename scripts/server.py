@@ -154,13 +154,24 @@ def _build_eye_trajectory(sim_data: dict, fps: int = 60) -> dict | None:
     head_pos = np.cumsum(hv * dt_orig, axis=0)           # (T, 3) deg
     head_ds  = head_pos[::step]
 
+    # Infer monocular cover: one eye in total darkness while the other has visual input
+    ones = np.ones(len(t))
+    spL = np.array(sim_data.get('scene_present_L',  ones))
+    spR = np.array(sim_data.get('scene_present_R',  ones))
+    tpL = np.array(sim_data.get('target_present_L', ones))
+    tpR = np.array(sim_data.get('target_present_R', ones))
+    cover_L = ((spL < 0.5) & (tpL < 0.5) & ((spR > 0.5) | (tpR > 0.5))).astype(int)[::step]
+    cover_R = ((spR < 0.5) & (tpR < 0.5) & ((spL > 0.5) | (tpL > 0.5))).astype(int)[::step]
+
     return dict(
         fps        = fps,
         n_frames   = int(len(t_ds)),
         duration_s = round(float(t_ds[-1]), 3),
-        left  = [[round(float(v), 2) for v in row] for row in L.tolist()],
-        right = [[round(float(v), 2) for v in row] for row in R.tolist()],
-        head  = [[round(float(v), 2) for v in row] for row in head_ds.tolist()],
+        left    = [[round(float(v), 2) for v in row] for row in L.tolist()],
+        right   = [[round(float(v), 2) for v in row] for row in R.tolist()],
+        head    = [[round(float(v), 2) for v in row] for row in head_ds.tolist()],
+        cover_L = cover_L.tolist(),
+        cover_R = cover_R.tolist(),
     )
 
 

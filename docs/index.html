@@ -400,6 +400,7 @@ let leftEyeBone  = null;
 let rightEyeBone = null;
 let headBone     = null;
 let restL = null, restR = null, restHead = null;
+let coverMeshL   = null, coverMeshR = null;
 
 const AVATAR_PATH = 'ready_player_me_male_avatar__vrchatgame_ready/scene.gltf';
 
@@ -441,6 +442,37 @@ new GLTFLoader().load(AVATAR_PATH, (gltf) => {
   worldCam.lookAt(eyeMid);
   worldCam.near = near; worldCam.far = far; worldCam.updateProjectionMatrix();
 
+  // Build procedural eye-cover patches (parented to model root = head-fixed).
+  // posL / posR are world positions — convert to model-local before using as
+  // child position, and push forward (+Z world) so they sit in front of the face.
+  const eyeL_local = posL.clone();
+  const eyeR_local = posR.clone();
+  model.worldToLocal(eyeL_local);
+  model.worldToLocal(eyeR_local);
+  // Forward direction in model-local space (world +Z = toward camera)
+  const fwdLocal = new THREE.Vector3(0, 0, 1)
+      .transformDirection(model.matrixWorld.clone().invert());
+  const fwdOffset = size.y * 0.04;    // clear of face surface
+
+  const coverGeo = new THREE.CircleGeometry(size.y * 0.022, 48);
+  const coverMat = new THREE.MeshStandardMaterial({
+    color: 0x0a0508, transparent: true, opacity: 0.82,
+    depthWrite: false, depthTest: false,
+  });
+  coverMeshL = new THREE.Mesh(coverGeo, coverMat);
+  coverMeshR = new THREE.Mesh(coverGeo, coverMat.clone());
+  coverMeshL.renderOrder = 1;
+  coverMeshR.renderOrder = 1;
+  coverMeshL.position.copy(eyeL_local).addScaledVector(fwdLocal, fwdOffset);
+  coverMeshR.position.copy(eyeR_local).addScaledVector(fwdLocal, fwdOffset);
+  model.add(coverMeshL);
+  model.add(coverMeshR);
+  // Orient disk face toward camera regardless of model's rest rotation
+  coverMeshL.lookAt(headCam.position);
+  coverMeshR.lookAt(headCam.position);
+  coverMeshL.visible = false;
+  coverMeshR.visible = false;
+
   document.getElementById('avatar-loading').style.display = 'none';
 
 }, undefined, err => {
@@ -478,6 +510,10 @@ function applyFrame(fi) {
       restHead.z
     );
   }
+
+  // Cover patches
+  if (coverMeshL) coverMeshL.visible = !!(_traj.cover_L && _traj.cover_L[fi]);
+  if (coverMeshR) coverMeshR.visible = !!(_traj.cover_R && _traj.cover_R[fi]);
 }
 
 // ── Playback ──────────────────────────────────────────────────────────────────

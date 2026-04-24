@@ -556,14 +556,18 @@ def _build_sim_data(t_array: np.ndarray, sig: dict, stim_kw: dict) -> dict:
     All angular quantities in deg or deg/s.
     """
     return dict(
-        t          = np.array(t_array),
-        eye_pos    = sig['eye_pos'],                              # (T, 3) deg — conjugate version
-        eye_pos_L  = sig['eye_pos_L'],                           # (T, 3) deg — left eye
-        eye_pos_R  = sig['eye_pos_R'],                           # (T, 3) deg — right eye
-        eye_vel    = sig['eye_vel'],                              # (T, 3) deg/s
-        head_vel   = np.array(stim_kw['head_vel_array']),        # (T, 3) deg/s
-        scene_vel  = np.array(stim_kw['v_scene_array']),         # (T, 3) deg/s
-        target_vel = np.array(stim_kw['v_target_array']),        # (T, 3) deg/s
+        t               = np.array(t_array),
+        eye_pos         = sig['eye_pos'],                              # (T, 3) deg — conjugate version
+        eye_pos_L       = sig['eye_pos_L'],                           # (T, 3) deg — left eye
+        eye_pos_R       = sig['eye_pos_R'],                           # (T, 3) deg — right eye
+        eye_vel         = sig['eye_vel'],                              # (T, 3) deg/s
+        head_vel        = np.array(stim_kw['head_vel_array']),        # (T, 3) deg/s
+        scene_vel       = np.array(stim_kw['v_scene_array']),         # (T, 3) deg/s
+        target_vel      = np.array(stim_kw['v_target_array']),        # (T, 3) deg/s
+        scene_present_L  = np.array(stim_kw['scene_present_L_array']),  # (T,)
+        scene_present_R  = np.array(stim_kw['scene_present_R_array']),  # (T,)
+        target_present_L = np.array(stim_kw['target_present_L_array']), # (T,)
+        target_present_R = np.array(stim_kw['target_present_R_array']), # (T,)
     )
 
 

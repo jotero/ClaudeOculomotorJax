@@ -57,8 +57,8 @@ h1   { font-size: 22px; margin-bottom: 4px; }
   <main>
     <h1>OculomotorJax — Benchmark Report</h1>
     <p class="meta">
-      Generated: <strong>2026-04-23 14:25</strong> &nbsp;|&nbsp;
-      Version: <strong>b13d605-dirty</strong> &nbsp;|&nbsp;
+      Generated: <strong>2026-04-23 21:07</strong> &nbsp;|&nbsp;
+      Version: <strong>252fae5-dirty</strong> &nbsp;|&nbsp;
       <a href="../BENCHMARKS.md">BENCHMARKS.md</a>
     </p>
 
@@ -174,16 +174,16 @@ h1   { font-size: 22px; margin-bottom: 4px; }
 
   <section class="section" id="tilt_translation">
     <h2>3. Tilt / Translation</h2>
-    <p>Otolith-driven eye movements: ocular counterroll (OCR) and OVAR. OCR is simulated with g_ocr=0.13 (13% physiological gain). OVAR requires the gravity estimator K_gd coupling to VS — placeholder.</p>
+    <p>Otolith-driven eye movements: OCR, OVAR, and VOR tilt suppression. OCR uses g_ocr=0.13 (13% physiological gain). OVAR and tilt suppression use K_gd=0.5 (gravity dumping). NOTE: gravity estimator not yet validated.</p>
     <div class="fig-grid">
       
     <div class="fig-card">
       <a href="figures/tilt_ocr.png" target="_blank"><img src="figures/tilt_ocr.png" alt="Ocular Counterroll (OCR)"></a>
       <h3>Ocular Counterroll (OCR)</h3>
-      <p class="desc">Head rolls 30° and holds. Otolith → gravity estimator → torsional OCR via g_ocr parameter. NOTE: gravity estimator not yet validated.</p>
+      <p class="desc">Head rolls 30° and holds. Otolith → gravity estimator → torsional OCR via g_ocr=0.13.</p>
       <div class="expected">
         <strong>Expected behavior</strong>
-        OCR ≈ −3.9° (counter-rolling, 30° tilt, 13% gain). Settling TC ≈ 2 s (1/K_grav). g_est y → G₀ sin(30°) = 4.9 m/s².
+        OCR ≈ 3.9° counter-rolling. Settling TC ≈ 2 s (1/K_grav). g_est_y → G₀ sin(30°) ≈ 4.9 m/s².
       </div>
       <p class="citation">&#128214; Boff, Kaufman & Thomas (1986); Tweed et al. (1994)</p>
       <span class="badge behavior">behavior</span>
@@ -192,12 +192,24 @@ h1   { font-size: 22px; margin-bottom: 4px; }
     <div class="fig-card">
       <a href="figures/tilt_ovar.png" target="_blank"><img src="figures/tilt_ovar.png" alt="OVAR — Off-Vertical Axis Rotation"></a>
       <h3>OVAR — Off-Vertical Axis Rotation</h3>
-      <p class="desc">Head rotates at constant velocity around a tilted axis. Canal component is constant; otolith modulates nystagmus SPV sinusoidally.</p>
+      <p class="desc">Constant 60°/s rotation around axis tilted 20° from vertical. Canal signals constant velocity; otolith sees sinusoidal gravity direction. K_gd=0.5 links gravity estimate to VS dumping.</p>
       <div class="expected">
         <strong>Expected behavior</strong>
-        Sinusoidal modulation of SPV with period = rotation period. Amplitude proportional to tilt angle. Requires K_gd (gravity → VS coupling) to be validated.
+        Sinusoidal SPV modulation at period = 6 s. g_est y oscillates between ±3.4 m/s². NOTE: gravity estimator not yet validated.
       </div>
       <p class="citation">&#128214; Raphan et al. (1981); Angelaki & Hess (1994) J Neurophysiol</p>
+      <span class="badge behavior">behavior</span>
+    </div>
+
+    <div class="fig-card">
+      <a href="figures/tilt_vor_suppression.png" target="_blank"><img src="figures/tilt_vor_suppression.png" alt="VOR Tilt Suppression"></a>
+      <h3>VOR Tilt Suppression</h3>
+      <p class="desc">Upright vs. 90° roll-tilted yaw VOR decay (K_gd=0.5, 20 s rotation at 60°/s). Gravity dumping selectively drains VS for motion perpendicular to gravity.</p>
+      <div class="expected">
+        <strong>Expected behavior</strong>
+        τ_upright ≈ 20–35 s (VS extends canal TC). τ_tilted: shortened by gravity dumping (τ_eff = τ_vs/(1+K_gd·τ_vs)). NOTE: gravity estimator not yet validated.
+      </div>
+      <p class="citation">&#128214; Raphan et al. (1981) J Neurophysiol; Cohen et al. (1983)</p>
       <span class="badge behavior">behavior</span>
     </div>
     </div>
@@ -331,7 +343,7 @@ h1   { font-size: 22px; margin-bottom: 4px; }
       <p class="desc">30 deg/s full-field scene. OKN sawtooth nystagmus; fast phases reset eye at orbital limit. EC-corrected slip tracks scene velocity during slow phases.</p>
       <div class="expected">
         <strong>Expected behavior</strong>
-        VS charges smoothly to ~30 deg/s despite fast phases. slip_corr ≈ 30 deg/s during slow phases, drops to ~0 during fast phases (EC cancels). VS should not show spikes locked to fast phases.
+        VS state converges toward OKN SS (~−21 deg/s; eye SPV ≈ 24 deg/s, gain ≈ 0.8). slip_corr ≈ 5–8 deg/s throughout (residual OKN drive after EC cancellation). VS should not show spikes or large drift locked to fast phases.
       </div>
       <p class="citation">&#128214; Raphan et al. (1979)</p>
       <span class="badge behavior">behavior</span>
