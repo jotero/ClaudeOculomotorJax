@@ -487,16 +487,20 @@ def step(x_brain, sensory_out, brain_params):
     motor_cmd_R = nerves[6:]   # (6,) right eye nerve activations
 
     # ── Efference copy: advance delay cascade with version motor command ──────
-    # Rotate (u_burst + u_pursuit) from head frame into eye frame before delaying.
-    # slip is in eye frame (retinal_signals applies R_gaze_T); the EC must
-    # delay the SAME frame.  Rotating at cascade INPUT ensures motor_ec at readout
-    # carries R_eye_T(t−τ) @ u(t−τ), which matches slip(t) exactly —
-    # both use the gaze angle from the same past time t−τ.
-    # Approximation: R_head ≈ I (head stationary during saccades) → R_gaze_T ≈ R_eye_T.
-    # x_ni_net proxies current gaze; [yaw,pitch,roll] → permute for rotation_matrix.
-    _q2rv_ec = lambda q: jnp.array([-q[1], q[0], q[2]])
-    R_eye_T  = rotation_matrix(_q2rv_ec(x_ni_net)).T   # head → eye frame
-    dx_ec, _ = ec.step(x_ec, R_eye_T @ (u_burst + u_pursuit), brain_params)
+    # Rotate (u_burst + u_pursuit) into eye frame before delaying, to match the
+    # frame of scene_vel / target_vel computed by retinal_signals (which applies
+    # R_gaze_T = R_eye.T @ R_head.T).
+    #
+    # Correct formula: motor_ec = R_gaze_T @ u_burst  →  scene_slip + motor_ec ≈ 0 ✓
+    #     R_gaze_T ≈ R_eye.T   (head stationary during saccades: R_head ≈ I)
+    #     R_eye = rotation_matrix(x_ni_net)    (x_ni_net proxies eye rotation vector)
+    #
+    # Note: do NOT permute x_ni_net before passing to rotation_matrix.  The
+    # previous code used _q2rv_ec([yaw, pitch, roll]) = [-pitch, yaw, roll],
+    # which created a pitch-axis rotation for a yaw gaze angle — wrong axis —
+    # introducing ~sin(gaze)·g_burst of spurious roll into the EC cascade.
+    R_gaze_T = rotation_matrix(x_ni_net).T   # R_eye.T  (head → eye frame)
+    dx_ec, _ = ec.step(x_ec, R_gaze_T @ (u_burst + u_pursuit), brain_params)
 
     # ── Pack state derivative ─────────────────────────────────────────────────
     dx_brain = jnp.concatenate([dx_vs, dx_ni, dx_sg, dx_ec, dx_grav, dx_pursuit, dx_verg, dx_acc])

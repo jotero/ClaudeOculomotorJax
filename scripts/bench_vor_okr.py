@@ -25,7 +25,7 @@ from oculomotor.models.sensory_models.sensory_model import (
     N_CANALS, FLOOR, _SOFTNESS, PINV_SENS, C_slip,
 )
 from oculomotor.sim import stimuli as stim_mod
-from oculomotor.analysis import ax_fmt, extract_burst, extract_canal, vs_net, ni_net, fit_tc, extract_spv
+from oculomotor.analysis import ax_fmt, extract_burst, extract_canal, vs_net, vs_null, ni_net, fit_tc, extract_spv
 
 SHOW  = '--show' in sys.argv
 DT    = 0.001
@@ -104,8 +104,12 @@ def _raphan(show):
         label='OKAN TC')
 
     # ── E/F: VVOR (rotation in lit stationary scene, stop in dark) ────────────
-    # target_present=0: no fixation target (Raphan paradigm — sees room, no foveal target)
-    t_vor_j   = jnp.array(t_vor)
+    # target_present=0: pursuit suppressed — it would fight the VOR by integrating
+    # the VOR-induced target slip (the EC cancels u_pursuit but not u_vor, so
+    # pursuit sees persistent error and saturates against the VOR).
+    # Fast phases are centering saccades (SG uses x_ni centering when target_in_vf=0),
+    # matching the Raphan (1979) paradigm.  scene_present=1 enables OKR/OKAN.
+    t_vor_j    = jnp.array(t_vor)
     scene_vvor = jnp.where((t_vor_j >= 0.0) & (t_vor_j < ON_DUR), 1.0, 0.0)
     st_vvor   = _simulate(theta, t_vor_j, head_vel=jnp.array(hv_full),
                           scene_present=scene_vvor,
@@ -122,6 +126,7 @@ def _raphan(show):
     mask_ss   = (t_vor > 10.0) & (t_vor < 25.0)
     vvor_gain = (np.mean(np.abs(spv_vvor_d[mask_ss])) /
                  (np.mean(np.abs(hv_1d[mask_ss])) + 1e-6))
+    print(f'  VVOR yaw gain (10–25 s): {vvor_gain:.3f}  (target > 0.85)')
 
     cup_okn  = extract_canal(st_okn)
     cup_vvor = extract_canal(st_vvor)

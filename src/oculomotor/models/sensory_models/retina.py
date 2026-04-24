@@ -136,9 +136,19 @@ def retinal_signals(p_target, eye_offset_head, q_head, w_head, q_eye, w_eye,
     target_pos = jnp.array([yaw_e, pitch_e, 0.0])           # roll=0: target direction has only 2 DOF
 
     # ── Retinal velocities in eye frame ───────────────────────────────────────
-    w_eye_world = w_head + R_head @ w_eye                    # total eye velocity, world frame
-    scene_vel   = R_gaze_T @ (w_scene  - w_eye_world)       # eye frame, deg/s
-    target_vel  = R_gaze_T @ (v_target - w_eye_world)       # eye frame, deg/s
+    # Velocity vectors are in [yaw,pitch,roll] notation but R_head / R_gaze_T
+    # are built in xyz (via _q2rv). Convert velocities to xyz for the matrix
+    # operations so the transformation is correct at large head angles.
+    # Without this, sustained rotation (e.g. 90° cumulative yaw) rotates the
+    # yaw velocity into the pitch/roll directions, causing OKR to fight VOR.
+    _rv2q       = lambda v: jnp.array([v[1], -v[0], v[2]])  # xyz → [yaw,pitch,roll]
+    w_head_xyz  = _q2rv(w_head)
+    w_eye_xyz   = _q2rv(w_eye)
+    w_scene_xyz = _q2rv(w_scene)
+    vt_xyz      = _q2rv(v_target)
+    w_eye_world = w_head_xyz + R_head @ w_eye_xyz            # total eye velocity, xyz world frame
+    scene_vel   = _rv2q(R_gaze_T @ (w_scene_xyz - w_eye_world))   # eye frame, [yaw,pitch,roll]
+    target_vel  = _rv2q(R_gaze_T @ (vt_xyz      - w_eye_world))   # eye frame, [yaw,pitch,roll]
 
     # ── Visual-field gate ─────────────────────────────────────────────────────
     e_mag  = jnp.linalg.norm(target_pos) + 1e-9
