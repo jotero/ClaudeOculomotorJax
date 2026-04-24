@@ -45,6 +45,7 @@ Parameters:
 """
 
 from oculomotor.models.sensory_models.retina import delay_cascade_step, delay_cascade_read
+from oculomotor.models.sensory_models.retina import velocity_saturation
 from oculomotor.models.sensory_models.retina import _N_PER_SIG
 
 N_STATES  = _N_PER_SIG   # 120  — one delay cascade for one 3-D signal
@@ -83,3 +84,41 @@ def step(x_ec, u, brain_params):
     dx_ec     = delay_cascade_step(x_ec, u, brain_params.tau_vis)
     u_delayed = delay_cascade_read(x_ec)   # pure state read — no lag vs dx_ec
     return dx_ec, u_delayed
+
+
+def step_pursuit(x_ec, u, brain_params):
+    """EC step for the pursuit cancellation path.
+
+    Clips the motor command at v_max_pursuit before entering the cascade so the
+    delayed EC matches the ceiling of the target_vel cascade (MT/MST tuning).
+    A large saccade burst (700 deg/s) is reduced to ≤ v_max_pursuit so it cannot
+    overcorrect the already-clipped delayed target velocity.
+
+    Args:
+        x_ec:         (120,)       pursuit EC cascade state
+        u:            (3,)         motor command (u_burst + u_pursuit), eye frame
+        brain_params: BrainParams  reads v_max_pursuit, tau_vis
+
+    Returns:
+        dx_ec:     (120,)  dx_ec/dt
+        u_delayed: (3,)    clipped-and-delayed motor command
+    """
+    return step(x_ec, velocity_saturation(u, brain_params.v_max_pursuit), brain_params)
+
+
+def step_okr(x_ec, u, brain_params):
+    """EC step for the OKR / VS cancellation path.
+
+    Clips the motor command at v_max_okr before entering the cascade so the
+    delayed EC matches the ceiling of the scene_vel cascade (NOT/AOS tuning).
+
+    Args:
+        x_ec:         (120,)       OKR EC cascade state
+        u:            (3,)         motor command (u_burst + u_pursuit), eye frame
+        brain_params: BrainParams  reads v_max_okr, tau_vis
+
+    Returns:
+        dx_ec:     (120,)  dx_ec/dt
+        u_delayed: (3,)    clipped-and-delayed motor command
+    """
+    return step(x_ec, velocity_saturation(u, brain_params.v_max_okr), brain_params)

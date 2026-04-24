@@ -53,7 +53,7 @@ from oculomotor.models.sensory_models               import otolith as _otolith
 from oculomotor.models.brain_models.brain_model    import (
     _IDX_VS, _IDX_VS_L, _IDX_VS_R, _IDX_VS_NULL,
     _IDX_NI, _IDX_NI_L, _IDX_NI_R, _IDX_NI_NULL,
-    _IDX_SG, _IDX_EC, _IDX_GRAV, _IDX_PURSUIT, _IDX_VERG, _IDX_ACC,
+    _IDX_SG, _IDX_EC, _IDX_EC_OKR, _IDX_GRAV, _IDX_PURSUIT, _IDX_VERG, _IDX_ACC,
     BrainParams,
 )
 from oculomotor.models.plant_models.plant_model_first_order import PlantParams, _IDX_P_L, _IDX_P_R
@@ -161,7 +161,7 @@ __all__ = [
     '_IDX_C', '_IDX_OTO', '_IDX_VIS', '_IDX_VIS_L', '_IDX_VIS_R',
     '_IDX_VS', '_IDX_VS_L', '_IDX_VS_R', '_IDX_VS_NULL',
     '_IDX_NI', '_IDX_NI_L', '_IDX_NI_R', '_IDX_NI_NULL',
-    '_IDX_SG', '_IDX_EC', '_IDX_GRAV', '_IDX_PURSUIT', '_IDX_VERG', '_IDX_ACC',
+    '_IDX_SG', '_IDX_EC', '_IDX_EC_OKR', '_IDX_GRAV', '_IDX_PURSUIT', '_IDX_VERG', '_IDX_ACC',
     '_IDX_P_L', '_IDX_P_R',
     'Params', 'SimConfig', 'SensoryParams', 'PlantParams', 'BrainParams',
     'default_params', 'with_brain', 'with_sensory', 'with_plant',

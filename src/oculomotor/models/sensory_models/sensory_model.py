@@ -89,6 +89,14 @@ class SensoryParams(NamedTuple):
     # Binocular
     ipd:                float       = 0.064  # inter-pupillary distance (m); ~64 mm adult
 
+    # Pre-delay velocity saturation (applied before visual cascade to suppress spikes)
+    # Mirrors the speed tuning of MT/MST (target) and NOT/AOS (scene) neurons.
+    # Must match the v_max_pursuit / v_max_okr values in BrainParams so that the
+    # EC correction (which is clipped to the same ceiling) exactly cancels what
+    # made it through the visual cascade.
+    v_max_target_vel:   float       = 40.0   # MT/MST speed ceiling (deg/s); clips target_vel before cascade
+    v_max_scene_vel:    float       = 80.0   # NOT/AOS speed ceiling (deg/s); clips scene_vel before cascade
+
 # ── Re-exports for external callers ────────────────────────────────────────────
 
 # Canal
@@ -283,10 +291,14 @@ def step(x_sensory,
 
     dx_vis_L = _retina.step(
         x_vis_L, scene_vel_L, target_pos_L, target_vel_L,
-        scene_visible_L, target_visible_L, target_strobed, sensory_params.tau_vis)
+        scene_visible_L, target_visible_L, target_strobed, sensory_params.tau_vis,
+        v_max_scene_vel=sensory_params.v_max_scene_vel,
+        v_max_target_vel=sensory_params.v_max_target_vel)
     dx_vis_R = _retina.step(
         x_vis_R, scene_vel_R, target_pos_R, target_vel_R,
-        scene_visible_R, target_visible_R, target_strobed, sensory_params.tau_vis)
+        scene_visible_R, target_visible_R, target_strobed, sensory_params.tau_vis,
+        v_max_scene_vel=sensory_params.v_max_scene_vel,
+        v_max_target_vel=sensory_params.v_max_target_vel)
 
     dx_sensory = jnp.concatenate([dx_c, dx_oto, dx_vis_L, dx_vis_R])
     return dx_sensory

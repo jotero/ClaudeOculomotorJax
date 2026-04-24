@@ -41,6 +41,67 @@ import jax.numpy as jnp
 
 from oculomotor.models.plant_models.readout import rotation_matrix
 
+
+# ── Velocity saturation ─────────────────────────────────────────────────────────
+
+def velocity_saturation(v, v_sat, v_zero=None):
+    """Smooth velocity saturation: passes at low speed, gain ramps to zero at high speed.
+
+    For a velocity vector v:
+        |v| ≤ v_sat          → output = v           (gain = 1)
+        v_sat < |v| < v_zero → output = v * gain    (cosine rolloff, 1 → 0)
+        |v| ≥ v_zero         → output = 0            (gain = 0)
+
+    The cosine rolloff keeps gain and its derivative continuous at both endpoints.
+
+    Contrast with jnp.clip: clipping keeps output at ±v_sat for large inputs,
+    which lets a step-function target spike (e.g. 9000 deg/s central-difference
+    artifact) drive the pursuit integrator at full saturation velocity.  This
+    function returns zero instead, faithfully modelling MT/MST insensitivity to
+    implausibly fast retinal motion.
+
+    Speed tuning background
+    -----------------------
+    MT/MST neurons are band-pass tuned for speed, not low-pass.  The population
+    response peaks around 10–40 deg/s and falls off sharply above ~80–100 deg/s.
+    Pursuit consequently saturates: human gain ≈ 1 below ~30 deg/s, dropping to
+    ~0.5 at 60 deg/s and near zero above ~100 deg/s.
+
+    NOT/AOS neurons driving OKR have broader tuning, peaking ~40–80 deg/s and
+    falling off above ~160 deg/s.
+
+    References
+    ----------
+    Maunsell JHR & Van Essen DC (1983) J Neurophysiol 49:1127-1147
+        — MT speed tuning in macaque; peak ~30 deg/s, ~50 % at 8 and 100 deg/s.
+    Lisberger SG et al. (1987) Annu Rev Neurosci 10:97-129
+        — Review of pursuit velocity range and MT contribution.
+    Priebe NJ & Lisberger SG (2004) J Neurosci 24:4907-4926
+        — Population speed coding in MT; pursuit gain × speed relationship.
+    Buettner U et al. (1976) Brain Res 108:359-377
+        — OKN gain as a function of stimulus velocity; falls above 80 deg/s.
+
+    Args:
+        v:      (N,) velocity vector (deg/s); norm computed over the full vector
+        v_sat:  saturation onset (deg/s) — gain is exactly 1 below this
+        v_zero: speed where gain reaches 0 (deg/s); default = 2 × v_sat
+
+    Returns:
+        Same shape as v, scaled by smooth gain ∈ [0, 1].
+
+    Example (pursuit):
+        velocity_saturation(target_slip, v_sat=40.0)   # v_zero defaults to 80.0
+    Example (OKR/NOT):
+        velocity_saturation(scene_slip, v_sat=80.0, v_zero=160.0)
+    """
+    if v_zero is None:
+        v_zero = 2.0 * v_sat
+    speed = jnp.linalg.norm(v)
+    t     = jnp.clip((speed - v_sat) / (v_zero - v_sat), 0.0, 1.0)
+    gain  = 0.5 * (1.0 + jnp.cos(jnp.pi * t))
+    return v * gain
+
+
 # ── Cascade parameters ──────────────────────────────────────────────────────────
 
 N_STAGES      = 40    # cascade depth (stages per signal)
@@ -206,27 +267,38 @@ def delay_cascade_read(x_cascade):
 # ── Combined visual delay step ───────────────────────────────────────────────────
 
 def step(x_vis, scene_vel, target_pos, target_vel,
-         scene_present, target_visible, target_strobed, tau_vis):
+         scene_present, target_visible, target_strobed, tau_vis,
+         v_max_scene_vel=80.0, v_max_target_vel=40.0):
     """Single ODE step for the full visual delay cascade (six signals).
 
-    Signals are gated at the cascade input so delayed outputs are already clean:
-        scene_vel   × scene_present                          → OKR / VS
-        target_pos  × target_visible                         → saccade error
-        target_vel  × target_visible × (1 − target_strobed) → pursuit drive
+    Signals are gated and speed-saturated at the cascade input:
+        scene_vel   × scene_present → velocity_saturation(·, v_max_scene_vel)   → OKR / VS
+        target_pos  × target_visible                                              → saccade error
+        target_vel  × target_visible × (1 − target_strobed)
+                    → velocity_saturation(·, v_max_target_vel)                  → pursuit drive
+
+    Pre-delay saturation ensures that step-target velocity spikes (e.g. 9000 deg/s
+    from central-difference numerics) never enter the cascade.  The cascade output
+    is then always ≤ v_max, matching the physiological speed tuning of MT/MST
+    (target) and NOT/AOS (scene) neurons.  EC subtraction and further post-delay
+    saturation are applied later in brain_model.
+
     Presence flags and strobe are delayed raw so the brain has timing information.
 
     State layout: [x_scene_vel(120) | x_target_pos(120) | x_target_vel(120)
                    | x_scene_visible(40) | x_target_visible(40) | x_strobed(40)]
 
     Args:
-        x_vis:           (480,)  visual cascade state
-        scene_vel:       (3,)    scene velocity on retina, eye frame (deg/s)
-        target_pos:      (3,)    target position on retina, eye frame (deg)
-        target_vel:      (3,)    target velocity on retina, eye frame (deg/s)
-        scene_present:   scalar  is scene physically present? ∈ {0, 1}
-        target_visible:  scalar  target_present × target_in_vf ∈ [0, 1]
-        target_strobed:  scalar  1 = stroboscopic illumination ∈ {0, 1}
-        tau_vis:         float   total cascade delay (s)
+        x_vis:             (480,)  visual cascade state
+        scene_vel:         (3,)    scene velocity on retina, eye frame (deg/s)
+        target_pos:        (3,)    target position on retina, eye frame (deg)
+        target_vel:        (3,)    target velocity on retina, eye frame (deg/s)
+        scene_present:     scalar  is scene physically present? ∈ {0, 1}
+        target_visible:    scalar  target_present × target_in_vf ∈ [0, 1]
+        target_strobed:    scalar  1 = stroboscopic illumination ∈ {0, 1}
+        tau_vis:           float   total cascade delay (s)
+        v_max_scene_vel:   float   NOT/AOS speed ceiling (deg/s); default 80.0
+        v_max_target_vel:  float   MT/MST speed ceiling (deg/s);  default 40.0
 
     Returns:
         dx_vis: (480,)  dx_vis/dt
@@ -238,9 +310,9 @@ def step(x_vis, scene_vel, target_pos, target_vel,
     x_target_vis  = x_vis[_OFF_TARGET_VIS: _OFF_STROBED]
     x_strobed     = x_vis[_OFF_STROBED   :]
 
-    scene_vel_in  = scene_vel  * scene_present
+    scene_vel_in  = velocity_saturation(scene_vel  * scene_present,                         v_max_scene_vel)
     target_pos_in = target_pos * target_visible
-    target_vel_in = target_vel * target_visible * (1.0 - target_strobed)
+    target_vel_in = velocity_saturation(target_vel * target_visible * (1.0 - target_strobed), v_max_target_vel)
 
     dx_scene_vel  = delay_cascade_step(x_scene_vel,  scene_vel_in,   tau_vis)
     dx_target_pos = delay_cascade_step(x_target_pos, target_pos_in,  tau_vis)

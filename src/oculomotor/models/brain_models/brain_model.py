@@ -75,7 +75,6 @@ from typing import NamedTuple
 
 import jax.numpy as jnp
 
-from oculomotor.models.nonlinearities import velocity_saturation
 from oculomotor.models.brain_models import velocity_storage    as vs
 from oculomotor.models.brain_models import neural_integrator   as ni
 from oculomotor.models.brain_models import saccade_generator   as sg
@@ -95,19 +94,20 @@ from oculomotor.models.plant_models.muscle_geometry import (
 
 # ── State layout ───────────────────────────────────────────────────────────────
 
-N_STATES = vs.N_STATES + ni.N_STATES + sg.N_STATES + ec.N_STATES + ge.N_STATES + pu.N_STATES + vg.N_STATES + acc_mod.N_STATES
-#        = 9 + 9 + 9 + 120 + 3 + 3 + 3 + 2 = 158
+N_STATES = vs.N_STATES + ni.N_STATES + sg.N_STATES + 2*ec.N_STATES + ge.N_STATES + pu.N_STATES + vg.N_STATES + acc_mod.N_STATES
+#        = 9 + 9 + 9 + 240 + 3 + 3 + 3 + 2 = 278
 
 # ── Index constants — relative to x_brain ─────────────────────────────────────
 # Computed from module N_STATES to stay in sync automatically.
 
-_o_vs  = 0
-_o_ni  = _o_vs + vs.N_STATES   # 9
-_o_sg  = _o_ni + ni.N_STATES   # 18
-_o_ec  = _o_sg + sg.N_STATES   # 27
-_o_gv  = _o_ec + ec.N_STATES   # 147
-_o_pu  = _o_gv + ge.N_STATES   # 150
-_o_vg  = _o_pu + pu.N_STATES   # 153
+_o_vs    = 0
+_o_ni    = _o_vs  + vs.N_STATES    # 9
+_o_sg    = _o_ni  + ni.N_STATES    # 18
+_o_ec    = _o_sg  + sg.N_STATES    # 27   pursuit EC
+_o_ec_ok = _o_ec  + ec.N_STATES    # 147  OKR EC
+_o_gv    = _o_ec_ok + ec.N_STATES  # 267
+_o_pu    = _o_gv  + ge.N_STATES    # 270
+_o_vg    = _o_pu  + pu.N_STATES    # 273
 
 # Velocity storage (9 states: L pop + R pop + null)
 _IDX_VS      = slice(_o_vs,     _o_vs + 9)   # (9,)
@@ -122,13 +122,14 @@ _IDX_NI_R    = slice(_o_ni + 3, _o_ni + 6)   # (3,) right NPH pop
 _IDX_NI_NULL = slice(_o_ni + 6, _o_ni + 9)   # (3,) null adaptation
 
 # Remaining subsystems
-_IDX_SG      = slice(_o_sg, _o_sg + sg.N_STATES)   # (9,)
-_IDX_EC      = slice(_o_ec, _o_ec + ec.N_STATES)   # (120,)
-_IDX_GRAV    = slice(_o_gv, _o_gv + ge.N_STATES)   # (3,)
-_IDX_PURSUIT = slice(_o_pu, _o_pu + pu.N_STATES)           # (3,)
-_IDX_VERG    = slice(_o_vg, _o_vg + vg.N_STATES)          # (3,)
-_o_acc       = _o_vg + vg.N_STATES                        # 156
-_IDX_ACC     = slice(_o_acc, _o_acc + acc_mod.N_STATES)   # (2,)
+_IDX_SG      = slice(_o_sg,   _o_sg   + sg.N_STATES)   # (9,)
+_IDX_EC      = slice(_o_ec,   _o_ec   + ec.N_STATES)   # (120,) pursuit EC  [27:147]
+_IDX_EC_OKR  = slice(_o_ec_ok, _o_ec_ok + ec.N_STATES) # (120,) OKR EC      [147:267]
+_IDX_GRAV    = slice(_o_gv,   _o_gv   + ge.N_STATES)   # (3,)               [267:270]
+_IDX_PURSUIT = slice(_o_pu,   _o_pu   + pu.N_STATES)   # (3,)               [270:273]
+_IDX_VERG    = slice(_o_vg,   _o_vg   + vg.N_STATES)   # (3,)               [273:276]
+_o_acc       = _o_vg + vg.N_STATES                     # 276
+_IDX_ACC     = slice(_o_acc,  _o_acc  + acc_mod.N_STATES)  # (2,)            [276:278]
 
 
 # ── Brain parameters ────────────────────────────────────────────────────────────
@@ -417,7 +418,8 @@ def step(x_brain, sensory_out, brain_params):
     x_ni      = x_brain[_IDX_NI]      # (9,): bilateral NI + null
     x_ni_net  = x_ni[:3] - x_ni[3:6]  # (3,): net eye position (L pop − R pop)
     x_sg      = x_brain[_IDX_SG]
-    x_ec      = x_brain[_IDX_EC]
+    x_ec      = x_brain[_IDX_EC]      # (120,): pursuit EC cascade
+    x_ec_okr  = x_brain[_IDX_EC_OKR]  # (120,): OKR EC cascade
     x_grav    = x_brain[_IDX_GRAV]
     x_pursuit = x_brain[_IDX_PURSUIT]
     x_verg    = x_brain[_IDX_VERG]
@@ -426,19 +428,15 @@ def step(x_brain, sensory_out, brain_params):
     # ── Binocular combining — version (average) and vergence (difference) ────────
     percept = _cyclopean_percept(sensory_out, brain_params)
 
-    # ── One EC, two corrections with separate gates ───────────────────────────
-    # motor_ec: efference copy of predicted eye velocity from saccades (u_burst) and smooth
-    #   pursuit (u_pursuit), delayed to match visual processing lag.  Used to cancel
-    #   self-generated retinal slip in both OKR (scene gate) and pursuit (target gate).
-    motor_ec = ec.read_delayed(x_ec)
+    # ── Two ECs, two corrections with separate clips and gates ───────────────
+    # motor_ec_pursuit: delayed pursuit-path EC (pre-clipped at v_max_pursuit in step_pursuit).
+    # motor_ec_okr:     delayed OKR-path EC (pre-clipped at v_max_okr in step_okr).
+    # Both cascade outputs are already speed-capped to match their respective visual cascades.
+    motor_ec_pursuit = ec.read_delayed(x_ec)
+    motor_ec_okr     = ec.read_delayed(x_ec_okr)
 
     # ── Velocity storage + gravity estimator + OCR ───────────────────────────
-    # EC cancellation happens before NOT/AOS saturation (postsynaptic summation precedes
-    # rate nonlinearity).  Sum slip + EC first, then clip — preserves the small OKN
-    # maintenance drive (~2 deg/s) during large fast phases where separate clipping
-    # would cancel both to ±80 → okr = 0, causing VS to drift across many cycles.
-    okr    = velocity_saturation(percept.scene_slip + motor_ec * percept.scene_visible,
-                                 brain_params.v_max_okr)
+    okr    = percept.scene_slip + motor_ec_okr * percept.scene_visible
     dx_vs,   w_est = vs.step(x_vs,   jnp.concatenate([sensory_out.canal, okr, x_grav]), brain_params)
     # Canal velocity (not VS output) for gravity transport: canal decays with tau_c~5s so
     # sustained yaw rotation won't drive g_est[z] to large values and break tilt dumping.
@@ -450,7 +448,7 @@ def step(x_brain, sensory_out, brain_params):
     # Strobe gate: when target is strobed, EC is also zeroed — stroboscopic illumination
     # provides no continuous motion signal, so eye-movement EC would create a spurious drive.
     # strobe_delayed matches the timing of the already-zeroed target_slip (same delay cascade).
-    dx_pursuit, u_pursuit = pu.step(x_pursuit, percept.target_slip, motor_ec*percept.target_motion_visible, brain_params)
+    dx_pursuit, u_pursuit = pu.step(x_pursuit, percept.target_slip, motor_ec_pursuit*percept.target_motion_visible, brain_params)
 
     # ── Saccade generator (target selection handled internally) ───────────────
     # x_ni_net is the brain's proxy for current eye position (avoids plant state dependency)
@@ -501,9 +499,11 @@ def step(x_brain, sensory_out, brain_params):
     # which created a pitch-axis rotation for a yaw gaze angle — wrong axis —
     # introducing ~sin(gaze)·g_burst of spurious roll into the EC cascade.
     R_gaze_T = rotation_matrix(x_ni_net).T   # R_eye.T  (head → eye frame)
-    dx_ec, _ = ec.step(x_ec, R_gaze_T @ (u_burst + u_pursuit), brain_params)
+    u_motor  = R_gaze_T @ (u_burst + u_pursuit)
+    dx_ec,     _ = ec.step_pursuit(x_ec,     u_motor, brain_params)
+    dx_ec_okr, _ = ec.step_okr(x_ec_okr, u_motor, brain_params)
 
     # ── Pack state derivative ─────────────────────────────────────────────────
-    dx_brain = jnp.concatenate([dx_vs, dx_ni, dx_sg, dx_ec, dx_grav, dx_pursuit, dx_verg, dx_acc])
+    dx_brain = jnp.concatenate([dx_vs, dx_ni, dx_sg, dx_ec, dx_ec_okr, dx_grav, dx_pursuit, dx_verg, dx_acc])
 
     return dx_brain, motor_cmd_L, motor_cmd_R

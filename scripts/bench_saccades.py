@@ -30,12 +30,42 @@ SHOW  = '--show' in sys.argv
 
 
 def _vel_sat_np(v_arr, v_sat):
-    """Batch numpy cosine-rolloff saturation matching nonlinearities.velocity_saturation."""
+    """Batch numpy cosine-rolloff saturation matching retina.velocity_saturation."""
     v_zero  = 2.0 * v_sat
     speeds  = np.linalg.norm(v_arr, axis=1, keepdims=True)
     t       = np.clip((speeds - v_sat) / (v_zero - v_sat), 0.0, 1.0)
     gain    = 0.5 * (1.0 + np.cos(np.pi * t))
     return v_arr * gain
+
+
+def _primary_saccade(burst_yaw, eye_yaw, t_np, t_jump, threshold=20.0):
+    """Amplitude and peak velocity of the FIRST saccade after t_jump.
+
+    Uses the burst signal (not raw velocity) to gate on/off so corrective
+    saccades and post-saccadic drift are excluded.
+
+    Returns (amplitude_deg, peak_vel_deg_s).  Falls back to full-trace
+    extremes only if no burst crossing is found.
+    """
+    i0     = int(t_jump / DT) + 1          # first sample after step
+    burst  = burst_yaw[i0:]
+    eye    = eye_yaw[i0:]
+    vel    = np.gradient(eye, DT)
+
+    is_sac = np.abs(burst) > threshold
+    on_idx  = np.where(np.diff(is_sac.astype(int)) > 0)[0]
+    off_idx = np.where(np.diff(is_sac.astype(int)) < 0)[0]
+
+    if len(on_idx) == 0:
+        return float(eye[-1] - eye_yaw[i0 - 1]), float(np.max(np.abs(vel)))
+
+    i_on  = on_idx[0] + 1                  # first sample inside saccade
+    after = off_idx[off_idx >= on_idx[0]]
+    i_off = int(after[0]) + 1 if len(after) > 0 else len(burst) - 1
+
+    amplitude = float(eye[i_off] - eye[i_on - 1])
+    peak_vel  = float(np.max(np.abs(vel[i_on:i_off + 1])))
+    return amplitude, peak_vel
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -72,10 +102,11 @@ def _main_sequence(show):
         pt3 = _pt3(t_np, amp, t_jump=t_jump)
         st  = _run(t_np, pt3, key=i)
         # version = average of left and right eye (conjugate movement hits target)
-        eye = (np.array(st.plant[:, 0]) + np.array(st.plant[:, 3])) / 2.0
-        vel = np.gradient(eye, DT)
-        amps_out.append(float(eye[-1] - eye[0]))
-        peak_vels.append(float(np.max(np.abs(vel))))
+        eye   = (np.array(st.plant[:, 0]) + np.array(st.plant[:, 3])) / 2.0
+        burst = extract_burst(st, THETA)[:, 0]
+        a_out, v_peak = _primary_saccade(burst, eye, t_np, t_jump)
+        amps_out.append(a_out)
+        peak_vels.append(v_peak)
         traces[amp] = (t_np - t_jump, eye - eye[int(t_jump / DT)])
 
     A_ref = np.linspace(0, 22, 300)
