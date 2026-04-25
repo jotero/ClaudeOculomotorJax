@@ -18,7 +18,7 @@ if '--show' not in sys.argv:
 import matplotlib.pyplot as plt
 
 from oculomotor.sim.simulator import PARAMS_DEFAULT, with_brain, with_sensory, simulate
-from oculomotor.sim.simulator import _IDX_VIS_L, _IDX_EC, _IDX_PURSUIT
+from oculomotor.sim.simulator import _IDX_VIS_L, _IDX_EC, _IDX_EC_OKR, _IDX_PURSUIT
 from oculomotor.sim import kinematics as km
 from oculomotor.analysis import ax_fmt, extract_burst, extract_sg, ni_net, vs_net
 from oculomotor.models.sensory_models.sensory_model import C_vel as C_vel_sm, C_slip as C_slip_sm
@@ -348,11 +348,12 @@ def _cascade(show):
         if ci == 0: axes[4, ci].legend(fontsize=7)
 
         # ── Pursuit / OKR signal chain (rows 5–7) ────────────────────────────
-        x_vis_L  = np.array(st.sensory[:, _IDX_VIS_L])         # (T, 480)
-        vel_del  = x_vis_L @ np.array(C_vel_sm).T               # (T, 3) delayed target vel
-        slip_del = x_vis_L @ np.array(C_slip_sm).T              # (T, 3) delayed scene slip
-        motor_ec = np.array(st.brain[:, _IDX_EC])[:, 117:]      # (T, 3) EC delayed readout
-        x_purs   = np.array(st.brain[:, _IDX_PURSUIT])          # (T, 3) pursuit memory
+        x_vis_L      = np.array(st.sensory[:, _IDX_VIS_L])          # (T, 480)
+        vel_del      = x_vis_L @ np.array(C_vel_sm).T                # (T, 3) delayed target vel
+        slip_del     = x_vis_L @ np.array(C_slip_sm).T               # (T, 3) delayed scene slip
+        motor_ec_pu  = np.array(st.brain[:, _IDX_EC])[:, 117:]       # (T, 3) pursuit EC readout
+        motor_ec_okr = np.array(st.brain[:, _IDX_EC_OKR])[:, 117:]  # (T, 3) OKR EC readout
+        x_purs       = np.array(st.brain[:, _IDX_PURSUIT])           # (T, 3) pursuit memory
 
         # Row 5: raw delayed velocities
         axes[5, ci].plot(t_np, vel_del[:, 0],  color='darkorange', lw=1.2, label='tgt_vel')
@@ -360,9 +361,9 @@ def _cascade(show):
         ax_fmt(axes[5, ci])
         if ci == 0: axes[5, ci].legend(fontsize=7)
 
-        # Row 6: EC-corrected + saturated (pursuit path and OKR path)
-        tgt_ec_sat   = _vel_sat_np(vel_del  + motor_ec, THETA.brain.v_max_pursuit)
-        scene_ec_sat = _vel_sat_np(slip_del + motor_ec, THETA.brain.v_max_okr)
+        # Row 6: EC-corrected + saturated (pursuit path uses pursuit EC; OKR path uses OKR EC)
+        tgt_ec_sat   = _vel_sat_np(vel_del  + motor_ec_pu,  THETA.brain.v_max_pursuit)
+        scene_ec_sat = _vel_sat_np(slip_del + motor_ec_okr, THETA.brain.v_max_okr)
         axes[6, ci].plot(t_np, tgt_ec_sat[:, 0],   color='#7b2d8b', lw=1.2, label='tgt−EC (sat)')
         axes[6, ci].plot(t_np, scene_ec_sat[:, 0],  color='#1a7a4a', lw=1.2, label='scene−EC (sat)')
         ax_fmt(axes[6, ci])

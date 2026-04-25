@@ -382,9 +382,13 @@ def _cascade(show):
     eye_o  = np.array(st_o.plant[:, 0])
     ev_o   = np.gradient(eye_o, DT)
 
+    ZOOM_T0, ZOOM_T1 = 5.0, 10.0   # 5-second window for nystagmus zoom rows
+
     # ── Figure ────────────────────────────────────────────────────────────────
-    fig, axes = plt.subplots(5, 2, figsize=(14, 14),
-                             gridspec_kw={'hspace': 0.45, 'wspace': 0.35})
+    fig, axes = plt.subplots(7, 2, figsize=(14, 16),
+                             gridspec_kw={'hspace': 0.55, 'wspace': 0.32,
+                                          'height_ratios': [1, 1, 1, 1, 1, 0.8, 0.8]},
+                             layout='constrained')
     fig.suptitle('VOR / OKR Signal Cascade\n'
                  'Left: VOR in dark (head rotation)   ·   Right: OKN (scene motion)',
                  fontsize=11)
@@ -393,7 +397,9 @@ def _cascade(show):
                   'Canal afferents / visual delay output (deg/s)',
                   'Velocity storage x_VS (deg/s)',
                   'Neural integrator x_NI (deg)',
-                  'Eye velocity (deg/s)']
+                  'Eye velocity (deg/s)',
+                  f'Eye pos zoom [{ZOOM_T0:.0f}–{ZOOM_T1:.0f} s] (deg)',
+                  f'Eye vel zoom [{ZOOM_T0:.0f}–{ZOOM_T1:.0f} s] (deg/s)']
     for r, lbl in enumerate(row_labels):
         axes[r, 0].set_ylabel(lbl, fontsize=8)
 
@@ -412,7 +418,7 @@ def _cascade(show):
     axes[4, 0].plot(t_vor, bst_spv,       color=utils.C['spv'],   lw=1.8, label='SPV')
     axes[4, 0].set_xlabel('Time (s)', fontsize=8)
 
-    for ax in axes[:, 0]:
+    for ax in axes[:5, 0]:
         ax.axvline(15.0, **vl); ax_fmt(ax); ax.legend(fontsize=7)
 
     # OKR
@@ -427,10 +433,35 @@ def _cascade(show):
     axes[4, 1].plot(t_okn_np, spv_okn, color=utils.C['spv'], lw=1.8, label='SPV')
     axes[4, 1].set_xlabel('Time (s)', fontsize=8)
 
-    for ax in axes[:, 1]:
+    for ax in axes[:5, 1]:
         ax_fmt(ax); ax.legend(fontsize=7)
 
-    fig.tight_layout()
+    # ── Nystagmus zoom rows (rows 5–6): 5-second window, ±100 deg/s ──────────
+    # VOR zoom: t=[5, 10] s — during rotation, fast phases visible
+    zm_v = (t_vor >= ZOOM_T0) & (t_vor <= ZOOM_T1)
+    eye_v_pos = np.array(st_v.plant[:, 0])
+    axes[5, 0].plot(t_vor[zm_v], eye_v_pos[zm_v], color=utils.C['eye'], lw=1.0)
+    axes[5, 0].set_xlim(ZOOM_T0, ZOOM_T1); ax_fmt(axes[5, 0])
+    axes[5, 0].set_xlabel('Time (s)', fontsize=8)
+
+    axes[6, 0].plot(t_vor[zm_v], ev_v[zm_v],     color=utils.C['eye'], lw=0.8, alpha=0.5, label='eye vel')
+    axes[6, 0].plot(t_vor[zm_v], bst_spv[zm_v],  color=utils.C['spv'], lw=1.8, label='SPV')
+    axes[6, 0].set_xlim(ZOOM_T0, ZOOM_T1); axes[6, 0].set_ylim(-100, 100)
+    ax_fmt(axes[6, 0]); axes[6, 0].legend(fontsize=7)
+    axes[6, 0].set_xlabel('Time (s)', fontsize=8)
+
+    # OKR zoom: t=[5, 10] s — during steady-state OKN nystagmus
+    zm_o = (t_okn_np >= ZOOM_T0) & (t_okn_np <= ZOOM_T1)
+    eye_o_pos = np.array(st_o.plant[:, 0])
+    axes[5, 1].plot(t_okn_np[zm_o], eye_o_pos[zm_o], color=utils.C['eye'], lw=1.0)
+    axes[5, 1].set_xlim(ZOOM_T0, ZOOM_T1); ax_fmt(axes[5, 1])
+    axes[5, 1].set_xlabel('Time (s)', fontsize=8)
+
+    axes[6, 1].plot(t_okn_np[zm_o], ev_o[zm_o],     color=utils.C['eye'], lw=0.8, alpha=0.5, label='eye vel')
+    axes[6, 1].plot(t_okn_np[zm_o], spv_okn[zm_o],  color=utils.C['spv'], lw=1.8, label='SPV')
+    axes[6, 1].set_xlim(ZOOM_T0, ZOOM_T1); axes[6, 1].set_ylim(-100, 100)
+    ax_fmt(axes[6, 1]); axes[6, 1].legend(fontsize=7)
+    axes[6, 1].set_xlabel('Time (s)', fontsize=8)
     path, rp = utils.save_fig(fig, 'vor_okr_cascade', show=show)
     return utils.fig_meta(path, rp,
         title='VOR / OKR Signal Cascade (Internal)',
@@ -455,13 +486,11 @@ SECTION = dict(
 def run(show=False):
     print('\n=== VOR / OKR ===')
     figs = []
-    print('  1/4  Raphan Fig.9 replication …')
+    print('  1/3  Raphan Fig.9 replication …')
     figs.append(_raphan(show))
-    print('  2/4  OKN nystagmus zoom …')
-    figs.append(_okn_zoom(show))
-    print('  3/4  VOR TC comparison …')
+    print('  2/3  VOR TC comparison …')
     figs.append(_vor_tc(show))
-    print('  4/4  signal cascade …')
+    print('  3/3  signal cascade …')
     figs.append(_cascade(show))
     return figs
 

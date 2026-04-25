@@ -31,7 +31,6 @@ MODULES = [
     'bench_pursuit',
     'bench_vergence',
     'bench_fixation',
-    'bench_efference',
 ]
 
 

@@ -44,7 +44,7 @@ from oculomotor.models.plant_models.readout import rotation_matrix
 
 # ── Velocity saturation ─────────────────────────────────────────────────────────
 
-def velocity_saturation(v, v_sat, v_zero=None):
+def velocity_saturation(v, v_sat, v_zero=None, v_offset=None):
     """Smooth velocity saturation: passes at low speed, gain ramps to zero at high speed.
 
     For a velocity vector v:
@@ -59,6 +59,20 @@ def velocity_saturation(v, v_sat, v_zero=None):
     artifact) drive the pursuit integrator at full saturation velocity.  This
     function returns zero instead, faithfully modelling MT/MST insensitivity to
     implausibly fast retinal motion.
+
+    Background-shifted saturation (v_offset)
+    -----------------------------------------
+    When v_offset is supplied the saturation window is centred on v_offset:
+
+        v_rel = v - v_offset
+        output = velocity_saturation(v_rel, v_sat, v_zero) + v_offset
+
+    Use case: efference-copy EC cascade input.  The retina clips scene_vel at ±v_sat;
+    the clip boundary depends on the *total* retinal velocity including the background
+    slip (v_offset ≈ percept.scene_slip).  Shifting the EC saturation by the same
+    background ensures vel_sat(scene_vel) + vel_sat_shifted(u_motor) = w_scene (the
+    uncorrupted scene drive), so the saccade-induced retinal slip cancels exactly
+    without the background component interacting with the rolloff.
 
     Speed tuning background
     -----------------------
@@ -78,28 +92,39 @@ def velocity_saturation(v, v_sat, v_zero=None):
         — Review of pursuit velocity range and MT contribution.
     Priebe NJ & Lisberger SG (2004) J Neurosci 24:4907-4926
         — Population speed coding in MT; pursuit gain × speed relationship.
-    Buettner U et al. (1976) Brain Res 108:359-377
+    Buettner U et al. (1976) Brain Res 108:359-777
         — OKN gain as a function of stimulus velocity; falls above 80 deg/s.
 
     Args:
-        v:      (N,) velocity vector (deg/s); norm computed over the full vector
-        v_sat:  saturation onset (deg/s) — gain is exactly 1 below this
-        v_zero: speed where gain reaches 0 (deg/s); default = 2 × v_sat
+        v:        (N,) velocity vector (deg/s); norm computed over the full vector
+        v_sat:    saturation onset (deg/s) — gain is exactly 1 below this
+        v_zero:   speed where gain reaches 0 (deg/s); default = 2 × v_sat
+        v_offset: (N,) background velocity to shift the clip window (deg/s);
+                  default None = zero offset (standard symmetric clip)
 
     Returns:
-        Same shape as v, scaled by smooth gain ∈ [0, 1].
+        Same shape as v, scaled by smooth gain ∈ [0, 1], plus v_offset if given.
 
     Example (pursuit):
         velocity_saturation(target_slip, v_sat=40.0)   # v_zero defaults to 80.0
     Example (OKR/NOT):
         velocity_saturation(scene_slip, v_sat=80.0, v_zero=160.0)
+    Example (EC with background):
+        velocity_saturation(u_motor, v_sat=80.0, v_offset=percept.scene_slip)
     """
     if v_zero is None:
         v_zero = 2.0 * v_sat
-    speed = jnp.linalg.norm(v)
+    if v_offset is not None:
+        v_rel = v - v_offset
+    else:
+        v_rel = v
+    speed = jnp.linalg.norm(v_rel)
     t     = jnp.clip((speed - v_sat) / (v_zero - v_sat), 0.0, 1.0)
     gain  = 0.5 * (1.0 + jnp.cos(jnp.pi * t))
-    return v * gain
+    result = v_rel * gain
+    if v_offset is not None:
+        result = result + v_offset
+    return result
 
 
 # ── Cascade parameters ──────────────────────────────────────────────────────────

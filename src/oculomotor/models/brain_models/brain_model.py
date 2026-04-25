@@ -430,9 +430,13 @@ def step(x_brain, sensory_out, brain_params):
     percept = _cyclopean_percept(sensory_out, brain_params)
 
     # ── Two ECs, two corrections with separate clips and gates ───────────────
-    # motor_ec_pursuit: delayed pursuit-path EC (pre-clipped at v_max_pursuit in step_pursuit).
-    # motor_ec_okr:     delayed OKR-path EC (pre-clipped at v_max_okr in step_okr).
-    # Both cascade outputs are already speed-capped to match their respective visual cascades.
+    # EC cascade inputs are background-shifted: vel_sat(u_motor - bg, v_max) + bg.
+    # This centres the clip window on the background retinal slip rather than zero,
+    # so the saccade component (u_motor - bg) is clipped at the same effective level
+    # as the scene/target velocity cascade, ensuring cancellation holds when the eye
+    # is already moving (OKN fast phases, saccades during pursuit).
+    #   OKR background  = percept.scene_slip  (delayed scene velocity on retina)
+    #   Pursuit bg      = percept.vel_delayed (delayed target velocity on retina)
     motor_ec_pursuit = ec.read_delayed(x_ec)
     motor_ec_okr     = ec.read_delayed(x_ec_okr)
 
@@ -501,8 +505,8 @@ def step(x_brain, sensory_out, brain_params):
     # introducing ~sin(gaze)·g_burst of spurious roll into the EC cascade.
     R_gaze_T = rotation_matrix(x_ni_net).T   # R_eye.T  (head → eye frame)
     u_motor  = R_gaze_T @ (u_burst + u_pursuit)
-    dx_ec,     _ = ec.step(x_ec,     velocity_saturation(u_motor, brain_params.v_max_pursuit), brain_params)
-    dx_ec_okr, _ = ec.step(x_ec_okr, velocity_saturation(u_motor, brain_params.v_max_okr),    brain_params)
+    dx_ec     = ec.step(x_ec,     velocity_saturation(u_motor, brain_params.v_max_pursuit, v_offset=percept.target_slip),  brain_params)
+    dx_ec_okr = ec.step(x_ec_okr, velocity_saturation(u_motor, brain_params.v_max_okr,     v_offset=percept.scene_slip),   brain_params)
 
     # ── Pack state derivative ─────────────────────────────────────────────────
     dx_brain = jnp.concatenate([dx_vs, dx_ni, dx_sg, dx_ec, dx_ec_okr, dx_grav, dx_pursuit, dx_verg, dx_acc])

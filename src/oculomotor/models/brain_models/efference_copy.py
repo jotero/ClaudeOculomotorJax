@@ -89,11 +89,8 @@ def step(x_ec, u, brain_params):
         brain_params: BrainParams  model parameters (reads tau_vis)
 
     Returns:
-        dx_ec:     (120,)  dx_ec/dt
-        u_delayed: (3,)    signal delayed by tau_vis (from current state)
+        dx_ec: (120,)  dx_ec/dt
     """
-    dx_ec     = delay_cascade_step(x_ec, u, brain_params.tau_vis)
-    u_delayed = delay_cascade_read(x_ec)   # pure state read — no lag vs dx_ec
-    return dx_ec, u_delayed
+    return delay_cascade_step(x_ec, u, brain_params.tau_vis)
 
 
