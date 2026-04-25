@@ -124,6 +124,13 @@ def step(x_oto, u, sensory_params):
     dx_R = (SENS_RIGHT @ f - x_R) / tau
 
     dx_oto = jnp.concatenate([dx_L, dx_R])
-    f_gia  = PINV_SENS @ x_oto   # average of LP-filtered outputs (current state)
+    # Return the INSTANTANEOUS GIA (= f), not the LP-adapted state.
+    # The gravity estimator needs the raw otolith reading so the correction
+    # term K_grav·(f−ĝ) works correctly during sustained tilt — if we pass the
+    # LP state (tau_oto=100 s), the correction pulls ĝ back toward upright
+    # once the canal decays, causing visible drift.
+    # x_oto remains as an adaptation state for future somatogravic illusion
+    # modelling (comparing adapted vs raw response).
+    f_gia  = f   # instantaneous GIA in head frame (m/s²)
 
     return dx_oto, f_gia
