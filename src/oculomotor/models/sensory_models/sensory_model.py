@@ -264,39 +264,25 @@ def step(x_sensory,
     x_vis_L = x_sensory[_IDX_VIS_L]
     x_vis_R = x_sensory[_IDX_VIS_R]
 
-    # Eye offsets in head frame — all geometry handled inside retinal_signals.
     ipd_half  = sensory_params.ipd * 0.5
-    eye_off_L = jnp.array([-ipd_half, 0.0, 0.0])   # left  eye in head frame
-    eye_off_R = jnp.array([ ipd_half, 0.0, 0.0])   # right eye in head frame
-
-    # Retinal signals per eye (all raw — no pre-gating; gating happens at readout)
-    target_pos_L, scene_vel_L, target_vel_L, target_in_vf_L = _retina.retinal_signals(
-        p_target, eye_off_L, q_head, w_head, x_head, v_head,
-        q_eye_L, w_eye_L, w_scene, v_target,
-        sensory_params.visual_field_limit, sensory_params.k_visual_field)
-
-    target_pos_R, scene_vel_R, target_vel_R, target_in_vf_R = _retina.retinal_signals(
-        p_target, eye_off_R, q_head, w_head, x_head, v_head,
-        q_eye_R, w_eye_R, w_scene, v_target,
-        sensory_params.visual_field_limit, sensory_params.k_visual_field)
-
-    # Visibility of scene and target. Both dependent of presence, target depends on field of view too.
-    target_visible_L = target_present_L * target_in_vf_L
-    target_visible_R = target_present_R * target_in_vf_R
-    scene_visible_L = scene_present_L;
-    scene_visible_R = scene_present_R;
+    eye_off_L = jnp.array([-ipd_half, 0.0, 0.0])
+    eye_off_R = jnp.array([ ipd_half, 0.0, 0.0])
 
     dx_c,   _ = _canal.step(x_c,   w_head, sensory_params)
     dx_oto, _ = _otolith.step(x_oto, jnp.concatenate([a_head, q_head]), sensory_params)
 
     dx_vis_L = _retina.step(
-        x_vis_L, scene_vel_L, target_pos_L, target_vel_L,
-        scene_visible_L, target_visible_L, target_strobed, sensory_params.tau_vis,
+        x_vis_L, p_target, eye_off_L,
+        q_head, w_head, x_head, v_head, q_eye_L, w_eye_L, w_scene, v_target,
+        scene_present_L, target_present_L, target_strobed,
+        sensory_params.tau_vis, sensory_params.visual_field_limit, sensory_params.k_visual_field,
         v_max_scene_vel=sensory_params.v_max_scene_vel,
         v_max_target_vel=sensory_params.v_max_target_vel)
     dx_vis_R = _retina.step(
-        x_vis_R, scene_vel_R, target_pos_R, target_vel_R,
-        scene_visible_R, target_visible_R, target_strobed, sensory_params.tau_vis,
+        x_vis_R, p_target, eye_off_R,
+        q_head, w_head, x_head, v_head, q_eye_R, w_eye_R, w_scene, v_target,
+        scene_present_R, target_present_R, target_strobed,
+        sensory_params.tau_vis, sensory_params.visual_field_limit, sensory_params.k_visual_field,
         v_max_scene_vel=sensory_params.v_max_scene_vel,
         v_max_target_vel=sensory_params.v_max_target_vel)
 

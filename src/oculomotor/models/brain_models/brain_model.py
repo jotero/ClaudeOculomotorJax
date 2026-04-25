@@ -75,6 +75,7 @@ from typing import NamedTuple
 
 import jax.numpy as jnp
 
+from oculomotor.models.sensory_models.retina import velocity_saturation
 from oculomotor.models.brain_models import velocity_storage    as vs
 from oculomotor.models.brain_models import neural_integrator   as ni
 from oculomotor.models.brain_models import saccade_generator   as sg
@@ -500,8 +501,8 @@ def step(x_brain, sensory_out, brain_params):
     # introducing ~sin(gaze)·g_burst of spurious roll into the EC cascade.
     R_gaze_T = rotation_matrix(x_ni_net).T   # R_eye.T  (head → eye frame)
     u_motor  = R_gaze_T @ (u_burst + u_pursuit)
-    dx_ec,     _ = ec.step_pursuit(x_ec,     u_motor, brain_params)
-    dx_ec_okr, _ = ec.step_okr(x_ec_okr, u_motor, brain_params)
+    dx_ec,     _ = ec.step(x_ec,     velocity_saturation(u_motor, brain_params.v_max_pursuit), brain_params)
+    dx_ec_okr, _ = ec.step(x_ec_okr, velocity_saturation(u_motor, brain_params.v_max_okr),    brain_params)
 
     # ── Pack state derivative ─────────────────────────────────────────────────
     dx_brain = jnp.concatenate([dx_vs, dx_ni, dx_sg, dx_ec, dx_ec_okr, dx_grav, dx_pursuit, dx_verg, dx_acc])

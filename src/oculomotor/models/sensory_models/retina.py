@@ -266,43 +266,62 @@ def delay_cascade_read(x_cascade):
 
 # ── Combined visual delay step ───────────────────────────────────────────────────
 
-def step(x_vis, scene_vel, target_pos, target_vel,
-         scene_present, target_visible, target_strobed, tau_vis,
+def step(x_vis,
+         p_target, eye_offset,
+         q_head, w_head, x_head, v_head,
+         q_eye, w_eye,
+         w_scene, v_target,
+         scene_present, target_present, target_strobed,
+         tau_vis, visual_field_limit, k_visual_field,
          v_max_scene_vel=80.0, v_max_target_vel=40.0):
     """Single ODE step for the full visual delay cascade (six signals).
 
-    Signals are gated and speed-saturated at the cascade input:
+    Computes retinal geometry (via retinal_signals) then gates, speed-saturates,
+    and advances six delay cascades:
         scene_vel   × scene_present → velocity_saturation(·, v_max_scene_vel)   → OKR / VS
         target_pos  × target_visible                                              → saccade error
         target_vel  × target_visible × (1 − target_strobed)
                     → velocity_saturation(·, v_max_target_vel)                  → pursuit drive
 
+    where target_visible = target_present × target_in_vf (retinal field-of-view gate).
+
     Pre-delay saturation ensures that step-target velocity spikes (e.g. 9000 deg/s
     from central-difference numerics) never enter the cascade.  The cascade output
     is then always ≤ v_max, matching the physiological speed tuning of MT/MST
-    (target) and NOT/AOS (scene) neurons.  EC subtraction and further post-delay
-    saturation are applied later in brain_model.
-
-    Presence flags and strobe are delayed raw so the brain has timing information.
+    (target) and NOT/AOS (scene) neurons.
 
     State layout: [x_scene_vel(120) | x_target_pos(120) | x_target_vel(120)
                    | x_scene_visible(40) | x_target_visible(40) | x_strobed(40)]
 
     Args:
-        x_vis:             (480,)  visual cascade state
-        scene_vel:         (3,)    scene velocity on retina, eye frame (deg/s)
-        target_pos:        (3,)    target position on retina, eye frame (deg)
-        target_vel:        (3,)    target velocity on retina, eye frame (deg/s)
-        scene_present:     scalar  is scene physically present? ∈ {0, 1}
-        target_visible:    scalar  target_present × target_in_vf ∈ [0, 1]
-        target_strobed:    scalar  1 = stroboscopic illumination ∈ {0, 1}
-        tau_vis:           float   total cascade delay (s)
-        v_max_scene_vel:   float   NOT/AOS speed ceiling (deg/s); default 80.0
-        v_max_target_vel:  float   MT/MST speed ceiling (deg/s);  default 40.0
+        x_vis:               (480,)  visual cascade state
+        p_target:            (3,)    target 3-D position (m, world frame)
+        eye_offset:          (3,)    eye centre in head frame (m); e.g. [±ipd/2, 0, 0]
+        q_head:              (3,)    head rotation vector (deg)
+        w_head:              (3,)    head angular velocity (deg/s)
+        x_head:              (3,)    head linear position (m, world frame)
+        v_head:              (3,)    head linear velocity (m/s, world frame)
+        q_eye:               (3,)    eye rotation vector (deg, head frame)
+        w_eye:               (3,)    eye angular velocity (deg/s, head frame)
+        w_scene:             (3,)    scene angular velocity (deg/s, world frame)
+        v_target:            (3,)    target angular velocity (deg/s, world frame)
+        scene_present:       scalar  is scene physically present? ∈ {0, 1}
+        target_present:      scalar  is target present (not occluded)? ∈ {0, 1}
+        target_strobed:      scalar  1 = stroboscopic illumination ∈ {0, 1}
+        tau_vis:             float   total cascade delay (s)
+        visual_field_limit:  float   retinal eccentricity limit (deg)
+        k_visual_field:      float   sigmoid steepness for visual field gate (1/deg)
+        v_max_scene_vel:     float   NOT/AOS speed ceiling (deg/s); default 80.0
+        v_max_target_vel:    float   MT/MST speed ceiling (deg/s);  default 40.0
 
     Returns:
         dx_vis: (480,)  dx_vis/dt
     """
+    target_pos, scene_vel, target_vel, target_in_vf = retinal_signals(
+        p_target, eye_offset, q_head, w_head, x_head, v_head,
+        q_eye, w_eye, w_scene, v_target,
+        visual_field_limit, k_visual_field)
+
     x_scene_vel   = x_vis[              :   _N_PER_SIG]
     x_target_pos  = x_vis[ _N_PER_SIG   : 2*_N_PER_SIG]
     x_target_vel  = x_vis[2*_N_PER_SIG  : 3*_N_PER_SIG]
@@ -310,7 +329,9 @@ def step(x_vis, scene_vel, target_pos, target_vel,
     x_target_vis  = x_vis[_OFF_TARGET_VIS: _OFF_STROBED]
     x_strobed     = x_vis[_OFF_STROBED   :]
 
-    scene_vel_in  = velocity_saturation(scene_vel  * scene_present,                         v_max_scene_vel)
+    target_visible = target_present * target_in_vf
+
+    scene_vel_in  = velocity_saturation(scene_vel  * scene_present,                           v_max_scene_vel)
     target_pos_in = target_pos * target_visible
     target_vel_in = velocity_saturation(target_vel * target_visible * (1.0 - target_strobed), v_max_target_vel)
 

@@ -25,6 +25,18 @@ it TWICE — once for u_burst (saccade EC) and once for u_pursuit (pursuit EC):
 The EC delay uses the same gamma-distributed cascade (N_STAGES first-order LP
 filters, tau_vis total delay) as the visual pathway.
 
+Visibility gating note
+──────────────────────
+The motor command is fed into the EC cascade unconditionally — it is NOT gated
+by scene_present or target_present before entering the delay.  This means that
+eye movements made just before a scene/target appears will leave a transient EC
+signal in the cascade that emerges ~tau_vis seconds later and briefly drives the
+VS / pursuit correction as if a self-generated motion had just occurred.  In
+practice this is negligible: the artifact lasts only one tau_vis (~80 ms) and
+occurs only at the exact moment of visibility onset, which is rarely the critical
+epoch in standard paradigms.  If it ever matters, gate u before delay_cascade_step
+by the appropriate presence flag.
+
 Frame note
 ──────────
 The motor command (u_burst + u_pursuit) is in head frame.  The retinal slip
@@ -45,7 +57,6 @@ Parameters:
 """
 
 from oculomotor.models.sensory_models.retina import delay_cascade_step, delay_cascade_read
-from oculomotor.models.sensory_models.retina import velocity_saturation
 from oculomotor.models.sensory_models.retina import _N_PER_SIG
 
 N_STATES  = _N_PER_SIG   # 120  — one delay cascade for one 3-D signal
@@ -86,39 +97,3 @@ def step(x_ec, u, brain_params):
     return dx_ec, u_delayed
 
 
-def step_pursuit(x_ec, u, brain_params):
-    """EC step for the pursuit cancellation path.
-
-    Clips the motor command at v_max_pursuit before entering the cascade so the
-    delayed EC matches the ceiling of the target_vel cascade (MT/MST tuning).
-    A large saccade burst (700 deg/s) is reduced to ≤ v_max_pursuit so it cannot
-    overcorrect the already-clipped delayed target velocity.
-
-    Args:
-        x_ec:         (120,)       pursuit EC cascade state
-        u:            (3,)         motor command (u_burst + u_pursuit), eye frame
-        brain_params: BrainParams  reads v_max_pursuit, tau_vis
-
-    Returns:
-        dx_ec:     (120,)  dx_ec/dt
-        u_delayed: (3,)    clipped-and-delayed motor command
-    """
-    return step(x_ec, velocity_saturation(u, brain_params.v_max_pursuit), brain_params)
-
-
-def step_okr(x_ec, u, brain_params):
-    """EC step for the OKR / VS cancellation path.
-
-    Clips the motor command at v_max_okr before entering the cascade so the
-    delayed EC matches the ceiling of the scene_vel cascade (NOT/AOS tuning).
-
-    Args:
-        x_ec:         (120,)       OKR EC cascade state
-        u:            (3,)         motor command (u_burst + u_pursuit), eye frame
-        brain_params: BrainParams  reads v_max_okr, tau_vis
-
-    Returns:
-        dx_ec:     (120,)  dx_ec/dt
-        u_delayed: (3,)    clipped-and-delayed motor command
-    """
-    return step(x_ec, velocity_saturation(u, brain_params.v_max_okr), brain_params)
