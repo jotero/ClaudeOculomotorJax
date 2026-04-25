@@ -23,6 +23,8 @@ import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 
 from oculomotor.sim import stimuli as stim
+from oculomotor.sim import kinematics as km
+from oculomotor.sim.kinematics import TargetTrajectory
 from oculomotor.llm_pipeline.scenario import SimulationScenario, SimulationComparison, Patient
 from oculomotor.sim.simulator import (
     PARAMS_DEFAULT, with_brain, with_sensory, simulate,
@@ -72,69 +74,62 @@ def _resolve_target_angular_shorthand(segments):
 
 
 def _build_stimulus(scenario: SimulationScenario) -> dict:
-    """Convert BodySegment lists to simulator keyword arrays.
+    """Convert BodySegment lists to simulator inputs.
 
-    Returns a dict for ``**stim_kwargs`` in ``simulate()``, plus 't_array'.
-    All three body channels are integrated to consistent 6-DOF trajectories;
-    the target is projected to retinal coordinates via full 3-D geometry.
+    Returns a dict containing:
+    - '_head_km', '_scene_km', '_target_tt': trajectory objects for simulate()
+    - flat arrays for _draw_panel() / _build_sim_data()
+    - visual flag arrays used by both simulate() and _draw_panel()
     """
     dt  = 0.001
     T   = int(round(scenario.duration_s / dt))
     t   = np.arange(T, dtype=np.float32) * dt
 
-    # ── Build 6-DOF arrays for each body ──────────────────────────────────────
-    head_arr   = stim.build_body_arrays(scenario.head,  T, dt, default_lin_pos=(0.0, 0.0, 0.0))
-    scene_arr  = stim.build_body_arrays(scenario.scene, T, dt, default_lin_pos=(0.0, 0.0, 5.0))
+    # ── Build 6-DOF trajectories ──────────────────────────────────────────────
+    head_km  = km.build_kinematics_from_segments(scenario.head,  T, dt, default_lin_pos=(0.0, 0.0, 0.0))
+    scene_km = km.build_kinematics_from_segments(scenario.scene, T, dt, default_lin_pos=(0.0, 0.0, 5.0))
 
-    # Resolve angular shorthand on target before building
     target_segs_resolved = _resolve_target_angular_shorthand(scenario.target)
-    target_arr = stim.build_body_arrays(target_segs_resolved, T, dt, default_lin_pos=(0.0, 0.0, 1.0))
+    target_km = km.build_kinematics_from_segments(target_segs_resolved, T, dt, default_lin_pos=(0.0, 0.0, 1.0))
+    target_tt = TargetTrajectory(t=target_km.t, lin_pos=target_km.lin_pos, lin_vel=target_km.lin_vel)
 
-    # ── Simulator inputs ───────────────────────────────────────────────────────
+    # ── Flat arrays for plotting ───────────────────────────────────────────────
 
-    # Head angular velocity → semicircular canals
-    head_vel = head_arr['rot_vel']                 # (T, 3) deg/s
+    head_vel = head_km.rot_vel                              # (T, 3) deg/s
+    v_scene  = scene_km.rot_vel                            # (T, 3) deg/s
 
-    # Target position in head frame (metres) — depth preserved for binocular disparity
-    rel_pos = target_arr['lin_pos'] - head_arr['lin_pos']   # (T, 3) m
-    rel_vel = target_arr['lin_vel'] - head_arr['lin_vel']   # (T, 3) m/s
+    rel_pos  = target_km.lin_pos - head_km.lin_pos         # (T, 3) m
+    rel_vel  = target_km.lin_vel - head_km.lin_vel         # (T, 3) m/s
     p_target = rel_pos.astype(np.float32)
 
-    # Angular velocity of target as seen from head (deg/s)
-    # d/dt(arctan(x/z)) = (vx·z − x·vz) / (z² + x²)  [rad/s] × (180/π)
-    depth   = np.maximum(rel_pos[:, 2], 0.05)              # clip to 5 cm minimum
+    # Angular velocity of target in head frame (deg/s) — for plotting only
+    depth   = np.maximum(rel_pos[:, 2], 0.05)
     denom_x = depth ** 2 + rel_pos[:, 0] ** 2
     denom_y = depth ** 2 + rel_pos[:, 1] ** 2
     v_target = np.zeros((T, 3), dtype=np.float32)
     v_target[:, 0] = ((rel_vel[:, 0] * depth - rel_pos[:, 0] * rel_vel[:, 2]) / denom_x * (180.0 / np.pi))
     v_target[:, 1] = ((rel_vel[:, 1] * depth - rel_pos[:, 1] * rel_vel[:, 2]) / denom_y * (180.0 / np.pi))
 
-    # Scene angular velocity → OKR / velocity storage
-    v_scene = scene_arr['rot_vel']                 # (T, 3) deg/s
-
     # Visual flags — per-eye scene_present, target_present, and strobe flag
     spL, spR, tpL, tpR, ts = stim.build_visual_flags(scenario.visual, T, dt)
 
-    # Head linear acceleration in world frame → simulator adds gravity rotation to get
-    # specific force in head frame (already done inside ODE_ocular_motor)
-    head_lin_acc = head_arr['lin_acc']   # (T, 3) m/s²
-
     return dict(
         t_array                 = t,
+        # Trajectory objects for simulate() — stripped before _draw_panel
+        _head_km                = head_km,
+        _scene_km               = scene_km,
+        _target_tt              = target_tt,
+        # Flat arrays for _draw_panel() / _build_sim_data()
         head_vel_array          = jnp.array(head_vel),
-        head_accel_array        = jnp.array(head_lin_acc),
         p_target_array          = jnp.array(p_target),
         v_target_array          = jnp.array(v_target),
         v_scene_array           = jnp.array(v_scene),
+        # Visual flags — used by both simulate() and _draw_panel()
         scene_present_L_array   = jnp.array(spL),
         scene_present_R_array   = jnp.array(spR),
         target_present_L_array  = jnp.array(tpL),
         target_present_R_array  = jnp.array(tpR),
         target_strobed_array    = jnp.array(ts),
-        # 6-DOF arrays stored for plotting (stripped before passing to ODE)
-        _head_lin_pos           = head_arr['lin_pos'],
-        _head_lin_vel           = head_arr['lin_vel'],
-        _target_world_pos       = target_arr['lin_pos'],
     )
 
 
@@ -591,20 +586,30 @@ def run_scenario(scenario: SimulationScenario, output_path: str | None = None,
     # Build stimulus and params
     stim_kw = _build_stimulus(scenario)
     t_array = stim_kw.pop('t_array')
-    # Strip private keys (6-DOF arrays stored for plotting but not passed to ODE)
-    plot_extra = {k: stim_kw.pop(k) for k in list(stim_kw) if k.startswith('_')}
-    params  = _build_params(scenario.patient)
 
-    # max_steps must cover all ODE steps: duration_s / dt_solve = T
-    # Add 50% headroom — diffrax may take more steps near discontinuities
+    # Extract trajectory objects for simulate(); keep flat arrays for plotting
+    head_km   = stim_kw.pop('_head_km')
+    scene_km  = stim_kw.pop('_scene_km')
+    target_tt = stim_kw.pop('_target_tt')
+    # Strip any remaining _ keys
+    for k in list(stim_kw):
+        if k.startswith('_'):
+            stim_kw.pop(k)
+
+    params    = _build_params(scenario.patient)
     max_steps = int(len(t_array) * 1.5) + 2000
 
     # Run simulation
     states = simulate(
         params, t_array,
+        head=head_km, scene=scene_km, target=target_tt,
+        scene_present_L_array=stim_kw['scene_present_L_array'],
+        scene_present_R_array=stim_kw['scene_present_R_array'],
+        target_present_L_array=stim_kw['target_present_L_array'],
+        target_present_R_array=stim_kw['target_present_R_array'],
+        target_strobed_array=stim_kw['target_strobed_array'],
         return_states=True,
         max_steps=max_steps,
-        **stim_kw,
     )
 
     # Extract signals
@@ -742,14 +747,27 @@ def run_comparison(
     for scenario in comparison.scenarios:
         stim_kw = _build_stimulus(scenario)
         t_array = stim_kw.pop('t_array')
-        # Strip private 6-DOF arrays before passing to ODE solver
+
+        head_km   = stim_kw.pop('_head_km')
+        scene_km  = stim_kw.pop('_scene_km')
+        target_tt = stim_kw.pop('_target_tt')
         for k in list(stim_kw):
             if k.startswith('_'):
                 stim_kw.pop(k)
-        params  = _build_params(scenario.patient)
+
+        params    = _build_params(scenario.patient)
         max_steps = int(len(t_array) * 1.5) + 2000
-        states = simulate(params, t_array, return_states=True,
-                          max_steps=max_steps, **stim_kw)
+        states = simulate(
+            params, t_array,
+            head=head_km, scene=scene_km, target=target_tt,
+            scene_present_L_array=stim_kw['scene_present_L_array'],
+            scene_present_R_array=stim_kw['scene_present_R_array'],
+            target_present_L_array=stim_kw['target_present_L_array'],
+            target_present_R_array=stim_kw['target_present_R_array'],
+            target_strobed_array=stim_kw['target_strobed_array'],
+            return_states=True,
+            max_steps=max_steps,
+        )
         sig = _extract_signals(states, params, t_array)
         results.append((t_array, sig, stim_kw))
         print(f"  ✓ {scenario.description}")
