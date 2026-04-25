@@ -71,7 +71,7 @@ def _extract(states, pt3_np, theta, t_np):
     x_copy = x_sg[:, :3]
     z_ref  = x_sg[:, 3]
     e_held = x_sg[:, 4:7]
-    z_sac  = x_sg[:, 7]
+    z_opn  = x_sg[:, 7]
     z_acc  = x_sg[:, 8]
     e_res  = e_held - x_copy
 
@@ -88,7 +88,7 @@ def _extract(states, pt3_np, theta, t_np):
         e_held=e_held[:, 0],
         x_copy=x_copy[:, 0],
         e_res=e_res[:, 0],
-        z_ref=z_ref, z_sac=z_sac, z_acc=z_acc,
+        z_ref=z_ref, z_opn=z_opn, z_acc=z_acc,
         u_burst_h=u_burst[:, 0],
         u_burst_v=u_burst[:, 1],
         eye_vel_h=np.gradient(x_p[:, 0], dt),
@@ -104,13 +104,13 @@ def _extract(states, pt3_np, theta, t_np):
 #   Target step                               [row 0: position]
 #     → 40-stage visual cascade (120 ms)      [row 1: e_pos_delayed rising]
 #     → gate_err fires → z_acc accumulates    [row 2: trigger pathway]
-#     → z_acc > 0.5 → z_sac latches          [row 2: z_sac fires]
+#     → z_acc > 0.5 → OPN pauses (z_opn→0)   [row 2: OPN drops]
 #     → e_held freezes at settled cascade val [row 1: e_held flat during saccade]
 #     → e_res = e_held − x_copy drives burst  [row 3: residual closes]
 #     → u_burst → NI + plant → eye velocity  [row 4: burst & eye vel]
 #     → x_copy integrates toward e_held       [row 3: x_copy rising]
 #     → e_res → 0 → z_ref charges            [row 5: refractory]
-#     → z_ref > 0.4 → z_sac releases         [row 2: z_sac drops]
+#     → z_ref > 0.4 → OPN recovers (z_opn→100) [row 2: OPN rises]
 #     → z_ref decays → z_acc can fire again   [row 5: z_ref decaying]
 
 def demo_saccade_cascade():
@@ -168,19 +168,19 @@ def demo_saccade_cascade():
         axes[1, ci].plot(t_np, s['e_pos_delayed'], color=_C['error'], lw=1.0, ls='--',
                          label='e_delayed  (cascade output, settling ~120 ms)')
         axes[1, ci].plot(t_np, s['e_held'],        color=_C['reset'], lw=1.8,
-                         label='e_held  (tracks cascade; freezes when z_sac=1)')
+                         label='e_held  (tracks cascade; freezes when OPN=0)')
         _vl(axes[1, ci]); ax_fmt(axes[1, ci])
         if ci == 0: axes[1, ci].legend(fontsize=6.5)
 
-        # ── Row 2: trigger pathway — z_acc (analog) + z_sac (binary latch) ────
+        # ── Row 2: trigger pathway — z_acc (analog) + OPN (100=tonic, 0=paused) ─
         ax2 = axes[2, ci]
         ax2.plot(t_np, s['z_acc'], color='#e08214', lw=1.5,
                  label='z_acc  (rise-to-bound accumulator)')
-        ax2.plot(t_np, s['z_sac'], color='#1b7837', lw=1.5,
-                 label='z_sac  (burst latch: 1=active)')
+        ax2.plot(t_np, s['z_opn'] / 100, color='#1b7837', lw=1.5,
+                 label='OPN (norm: 1=tonic, 0=paused)')
         ax2.axhline(THETA_SAC.brain.threshold_acc, color='#e08214',
                     lw=0.8, ls=':', alpha=0.7,
-                    label=f'threshold_acc={THETA_SAC.brain.threshold_acc:.1f}  (z_sac fires here)')
+                    label=f'threshold_acc={THETA_SAC.brain.threshold_acc:.1f}  (OPN pauses here)')
         ax2.set_ylim(-0.05, 1.15)
         _vl(ax2); ax2.grid(True, alpha=0.2)
         if ci == 0: ax2.legend(fontsize=6.5)
@@ -211,7 +211,7 @@ def demo_saccade_cascade():
                  label='z_ref  (OPN refractory state)')
         ax5.axhline(THETA_SAC.brain.threshold_sac_release, color='#762a83',
                     lw=0.8, ls=':', alpha=0.8,
-                    label=f'release threshold={THETA_SAC.brain.threshold_sac_release:.1f}  (z_sac drops here)')
+                    label=f'release threshold={THETA_SAC.brain.threshold_sac_release:.1f}  (OPN recovers here)')
         ax5.axhline(THETA_SAC.brain.threshold_ref, color='#c2a5cf',
                     lw=0.8, ls=':', alpha=0.8,
                     label=f'OPN gate threshold={THETA_SAC.brain.threshold_ref:.1f}  (z_acc can charge again)')

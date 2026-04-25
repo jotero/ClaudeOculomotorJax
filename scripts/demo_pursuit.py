@@ -75,7 +75,7 @@ def _extract(states, theta, t_np):
     x_copy = x_sg[:, :3]
     z_ref  = x_sg[:, 3]
     e_held = x_sg[:, 4:7]
-    z_sac  = x_sg[:, 7]
+    z_opn  = x_sg[:, 7]
     z_acc  = x_sg[:, 8]
 
     x_vis         = np.array(states.sensory[:, _IDX_VIS])
@@ -87,7 +87,7 @@ def _extract(states, theta, t_np):
         eye_pos=x_p, x_ni=x_ni, x_pursuit=x_pursuit,
         e_pos_delayed=e_pos_delayed[:, 0],
         e_held=e_held[:, 0], x_copy=x_copy[:, 0],
-        z_ref=z_ref, z_sac=z_sac, z_acc=z_acc,
+        z_ref=z_ref, z_opn=z_opn, z_acc=z_acc,
         u_burst_h=u_burst[:, 0], eye_vel_h=np.gradient(x_p[:, 0], dt),
     )
 
@@ -245,7 +245,7 @@ def demo_pursuit_cascade():
         if ci == 0: axes[1, ci].legend(fontsize=6)
 
         axes[2, ci].plot(t_np, s['z_acc'], color='#e08214', lw=1.5, label='z_acc')
-        axes[2, ci].plot(t_np, s['z_sac'], color='#1b7837', lw=1.5, label='z_sac')
+        axes[2, ci].plot(t_np, s['z_opn'] / 100, color='#1b7837', lw=1.5, label='OPN (norm)')
         axes[2, ci].axhline(THETA.brain.threshold_acc, color='#e08214', lw=0.7, ls=':')
         axes[2, ci].set_ylim(-0.05, 1.15)
         _vl(axes[2, ci]); axes[2, ci].grid(True, alpha=0.2)

@@ -231,7 +231,7 @@ def _cascade(show):
     axes[3].legend(fontsize=8)
 
     axes[4].plot(t_np, sg['z_acc'], color='#e08214', lw=1.5, label='z_acc')
-    axes[4].plot(t_np, sg['z_sac'], color='#1b7837', lw=1.5, label='z_sac (catch-up saccade latch)')
+    axes[4].plot(t_np, sg['z_opn'] / 100, color='#1b7837', lw=1.5, label='OPN (norm, 1=tonic)')
     axes[4].axhline(THETA.brain.threshold_acc, color='#e08214', lw=0.8, ls=':')
     axes[4].set_ylim(-0.05, 1.15)
     axes[4].set_ylabel('Accumulator'); axes[4].set_title('Catch-up Saccade Trigger')

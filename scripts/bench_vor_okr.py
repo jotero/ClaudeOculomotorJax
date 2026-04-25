@@ -266,83 +266,7 @@ def _okn_zoom(show):
         fig_type='behavior')
 
 
-# ── Figure 3: VOR time-constant comparison ────────────────────────────────────
-
-def _vor_tc(show):
-    """SPV decay with VS vs without VS — TC extension comparison."""
-    V_STIM   = 30.0
-    ROT      = 20.0
-    COAST    = 60.0
-    BASELINE = 3.0
-
-    B = int(BASELINE / DT)
-    _head = km.head_rotation_step(V_STIM, rotate_dur=ROT, coast_dur=COAST, dt=DT)
-    t_rot, hv_3d = _head.t, _head.rot_vel
-    t_np    = np.concatenate([np.arange(1 - B, 1) * DT - DT, np.array(t_rot)])
-    hv_full = np.concatenate([np.zeros((B, 3)), np.array(hv_3d)])
-    T       = len(t_np)
-    hv_1d   = hv_full[:, 0]
-
-    theta_vs    = THETA
-    theta_no_vs = with_brain(THETA, tau_vs=0.5, K_vs=0.001)   # near-zero VS
-
-    results = {}
-    for label, theta in [('with VS', theta_vs), ('no VS', theta_no_vs)]:
-        st   = _simulate(theta, jnp.array(t_np), head_vel=jnp.array(hv_full),
-                         scene_present=jnp.zeros(T), target_present=jnp.zeros(T),
-                         key=4)
-        eye  = np.array(st.plant[:, 0])
-        ev   = np.gradient(eye, DT)
-        bst  = extract_burst(st, theta)[:, 0]
-        spv  = extract_spv(t_np, ev, bst)
-        tau, t_fit, y_fit = fit_tc(t_np, spv, t_start=ROT + 1.0,
-                                    t_end=ROT + COAST - 5.0,
-                                    label=f'{label} post-rot TC')
-        results[label] = (spv, tau, t_fit, y_fit)
-
-    fig, axes = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
-    fig.suptitle('VOR Time-Constant Extension by Velocity Storage\n'
-                 f'Step rotation {V_STIM:.0f} deg/s for {ROT:.0f} s, then coast',
-                 fontsize=11)
-    colors = {'with VS': utils.C['eye'], 'no VS': utils.C['no_vis']}
-    vl = dict(color='k', lw=0.8, ls='--', alpha=0.5)
-
-    axes[0].plot(t_np, -hv_1d, color=utils.C['head'], lw=1.0, ls=':', alpha=0.6,
-                 label='−head vel')
-    for label, (spv, tau, t_fit, y_fit) in results.items():
-        axes[0].plot(t_np, spv, color=colors[label], lw=1.8, label=f'{label} SPV')
-        if tau is not None:
-            axes[0].plot(t_fit, y_fit, color=colors[label], lw=1.5, ls='--',
-                         label=f'{label} τ = {tau:.1f} s')
-    axes[0].axvline(0.0, **vl)
-    axes[0].axvline(ROT, **vl)
-    axes[0].set_ylabel('Slow-phase velocity (deg/s)')
-    axes[0].set_title('SPV: with VS vs without VS')
-    axes[0].legend(fontsize=9); ax_fmt(axes[0]); axes[0].set_xlim(-BASELINE, ROT + COAST)
-
-    st_vs   = _simulate(theta_vs, jnp.array(t_np), head_vel=jnp.array(hv_full),
-                         scene_present=jnp.zeros(T), target_present=jnp.zeros(T), key=4)
-    vs_with = vs_net(st_vs)[:, 0]
-    axes[1].plot(t_np, vs_with, color=utils.C['vs'], lw=1.8,
-                 label=f'VS state (τ_vs = {theta_vs.brain.tau_vs:.0f} s)')
-    axes[1].axvline(0.0, **vl)
-    axes[1].axvline(ROT, **vl)
-    axes[1].set_ylabel('VS net state (deg/s)'); axes[1].set_xlabel('Time (s)')
-    axes[1].set_title('Velocity Storage State — charges during rotation, drives post-rotatory SPV')
-    axes[1].legend(fontsize=9); ax_fmt(axes[1]); axes[1].set_xlim(-BASELINE, ROT + COAST)
-
-    fig.tight_layout()
-    path, rp = utils.save_fig(fig, 'vor_tc_comparison', show=show)
-    return utils.fig_meta(path, rp,
-        title='VOR Time-Constant Extension',
-        description='SPV decay after step rotation: with VS (tau_vs=20 s) vs without VS (tau_vs≈0). '
-                    'Bottom: velocity storage state trajectory during and after rotation.',
-        expected='Without VS: TC ≈ 5 s (canal); with VS: TC ≈ 15–25 s (velocity storage extends it ~4×).',
-        citation='Cohen, Matsuo & Raphan (1977) J Neurophysiol',
-        fig_type='behavior')
-
-
-# ── Figure 4: VOR/OKR signal cascade ──────────────────────────────────────────
+# ── Figure 3: VOR/OKR signal cascade ──────────────────────────────────────────
 
 def _cascade(show):
     """Internal signal cascade for VOR (left) and OKR (right)."""
@@ -486,11 +410,9 @@ SECTION = dict(
 def run(show=False):
     print('\n=== VOR / OKR ===')
     figs = []
-    print('  1/3  Raphan Fig.9 replication …')
+    print('  1/2  Raphan Fig.9 replication …')
     figs.append(_raphan(show))
-    print('  2/3  VOR TC comparison …')
-    figs.append(_vor_tc(show))
-    print('  3/3  signal cascade …')
+    print('  2/2  signal cascade …')
     figs.append(_cascade(show))
     return figs
 

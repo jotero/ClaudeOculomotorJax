@@ -374,8 +374,8 @@ def demo_vvor():
 
     sg_dark   = np.array(states_dark.brain[:, _IDX_SG])
     sg_lit    = np.array(states_lit.brain[:,  _IDX_SG])
-    z_sac_dark = sg_dark[:, 7]
-    z_sac_lit  = sg_lit[:,  7]
+    z_opn_dark = sg_dark[:, 7]
+    z_opn_lit  = sg_lit[:,  7]
 
     orbital_limit = THETA.plant.orbital_limit
 
@@ -432,14 +432,14 @@ def demo_vvor():
     axes[4].set_title('Saccade burst u_burst')
     axes[4].legend(fontsize=8)
 
-    axes[5].plot(t_vv, z_sac_dark, color=_C['no_vs'], lw=1.0, ls='--', alpha=0.8,
-                 label='z_sac (dark)')
-    axes[5].plot(t_vv, z_sac_lit,  color=_C['eye'],   lw=1.0, alpha=0.8,
-                 label='z_sac (lit)')
-    axes[5].set_ylim(-0.05, 1.15)
-    axes[5].set_ylabel('z_sac')
+    axes[5].plot(t_vv, z_opn_dark, color=_C['no_vs'], lw=1.0, ls='--', alpha=0.8,
+                 label='OPN (dark)')
+    axes[5].plot(t_vv, z_opn_lit,  color=_C['eye'],   lw=1.0, alpha=0.8,
+                 label='OPN (lit)')
+    axes[5].set_ylim(-5, 110)
+    axes[5].set_ylabel('OPN (spk/s)')
     axes[5].set_xlabel('Time (s)')
-    axes[5].set_title('Saccade latch z_sac')
+    axes[5].set_title('OPN firing rate (100=tonic, 0=paused during saccade)')
     axes[5].legend(fontsize=8)
     axes[5].grid(True, alpha=0.2)
 

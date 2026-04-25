@@ -297,7 +297,7 @@ def _cascade(show):
                  fontsize=11)
 
     row_labels = ['Eye + target pos (deg)', 'Cascade output + hold (deg)',
-                  'Accum / latch + refractory', 'Residual error (deg)',
+                  'Residual error (deg)', 'Accum / latch + refractory',
                   'Burst (deg/s) + eye velocity', 'Tgt vel + scene slip (deg/s)',
                   'EC-corrected + sat (deg/s)', 'u_pursuit + VS/OKR (deg/s)']
     for r, lbl in enumerate(row_labels):
@@ -326,19 +326,20 @@ def _cascade(show):
         ax_fmt(axes[1, ci])
         if ci == 0: axes[1, ci].legend(fontsize=7)
 
-        # Row 2: accumulator / latch + refractory (all 0–1 scale, same axis)
-        axes[2, ci].plot(t_np, sg['z_acc'], color='#e08214', lw=1.5, label='z_acc')
-        axes[2, ci].plot(t_np, sg['z_sac'], color='#1b7837', lw=1.5, label='z_sac')
-        axes[2, ci].plot(t_np, sg['z_ref'], color=utils.C['refractory'], lw=1.2, ls='--', label='z_ref')
-        axes[2, ci].axhline(THETA.brain.threshold_acc,         color='#e08214',             lw=0.8, ls=':')
-        axes[2, ci].axhline(THETA.brain.threshold_sac_release, color=utils.C['refractory'], lw=0.8, ls=':')
-        axes[2, ci].axhline(THETA.brain.threshold_ref,         color='#c2a5cf',             lw=0.8, ls=':')
-        axes[2, ci].set_ylim(-0.05, 1.15)
+        # Row 2: residual error + copy integrator
+        axes[2, ci].plot(t_np, sg['e_res'][:,0],  color=utils.C['target'], lw=1.5, label='e_res')
+        axes[2, ci].plot(t_np, sg['x_copy'][:,0], color=utils.C['vs'],     lw=1.2, ls='--', label='x_copy')
+        ax_fmt(axes[2, ci])
         if ci == 0: axes[2, ci].legend(fontsize=7)
 
-        axes[3, ci].plot(t_np, sg['e_res'][:,0],  color=utils.C['target'], lw=1.5, label='e_res')
-        axes[3, ci].plot(t_np, sg['x_copy'][:,0], color=utils.C['vs'],     lw=1.2, ls='--', label='x_copy')
-        ax_fmt(axes[3, ci])
+        # Row 3: accumulator / latch + refractory (all 0–1 scale, same axis)
+        axes[3, ci].plot(t_np, sg['z_acc'], color='#e08214', lw=1.5, label='z_acc')
+        axes[3, ci].plot(t_np, sg['z_opn'] / 100, color='#1b7837', lw=1.5, label='OPN (norm)')
+        axes[3, ci].plot(t_np, sg['z_ref'], color=utils.C['refractory'], lw=1.2, ls='--', label='z_ref')
+        axes[3, ci].axhline(THETA.brain.threshold_acc,         color='#e08214',             lw=0.8, ls=':')
+        axes[3, ci].axhline(THETA.brain.threshold_sac_release, color=utils.C['refractory'], lw=0.8, ls=':')
+        axes[3, ci].axhline(THETA.brain.threshold_ref,         color='#c2a5cf',             lw=0.8, ls=':')
+        axes[3, ci].set_ylim(-0.05, 1.15)
         if ci == 0: axes[3, ci].legend(fontsize=7)
 
         # Row 4: eye velocity first, then burst on top

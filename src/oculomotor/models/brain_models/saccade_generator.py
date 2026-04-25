@@ -13,21 +13,22 @@ latches the retinal error at trigger onset and is frozen during the burst.
 The Robinson residual (e_held − x_copy) drives the burst and always decreases
 monotonically to zero at burst end, regardless of target velocity.
 
-State:  x_sg = [x_copy (3) | z_ref (1) | e_held (3) | z_sac (1) | z_acc (1)]   (9 states)
+State:  x_sg = [x_copy (3) | z_ref (1) | e_held (3) | z_opn (1) | z_acc (1)]   (9 states)
 
     x_copy  — internal copy integrator; mirrors NI during burst, resets between
     z_ref   — OPN refractory state: 0=ready, rises to ~0.7 after each saccade,
                decays with τ_ref (~150 ms); bistable OPN gate blocks burst while
                z_ref > threshold_ref
     e_held  — sample-and-hold: tracks e_pos_delayed between saccades (τ_hold=5ms),
-               frozen during burst (z_sac=1)
-    z_sac   — saccade latch: 1=burst in progress, 0=idle/refractory
-               charges (1ms) when accumulator crosses threshold (z_acc > threshold_acc)
-               discharges when z_ref crosses threshold_sac_release
+               frozen during burst (z_opn=0)
+    z_opn   — OPN state: 100=tonic firing (burst blocked), 0=paused (burst active)
+               drops to 0 (1ms) when accumulator crosses threshold (z_acc > threshold_acc)
+               recovers to 100 when z_ref crosses threshold_sac_release
     z_acc   — rise-to-bound accumulator: integrates gate_err × gate_opn with τ_acc.
-               Drains when gate_err=0 or z_sac=1.  Noise-robust: brief spikes (< τ_acc)
-               cannot cross threshold_acc.  Also delays z_sac by τ_acc after gate_err
-               first fires, giving the visual cascade time to settle before e_held freezes.
+               Drains when gate_err=0 or z_opn=0 (burst active).  Noise-robust: brief
+               spikes (< τ_acc) cannot cross threshold_acc.  Also delays z_opn drop by
+               τ_acc after gate_err first fires, giving the visual cascade time to settle
+               before e_held freezes.
 
 Input:  u_sg  = e_pos_delayed (3,)   delayed retinal position error (deg)
 Output: u_burst (3,)                  saccade velocity command (deg/s)
@@ -55,26 +56,29 @@ Gates
         between gate_opn and e_held freeze.
 
 ──────────────────────────────────────────────────────────────────────────────
-Saccade latch (z_sac) — the key to the ballistic design
+OPN latch (z_opn) — the key to the ballistic design
 ──────────────────────────────────────────────────────────────────────────────
-    dz_sac/dt = (1−z_sac) · gate_err · gate_opn / τ_sac
-              −  z_sac    · (1−gate_opn)          / τ_sac
+    z_opn = 100 at rest (tonic OPN firing); z_opn = 0 during saccade (OPN paused)
 
-    Charge signal  gate_err · gate_opn:  high when trigger fires AND not refractory
-    Release signal (1−gate_opn):         high when refractory starts (z_ref > threshold_ref)
+    dz_opn/dt = (100−z_opn) · release_sac / τ_sac
+              −       z_opn  · charge_sac  / τ_sac
+
+    charge_sac  = σ(k_acc · (z_acc − threshold_acc)):  accumulator crossed threshold
+    release_sac = σ(k_ref · (z_ref − threshold_sac_release)): refractory reached peak
 
     Sequence:
-        1. Target appears → gate_err→1, gate_opn≈1 → z_sac→1 in ~1ms
-        2. e_held freezes at current epd (accurate target at onset)
-        3. Burst runs: gate_active = z_sac · gate_res · gate_dir ≈ 1
-        4. x_copy integrates toward e_held → e_res decreases → gate_res→0
-        5. charge fires → z_ref charges to ~0.7 in ~1ms
-        6. z_ref > threshold_ref → gate_opn→0 → (1-gate_opn)→1 → z_sac→0
-        7. e_held unfreezes → tracks epd → prepares next saccade target
-        8. z_ref decays below threshold_ref in ~175ms → gate_opn→1 → z_sac fires again
+        1. Target appears → gate_err→1, gate_opn≈1 → z_acc accumulates
+        2. z_acc > threshold_acc → charge_sac→1 → z_opn→0 in ~1ms (OPN pauses)
+        3. e_held freezes (z_opn/100 ≈ 0 → tracking term off)
+        4. Burst runs: gate_active = (1−z_opn/100) · gate_res · gate_dir ≈ 1
+        5. x_copy integrates toward e_held → e_res decreases → gate_res→0
+        6. z_ref charges to ~0.7 in ~1ms
+        7. z_ref > threshold_sac_release → release_sac→1 → z_opn→100 (OPN resumes)
+        8. e_held unfreezes → tracks epd → prepares next saccade target
+        9. z_ref decays below threshold_ref in ~175ms → gate_opn→1 → z_acc can fire again
 
-    Critical property: z_sac charges from gate_err×gate_opn (not gate_active),
-    so it doesn't depend on gate_res or e_held — no circular dependency.
+    Initialization: z_opn=100 (set in make_x0).  Between saccades z_opn stays at 100
+    because both charge_sac and release_sac are 0 → dz_opn=0.
 
 ──────────────────────────────────────────────────────────────────────────────
 Refractory (OPN) dynamics
@@ -178,8 +182,12 @@ def step(x_sg, pos_delayed, target_in_vf, x_ni, brain_params):
     x_copy = x_sg[:3]    # (3,) internal copy integrator
     z_ref  = x_sg[3]     # scalar refractory state
     e_held = x_sg[4:7]   # (3,) held target error (frozen during burst)
-    z_sac  = x_sg[7]     # scalar saccade latch (1=burst active, 0=idle/refractory)
+    z_opn  = x_sg[7]     # scalar OPN state: 100=tonic (burst blocked), 0=paused (burst active)
     z_acc  = x_sg[8]     # scalar rise-to-bound accumulator
+
+    # Normalised convenience aliases (equivalent to old z_sac and 1−z_sac)
+    z_act = (100.0 - z_opn) / 100.0   # 0=idle, 1=saccade active
+    z_idl = z_opn / 100.0             # 0=during saccade, 1=idle
 
     # ── Target selection ──────────────────────────────────────────────────────
     # Use x_ni (NI state) as brain's proxy for current eye position.
@@ -229,7 +237,7 @@ def step(x_sg, pos_delayed, target_in_vf, x_ni, brain_params):
     # ── Burst output ──────────────────────────────────────────────────────────
 
     u_burst_raw = burst_velocity(e_res, brain_params)
-    u_burst     = z_sac * gate_active_burst * u_burst_raw
+    u_burst     = z_act * gate_active_burst * u_burst_raw
 
     # ── Copy integrator ───────────────────────────────────────────────────────
     # Four regimes via z_sac and gate_active_burst:
@@ -256,9 +264,9 @@ def step(x_sg, pos_delayed, target_in_vf, x_ni, brain_params):
     tau_fast = brain_params.tau_reset_fast
     A_ni     = (-1.0 / brain_params.tau_i) * jnp.eye(3)
     # B = I (identity — omitted)
-    dx_copy  = (z_sac * (gate_active_burst * (A_ni @ x_copy + u_burst_raw)
+    dx_copy  = (z_act * (gate_active_burst * (A_ni @ x_copy + u_burst_raw)
                          + (1.0 - gate_active_burst) * (-(x_copy - e_held) / tau_fast))
-               + (1.0 - z_sac)**2 * (-x_copy / tau_fast))
+               + z_idl**2 * (-x_copy / tau_fast))
 
     # ── Sample-and-hold ───────────────────────────────────────────────────────
     # z_sac=1 (burst active):   de_held ≈ 0  → e_held frozen at onset value
@@ -271,7 +279,7 @@ def step(x_sg, pos_delayed, target_in_vf, x_ni, brain_params):
     # Between saccades z_sac≈0 so (1-0)²=1: tracking rate unchanged.
 
     tau_hold = brain_params.tau_hold
-    de_held  = (1.0 - z_sac)**2 * (e_cur - e_held) / tau_hold
+    de_held  = z_idl**2 * (e_cur - e_held) / tau_hold
 
     # ── Refractory (OPN) dynamics ─────────────────────────────────────────────
     # charge = z_sac · (1 − gate_res)
@@ -289,7 +297,7 @@ def step(x_sg, pos_delayed, target_in_vf, x_ni, brain_params):
 
     tau_ref_charge = brain_params.tau_ref_charge
     tau_ref        = brain_params.tau_ref
-    charge         = z_sac * (1.0 - gate_res)
+    charge         = z_act * (1.0 - gate_res)
     dz_ref         = (1.0 - z_ref) * charge / tau_ref_charge  -  z_ref / tau_ref
 
     # ── Rise-to-bound accumulator (z_acc) ────────────────────────────────────
@@ -308,20 +316,20 @@ def step(x_sg, pos_delayed, target_in_vf, x_ni, brain_params):
     threshold_acc = brain_params.threshold_acc
     k_acc         = brain_params.k_acc
 
-    # Accumulate while gate is on AND burst not yet active; drain otherwise.
-    gate_drive = gate_err * gate_opn * (1.0 - z_sac)
+    # Accumulate while gate is on AND OPN is tonic (not paused); drain otherwise.
+    gate_drive = gate_err * gate_opn * z_idl
     dz_acc     = gate_drive / tau_acc  -  z_acc / tau_drain
 
     # ── Saccade latch dynamics ────────────────────────────────────────────────
     # z_sac fires (fast, 1ms) when accumulator crosses threshold.
-    # z_sac discharges when z_ref crosses threshold_sac_release ≫ threshold_ref.
+    # z_opn recovers to 100 when z_ref crosses threshold_sac_release ≫ threshold_ref.
 
     tau_sac               = brain_params.tau_sac
     threshold_sac_release = brain_params.threshold_sac_release
     charge_sac  = jax.nn.sigmoid(k_acc * (z_acc - threshold_acc))          # fires when accumulated
     release_sac = jax.nn.sigmoid(k_ref * (z_ref - threshold_sac_release))  # fires when refractory
-    dz_sac      = ((1.0 - z_sac) * charge_sac  -  z_sac * release_sac) / tau_sac
+    dz_opn      = ((100.0 - z_opn) * release_sac  -  z_opn * charge_sac) / tau_sac
 
     dx_sg = jnp.concatenate([dx_copy, jnp.array([dz_ref]), de_held,
-                              jnp.array([dz_sac]), jnp.array([dz_acc])])
+                              jnp.array([dz_opn]), jnp.array([dz_acc])])
     return dx_sg, u_burst

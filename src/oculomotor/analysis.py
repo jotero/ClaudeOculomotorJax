@@ -153,7 +153,7 @@ def extract_sg(states, theta):
             x_copy  (T, 3)  internal eye-displacement copy
             z_ref   (T,)    refractory / OPN state
             e_held  (T, 3)  sample-and-hold of position error at saccade onset
-            z_sac   (T,)    saccade latch state
+            z_opn   (T,)    OPN state (100=tonic, 0=paused during saccade)
             z_acc   (T,)    accumulator state
             e_res   (T, 3)  residual error = e_held − x_copy  (drives burst)
             e_pd    (T, 3)  delayed position error from visual cascade
@@ -168,7 +168,7 @@ def extract_sg(states, theta):
     x_copy = x_sg[:, :3]
     z_ref  = x_sg[:, 3]
     e_held = x_sg[:, 4:7]
-    z_sac  = x_sg[:, 7]
+    z_opn  = x_sg[:, 7]
     z_acc  = x_sg[:, 8]
     e_res  = e_held - x_copy
     # Use L+R average — matches what the brain's pos_delayed actually received
@@ -178,7 +178,7 @@ def extract_sg(states, theta):
 
     return dict(
         x_copy=x_copy, z_ref=z_ref, e_held=e_held,
-        z_sac=z_sac,   z_acc=z_acc,  e_res=e_res,
+        z_opn=z_opn,   z_acc=z_acc,  e_res=e_res,
         e_pd=e_pd,     u_burst=u_burst, x_ni=x_ni,
     )
 

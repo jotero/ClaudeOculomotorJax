@@ -299,6 +299,8 @@ def make_x0(brain_params=None):
         # _IDX_VS_NULL stays at 0 (no initial adaptation)
         # NI: b_ni populations (b_ni=0 default → stays zero)
         # _IDX_NI_L/R/NULL all stay at 0
+        # OPN: initialise to tonic firing rate (100); stays there between saccades.
+        x0 = x0.at[_IDX_SG.start + 7].set(100.0)
         # Vergence: initialise to phoria — tau_verg too slow to settle from zero.
         x0 = x0.at[_IDX_VERG].set(jnp.asarray(brain_params.phoria, dtype=jnp.float32))
         # Accommodation: initialise fast component at 1 D (1 m target), slow at 0.

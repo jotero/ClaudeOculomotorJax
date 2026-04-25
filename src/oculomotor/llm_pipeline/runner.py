@@ -230,7 +230,7 @@ def _extract_signals(states, params, t_np: np.ndarray) -> dict:
     x_copy = x_sg[:, :3]
     z_ref  = x_sg[:, 3]
     e_held = x_sg[:, 4:7]
-    z_sac  = x_sg[:, 7]
+    z_opn  = x_sg[:, 7]
     z_acc  = x_sg[:, 8]
 
     return dict(
@@ -246,7 +246,7 @@ def _extract_signals(states, params, t_np: np.ndarray) -> dict:
         e_pos_delayed  = e_pos_delayed,
         u_burst        = u_burst,
         z_ref          = z_ref,
-        z_sac          = z_sac,
+        z_opn          = z_opn,
         z_acc          = z_acc,
         e_held         = e_held,
         x_copy         = x_copy,
