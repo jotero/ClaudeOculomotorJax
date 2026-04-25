@@ -385,10 +385,9 @@ def _cascade(show):
     ZOOM_T0, ZOOM_T1 = 5.0, 10.0   # 5-second window for nystagmus zoom rows
 
     # ── Figure ────────────────────────────────────────────────────────────────
-    fig, axes = plt.subplots(7, 2, figsize=(14, 16),
-                             gridspec_kw={'hspace': 0.55, 'wspace': 0.32,
-                                          'height_ratios': [1, 1, 1, 1, 1, 0.8, 0.8]},
-                             layout='constrained')
+    fig, axes = plt.subplots(7, 2, figsize=(14, 14),
+                             gridspec_kw={'hspace': 0.38, 'wspace': 0.32,
+                                          'height_ratios': [1, 1, 1, 1, 1, 0.8, 0.8]})
     fig.suptitle('VOR / OKR Signal Cascade\n'
                  'Left: VOR in dark (head rotation)   ·   Right: OKN (scene motion)',
                  fontsize=11)
@@ -462,6 +461,7 @@ def _cascade(show):
     axes[6, 1].set_xlim(ZOOM_T0, ZOOM_T1); axes[6, 1].set_ylim(-100, 100)
     ax_fmt(axes[6, 1]); axes[6, 1].legend(fontsize=7)
     axes[6, 1].set_xlabel('Time (s)', fontsize=8)
+    fig.tight_layout(pad=0.4)
     path, rp = utils.save_fig(fig, 'vor_okr_cascade', show=show)
     return utils.fig_meta(path, rp,
         title='VOR / OKR Signal Cascade (Internal)',

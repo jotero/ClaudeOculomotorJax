@@ -70,6 +70,7 @@ def _ocr(show):
     params = with_brain(PARAMS_DEFAULT, g_ocr=0.13, g_burst=0.0)
     st     = simulate(params, t,
                       head=km.build_kinematics(t, rot_vel=head_vel),
+                      target_present_array=np.zeros(len(t)),
                       return_states=True)
 
     eye_roll   = (np.array(st.plant[:, 2]) + np.array(st.plant[:, 5])) / 2.0
@@ -147,10 +148,11 @@ def _ovar(show):
         np.full(T, omega_z),
     ], axis=1)
 
-    # K_gd links gravity estimate to VS dumping; no saccades; dark room
+    # K_gd links gravity estimate to VS dumping; no saccades; dark room; no target
     params = with_brain(PARAMS_DEFAULT, K_gd=K_GD, g_burst=0.0)
     st     = simulate(params, t,
                       head=km.build_kinematics(t, rot_vel=head_vel),
+                      target_present_array=np.zeros(T),
                       return_states=True)
 
     eye_yaw_pos = (np.array(st.plant[:, 0]) + np.array(st.plant[:, 3])) / 2.0
@@ -243,6 +245,7 @@ def _tilt_suppression(show):
     st_u = simulate(params, t_u,
                     head=km.build_kinematics(t_u, rot_vel=km._pad3(hv_u, 'yaw')),
                     scene_present_array=np.zeros(T_u),
+                    target_present_array=np.zeros(T_u),
                     sim_config=cfg, return_states=True)
 
     ev_u    = np.gradient((np.array(st_u.plant[:, 0]) + np.array(st_u.plant[:, 3])) / 2.0, DT)
@@ -259,6 +262,7 @@ def _tilt_suppression(show):
     st_tilt = simulate(params, t_tilt,
                        head=km.build_kinematics(t_tilt, rot_vel=hv_3d),
                        scene_present_array=np.zeros(T_tilt),
+                       target_present_array=np.zeros(T_tilt),
                        sim_config=cfg, return_states=True)
 
     ev_tilt    = np.gradient((np.array(st_tilt.plant[:, 0]) + np.array(st_tilt.plant[:, 3])) / 2.0, DT)

@@ -52,13 +52,12 @@ h1   { font-size: 22px; margin-bottom: 4px; }
     <a href="#pursuit">4. Smooth Pursuit</a>
     <a href="#vergence">5. Vergence</a>
     <a href="#fixation">6. Fixation</a>
-    <a href="#efference">7. Efference Copy</a>
   </nav>
   <main>
     <h1>OculomotorJax — Benchmark Report</h1>
     <p class="meta">
-      Generated: <strong>2026-04-24 18:53</strong> &nbsp;|&nbsp;
-      Version: <strong>11ea072-dirty</strong> &nbsp;|&nbsp;
+      Generated: <strong>2026-04-24 20:27</strong> &nbsp;|&nbsp;
+      Version: <strong>8fd09e9-dirty</strong> &nbsp;|&nbsp;
       <a href="../BENCHMARKS.md">BENCHMARKS.md</a>
     </p>
 
@@ -131,18 +130,6 @@ h1   { font-size: 22px; margin-bottom: 4px; }
         A: post-rot SPV TC 10–30 s. C: OKN gain~1, OKAN TC~20 s. E: VVOR gain>0.85 during rotation; post-rot TC similar to A. B/D/F: INT follows SPV; CUP decays at canal TC (~5 s).
       </div>
       <p class="citation">&#128214; Raphan, Matsuo & Cohen (1979) Exp Brain Res 35:229–248</p>
-      <span class="badge behavior">behavior</span>
-    </div>
-
-    <div class="fig-card">
-      <a href="figures/okn_nystagmus_zoom.png" target="_blank"><img src="figures/okn_nystagmus_zoom.png" alt="OKN Nystagmus Zoom"></a>
-      <h3>OKN Nystagmus Zoom</h3>
-      <p class="desc">First 15 s of OKN at 30 deg/s. Top: eye position showing sawtooth waveform. Bottom: raw eye velocity (fast phases visible) and SPV (fast phases removed).</p>
-      <div class="expected">
-        <strong>Expected behavior</strong>
-        Clear sawtooth; SPV ≈ 30 deg/s during slow phases; fast phases reset periodically.
-      </div>
-      <p class="citation">&#128214; Raphan et al. (1979)</p>
       <span class="badge behavior">behavior</span>
     </div>
 
@@ -303,49 +290,6 @@ h1   { font-size: 22px; margin-bottom: 4px; }
         Noiseless: eye stays at 0°. Canal noise: slow drift + rare microsaccades. Pos noise: OU drift → corrective microsaccades when error exceeds threshold. Vel noise: smooth pursuit-like drift.
       </div>
       <p class="citation">&#128214; Rolfs (2009) Neurosci Biobehav Rev 33:1597–1627</p>
-      <span class="badge behavior">behavior</span>
-    </div>
-    </div>
-  </section>
-
-  <section class="section" id="efference">
-    <h2>7. Efference Copy</h2>
-    <p>Tests that self-generated motor commands (saccades, pursuit) do not contaminate velocity storage or pursuit integrator via retinal slip. EC-corrected slip ≈ 0 during saccades; VS stays flat in stationary scene.</p>
-    <div class="fig-grid">
-      
-    <div class="fig-card">
-      <a href="figures/efference_saccade.png" target="_blank"><img src="figures/efference_saccade.png" alt="EC — Saccade in Lit Scene"></a>
-      <h3>EC — Saccade in Lit Scene</h3>
-      <p class="desc">20° saccade in stationary lit scene. Row-by-row: eye velocity, burst command, raw retinal slip (spikes during saccade), motor EC (delayed opposing signal), corrected slip (raw + EC), VS net + pursuit state (both should stay near 0).</p>
-      <div class="expected">
-        <strong>Expected behavior</strong>
-        slip_raw spikes during burst. motor_ec provides equal/opposite delayed correction. slip_corr ≈ 0. VS net and pursuit state remain flat (< 1 deg/s) post-saccade.
-      </div>
-      <p class="citation">&#128214; Henn et al. (1974); Robinson (1977)</p>
-      <span class="badge cascade">cascade</span>
-    </div>
-
-    <div class="fig-card">
-      <a href="figures/efference_pursuit_limit.png" target="_blank"><img src="figures/efference_pursuit_limit.png" alt="EC — Large Pursuit to Orbital Limit"></a>
-      <h3>EC — Large Pursuit to Orbital Limit</h3>
-      <p class="desc">40 deg/s ramp pursuit. Eye tracks target until orbital limit (±50°), then stops. VS net and pursuit state shown.</p>
-      <div class="expected">
-        <strong>Expected behavior</strong>
-        Eye tracks at 40 deg/s until ~50°, then stops cleanly. VS net stays near 0 (pursuit EC prevents OKR contamination). No runaway pursuit state after hitting the limit.
-      </div>
-      <p class="citation">&#128214; Collewijn & Tamminga (1984)</p>
-      <span class="badge behavior">behavior</span>
-    </div>
-
-    <div class="fig-card">
-      <a href="figures/efference_okn_orbital.png" target="_blank"><img src="figures/efference_okn_orbital.png" alt="EC — OKN to Orbital Limit"></a>
-      <h3>EC — OKN to Orbital Limit</h3>
-      <p class="desc">30 deg/s full-field scene. OKN sawtooth nystagmus; fast phases reset eye at orbital limit. EC-corrected slip tracks scene velocity during slow phases.</p>
-      <div class="expected">
-        <strong>Expected behavior</strong>
-        VS state converges toward OKN SS (~−21 deg/s; eye SPV ≈ 24 deg/s, gain ≈ 0.8). slip_corr ≈ 5–8 deg/s throughout (residual OKN drive after EC cancellation). VS should not show spikes or large drift locked to fast phases.
-      </div>
-      <p class="citation">&#128214; Raphan et al. (1979)</p>
       <span class="badge behavior">behavior</span>
     </div>
     </div>
