@@ -78,7 +78,7 @@ def _ocr(show):
     TILT_VEL  = 60.0
     HOLD_T    = 10.0
 
-    params = with_brain(PARAMS_DEFAULT, g_ocr=G_OCR, g_burst=0.0)
+    params = with_brain(PARAMS_DEFAULT, g_ocr=G_OCR, g_burst=700.0)
     cmap   = plt.get_cmap('plasma')
     colors = [cmap(i / (len(TILTS_DEG) - 1)) for i in range(len(TILTS_DEG))]
 
@@ -458,7 +458,10 @@ def _somatogravic_frequency(show):
         eye_roll = (np.array(st.plant[:, 2]) + np.array(st.plant[:, 5])) / 2.0
         g_est    = np.array(st.brain[:, _IDX_GRAV])
 
-        i_ss = int((total - 3.0 / freq) / DT)
+        # Align display start to a complete cycle boundary so a_lat starts at 0.
+        n_full_cycles   = int(total * freq)
+        display_cycle   = max(0, n_full_cycles - 3)
+        i_ss            = int(display_cycle / freq / DT)
         peak = float(np.max(np.abs(eye_roll[i_ss:])))
         amp_model.append(peak)
 

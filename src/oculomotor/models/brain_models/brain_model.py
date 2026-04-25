@@ -454,15 +454,16 @@ def step(x_brain, sensory_out, brain_params):
     # Canal velocity (not VS output) for gravity transport: canal decays with tau_c~5s so
     # sustained yaw rotation won't drive g_est[z] to large values and break tilt dumping.
     canal_vel       = PINV_SENS @ sensory_out.canal
-    # Otolith outputs in world frame [x=right, y=up, z=fwd]; gravity estimator uses canal frame
-    # [x=yaw=up, y=pitch, z=roll].  Mapping from _q2rv: canal=[yaw,pitch,roll]→world=[-pitch,yaw,roll]
-    # Inverse: canal[0]=world[1], canal[1]=-world[0], canal[2]=world[2]
-    f_oto_canal     = jnp.array([sensory_out.otolith[1], -sensory_out.otolith[0], sensory_out.otolith[2]])
-    dx_grav, g_est = ge.step(x_grav, jnp.concatenate([canal_vel, f_oto_canal]), brain_params)
-    # OCR: g_est[1] < 0 when left ear down (positive roll, canal-y = rightward).
-    # For left-ear-down tilt, OCR should be negative (eye rolls in the same
-    # rotational direction as head → top-of-eye tilts toward lowered ear).
-    # g_ocr in deg/(m/s²): g_est[1] already carries the correct sign.
+    # gravity_estimator frame: x=up, y=interaural(leftward), z=fwd (X0=[G0,0,0] at upright).
+    # canal_vel is in [yaw, pitch, roll] = [rotation-about-up, rotation-about-interaural, rotation-about-fwd].
+    # GE needs angular velocity in same axes: ge_x=canal[0] (yaw=up), ge_y=−canal[1] (pitch sign flip), ge_z=canal[2].
+    w_for_ge        = jnp.array([canal_vel[0], -canal_vel[1], canal_vel[2]])
+    # sensory_out.otolith = f_gia in head frame using world convention x=right, y=up, z=fwd (G_WORLD=[0,G0,0]).
+    # Convert to GE convention [x=up, y=interaural(leftward), z=fwd]: ge_x=f[1], ge_y=−f[0], ge_z=f[2].
+    # At upright: f_gia=[0,G0,0] → f_oto_ge=[G0,0,0]=X0 ✓; left-ear-down: f_oto_ge[1]<0 → OCR<0 ✓.
+    f_oto_ge        = jnp.array([sensory_out.otolith[1], -sensory_out.otolith[0], sensory_out.otolith[2]])
+    dx_grav, g_est = ge.step(x_grav, jnp.concatenate([w_for_ge, f_oto_ge]), brain_params)
+    # OCR: g_est[1] < 0 when left-ear-down (positive roll) → torsion negative = eye rolls left-ear-down.
     ocr            = jnp.array([0.0, 0.0, brain_params.g_ocr * g_est[1]])
 
     # ── Pursuit: target-gated EC-corrected velocity → pursuit integrator ─────────
