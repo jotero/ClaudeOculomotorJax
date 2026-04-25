@@ -215,15 +215,16 @@ def _listing_ocr(show):
     eye_roll_sac = (np.array(st_sac.plant[:, 2]) + np.array(st_sac.plant[:, 5])) / 2.0
     g_est_sac    = np.array(st_sac.brain[:, _IDX_GRAV])
 
-    # OCR target: G_OCR * G0 * sin(tilt)
-    ocr_expected = G_OCR * G0 * np.sin(np.radians(TILT_DEG))
+    # OCR target: negative for positive head roll (left-ear-down).
+    # g_est[1] < 0 for left-ear-down; OCR = g_ocr * g_est[1] < 0.
+    ocr_expected = -G_OCR * G0 * np.sin(np.radians(TILT_DEG))
 
     t_rel = t - (PRE_REST + TILT_DUR)   # time relative to end of tilt
 
     fig, axes = plt.subplots(3, 1, figsize=(11, 10), sharex=True)
     fig.suptitle(
         f'OCR-Driven Torsional Saccade  (head tilt {TILT_DEG:.0f}°, g_ocr={G_OCR:.2f})\n'
-        f'Expected torsion: G_OCR × G0 × sin({TILT_DEG:.0f}°) = {ocr_expected:.2f}°',
+        f'Expected torsion: −G_OCR × G0 × sin({TILT_DEG:.0f}°) = {ocr_expected:.2f}°',
         fontsize=12, fontweight='bold')
 
     head_roll_pos = head_km.rot_pos[:, 2]

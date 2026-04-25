@@ -53,6 +53,7 @@ import jax.numpy as jnp
 from oculomotor.models.sensory_models import canal   as _canal
 from oculomotor.models.sensory_models import otolith as _otolith
 from oculomotor.models.sensory_models import retina  as _retina
+from oculomotor.models.plant_models.readout import rotation_matrix as _rotation_matrix
 
 
 # ── Sensory parameters ──────────────────────────────────────────────────────────
@@ -148,7 +149,7 @@ class SensoryOutput(NamedTuple):
 
     Shared:
         canal:        (6,)   canal afferent rates
-        otolith:    (3,)   LP-filtered GIA → gravity estimator
+        otolith:    (3,)   instantaneous GIA in head frame (m/s²) → gravity estimator
     Per-eye raw (un-gated) delayed signals:
         slip_L/R:     (3,)   delayed scene velocity    → VS / OKR after gating
         pos_L/R:      (3,)   delayed target position   → SG after gating
@@ -175,7 +176,7 @@ class SensoryOutput(NamedTuple):
     acc_demand:       float = 0.0  # 1/z_depth (D) — instantaneous blur demand; set in ODE
 
 
-def read_outputs(x_sensory, sensory_params):
+def read_outputs(x_sensory, sensory_params, q_head, a_head):
     """Read all sensory outputs from the current state (pure state readout).
 
     Returns per-eye raw cascade readouts and delayed visibility gates.
@@ -184,17 +185,26 @@ def read_outputs(x_sensory, sensory_params):
     Args:
         x_sensory:      (978,)  sensory state
         sensory_params: SensoryParams
+        q_head:         (3,)    head rotation vector [yaw,pitch,roll] (deg) — for GIA
+        a_head:         (3,)    head linear acceleration (m/s², world frame) — for GIA
 
     Returns:
         SensoryOutput with per-eye raw signals and delayed visibility gates.
     """
     x_c     = x_sensory[_IDX_C]
-    x_oto   = x_sensory[_IDX_OTO]
     x_vis_L = x_sensory[_IDX_VIS_L]
     x_vis_R = x_sensory[_IDX_VIS_R]
 
     canal_out = _canal.nonlinearity(x_c, sensory_params.canal_gains, sensory_params.canal_floor)
-    f_gia     = _otolith.PINV_SENS @ x_oto
+
+    # Instantaneous GIA in head frame — same formula as otolith.step().
+    # x_oto (LP state, tau=100s) is NOT used here: it hasn't adapted after
+    # a short-duration tilt, so using it would pull the gravity estimator
+    # back toward upright (exactly the drift bug we're fixing).
+    # x_oto is retained in the state purely for somatogravic illusion modelling.
+    q_xyz = jnp.array([-q_head[1], q_head[0], q_head[2]])
+    R     = _rotation_matrix(q_xyz)
+    f_gia = R.T @ _otolith.G_WORLD + R.T @ a_head   # GIA in head frame (m/s²)
 
     return SensoryOutput(
         canal        = canal_out,

@@ -254,7 +254,7 @@ def ODE_ocular_motor(t, state, args):
     acc_demand = 1.0 / jnp.maximum(p_target[2], 0.05)
 
     # ── Sensory: read delayed cascade outputs ────────────────────────────────
-    sensory_out = sensory_model.read_outputs(state.sensory, theta.sensory)
+    sensory_out = sensory_model.read_outputs(state.sensory, theta.sensory, q_head, a_head)
     sensory_out = sensory_out._replace(acc_demand=acc_demand)
 
     # ── Sensory noise ─────────────────────────────────────────────────────────

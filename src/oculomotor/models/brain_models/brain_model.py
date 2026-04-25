@@ -459,10 +459,11 @@ def step(x_brain, sensory_out, brain_params):
     # Inverse: canal[0]=world[1], canal[1]=-world[0], canal[2]=world[2]
     f_oto_canal     = jnp.array([sensory_out.otolith[1], -sensory_out.otolith[0], sensory_out.otolith[2]])
     dx_grav, g_est = ge.step(x_grav, jnp.concatenate([canal_vel, f_oto_canal]), brain_params)
-    # OCR: g_est[1] = G0·sin(tilt) > 0 when right ear down (canal-y = leftward).
-    # Compensatory counterroll: eye rolls opposite to head tilt → negate.
-    # g_ocr in deg/(m/s²): directly proportional to otolith signal.
-    ocr            = jnp.array([0.0, 0.0, -brain_params.g_ocr * g_est[1]])
+    # OCR: g_est[1] < 0 when left ear down (positive roll, canal-y = rightward).
+    # For left-ear-down tilt, OCR should be negative (eye rolls in the same
+    # rotational direction as head → top-of-eye tilts toward lowered ear).
+    # g_ocr in deg/(m/s²): g_est[1] already carries the correct sign.
+    ocr            = jnp.array([0.0, 0.0, brain_params.g_ocr * g_est[1]])
 
     # ── Pursuit: target-gated EC-corrected velocity → pursuit integrator ─────────
     # Strobe gate: when target is strobed, EC is also zeroed — stroboscopic illumination
