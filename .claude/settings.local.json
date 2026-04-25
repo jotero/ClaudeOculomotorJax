@@ -16,7 +16,8 @@
       "Bash(\"d:/OneDrive/UC Berkeley/OMlab - JOM/Code/ClaudeOculomotorJax/.venv/Scripts/python.exe\" -X utf8 scripts/demo_pursuit.py)",
       "Bash(grep -v \"^$\")",
       "Bash(\"d:/OneDrive/UC Berkeley/OMlab - JOM/Code/ClaudeOculomotorJax/.venv/Scripts/python.exe\" -X utf8 scripts/demo_fixation.py)",
-      "Bash(wait)"
+      "Bash(wait)",
+      "Read(//d/OneDrive/UC Berkeley/OMlab - JOM/Code/ClaudeOculomotorJax/**)"
     ],
     "additionalDirectories": [
       "d:\\OneDrive\\UC Berkeley\\OMlab - JOM\\Code\\ClaudeOculomotorJax\\outputs"

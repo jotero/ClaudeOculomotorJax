@@ -214,7 +214,7 @@ class BrainParams(NamedTuple):
     alpha_reset:           float = 1.0    # centering gain (0–1); e_center = −α·x_ni when out-of-field
 
     # Otolith / gravity estimation — Laurens & Angelaki (2011, 2017)
-    K_grav:                float = 0.5    # otolith correction gain (1/s); TC = 1/K_grav ≈ 2 s
+    K_grav:                float = 0.6    # otolith correction gain (1/s); go=0.6 Laurens & Angelaki 2011
     K_gd:                  float = 0.0    # gravity dumping gain (1/s); 0 = disabled
     g_ocr:                 float = 0.0    # OCR amplitude (deg); healthy ~10°; 0 = disabled until verified
 
@@ -448,7 +448,11 @@ def step(x_brain, sensory_out, brain_params):
     # Canal velocity (not VS output) for gravity transport: canal decays with tau_c~5s so
     # sustained yaw rotation won't drive g_est[z] to large values and break tilt dumping.
     canal_vel       = PINV_SENS @ sensory_out.canal
-    dx_grav, g_est = ge.step(x_grav, jnp.concatenate([canal_vel, sensory_out.otolith]), brain_params)
+    # Otolith outputs in world frame [x=right, y=up, z=fwd]; gravity estimator uses canal frame
+    # [x=yaw=up, y=pitch, z=roll].  Mapping from _q2rv: canal=[yaw,pitch,roll]→world=[-pitch,yaw,roll]
+    # Inverse: canal[0]=world[1], canal[1]=-world[0], canal[2]=world[2]
+    f_oto_canal     = jnp.array([sensory_out.otolith[1], -sensory_out.otolith[0], sensory_out.otolith[2]])
+    dx_grav, g_est = ge.step(x_grav, jnp.concatenate([canal_vel, f_oto_canal]), brain_params)
     ocr            = jnp.array([0.0, 0.0, brain_params.g_ocr * g_est[1]])
 
     # ── Pursuit: target-gated EC-corrected velocity → pursuit integrator ─────────
