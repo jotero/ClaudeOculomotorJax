@@ -173,11 +173,18 @@ def _integrate_rotation(vel_ypr_degs: np.ndarray, t: np.ndarray,
     Uses scipy Rotation composition for correctness at any rotation magnitude,
     including simultaneous multi-axis rotations (OVAR, tilts, etc.).
 
-    Convention: R(q) maps head→world (world ← head), world-frame angular velocity.
-    Each step: R_new = dR_world · R_old  (left-compose world-frame increment).
+    Convention: R(q) maps head→world (world ← head), body-frame (intrinsic) angular velocity.
+    Each step: R_new = R_old · dR_body  (right-compose body-frame increment).
+
+    Intrinsic means velocities are in the moving head frame — canals, gyroscopes,
+    and IMUs all measure intrinsic angular velocity.  For single-axis rotations
+    starting from upright (R_old = I), intrinsic = extrinsic, so VOR/saccade/
+    pursuit demos are unaffected.  OVAR with a pre-tilted head requires intrinsic:
+    rot_pos_0=[0,0,tilt_deg] + rot_vel=[Ω,0,0] → rotation around the tilted body
+    yaw axis, making gravity sweep sinusoidally in the head frame.
 
     Args:
-        vel_ypr_degs:  (T, 3) angular velocity [yaw,pitch,roll] deg/s
+        vel_ypr_degs:  (T, 3) angular velocity [yaw,pitch,roll] deg/s  (body frame)
         t:             (T,)   time array (s)
         pos_0_ypr_deg: (3,) or None  initial orientation (deg); default zeros
 
@@ -198,25 +205,27 @@ def _integrate_rotation(vel_ypr_degs: np.ndarray, t: np.ndarray,
         pos[i] = _xyz_to_ypr(r.as_rotvec())
         if i < T - 1:
             dr = Rotation.from_rotvec(_ypr_to_xyz(vel[i]) * dt[i])
-            r  = dr * r   # world-frame: left-compose increment
+            r  = r * dr   # body-frame: right-compose increment
     return pos.astype(np.float32)
 
 
 def _differentiate_rotation(pos_ypr_deg: np.ndarray, t: np.ndarray) -> np.ndarray:
-    """Differentiate [yaw,pitch,roll] deg orientation → angular velocity (deg/s).
+    """Differentiate [yaw,pitch,roll] deg orientation → body-frame angular velocity (deg/s).
 
     Uses Lie-group central differences (log of incremental rotation) for
     correctness at any rotation magnitude.
 
-    Interior:   ω_i = log(R_{i+1} · R_{i-1}^{-1}) / (t_{i+1} − t_{i-1})
+    Interior:   ω_i = log(R_{i-1}^{-1} · R_{i+1}) / (t_{i+1} − t_{i-1})
     Endpoints:  forward / backward 1st-order.
+
+    Returns body-frame (intrinsic) angular velocity to match _integrate_rotation.
 
     Args:
         pos_ypr_deg: (T, 3)  orientation [yaw,pitch,roll] deg
         t:           (T,)    time array (s)
 
     Returns:
-        (T, 3) float32  angular velocity [yaw,pitch,roll] deg/s
+        (T, 3) float32  body-frame angular velocity [yaw,pitch,roll] deg/s
     """
     T    = len(pos_ypr_deg)
     t64  = t.astype(np.float64)
@@ -230,12 +239,12 @@ def _differentiate_rotation(pos_ypr_deg: np.ndarray, t: np.ndarray) -> np.ndarra
     # Interior (central difference in Lie group)
     for i in range(1, T - 1):
         dt2  = t64[i + 1] - t64[i - 1]
-        dr   = rs[i + 1] * rs[i - 1].inv()   # world-frame incremental rotation
+        dr   = rs[i - 1].inv() * rs[i + 1]   # body-frame: R_{i-1}^{-1} · R_{i+1}
         vel[i] = _xyz_to_ypr(dr.as_rotvec() / dt2)
 
     # Endpoints (first-order)
-    vel[0]  = _xyz_to_ypr((rs[1]  * rs[0].inv()) .as_rotvec() / (t64[1]  - t64[0]))
-    vel[-1] = _xyz_to_ypr((rs[-1] * rs[-2].inv()).as_rotvec() / (t64[-1] - t64[-2]))
+    vel[0]  = _xyz_to_ypr((rs[0].inv() * rs[1]) .as_rotvec() / (t64[1]  - t64[0]))
+    vel[-1] = _xyz_to_ypr((rs[-2].inv() * rs[-1]).as_rotvec() / (t64[-1] - t64[-2]))
 
     return vel.astype(np.float32)
 

@@ -493,9 +493,11 @@ def step(x_brain, sensory_out, brain_params):
     dx_sg, u_burst = sg.step(x_sg, pos_for_sg, percept.target_visible, x_ni_for_sg, brain_params)
 
     # ── Neural integrator: VOR + saccades + pursuit → version motor command ───
-    # ocr / tau_i is a tonic drive that settles the NI at ocr in steady
-    # state, acting as a torsional setpoint without bypassing the integrator leak.
-    dx_ni, motor_cmd_ni = ni.step(x_ni, -w_est + u_burst + u_pursuit_listing + ocr / brain_params.tau_i, brain_params)
+    dx_ni, motor_cmd_ni = ni.step(x_ni, -w_est + u_burst + u_pursuit_listing, brain_params)
+    # OCR is a tonic position offset (gravity-driven, ~100–500 ms latency via plant TC).
+    # Added directly to motor command rather than through the NI (25 s TC) so that
+    # dynamic OCR (somatogravic, OVAR) is not attenuated above the NI passband (~0.006 Hz).
+    motor_cmd_ni = motor_cmd_ni + ocr
 
     # ── Accommodation: blur-driven lens adjustment (AC/A and CA/C cross-links disabled) ──
     # TODO: re-enable cross-links once accommodation–vergence interaction is validated.

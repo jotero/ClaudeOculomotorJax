@@ -34,7 +34,7 @@ G0   = 9.81
 
 K_GD   = 0.5
 K_GRAV = 0.6
-G_OCR  = 10.0 / 9.81   # OCR gain (deg/(m/s²)): 10° at 90° tilt, ~10% at all angles
+G_OCR  = 6.0 / 9.81    # OCR gain (deg/(m/s²)): ~6° at 90° tilt (Howard & Templeton 1966)
 
 
 SECTION = dict(
@@ -74,7 +74,7 @@ def _stim_twin(ax, t, pos, vel, pos_label, vel_label, pos_color, vel_color):
 
 def _ocr(show):
     """OCR for a sweep of tilt angles: time traces + SS torsion vs tilt scatter."""
-    TILTS_DEG = [5.0, 10.0, 20.0, 30.0, 45.0, 60.0]
+    TILTS_DEG = [5.0, 10.0, 20.0, 30.0, 45.0, 60.0, 75.0, 90.0]
     TILT_VEL  = 60.0
     HOLD_T    = 10.0
 
@@ -199,15 +199,14 @@ def _ovar(show):
         fontsize=12, fontweight='bold')
 
     for ci, tilt_deg in enumerate(TILTS_DEG):
-        alpha   = np.radians(tilt_deg)
-        omega_y = SPIN_VEL * np.cos(alpha)
-        omega_z = SPIN_VEL * np.sin(alpha)
-
-        # v[0]=0 so warmup prepend is at rest
-        head_vel = np.stack([np.where(t > 0, omega_y, 0.0),
+        # Head starts tilted (left-ear-down = positive roll) then rotates at SPIN_VEL
+        # around the body yaw axis (intrinsic).  This is the classic OVAR geometry:
+        # the chair tilts the subject then rotates around the chair's (tilted) axis.
+        head_vel = np.stack([np.where(t > 0, SPIN_VEL, 0.0),
                              np.zeros(T),
-                             np.where(t > 0, omega_z, 0.0)], axis=1)
-        head_km  = km.build_kinematics(t, rot_vel=head_vel)
+                             np.zeros(T)], axis=1)
+        head_km  = km.build_kinematics(t, rot_vel=head_vel,
+                                       rot_pos_0=[0.0, 0.0, tilt_deg])
 
         st       = simulate(params, t,
                             head=head_km,
@@ -221,20 +220,15 @@ def _ovar(show):
         spv     = extract_spv(t, eye_vel, burst)
         g_est   = np.array(st.brain[:, _IDX_GRAV])
 
-        # Head orientation: yaw and roll positions (from kinematics)
-        head_yaw  = head_km.rot_pos[:, 0]
-        head_roll = head_km.rot_pos[:, 2]
-
         col = colors[ci]
         lbl = f'{tilt_deg:.0f}° tilt'
-        axes[0].plot(t, spv,           color=col, lw=1.2, alpha=0.85, label=lbl)
-        axes[1].plot(t, g_est[:, 1],   color=col, lw=1.2, label=lbl)
+        axes[0].plot(t, spv,             color=col, lw=1.2, alpha=0.85, label=lbl)
+        axes[1].plot(t, g_est[:, 1],     color=col, lw=1.2, label=lbl)
         axes[2].plot(t, vs_net(st)[:,0], color=col, lw=1.2, label=lbl)
-        # Stimulus panel: head yaw and roll orientation (overlapping circles as head rotates)
-        if ci == len(TILTS_DEG) - 1:   # annotate only for largest tilt for clarity
-            axes[3].plot(t % period, head_yaw % 360,  color=col, lw=0.5, alpha=0.3)
-        axes[3].plot(t, head_yaw,  color=col, lw=1.0, ls='-',  alpha=0.7, label=f'{tilt_deg:.0f}° yaw pos')
-        axes[3].plot(t, head_roll, color=col, lw=1.0, ls='--', alpha=0.7, label=f'{tilt_deg:.0f}° roll pos')
+        # Stimulus panel: yaw velocity (step to SPIN_VEL) and initial roll tilt (dashed)
+        if ci == 0:
+            axes[3].plot(t, head_km.rot_vel[:, 0], 'k-', lw=1.5, label=f'Yaw vel ({SPIN_VEL:.0f} °/s)')
+        axes[3].axhline(tilt_deg, color=col, lw=1.2, ls='--', label=f'{tilt_deg:.0f}° tilt (roll)')
 
     pm = np.arange(period, TOTAL, period)
     for ax in axes[:3]:
@@ -255,16 +249,11 @@ def _ovar(show):
     axes[2].set_ylabel('VS net yaw (deg/s)', fontsize=9); axes[2].legend(fontsize=8)
     axes[2].set_title('VS modulated by gravity dumping (K_gd)', fontsize=9)
 
-    axes[3].set_ylabel('Head orientation (deg)', fontsize=9)
+    axes[3].set_ylabel('Angular velocity / tilt angle (deg or deg/s)', fontsize=9)
     axes[3].set_xlabel('Time (s)', fontsize=9)
-    axes[3].set_title('Stimulus: head yaw pos (solid) and roll pos (dashed) — both grow linearly; '
-                      'dashed period markers = one full revolution', fontsize=9)
-    # Simplified legend: just show color meaning
-    from matplotlib.lines import Line2D
-    axes[3].legend(handles=[
-        Line2D([0],[0], color=colors[i], lw=1.5, label=f'{d:.0f}° tilt')
-        for i, d in enumerate(TILTS_DEG)
-    ], fontsize=8)
+    axes[3].set_title('Stimulus: body-yaw velocity (black solid) + initial roll tilt (dashed, per condition)',
+                      fontsize=9)
+    axes[3].legend(fontsize=7, ncol=2)
 
     fig.tight_layout()
     path, rp = utils.save_fig(fig, 'gravity_ovar', show=show)
@@ -443,11 +432,10 @@ def _somatogravic_frequency(show):
         t       = np.arange(0.0, total, DT)
         T       = len(t)
 
-        # Lateral (interaural, y-axis) translation — x=up in this codebase.
-        # Somatogravic OCR is driven by g_est[1] (interaural component of gravity
-        # estimate), which is only affected by lateral, not vertical, acceleration.
+        # Lateral (interaural = world x = rightward) translation.
+        # World frame: x=right, y=up, z=fwd  → lateral acceleration is component 0.
         a_lat   = A_ACCEL * np.sin(omega * t)
-        lin_acc = np.stack([np.zeros(T), a_lat, np.zeros(T)], axis=1)
+        lin_acc = np.stack([a_lat, np.zeros(T), np.zeros(T)], axis=1)
 
         st = simulate(params, t,
                       head=km.build_kinematics(t, lin_acc=lin_acc),
