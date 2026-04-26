@@ -86,7 +86,7 @@ import jax.numpy as jnp
 from oculomotor.models.sensory_models.sensory_model import PINV_SENS, N_CANALS
 
 N_STATES  = 9   # x_L(3) + x_R(3) + x_null(3)
-N_INPUTS  = N_CANALS + 3 + 3   # 6 canal afferents + 3 slip + 3 g_est
+N_INPUTS  = N_CANALS + 3 + 3 + 3   # 6 canal afferents + 3 slip + 3 g_est + 3 f_oto
 N_OUTPUTS = 3   # w_est (3,)
 
 # Sub-index slices (relative to x_vs)
@@ -102,12 +102,21 @@ def step(x_vs, u, brain_params):
 
     Args:
         x_vs:         (9,)   VS state [x_L (3,) | x_R (3,) | x_null (3,)]
-        u:            (12,)  [y_canals (6,) | e_slip_delayed (3,) | g_est (3,)]
+                             axes: [x=up/yaw, y=left/interaural, z=fwd/naso-occipital] (deg/s)
+        u:            (15,)  [y_canals (6,) | e_slip_delayed (3,) | g_est (3,) | f_oto (3,)]
+                             y_canals:       6 semicircular canal afferents (deg/s)
+                             e_slip_delayed: retinal slip, head frame [x=up, y=left, z=fwd] (deg/s)
+                             g_est:          gravity estimate from GE state, head frame (m/s²)
+                                             [x=up/yaw, y=left/interaural, z=fwd/naso-occipital]
+                                             upright rest: [+9.81, 0, 0]
+                             f_oto:          raw GIA from otolith, same head frame (m/s²)
+                                             = gravity + linear acceleration (specific force)
+                                             Used for gravity dumping: cross(f_oto, g_est).
         brain_params: BrainParams
 
     Returns:
-        dx:    (9,)  dx_vs/dt
-        w_est: (3,)  angular velocity estimate → NI (deg/s)
+        dx:    (9,)  dx_vs/dt  — same head frame as x_vs
+        w_est: (3,)  angular velocity estimate → NI (deg/s), head frame [x=up, y=left, z=fwd]
     """
     x_L    = x_vs[_IDX_L]    # (3,) left  pop
     x_R    = x_vs[_IDX_R]    # (3,) right pop
@@ -115,8 +124,9 @@ def step(x_vs, u, brain_params):
     x_pop  = x_vs[:6]        # (6,) bilateral populations (for ABCD)
 
     canal_in = jnp.clip(u[:N_CANALS], -brain_params.v_max_vor, brain_params.v_max_vor)  # (6,)
-    slip_in  = u[N_CANALS:N_CANALS+3]  # (3,)
-    g_est    = u[N_CANALS+3:]          # (3,)
+    slip_in  = u[N_CANALS:N_CANALS+3]    # (3,) head frame [x=up, y=left, z=fwd]
+    g_est    = u[N_CANALS+3:N_CANALS+6]  # (3,) gravity estimate, head frame (m/s²)
+    f_oto    = u[N_CANALS+6:]            # (3,) raw GIA from otolith, head frame (m/s²)
     u_lin    = jnp.concatenate([canal_in, slip_in])   # (9,) linear inputs
 
     # Population equilibria: b_vs bias ± half-null shift
@@ -149,12 +159,15 @@ def step(x_vs, u, brain_params):
     # D (3×9): feedthrough on net output — canal + visual
     D = jnp.concatenate([brain_params.g_vor * PINV_SENS, -brain_params.g_vis * jnp.eye(3)], axis=1)
 
-    # ── Gravity dumping — nonlinear correction, outside ABCD core ─────────────
-    g_norm_sq = jnp.dot(g_est, g_est) + 1e-9
-    dev   = x_pop - b_eff
-    gd_L  = brain_params.K_gd * jnp.cross(g_est, jnp.cross(g_est, dev[:3])) / g_norm_sq
-    gd_R  = brain_params.K_gd * jnp.cross(g_est, jnp.cross(g_est, dev[3:])) / g_norm_sq
-    gd    = jnp.concatenate([gd_L, gd_R])
+    # ── Gravity dumping — mismatch between GIA and gravity estimate ─────────────
+    # cross(f_oto, g_est) / |g_est|² measures the angular error between the raw
+    # otolith measurement and the gravity estimate.  Zero when they are aligned
+    # (upright head OR stable tilt with well-calibrated g_est); nonzero when VS
+    # transport has rotated g_est away from f_oto during post-rotatory nystagmus.
+    # Push-pull: +gd drives L pop down, -gd drives R pop up (net = 2×gd_signal).
+    g_norm_sq  = jnp.dot(g_est, g_est) + 1e-9
+    gd_signal  = brain_params.K_gd * jnp.cross(f_oto, g_est) / g_norm_sq
+    gd         = jnp.concatenate([gd_signal, -gd_signal])
 
     # ── Bilateral dynamics: leak toward adapted bias ───────────────────────────
     dx_pop = A @ (x_pop - b_eff) + B @ u_lin + gd

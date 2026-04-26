@@ -4,17 +4,19 @@ Drives disconjugate eye movements to align both foveas on a binocular target.
 
 Architecture:
     One integrator state x_verg holds the tonic vergence position memory.
-    The input is a piecewise-linear (nonlinear) combination of two clipped
+    The input is a windowed (zero-outside-range) combination of two gated
     versions of e_disp, implementing dual-range gain:
 
-            e_fus  = clip(e_disp, ±disp_max_verg_fus)    ← fusional range  (~±1 deg)
-        e_prox = clip(e_disp, ±disp_max_verg_prox)  ← full range      (~±20 deg)
-        e_pred = K_verg · e_fus + K_verg_prox · e_prox   ← deg/s drive
+            e_fus  = disp_sat(e_disp, v_sat=disp_max_verg_fus)   ← cosine rolloff 1→2 deg
+            e_prox = disp_sat(e_disp, v_sat=disp_max_verg_prox) ← cosine rolloff 20→40 deg
+            e_pred = K_verg · e_fus + K_verg_prox · e_prox     ← deg/s drive
 
     Gain profile (deg/s per deg disparity):
         |e_disp| < 1 deg:    K_verg + K_verg_prox  [high — fusional + proximal active]
-        1 < |e_disp| < 20:   K_verg_prox           [lower — proximal only, fusional saturated]
-        |e_disp| > 20:       0                      [fully saturated]
+        1–2 deg rolloff:     K_verg decays smoothly (cosine), K_verg_prox still full
+        2 < |e_disp| < 20:   K_verg_prox           [lower — fusional gone, proximal full]
+        20–40 deg rolloff:   K_verg_prox decays smoothly to zero
+        |e_disp| > 40:       0                      [outside vergence range — no drive]
 
 Dynamics:
     dx_verg  = −(x_verg − phoria) / τ  +  e_pred
@@ -65,6 +67,8 @@ References:
 
 import jax.numpy as jnp
 
+from oculomotor.models.sensory_models.retina import velocity_saturation as _disp_sat
+
 N_STATES  = 3   # x_verg: [H_verg, V_verg, torsional_verg]  (deg)
 N_INPUTS  = 3   # e_disp = pos_delayed_L − pos_delayed_R (deg)
 N_OUTPUTS = 3   # u_verg: vergence position command (deg)
@@ -92,18 +96,20 @@ def step(x_verg, e_disp, ac_a_drive, brain_params):
     # The dual-range nonlinearity then clips the combined signal appropriately.
     e_total = e_disp + jnp.array([ac_a_drive, 0.0, 0.0])
 
-    # ── Dual-range nonlinear gain ───────────────────────────────────────────────
-    # e_total > 0: need to converge more (disparity or AC/A demand).
-    # e_total < 0: need to diverge.
+    # ── Dual-range cosine-rolloff nonlinearity ──────────────────────────────────
+    # Same shape as velocity_saturation in retina.py: gain=1 below v_sat, cosine
+    # rolloff to 0 at v_zero=2×v_sat, zero beyond.  This avoids the saturation
+    # plateau that clip() creates (which drives vergence at constant max force for
+    # arbitrarily large disparities).
     #
-    # e_fus:  clipped to fusional range (±disp_max_verg_fus, ~±1 deg) — high-gain path.
-    # e_prox: clipped to full range (±disp_max_verg_prox, ~±20 deg) — low-gain path.
-    #
-    # Gain profile:
-    #   |e_total| < 1 deg:   K_verg + K_verg_prox ≈ 6/s  → TC ~160 ms [Rashbass 1961]
-    #   1 < |e_total| < 20:  K_verg_prox          ≈ 1/s  → TC ~1 s    [Judge 1985]
-    e_fus  = jnp.clip(e_total, -brain_params.disp_max_verg_fus,  brain_params.disp_max_verg_fus)
-    e_prox = jnp.clip(e_total, -brain_params.disp_max_verg_prox, brain_params.disp_max_verg_prox)
+    # Gain profile (based on |e_total|):
+    #   |e_total| < 1 deg:       K_verg + K_verg_prox ≈ 6/s  → TC ~160 ms [Rashbass 1961]
+    #   1 < |e_total| < 2 deg:   K_verg × rolloff + K_verg_prox  (fusional rolling off)
+    #   2 < |e_total| < 20 deg:  K_verg_prox          ≈ 1/s  → TC ~1 s    [Judge 1985]
+    #   20 < |e_total| < 40 deg: K_verg_prox × rolloff (proximal rolling off)
+    #   |e_total| > 40 deg:      0                            → no drive
+    e_fus  = _disp_sat(e_total, v_sat=brain_params.disp_max_verg_fus)
+    e_prox = _disp_sat(e_total, v_sat=brain_params.disp_max_verg_prox)
 
     e_pred = brain_params.K_verg * e_fus + brain_params.K_verg_prox * e_prox
 

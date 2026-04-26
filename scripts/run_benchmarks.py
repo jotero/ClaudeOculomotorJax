@@ -27,10 +27,11 @@ HTML_ONLY = '--html-only' in sys.argv
 MODULES = [
     'bench_saccades',
     'bench_vor_okr',
-    'bench_tilt_translation',
+    'bench_gravity',
     'bench_pursuit',
     'bench_vergence',
     'bench_fixation',
+    'bench_listing',
 ]
 
 

@@ -182,7 +182,7 @@ def _ocr(show):
 def _ovar(show):
     SPIN_VEL  = 60.0
     TOTAL     = 60.0
-    TILTS_DEG = [10.0, 30.0, 60.0]
+    TILTS_DEG = [10.0, 30.0, 60.0, 90.0]
 
     params = with_brain(PARAMS_DEFAULT, K_gd=K_GD, g_burst=700.0)
     cfg    = SimConfig(warmup_s=0.0)   # start from rest (v[0]=0 required)
@@ -190,7 +190,7 @@ def _ovar(show):
     T      = len(t)
     period = 360.0 / SPIN_VEL
 
-    colors = ['#1b7837', '#762a83', '#e08214']
+    colors = ['#1b7837', '#762a83', '#e08214', '#c0392b']
 
     fig, axes = plt.subplots(4, 1, figsize=(14, 12), sharex=True)
     fig.suptitle(
@@ -225,10 +225,18 @@ def _ovar(show):
         axes[0].plot(t, spv,             color=col, lw=1.2, alpha=0.85, label=lbl)
         axes[1].plot(t, g_est[:, 1],     color=col, lw=1.2, label=lbl)
         axes[2].plot(t, vs_net(st)[:,0], color=col, lw=1.2, label=lbl)
-        # Stimulus panel: yaw velocity (step to SPIN_VEL) and initial roll tilt (dashed)
+        # Stimulus: yaw velocity is identical for all conditions — plot once
         if ci == 0:
-            axes[3].plot(t, head_km.rot_vel[:, 0], 'k-', lw=1.5, label=f'Yaw vel ({SPIN_VEL:.0f} °/s)')
-        axes[3].axhline(tilt_deg, color=col, lw=1.2, ls='--', label=f'{tilt_deg:.0f}° tilt (roll)')
+            axes[3].plot(t, head_km.rot_vel[:, 0], 'k-', lw=1.5, label=f'{SPIN_VEL:.0f}°/s body yaw')
+
+    # Twin axis: right = initial roll tilt per condition (horizontal colored lines)
+    ax3b = axes[3].twinx()
+    for ci, tilt_deg in enumerate(TILTS_DEG):
+        ax3b.axhline(tilt_deg, color=colors[ci], lw=1.5, ls='--', label=f'{tilt_deg:.0f}° tilt')
+    ax3b.set_ylabel('Initial roll tilt (°)', fontsize=9, color='gray')
+    ax3b.tick_params(axis='y', labelcolor='gray')
+    ax3b.set_ylim(-5, 100)
+    ax3b.legend(fontsize=7, loc='center right', ncol=2)
 
     pm = np.arange(period, TOTAL, period)
     for ax in axes[:3]:
@@ -243,17 +251,17 @@ def _ovar(show):
 
     amp_ref = G0 * np.sin(np.radians(TILTS_DEG[-1]))
     axes[1].set_ylabel('g_est[1] interaural (m/s²)', fontsize=9); axes[1].legend(fontsize=8)
-    axes[1].set_title(f'Gravity oscillates ±G₀ sin(α); largest: ±{amp_ref:.1f} m/s²', fontsize=9)
+    axes[1].set_title(f'Gravity oscillates ±G₀ sin(α); 90°: ±{amp_ref:.1f} m/s²', fontsize=9)
     axes[1].set_ylim(-12, 12)
 
     axes[2].set_ylabel('VS net yaw (deg/s)', fontsize=9); axes[2].legend(fontsize=8)
     axes[2].set_title('VS modulated by gravity dumping (K_gd)', fontsize=9)
 
-    axes[3].set_ylabel('Angular velocity / tilt angle (deg or deg/s)', fontsize=9)
+    axes[3].set_ylabel('Head yaw velocity (°/s)', fontsize=9, color='k')
     axes[3].set_xlabel('Time (s)', fontsize=9)
-    axes[3].set_title('Stimulus: body-yaw velocity (black solid) + initial roll tilt (dashed, per condition)',
+    axes[3].set_title('Stimulus: constant body-yaw rotation (left) + initial roll tilt per condition (right)',
                       fontsize=9)
-    axes[3].legend(fontsize=7, ncol=2)
+    axes[3].legend(fontsize=8, loc='lower right')
 
     fig.tight_layout()
     path, rp = utils.save_fig(fig, 'gravity_ovar', show=show)
@@ -273,41 +281,41 @@ def _ovar(show):
 
 def _tilt_suppression(show):
     ROT_VEL   = 60.0
-    ROT_T     = 20.0
-    COAST_T   = 60.0
-    SETTLE_T  = 8.0
+    ROT_T     = 20.0     # rotation duration (s): identical for all conditions
+    COAST_T   = 60.0     # post-tilt coast (s)
     TILTS_DEG = [0.0, 30.0, 60.0, 90.0]
-    TILT_VEL  = 60.0
+    TILT_VEL  = 60.0     # roll tilt speed applied AFTER rotation stops
+
+    # Protocol: rotate upright for ROT_T s (all conditions identical),
+    # then tilt to θ°, then coast for COAST_T s.
+    # t_rel = 0 at rotation stop.
+    max_tilt_dur = max(TILTS_DEG) / TILT_VEL   # = 1.5 s (90° at 60°/s)
+    t_total = ROT_T + max_tilt_dur + COAST_T
+    t_arr   = np.arange(0.0, t_total, DT)
+    T       = len(t_arr)
+    t_rel   = t_arr - ROT_T   # aligned to rotation stop
 
     params = with_brain(PARAMS_DEFAULT, K_gd=K_GD)
     cfg    = SimConfig(warmup_s=0.0)
     colors = ['steelblue', '#2196a8', '#e08214', '#c62e2e']
 
-    fig, axes = plt.subplots(3, 1, figsize=(14, 11), sharex=False)
+    fig, axes = plt.subplots(3, 1, figsize=(14, 11), sharex=True)
     fig.suptitle(
         f'VOR Tilt Suppression  (Laurens & Angelaki 2011, Fig 6)\n'
-        f'{ROT_VEL:.0f}°/s yaw, {ROT_T:.0f} s;  K_gd={K_GD}, K_grav={K_GRAV}',
+        f'Upright {ROT_VEL:.0f}°/s yaw for {ROT_T:.0f} s; tilt applied after stop;  '
+        f'K_gd={K_GD}, K_grav={K_GRAV}',
         fontsize=12, fontweight='bold')
 
     taus = {}
-    stim_data = {}   # save for stimulus panel
+
+    hv_yaw_base = np.where(t_arr < ROT_T, ROT_VEL, 0.0)   # same for all conditions
 
     for ci, tilt_deg in enumerate(TILTS_DEG):
-        tilt_dur    = tilt_deg / TILT_VEL if tilt_deg > 0 else 0.0
-        t_rot_start = tilt_dur + SETTLE_T if tilt_deg > 0 else 0.0
-        t_total     = t_rot_start + ROT_T + COAST_T
-        t_arr       = np.arange(0.0, t_total, DT)
-        T           = len(t_arr)
-
-        if tilt_deg == 0.0:
-            hv_roll = np.zeros(T)
-            hv_yaw  = np.where(t_arr < ROT_T, ROT_VEL, 0.0)
-        else:
-            hv_roll = np.where(t_arr < tilt_dur, TILT_VEL, 0.0)
-            hv_yaw  = np.where(
-                (t_arr >= t_rot_start) & (t_arr < t_rot_start + ROT_T),
-                ROT_VEL, 0.0)
-        hv_3d = np.stack([hv_yaw, np.zeros(T), hv_roll], axis=1)
+        tilt_dur = tilt_deg / TILT_VEL if tilt_deg > 0 else 0.0
+        # Tilt starts right when rotation stops (t=ROT_T), ends at t=ROT_T+tilt_dur
+        hv_roll = np.where(
+            (t_arr >= ROT_T) & (t_arr < ROT_T + tilt_dur), TILT_VEL, 0.0)
+        hv_3d   = np.stack([hv_yaw_base, np.zeros(T), hv_roll], axis=1)
 
         head_km = km.build_kinematics(t_arr, rot_vel=hv_3d)
 
@@ -322,60 +330,54 @@ def _tilt_suppression(show):
         burst   = np.array(extract_burst(st, params)[:, 0])
         spv     = extract_spv(t_arr, eye_vel, burst)
         g_est_y = np.array(st.brain[:, _IDX_GRAV])[:, 1]
-        t_rel   = t_arr - t_rot_start
 
-        stim_data[tilt_deg] = {
-            't_rel':   t_rel,
-            'hv_yaw':  hv_yaw,
-            'hv_roll': hv_roll,
-            'roll_pos': head_km.rot_pos[:, 2],
-        }
-
-        tau, t_fit, y_fit = fit_tc(t_rel, spv, ROT_T, ROT_T + COAST_T)
+        # Fit TC starting after tilt completes
+        fit_start = tilt_dur
+        fit_end   = tilt_dur + COAST_T
+        tau, t_fit, y_fit = fit_tc(t_rel, spv, fit_start, fit_end)
         taus[tilt_deg] = tau
+
         col = colors[ci]
         upright_sfx = ' (upright)' if tilt_deg == 0.0 else ''
         lbl = f'{tilt_deg:.0f}° roll{upright_sfx}' + (f'  τ={tau:.1f} s' if tau else '')
 
-        axes[0].plot(t_rel, spv, color=col, lw=1.2, label=lbl)
+        axes[0].plot(t_rel, spv,     color=col, lw=1.2, label=lbl)
+        axes[1].plot(t_rel, g_est_y, color=col, lw=1.2, label=f'{tilt_deg:.0f}°{upright_sfx}')
         if t_fit is not None:
             axes[0].plot(t_fit, y_fit, color=col, lw=2.5, ls=':', alpha=0.9)
-        axes[1].plot(t_rel, g_est_y, color=col, lw=1.2, label=f'{tilt_deg:.0f}°{upright_sfx}')
 
-    # ── Stimulus panel: head roll pos (left y) + head yaw vel (right y) ──────
-    ax_stim = axes[2]
-    ax_stim2 = ax_stim.twinx()
-    for ci, tilt_deg in enumerate(TILTS_DEG):
-        d = stim_data[tilt_deg]
-        col = colors[ci]
-        ax_stim.plot(d['t_rel'],  d['roll_pos'], color=col, lw=1.5,
-                     label=f'{tilt_deg:.0f}° roll pos')
-        ax_stim2.plot(d['t_rel'], d['hv_yaw'],  color=col, lw=1.0, ls='--', alpha=0.7)
+        # Stimulus panel (plot once; all conditions share same yaw, differ only in roll)
+        axes[2].plot(t_rel, head_km.rot_pos[:, 2], color=col, lw=1.5,
+                     label=f'{tilt_deg:.0f}° roll')
 
-    ax_stim.set_ylabel('Head roll orientation (deg)', fontsize=8, color='k')
-    ax_stim2.set_ylabel('Head yaw velocity (deg/s)', fontsize=8, color='gray')
+    # Stimulus panel: right axis = yaw velocity (identical for all → plot once)
+    ax_stim2 = axes[2].twinx()
+    ax_stim2.plot(t_rel, hv_yaw_base, 'k--', lw=1.2, alpha=0.6, label='yaw vel (all)')
+    ax_stim2.set_ylabel('Head yaw velocity (°/s)', fontsize=8, color='gray')
     ax_stim2.tick_params(axis='y', labelcolor='gray')
-    ax_stim.set_title('Stimulus: roll orientation = pre-tilt (solid); yaw velocity = rotation epoch (dashed)',
-                      fontsize=9)
-    ax_stim.legend(fontsize=7, ncol=2, loc='center right')
-    ax_stim.text(-4.5, 2.0, '0° = upright', fontsize=7, color='k', style='italic')
+    axes[2].set_ylabel('Head roll orientation (°)', fontsize=8)
+    axes[2].set_title('Stimulus: upright yaw rotation (dashed, all conditions); '
+                      'post-stop roll tilt (solid, per condition)', fontsize=9)
+    axes[2].legend(fontsize=7, ncol=2, loc='upper left')
 
-    xlim = (-5.0, ROT_T + COAST_T)
+    xlim = (-ROT_T - 2.0, max_tilt_dur + COAST_T + 2.0)
     for ax in axes:
         ax.set_xlim(*xlim)
-        ax.axvline(0.0,   color='gray', lw=1.0, ls='-')
-        ax.axvline(ROT_T, color='gray', lw=1.0, ls='--')
-        ax.axhline(0.0,   color='k',   lw=0.4)
+        ax.axvline(0.0, color='gray', lw=1.0, ls='-',  label='rotation stop')
+        ax.axhline(0.0, color='k',   lw=0.4)
         ax.grid(True, alpha=0.15)
 
-    axes[0].set_ylabel('SPV (deg/s)', fontsize=9); axes[0].legend(fontsize=8, ncol=2)
-    axes[0].set_title('Post-rotatory SPV decay: upright TC ≈ τ_vs; tilted TC shortened', fontsize=9)
+    axes[0].set_ylabel('SPV (°/s)', fontsize=9); axes[0].legend(fontsize=8, ncol=2)
+    axes[0].set_title('Post-rotatory SPV: all conditions identical during rotation; '
+                      'TC shortened by tilt after stop', fontsize=9)
 
-    axes[1].set_ylabel('g_est[1] interaural (m/s²)', fontsize=9); axes[1].legend(fontsize=8, ncol=2)
-    axes[1].set_ylim(-12, 3)
-    axes[1].set_title('Gravity estimate: 0° → 0; 90° roll → −G₀', fontsize=9)
+    axes[1].set_ylabel('g_est[1] interaural (m/s²)', fontsize=9)
+    axes[1].legend(fontsize=8, ncol=2)
+    axes[1].set_ylim(-12, 12)
+    axes[1].set_title('Gravity estimate (interaural): 0 during upright rotation; '
+                      'steps to −G₀·sin(θ) after tilt', fontsize=9)
 
-    axes[2].set_xlabel('Time relative to rotation onset (s)', fontsize=9)
+    axes[2].set_xlabel('Time relative to rotation stop (s)', fontsize=9)
 
     # Inset: TC vs tilt
     ax_ins = axes[0].inset_axes([0.72, 0.55, 0.25, 0.38])
@@ -391,9 +393,10 @@ def _tilt_suppression(show):
     path, rp = utils.save_fig(fig, 'gravity_tilt_suppression', show=show)
     return utils.fig_meta(path, rp,
         title='VOR Tilt Suppression',
-        description=f'Post-rotatory decay for {TILTS_DEG}° pre-tilt. '
+        description=f'Upright {ROT_VEL:.0f}°/s yaw; tilt {TILTS_DEG}° applied after stop. '
                     'Replicates Laurens & Angelaki (2011) Fig 6.',
-        expected='TC decreases with tilt. 0°: TC ≈ τ_vs. 90°: TC ≈ τ_canal.',
+        expected='Per-rotatory identical. TC decreases with post-stop tilt. '
+                 '0°: TC ≈ τ_vs. 90°: TC ≈ τ_canal.',
         citation='Laurens & Angelaki (2011) Exp Brain Res',
         fig_type='behavior')
 

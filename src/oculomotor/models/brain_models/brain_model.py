@@ -97,7 +97,7 @@ from oculomotor.models.plant_models.muscle_geometry import (
 # ── State layout ───────────────────────────────────────────────────────────────
 
 N_STATES = vs.N_STATES + ni.N_STATES + sg.N_STATES + 2*ec.N_STATES + ge.N_STATES + pu.N_STATES + vg.N_STATES + acc_mod.N_STATES
-#        = 9 + 9 + 9 + 240 + 3 + 3 + 3 + 2 = 278
+#        = 9 + 9 + 9 + 240 + 6 + 3 + 3 + 2 = 281
 
 # ── Index constants — relative to x_brain ─────────────────────────────────────
 # Computed from module N_STATES to stay in sync automatically.
@@ -215,7 +215,9 @@ class BrainParams(NamedTuple):
     alpha_reset:           float = 1.0    # centering gain (0–1); e_center = −α·x_ni when out-of-field
 
     # Otolith / gravity estimation — Laurens & Angelaki (2011, 2017)
-    K_grav:                float = 0.6    # otolith correction gain (1/s); go=0.6 Laurens & Angelaki 2011
+    K_grav:                float = 0.6    # otolith correction gain for gravity (1/s); go=0.6 Laurens & Angelaki 2011
+    K_lin:                 float = 0.1    # linear acceleration adaptation gain (1/s); 0 disables â state
+                                          # smaller → more somatogravic effect; larger → faster a_lin adaptation
     K_gd:                  float = 0.0    # gravity dumping gain (1/s); 0 = disabled
     g_ocr:                 float = 0.0    # OCR amplitude (deg); healthy ~10°; 0 = disabled until verified
 
@@ -296,7 +298,7 @@ def make_x0(brain_params=None):
         brain_params: BrainParams NamedTuple.  If None, uses b_vs=0 (zero bias; old behaviour).
     """
     x0 = jnp.zeros(N_STATES)
-    x0 = x0.at[_IDX_GRAV].set(ge.X0)
+    x0 = x0.at[_IDX_GRAV].set(ge.X0)   # [G0,0,0, 0,0,0] — upright gravity, zero linear accel
     if brain_params is not None:
         # VS: both populations start at resting bias; null starts at 0.
         b6 = jnp.broadcast_to(jnp.asarray(brain_params.b_vs, dtype=jnp.float32), (6,))
@@ -449,19 +451,18 @@ def step(x_brain, sensory_out, brain_params):
     motor_ec_okr     = ec.read_delayed(x_ec_okr)
 
     # ── Velocity storage + gravity estimator + OCR ───────────────────────────
-    okr    = percept.scene_slip + motor_ec_okr * percept.scene_visible
-    dx_vs,   w_est = vs.step(x_vs,   jnp.concatenate([sensory_out.canal, okr, x_grav]), brain_params)
-    # Canal velocity (not VS output) for gravity transport: canal decays with tau_c~5s so
-    # sustained yaw rotation won't drive g_est[z] to large values and break tilt dumping.
-    canal_vel       = PINV_SENS @ sensory_out.canal
-    # gravity_estimator frame: x=up, y=interaural(leftward), z=fwd (X0=[G0,0,0] at upright).
-    # canal_vel is in [yaw, pitch, roll] = [rotation-about-up, rotation-about-interaural, rotation-about-fwd].
-    # GE needs angular velocity in same axes: ge_x=canal[0] (yaw=up), ge_y=−canal[1] (pitch sign flip), ge_z=canal[2].
-    w_for_ge        = jnp.array([canal_vel[0], -canal_vel[1], canal_vel[2]])
-    # sensory_out.otolith = f_gia in head frame using world convention x=right, y=up, z=fwd (G_WORLD=[0,G0,0]).
-    # Convert to GE convention [x=up, y=interaural(leftward), z=fwd]: ge_x=f[1], ge_y=−f[0], ge_z=f[2].
+    # Canal velocity for gravity transport (decays with tau_c~5s).
+    canal_vel = PINV_SENS @ sensory_out.canal
+    # GE convention [x=up, y=interaural(leftward), z=fwd]: w_x=canal[0] (yaw), w_y=-canal[1] (pitch sign flip).
+    w_for_ge  = jnp.array([canal_vel[0], -canal_vel[1], canal_vel[2]])
+    # sensory_out.otolith = f_gia in world convention x=right, y=up, z=fwd.
+    # Convert to GE/VS convention [x=up, y=interaural(leftward), z=fwd]: ge_x=f[1], ge_y=−f[0], ge_z=f[2].
     # At upright: f_gia=[0,G0,0] → f_oto_ge=[G0,0,0]=X0 ✓; left-ear-down: f_oto_ge[1]<0 → OCR<0 ✓.
-    f_oto_ge        = jnp.array([sensory_out.otolith[1], -sensory_out.otolith[0], sensory_out.otolith[2]])
+    f_oto_ge  = jnp.array([sensory_out.otolith[1], -sensory_out.otolith[0], sensory_out.otolith[2]])
+
+    okr      = percept.scene_slip + motor_ec_okr * percept.scene_visible
+    g_est_now = x_grav[ge._IDX_G]   # (3,) gravity estimate from GE state (first 3 of 6)
+    dx_vs,   w_est = vs.step(x_vs,   jnp.concatenate([sensory_out.canal, okr, g_est_now, f_oto_ge]), brain_params)
     dx_grav, g_est = ge.step(x_grav, jnp.concatenate([w_for_ge, f_oto_ge]), brain_params)
     # OCR: g_est[1] < 0 when left-ear-down (positive roll) → torsion negative = eye rolls left-ear-down.
     ocr            = jnp.array([0.0, 0.0, brain_params.g_ocr * g_est[1]])

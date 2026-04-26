@@ -48,17 +48,17 @@ h1   { font-size: 22px; margin-bottom: 4px; }
     <h2>Sections</h2>
     <a href="#saccades">1. Saccades</a>
     <a href="#vor_okr">2. VOR / OKR</a>
-    <a href="#gravity">3. Gravity Estimator</a>
-    <a href="#listing">4. Listing's Law</a>
-    <a href="#pursuit">5. Smooth Pursuit</a>
-    <a href="#vergence">6. Vergence</a>
-    <a href="#fixation">7. Fixation</a>
+    <a href="#gravity">4. Gravity Estimator</a>
+    <a href="#pursuit">4. Smooth Pursuit</a>
+    <a href="#vergence">5. Vergence</a>
+    <a href="#fixation">6. Fixation</a>
+    <a href="#listing">5. Listing's Law</a>
   </nav>
   <main>
     <h1>OculomotorJax — Benchmark Report</h1>
     <p class="meta">
-      Generated: <strong>2026-04-25</strong> &nbsp;|&nbsp;
-      Version: <strong>cadb4f7-dirty</strong> &nbsp;|&nbsp;
+      Generated: <strong>2026-04-26 00:31</strong> &nbsp;|&nbsp;
+      Version: <strong>7bff8b9-dirty</strong> &nbsp;|&nbsp;
       <a href="../BENCHMARKS.md">BENCHMARKS.md</a>
     </p>
 
@@ -149,105 +149,62 @@ h1   { font-size: 22px; margin-bottom: 4px; }
   </section>
 
   <section class="section" id="gravity">
-    <h2>3. Gravity Estimator</h2>
-    <p>Otolith-driven eye movements via the cross-product gravity transport model. g_est tracks head-frame gravity direction; OCR is driven by g_est[1] (lateral gravity component) via g_ocr=0.13. K_gd=0.5 links g_est to velocity-storage dumping for OVAR and tilt suppression.</p>
+    <h2>4. Gravity Estimator</h2>
+    <p>Canal-otolith interaction: OCR, OVAR, VOR tilt suppression, OCR vs tilt angle, somatogravic OCR frequency dependence. Parameters: K_grav=0.6, K_gd=0.5, g_ocr=0.6116207951070336 (Laurens & Angelaki 2011).</p>
     <div class="fig-grid">
-
+      
     <div class="fig-card">
       <a href="figures/gravity_ocr.png" target="_blank"><img src="figures/gravity_ocr.png" alt="Ocular Counterroll (OCR)"></a>
       <h3>Ocular Counterroll (OCR)</h3>
-      <p class="desc">Step-ramp head rolls to 5°–60°, then hold 10 s. Row 1: eye torsion time traces for all angles (dotted = expected G_OCR·G₀·sin θ). Row 2: g_est[1] settling (0 = upright). Row 3: SS torsion vs tilt angle scatter with sine prediction.</p>
+      <p class="desc">Counter-roll traces for tilts [5.0, 10.0, 20.0, 30.0, 45.0, 60.0, 75.0, 90.0]° + SS scatter. g_ocr=0.61.</p>
       <div class="expected">
         <strong>Expected behavior</strong>
-        OCR ≈ G_OCR·G₀·sin(θ). 30° → ≈3.9°. g_est settles to −G₀·sin(θ) and holds flat (no drift).
+        Torsion ≈ −G_OCR×G0×sin(θ). 30° → ≈−3.0°. g_est holds flat after tilt (no drift).
       </div>
-      <p class="citation">&#128214; Boff, Kaufman &amp; Thomas (1986); Laurens &amp; Angelaki (2011)</p>
+      <p class="citation">&#128214; Boff, Kaufman & Thomas (1986); Laurens & Angelaki (2011)</p>
       <span class="badge behavior">behavior</span>
     </div>
 
     <div class="fig-card">
       <a href="figures/gravity_ovar.png" target="_blank"><img src="figures/gravity_ovar.png" alt="OVAR — Off-Vertical Axis Rotation"></a>
       <h3>OVAR — Off-Vertical Axis Rotation</h3>
-      <p class="desc">Constant 60°/s rotation around axis tilted 10°, 30°, or 60° from vertical. Canal signals constant velocity; otolith sees sinusoidal gravity direction cycling at the rotation rate.</p>
+      <p class="desc">60°/s rotation, tilt angles [10.0, 30.0, 60.0, 90.0]°. Replicates Laurens & Angelaki (2011) Fig 5.</p>
       <div class="expected">
         <strong>Expected behavior</strong>
-        SPV sinusoidally modulated at rotation period. g_est[1] oscillates ±G₀·sin(α). Modulation amplitude ∝ sin(tilt).
+        SPV sinusoidally modulated at rotation period. Modulation amplitude ∝ sin(tilt). g_est oscillates ±G₀ sin(α).
       </div>
-      <p class="citation">&#128214; Raphan et al. (1981); Angelaki &amp; Hess (1994) J Neurophysiol</p>
+      <p class="citation">&#128214; Laurens & Angelaki (2011) Exp Brain Res 210:407</p>
       <span class="badge behavior">behavior</span>
     </div>
 
     <div class="fig-card">
       <a href="figures/gravity_tilt_suppression.png" target="_blank"><img src="figures/gravity_tilt_suppression.png" alt="VOR Tilt Suppression"></a>
       <h3>VOR Tilt Suppression</h3>
-      <p class="desc">Post-rotatory SPV decay for 0° (upright), 30°, 60°, 90° pre-tilt (K_gd=0.5, 20 s yaw at 60°/s). Gravity dumping selectively shortens VS time constant perpendicular to gravity. Inset: TC vs tilt angle.</p>
+      <p class="desc">Upright 60°/s yaw; tilt [0.0, 30.0, 60.0, 90.0]° applied after stop. Replicates Laurens & Angelaki (2011) Fig 6.</p>
       <div class="expected">
         <strong>Expected behavior</strong>
-        0° (upright) τ ≈ τ_vs. TC decreases monotonically with tilt. 90°: τ_eff = τ_vs/(1+K_gd·τ_vs).
+        Per-rotatory identical. TC decreases with post-stop tilt. 0°: TC ≈ τ_vs. 90°: TC ≈ τ_canal.
       </div>
-      <p class="citation">&#128214; Raphan et al. (1981) J Neurophysiol; Cohen et al. (1983)</p>
+      <p class="citation">&#128214; Laurens & Angelaki (2011) Exp Brain Res</p>
       <span class="badge behavior">behavior</span>
     </div>
 
     <div class="fig-card">
-      <a href="figures/gravity_somatogravic_freq.png" target="_blank"><img src="figures/gravity_somatogravic_freq.png" alt="Somatogravic OCR Frequency Dependence"></a>
-      <h3>Somatogravic OCR Frequency Dependence</h3>
-      <p class="desc">Sinusoidal lateral translation (2 m/s² peak) at 0.03–1.5 Hz. Low-pass gravity estimator converts GIA → perceived tilt → OCR. Bode plot: peak torsion vs frequency with LP theory overlay.</p>
+      <a href="figures/gravity_somatogravic_freq.png" target="_blank"><img src="figures/gravity_somatogravic_freq.png" alt="Somatogravic OCR — Frequency Dependence"></a>
+      <h3>Somatogravic OCR — Frequency Dependence</h3>
+      <p class="desc">Sinusoidal lateral translation at [0.03, 0.07, 0.15, 0.3, 0.7, 1.5] Hz, 2.0 m/s² peak. OCR via gravity estimator LP filter.</p>
       <div class="expected">
         <strong>Expected behavior</strong>
-        OCR amplitude ∝ 1/√(1+(f/fc)²). Corner freq fc = K_grav/(2π) ≈ 0.095 Hz. High-f → no perceived tilt, near-zero OCR.
+        Corner frequency fc = K_grav/(2π) ≈ 0.095 Hz. OCR amplitude ∝ 1/√(1+(f/fc)²). Low f → peak ≈ 1.22°; high f → near 0°.
       </div>
-      <p class="citation">&#128214; Mayne (1974); Laurens &amp; Angelaki (2011)</p>
-      <span class="badge behavior">behavior</span>
-    </div>
-    </div>
-  </section>
-
-  <section class="section" id="listing">
-    <h2>4. Listing's Law</h2>
-    <p>Half-angle rule enforcement: torsion T satisfies T = OCR − (H−H₀)(V−V₀)·π/360 in rotation-vector space. Saccades auto-correct torsional error toward Listing's plane; pursuit adds torsional velocity demand proportional to H·dV/dt + V·dH/dt.</p>
-    <div class="fig-grid">
-
-    <div class="fig-card">
-      <a href="figures/listing_plane.png" target="_blank"><img src="figures/listing_plane.png" alt="Listing's Plane — Scatter"></a>
-      <h3>Listing's Plane</h3>
-      <p class="desc">Saccades to a 5×5 grid of targets (±15° H, ±15° V). Left: 3D scatter of eye rotation vectors after each saccade. Right: torsion vs predicted half-angle value (identity line = perfect Listing's law).</p>
-      <div class="expected">
-        <strong>Expected behavior</strong>
-        All points within ±0.3° of the Listing's plane (T ≈ −H·V·π/360 for primary position at origin). Scatter plot lies on identity line.
-      </div>
-      <p class="citation">&#128214; Tweed &amp; Vilis (1987) J Neurophysiol; Haslwanter (1995)</p>
-      <span class="badge behavior">behavior</span>
-    </div>
-
-    <div class="fig-card">
-      <a href="figures/listing_ocr_saccade.png" target="_blank"><img src="figures/listing_ocr_saccade.png" alt="Listing's Law + OCR Interaction"></a>
-      <h3>Listing's Law + OCR Interaction</h3>
-      <p class="desc">Head rolls 20° (OCR tilts Listing's plane), then saccades to eccentric targets. Tests that saccade torsion correction uses OCR-shifted primary position.</p>
-      <div class="expected">
-        <strong>Expected behavior</strong>
-        After head roll, g_ocr offsets primary torsion. Saccades to oblique targets still land on the (tilted) Listing's plane. Torsion error &lt; 0.5°.
-      </div>
-      <p class="citation">&#128214; Haslwanter et al. (1992); Crawford &amp; Vilis (1991)</p>
-      <span class="badge behavior">behavior</span>
-    </div>
-
-    <div class="fig-card">
-      <a href="figures/listing_pursuit.png" target="_blank"><img src="figures/listing_pursuit.png" alt="Listing's Law During Pursuit"></a>
-      <h3>Listing's Law During Pursuit</h3>
-      <p class="desc">Sinusoidal horizontal pursuit (±15°, 0.5 Hz) at constant vertical offset (20°). The half-angle rule demands torsional velocity T̈ = −π/360·(H·V̇ + V·Ḣ), which the NI must track.</p>
-      <div class="expected">
-        <strong>Expected behavior</strong>
-        Torsion tracks T_expected = −H·V·π/360 with RMS error &lt; 0.5°. Torsion oscillates at pursuit frequency.
-      </div>
-      <p class="citation">&#128214; Tweed et al. (1994) J Neurophysiol; Misslisch et al. (1994)</p>
+      <p class="citation">&#128214; Mayne (1974); Laurens & Angelaki (2011)</p>
       <span class="badge behavior">behavior</span>
     </div>
     </div>
   </section>
 
   <section class="section" id="pursuit">
-    <h2>5. Smooth Pursuit</h2>
+    <h2>4. Smooth Pursuit</h2>
     <p>Smooth pursuit and catch-up saccades. Tests velocity gain at multiple speeds, sinusoidal tracking, and the pursuit integrator + saccade interaction cascade.</p>
     <div class="fig-grid">
       
@@ -290,7 +247,7 @@ h1   { font-size: 22px; margin-bottom: 4px; }
   </section>
 
   <section class="section" id="vergence">
-    <h2>6. Vergence</h2>
+    <h2>5. Vergence</h2>
     <p>Binocular vergence eye movements driven by disparity. Symmetric convergence isolates vergence dynamics. Asymmetric vergence combines a version saccade with a depth change.</p>
     <div class="fig-grid">
       
@@ -321,7 +278,7 @@ h1   { font-size: 22px; margin-bottom: 4px; }
   </section>
 
   <section class="section" id="fixation">
-    <h2>7. Fixation</h2>
+    <h2>6. Fixation</h2>
     <p>Fixational eye movements driven by different noise sources. Tests canal noise filtering, retinal position OU drift (microsaccades), and retinal velocity noise (pursuit-like drift).</p>
     <div class="fig-grid">
       
@@ -334,6 +291,49 @@ h1   { font-size: 22px; margin-bottom: 4px; }
         Noiseless: eye stays at 0°. Canal noise: slow drift + rare microsaccades. Pos noise: OU drift → corrective microsaccades when error exceeds threshold. Vel noise: smooth pursuit-like drift.
       </div>
       <p class="citation">&#128214; Rolfs (2009) Neurosci Biobehav Rev 33:1597–1627</p>
+      <span class="badge behavior">behavior</span>
+    </div>
+    </div>
+  </section>
+
+  <section class="section" id="listing">
+    <h2>5. Listing's Law</h2>
+    <p>Torsional constraint T = OCR − H·V·π/360: saccade plane scatter and OCR-driven correction saccade.</p>
+    <div class="fig-grid">
+      
+    <div class="fig-card">
+      <a href="figures/listing_plane.png" target="_blank"><img src="figures/listing_plane.png" alt="Listing's Plane"></a>
+      <h3>Listing's Plane</h3>
+      <p class="desc">Saccades to a (H, V) grid; torsion measured at steady state. g_ocr=0 so OCR=0 and T_required = −H·V·π/360.</p>
+      <div class="expected">
+        <strong>Expected behavior</strong>
+        Scatter points lie on identity line; cross-sections linear with slope −V·π/360.
+      </div>
+      <p class="citation">&#128214; Tweed, Haslwanter & Fetter (1998) IOVS; van Rijn & van den Berg (1993) EBR</p>
+      <span class="badge behavior">behavior</span>
+    </div>
+
+    <div class="fig-card">
+      <a href="figures/listing_ocr_saccade.png" target="_blank"><img src="figures/listing_ocr_saccade.png" alt="OCR Torsional Correction Saccade"></a>
+      <h3>OCR Torsional Correction Saccade</h3>
+      <p class="desc">Head tilt 30°; g_ocr=1.02. Torsional listing error drives a corrective saccade.</p>
+      <div class="expected">
+        <strong>Expected behavior</strong>
+        With saccades: torsion jumps to ≈-5.0° after accumulator delay (~80 ms × n_sacs). Without saccades: slow exponential rise with τ≈τ_i=25 s.
+      </div>
+      <p class="citation">&#128214; Listing (1854); Tweed et al. (1998)</p>
+      <span class="badge behavior">behavior</span>
+    </div>
+
+    <div class="fig-card">
+      <a href="figures/listing_pursuit.png" target="_blank"><img src="figures/listing_pursuit.png" alt="Listing's Plane During Smooth Pursuit"></a>
+      <h3>Listing's Plane During Smooth Pursuit</h3>
+      <p class="desc">Sinusoidal H pursuit (15° at 0.5 Hz) at V=20°. vel_torsion demand added to NI keeps torsion on Listing's plane continuously.</p>
+      <div class="expected">
+        <strong>Expected behavior</strong>
+        Eye torsion tracks T_required = −H·20·π/360 in real time; Listing error RMS < 0.5°.
+      </div>
+      <p class="citation">&#128214; Tweed, Haslwanter & Fetter (1998) IOVS; van Rijn & van den Berg (1993) EBR</p>
       <span class="badge behavior">behavior</span>
     </div>
     </div>
