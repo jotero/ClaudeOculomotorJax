@@ -237,8 +237,8 @@ class BrainParams(NamedTuple):
 
     # Vergence — single leaky integrator with dual-range nonlinear drive (Schor 1979)
     # Rashbass & Westheimer 1961; Jones 1980; Hung & Semmlow 1980; Judge & Miles 1985
-    K_verg:                float        = 5.0             # fusional integration gain (1/s); high gain for fine disparity
-    K_verg_prox:           float        = 1.0             # proximal integration gain (1/s); lower gain for full range
+    K_verg:                float        = 4.0             # fusional integration gain (1/s); high gain for fine disparity
+    K_verg_prox:           float        = 3.0             # proximal integration gain (1/s); lower gain for full range
     K_phasic_verg:         float        = 1.0             # phasic feedthrough (dim'less); applied to fusional clip only
     tau_verg:              float        = 6.0             # vergence leak TC (s); leaks to phoria [Semmlow 1986: ~5–7 s]
     disp_max_verg_fus:     float        = 2.0             # fusional disparity saturation (deg); Panum's ~±1 deg (Jones 1980)

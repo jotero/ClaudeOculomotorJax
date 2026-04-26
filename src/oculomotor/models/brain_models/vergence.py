@@ -29,19 +29,19 @@ Phasic term (K_phasic · e_fus):
 
 Steady-state gain (approximate, within fusional range):
     CL gain ≈ G / (1 + G)   where G ≈ (K_verg + K_verg_prox) · τ + K_phasic
-    With K_verg=5, K_verg_prox=1, τ=6, K_phasic=1:  G ≈ 37 → gain ~97 %
+    With K_verg=4, K_verg_prox=3, τ=6, K_phasic=1:  G ≈ 43 → gain ~98 %
 
 State:
     x_verg = [H_verg, V_verg, torsional_verg]  (3,)  deg
     Positive H = converged (eyes rotated inward for near target).
 
 Parameters:
-    K_verg         — fusional integration gain (1/s).  Default 5.
-                     Combined gain in fusional range = K_verg + K_verg_prox ≈ 6 /s →
-                     convergence TC ≈ 160 ms. [Rashbass & Westheimer 1961]
-    K_verg_prox    — proximal/full-range integration gain (1/s).  Default 1.
-                     Active alone outside fusional range: TC ≈ 1 s.
-                     [Judge & Miles 1985: slow vergence ~500 ms–1 s]
+    K_verg         — fusional integration gain (1/s).  Default 4.
+                     Combined gain in fusional range = K_verg + K_verg_prox = 7 /s →
+                     convergence TC ≈ 143 ms. [Rashbass & Westheimer 1961]
+    K_verg_prox    — proximal/full-range integration gain (1/s).  Default 3.
+                     Active alone outside fusional range: TC ≈ 330 ms;
+                     initial velocity ≈ 30°/s for 10° step. [Collewijn et al. 1988]
     K_phasic_verg  — phasic feedthrough (dim'less); default 1.
                      Applied to fusional clip only → fast onset for small steps.
     tau_verg       — leak TC (s); default 6 s.  Tonic vergence hold; drifts to phoria

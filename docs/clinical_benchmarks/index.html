@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OculomotorJax — Clinical Benchmark Report</title>
+  <style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+       background: #f5f5f5; color: #222; display: flex; }
+nav  { width: 210px; min-height: 100vh; background: #1a1a2e; color: #eee;
+       padding: 20px 0; position: sticky; top: 0; flex-shrink: 0; }
+nav h2  { font-size: 13px; padding: 0 16px 12px; color: #aaa;
+          text-transform: uppercase; letter-spacing: 0.05em; }
+nav a   { display: block; padding: 8px 16px; color: #ccc; text-decoration: none;
+          font-size: 13px; border-left: 3px solid transparent; }
+nav a:hover { background: #2a2a4e; color: #fff; border-left-color: #e08214; }
+main { flex: 1; padding: 32px; max-width: 1400px; }
+h1   { font-size: 22px; margin-bottom: 4px; }
+.meta { font-size: 12px; color: #888; margin-bottom: 32px; }
+.section    { margin-bottom: 48px; }
+.section h2 { font-size: 18px; margin-bottom: 6px; border-bottom: 2px solid #e08214;
+              padding-bottom: 6px; }
+.section > p { font-size: 13px; color: #555; margin-bottom: 16px; }
+.fig-grid   { display: grid; grid-template-columns: repeat(auto-fill, minmax(580px, 1fr));
+              gap: 20px; }
+.fig-card   { background: #fff; border: 1px solid #e0e0e0; border-radius: 8px;
+              padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+.fig-card a img { width: 100%; border-radius: 4px; display: block;
+                  border: 1px solid #eee; cursor: zoom-in; }
+.fig-card h3 { font-size: 14px; margin: 12px 0 6px; }
+.fig-card .desc { font-size: 12px; color: #555; margin-bottom: 8px; }
+.expected   { background: #fff8f0; border-left: 3px solid #e08214;
+              padding: 8px 10px; font-size: 12px; border-radius: 0 4px 4px 0;
+              margin-bottom: 8px; }
+.expected strong { display: block; font-size: 11px; color: #888;
+                   text-transform: uppercase; margin-bottom: 2px; }
+.citation   { font-size: 11px; color: #888; font-style: italic; }
+.badge      { display: inline-block; padding: 2px 8px; border-radius: 12px;
+              font-size: 10px; font-weight: 600; letter-spacing: 0.04em;
+              text-transform: uppercase; margin-top: 8px; }
+.badge.behavior { background: #d4edda; color: #155724; }
+.badge.cascade  { background: #cce5ff; color: #004085; }
+.banner     { background: #fff3cd; border: 1px solid #ffc107;
+              padding: 10px 16px; border-radius: 6px; margin-bottom: 24px;
+              font-size: 13px; color: #856404; }
+</style>
+</head>
+<body>
+  <nav>
+    <h2>Clinical Sections</h2>
+    <a href="#clin_vestibular">A. Vestibular Lesions</a>
+    <a href="#clin_ni_vs">B. Gaze-Holding & Integrator Disorders</a>
+    <a href="#clin_cn_palsies">C. Cranial Nerve Palsies, Motor Nuclear Lesions & INO</a>
+    <a href="#clin_saccades">D. Saccadic Disorders</a>
+  </nav>
+  <main>
+    <h1>OculomotorJax — Clinical Benchmarks</h1>
+    <p class="meta">
+      Generated: <strong>2026-04-26 09:25</strong> &nbsp;|&nbsp;
+      Version: <strong>cd93875-dirty</strong> &nbsp;|&nbsp;
+      <a href="../../docs/benchmarks/index.html">Normal Benchmarks</a>
+    </p>
+    <div class="banner">
+      &#9883; Clinical simulation suite — lesion models and pathological eye movement patterns.
+      All simulations use deterministic parameters (noise suppressed) for reproducible figures.
+    </div>
+
+  <section class="section" id="clin_vestibular">
+    <h2>A. Vestibular Lesions</h2>
+    <p>Peripheral and central vestibular pathology: unilateral hypofunction, bilateral failure, nodulus/uvula lesion, and VOR gain asymmetry.</p>
+    <div class="fig-grid">
+      
+    <div class="fig-card">
+      <a href="figures/clin_vest_uvh.png" target="_blank"><img src="figures/clin_vest_uvh.png" alt="Unilateral Vestibular Hypofunction — Spontaneous Nystagmus + vHIT"></a>
+      <h3>Unilateral Vestibular Hypofunction — Spontaneous Nystagmus + vHIT</h3>
+      <p class="desc">Left UVH (neuritis, 30% afferent loss) vs VN infarct (100%). Spontaneous nystagmus beats toward intact side. vHIT: reduced gain ipsilesionally.</p>
+      <div class="expected">
+        <strong>Expected finding</strong>
+        Neuritis SPV ≈ −20–30 deg/s. Infarct SPV ≈ −100 deg/s. Ipsilesional (leftward) impulse: gain < 0.5, catch-up saccade. Contraversive (rightward) impulse: gain ≈ 1.
+      </div>
+      <p class="citation">&#128214; Halmagyi & Curthoys (1988) Arch Neurol; Fetter & Zee (1988) JNEN</p>
+      <span class="badge cascade">cascade</span>
+    </div>
+
+    <div class="fig-card">
+      <a href="figures/clin_vest_bilateral.png" target="_blank"><img src="figures/clin_vest_bilateral.png" alt="Bilateral Vestibular Failure"></a>
+      <h3>Bilateral Vestibular Failure</h3>
+      <p class="desc">Canal gains × 0.05 (ototoxicity / bilateral Ménière disease). VOR abolished: oscillopsia during head movement. Normal OKN.</p>
+      <div class="expected">
+        <strong>Expected finding</strong>
+        VOR gain ≈ 0 at all frequencies. Step rotation: no post-rotatory nystagmus. OKN/pursuit preserved (visual pathway intact).
+      </div>
+      <p class="citation">&#128214; Gillespie & Minor (1999) Laryngoscope; Cohen et al. (1973)</p>
+      <span class="badge behavior">behavior</span>
+    </div>
+
+    <div class="fig-card">
+      <a href="figures/clin_vest_nodulus.png" target="_blank"><img src="figures/clin_vest_nodulus.png" alt="Velocity-Storage Dysfunction (Nodulus Lesion)"></a>
+      <h3>Velocity-Storage Dysfunction (Nodulus Lesion)</h3>
+      <p class="desc">τ_vs → 0.5 s models cerebellar nodulus/uvula ablation. OKAN and post-rotatory VOR TC both reduced to ≈ canal TC.</p>
+      <div class="expected">
+        <strong>Expected finding</strong>
+        OKAN TC: healthy ≈ 15–20 s; nodulus ≈ 1–2 s (≈ canal TC). Post-rotatory VOR TC: same shortening.
+      </div>
+      <p class="citation">&#128214; Cohen et al. (1981) Brain Res; Waespe et al. (1985) Science</p>
+      <span class="badge behavior">behavior</span>
+    </div>
+    </div>
+  </section>
+
+  <section class="section" id="clin_ni_vs">
+    <h2>B. Gaze-Holding & Integrator Disorders</h2>
+    <p>Neural integrator and velocity-storage pathology: gaze-evoked nystagmus (leaky NI), rebound nystagmus (NI null adaptation), Bruns nystagmus, and extended OKAN (VS null adaptation / PAN precursor).</p>
+    <div class="fig-grid">
+      
+    <div class="fig-card">
+      <a href="figures/clin_ni_gen.png" target="_blank"><img src="figures/clin_ni_gen.png" alt="Gaze-Evoked Nystagmus (GEN)"></a>
+      <h3>Gaze-Evoked Nystagmus (GEN)</h3>
+      <p class="desc">NI leak TC reduced: healthy 25 s → moderate 6 s → severe 2 s. Centripetal drift during eccentric gaze; corrective fast phases.</p>
+      <div class="expected">
+        <strong>Expected finding</strong>
+        GEN: nystagmus beats in direction of gaze (centripetal drift). Severity scales with τ_i shortening. No nystagmus at primary position.
+      </div>
+      <p class="citation">&#128214; Cannon & Robinson (1985) Biol Cybern; Zee et al. (1976) J Neurophysiol</p>
+      <span class="badge behavior">behavior</span>
+    </div>
+
+    <div class="fig-card">
+      <a href="figures/clin_ni_rebound.png" target="_blank"><img src="figures/clin_ni_rebound.png" alt="Rebound Nystagmus"></a>
+      <h3>Rebound Nystagmus</h3>
+      <p class="desc">NI null adaptation TC = 20 s. Hold 20° for 20 s, return to center. Null persists → rebound beats toward center.</p>
+      <div class="expected">
+        <strong>Expected finding</strong>
+        Brief nystagmus beating toward former eccentric position after returning to center. Hallmark of cerebellar floccular lesion. No rebound without null adaptation.
+      </div>
+      <p class="citation">&#128214; Zee et al. (1980) Brain; Hood & Leech (1974) J Neurol</p>
+      <span class="badge behavior">behavior</span>
+    </div>
+
+    <div class="fig-card">
+      <a href="figures/clin_ni_bruns.png" target="_blank"><img src="figures/clin_ni_bruns.png" alt="Bruns Nystagmus (CPA Tumor)"></a>
+      <h3>Bruns Nystagmus (CPA Tumor)</h3>
+      <p class="desc">Left UVH + leaky NI (τ_i=3 s) + null adaptation (τ=15 s). Large nystagmus ipsilesionally; small fast rebound contraversively.</p>
+      <div class="expected">
+        <strong>Expected finding</strong>
+        Ipsilesional gaze: large-amplitude slow nystagmus. Contraversive gaze: small fast nystagmus. Spontaneous nystagmus beating toward intact side at rest.
+      </div>
+      <p class="citation">&#128214; Bruns (1902); Leigh & Zee (2015) Neurology of Eye Movements</p>
+      <span class="badge behavior">behavior</span>
+    </div>
+
+    <div class="fig-card">
+      <a href="figures/clin_ni_okan.png" target="_blank"><img src="figures/clin_ni_okan.png" alt="Extended OKAN / VS Null Adaptation"></a>
+      <h3>Extended OKAN / VS Null Adaptation</h3>
+      <p class="desc">VS null adaptation (τ_vs_adapt 600→60 s) prolongs OKAN. PAN would require inhibitory null coupling (future work).</p>
+      <div class="expected">
+        <strong>Expected finding</strong>
+        OKAN duration extended when τ_vs_adapt is shorter. VS null builds during sustained OKN, residual prolong decay. Normal OKN gain preserved.
+      </div>
+      <p class="citation">&#128214; Cohen et al. (1992) J Neurophysiol; Leigh et al. (1981) Neurology</p>
+      <span class="badge behavior">behavior</span>
+    </div>
+    </div>
+  </section>
+
+  <section class="section" id="clin_cn_palsies">
+    <h2>C. Cranial Nerve Palsies, Motor Nuclear Lesions & INO</h2>
+    <p>Simulated 9 positions of gaze and saccade trajectories under CN VI (abducens nerve / nucleus), CN III (oculomotor), CN IV (trochlear) palsies and internuclear ophthalmoplegia (INO). Graded recovery series for CN VI nerve palsy and partial INO.</p>
+    <div class="fig-grid">
+      
+    <div class="fig-card">
+      <a href="figures/clin_cn_9positions.png" target="_blank"><img src="figures/clin_cn_9positions.png" alt="9 Positions of Gaze"></a>
+      <h3>9 Positions of Gaze</h3>
+      <p class="desc">Standard clinical 9-position gaze test. Each panel shows left (blue circles) and right (red squares) final eye positions after a saccade to each of the 9 standard fixation targets. Vertical or horizontal gaps between paired symbols reveal the duction deficit for each lesion.</p>
+      <div class="expected">
+        <strong>Expected finding</strong>
+        CN VI (R): right esotropia increasing on rightward gaze; CN III (R): right eye down-and-out, can't adduct/elevate; CN IV (R): right hypertropia maximal in adduction; Left INO: left adduction lag on rightward gaze; Bilateral INO: bilateral adduction failure, exotropia on lateral gaze.
+      </div>
+      <p class="citation">&#128214; Leigh RJ & Zee DS (2015) The Neurology of Eye Movements, 5th ed.</p>
+      <span class="badge behavior">behavior</span>
+    </div>
+
+    <div class="fig-card">
+      <a href="figures/clin_cn_ino_timeseries.png" target="_blank"><img src="figures/clin_cn_ino_timeseries.png" alt="INO Saccade Trajectories"></a>
+      <h3>INO Saccade Trajectories</h3>
+      <p class="desc">Horizontal saccade position and velocity for healthy, left INO, right INO, and bilateral INO. Left INO impairs left-eye adduction on rightward saccades; right INO impairs right-eye adduction on leftward saccades. Dashed = left eye; solid = right eye.</p>
+      <div class="expected">
+        <strong>Expected finding</strong>
+        Left INO: left adducting eye (dashed) velocity reduced/delayed on rightward saccade; abducting right eye normal. Right INO: mirror pattern on leftward saccade. Bilateral INO: both adducting eyes impaired; both abducting eyes normal.
+      </div>
+      <p class="citation">&#128214; Bhidayasiri R et al. (2000) Brain 123:1241-1267 — INO pathophysiology; Zee DS et al. (1992) Ann Neurol 32:756-764 — BIMLF syndrome.</p>
+      <span class="badge cascade">cascade</span>
+    </div>
+
+    <div class="fig-card">
+      <a href="figures/clin_cn_graded.png" target="_blank"><img src="figures/clin_cn_graded.png" alt="Graded CN VI and INO Recovery"></a>
+      <h3>Graded CN VI and INO Recovery</h3>
+      <p class="desc">Rightward 20.0° saccade for partial CN VI nerve palsy (top, g_nerve[LR_R]) and partial left INO (bottom, g_mlf_ver_L) at five gain levels (1.0 = healthy, 0.0 = complete lesion). Models incomplete recovery or graded paresis.</p>
+      <div class="expected">
+        <strong>Expected finding</strong>
+        CN VI paretic (R) eye undershoots and converges with decreasing gain; fellow (L) eye unchanged. INO adducting (L) eye progressively slows and undershoots; abducting (R) eye normal throughout.
+      </div>
+      <p class="citation">&#128214; Keller EL & Robinson DA (1972) J Neurophysiol 35:466-476 — partial lesion quantification; Frohman TC et al. (2003) J Neuro-ophthalmol 23:106-113 — graded INO.</p>
+      <span class="badge behavior">behavior</span>
+    </div>
+    </div>
+  </section>
+
+  <section class="section" id="clin_saccades">
+    <h2>D. Saccadic Disorders</h2>
+    <p>Slow saccades from reduced burst-neuron drive (PPRF/IBN lesion), ocular flutter and square wave jerks from reduced OPN tone, and complete saccadic palsy (absence of fast phases during VOR).</p>
+    <div class="fig-grid">
+      
+    <div class="fig-card">
+      <a href="figures/clin_sac_slow.png" target="_blank"><img src="figures/clin_sac_slow.png" alt="Slow Saccades (Main Sequence Shift)"></a>
+      <h3>Slow Saccades (Main Sequence Shift)</h3>
+      <p class="desc">Main sequence curves and 20° saccade traces for three levels of burst-neuron ceiling (g_burst). Reduced g_burst models reduced excitatory burst neuron drive, as in PPRF or IBN lesions. Dashed = position, solid = velocity (right axis).</p>
+      <div class="expected">
+        <strong>Expected finding</strong>
+        Reduced g_burst lowers peak velocity across all amplitudes, shifting the main sequence curve downward. Saccade duration increases but final position is preserved by the local feedback loop. Healthy: peak velocity ~600 deg/s at 40°. Severe (g=120): ~170 deg/s.
+      </div>
+      <p class="citation">&#128214; Zee DS et al. (1976) Ann Neurol 1:309-315 — PPRF slow saccades; Optican LM & Robinson DA (1980) J Neurophysiol 44:1058-1076 — cerebellar adaptive gain.</p>
+      <span class="badge behavior">behavior</span>
+    </div>
+
+    <div class="fig-card">
+      <a href="figures/clin_sac_flutter_swj.png" target="_blank"><img src="figures/clin_sac_flutter_swj.png" alt="Ocular Flutter and Square Wave Jerks"></a>
+      <h3>Ocular Flutter and Square Wave Jerks</h3>
+      <p class="desc">Static center fixation under healthy, flutter, and SWJ conditions. Flutter: OPN threshold set near zero → saccade generator oscillates continuously. SWJ: moderately relaxed threshold + retinal position noise → pairs of back-to-back saccades with the inter-saccadic fixation interval. Left column = position, right = velocity.</p>
+      <div class="expected">
+        <strong>Expected finding</strong>
+        Healthy: near-zero drift during fixation (microsaccade-free without noise). Flutter: high-frequency sinusoidal saccadic oscillation ~100 Hz, amplitude 2–5°. SWJ: paired saccades at ~1 Hz, right-left or left-right, separated by fixation interval of ~150–200 ms.
+      </div>
+      <p class="citation">&#128214; Zee DS & Robinson DA (1979) Ann Neurol 5:207-209 — flutter mechanism; Hepp K et al. (1989) Exp Brain Res 75:551-564 — OPN and saccadic control.</p>
+      <span class="badge cascade">cascade</span>
+    </div>
+
+    <div class="fig-card">
+      <a href="figures/clin_sac_palsy.png" target="_blank"><img src="figures/clin_sac_palsy.png" alt="Saccade Palsy — Loss of Fast Phases During VOR"></a>
+      <h3>Saccade Palsy — Loss of Fast Phases During VOR</h3>
+      <p class="desc">Sinusoidal head rotation (60 deg/s at 0.5 Hz) in the dark. Left column = eye position, right = velocity. Healthy: sawtooth nystagmus with fast phases. Partial palsy (g_burst=50): occasional slow corrective saccades. Complete palsy (g_burst=0): smooth sinusoidal eye motion only, no fast phases — VOR without nystagmus.</p>
+      <div class="expected">
+        <strong>Expected finding</strong>
+        Healthy: clear nystagmus sawtooth with fast phases resetting eye position. Complete palsy: smooth sinusoidal eye velocity matching VOR gain ~0.9; no reset saccades → progressive torsion-like drift without fast phases. Pattern seen in acute PPRF lesions.
+      </div>
+      <p class="citation">&#128214; Bhidayasiri R et al. (2001) Brain 124:2523-2547 — pontine gaze palsy; Leigh RJ & Zee DS (2015) The Neurology of Eye Movements.</p>
+      <span class="badge cascade">cascade</span>
+    </div>
+    </div>
+  </section>
+  </main>
+  
+<div id="lb" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;
+     background:rgba(0,0,0,.85);z-index:1000;cursor:zoom-out;align-items:center;
+     justify-content:center;">
+  <img id="lb-img" style="max-width:95vw;max-height:95vh;border-radius:4px;">
+</div>
+<script>
+(function(){
+  var lb=document.getElementById('lb'),
+      li=document.getElementById('lb-img');
+  document.querySelectorAll('.fig-card a').forEach(function(a){
+    a.addEventListener('click',function(e){
+      e.preventDefault();
+      li.src=a.href; lb.style.display='flex';
+    });
+  });
+  lb.addEventListener('click',function(){ lb.style.display='none'; });
+})();
+</script>
+
+</body>
+</html>
