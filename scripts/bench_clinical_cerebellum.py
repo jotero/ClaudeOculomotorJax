@@ -27,7 +27,7 @@ from oculomotor.sim.simulator import (
 )
 from oculomotor.sim import kinematics as km
 from oculomotor.analysis import (
-    ax_fmt, extract_burst, vs_net, ni_net, ni_null, vs_null, extract_spv,
+    ax_fmt, vs_net, ni_net, ni_null, vs_null, extract_spv_states,
 )
 
 SHOW = '--show' in sys.argv
@@ -74,10 +74,8 @@ def _eye_pos(states):
 def _eye_vel(states, dt=DT):
     return np.gradient(_eye_pos(states), dt)
 
-def _spv(t_np, states, theta, **kw):
-    ev    = _eye_vel(states)
-    burst = np.array(extract_burst(states, theta)[:, 0])
-    return extract_spv(t_np, ev, burst, **kw)
+def _spv(t_np, states, **kw):
+    return extract_spv_states(states, t_np, **kw)[:, 0]
 
 def _ni_net_yaw(states):
     return np.array(ni_net(states)[:, 0])
@@ -121,8 +119,8 @@ def _test_fl_pfl(show):
     st_a_c = simulate(THETA_FL, t_a, target=tgt_a, scene_present_array=sp_a,
                       max_steps=max_a, return_states=True)
 
-    spv_a_h = _spv(t_a, st_a_h, THETA)
-    spv_a_c = _spv(t_a, st_a_c, THETA_FL)
+    spv_a_h = _spv(t_a, st_a_h)
+    spv_a_c = _spv(t_a, st_a_c)
 
     # ── Protocol B: 15 deg/s pursuit ramp ────────────────────────────────────
     RAMP_VEL = 15.0
@@ -276,7 +274,7 @@ def _test_bruns(show):
                      scene_present_array=sp_br,
                      max_steps=max_br, return_states=True)
 
-    spv_br = _spv(t_br, st_br, THETA_BRUNS)
+    spv_br = _spv(t_br, st_br)
 
     seg_labels = ['Centre', '+20° contra\n(intact side)', 'Centre', '−20° ipsi\n(lesioned side)']
     seg_vlines = [SEG * i for i in range(1, 4)]
@@ -362,8 +360,8 @@ def _test_nodulus(show):
                     target_present_array=tgt_pr,
                     max_steps=max_nd, return_states=True)
 
-    spv_h = _spv(t_np, st_h, THETA)
-    spv_a = _spv(t_np, st_a, THETA_NOD)
+    spv_h = _spv(t_np, st_h)
+    spv_a = _spv(t_np, st_a)
 
     # ── Figure: 3 rows × 1 col ────────────────────────────────────────────────
     fig, axes = plt.subplots(3, 1, figsize=(13, 10), sharex=True)

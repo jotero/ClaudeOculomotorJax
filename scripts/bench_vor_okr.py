@@ -25,7 +25,7 @@ from oculomotor.models.sensory_models.sensory_model import (
     N_CANALS, FLOOR, _SOFTNESS, PINV_SENS, C_slip,
 )
 from oculomotor.sim import kinematics as km
-from oculomotor.analysis import ax_fmt, extract_burst, extract_canal, vs_net, vs_null, ni_net, fit_tc, extract_spv
+from oculomotor.analysis import ax_fmt, extract_canal, vs_net, vs_null, ni_net, fit_tc, extract_spv_states
 
 SHOW  = '--show' in sys.argv
 DT    = 0.001
@@ -72,8 +72,7 @@ def _raphan(show):
                         scene_present=jnp.zeros(T_vor),
                         target_present=jnp.zeros(T_vor), key=0)
     ev_vor    = np.gradient(np.array(st_vor.plant[:, 0]), DT)
-    burst_vor = extract_burst(st_vor, theta)[:, 0]
-    spv_vor_d = -extract_spv(t_vor, ev_vor, burst_vor)   # negate: compensatory = positive
+    spv_vor_d = -extract_spv_states(st_vor, t_vor)[:, 0]   # negate: compensatory = positive
     cup_vor   = extract_canal(st_vor)
     int_vor   = vs_net(st_vor)[:, 0]                     # x_L−x_R > 0 during rightward VOR
     ni_vor    = ni_net(st_vor)[:, 0]
@@ -95,8 +94,7 @@ def _raphan(show):
     st_okn  = _simulate(theta, t_okn_j, scene_vel=sv,
                         scene_present=sp, target_present=jnp.zeros(T_okn), key=1)
     ev_okn    = np.gradient(np.array(st_okn.plant[:, 0]), DT)
-    burst_okn = extract_burst(st_okn, theta)[:, 0]
-    spv_okn_d = extract_spv(t_okn, ev_okn, burst_okn)    # positive: eye tracks scene
+    spv_okn_d = extract_spv_states(st_okn, t_okn)[:, 0]    # positive: eye tracks scene
     int_okn   = -vs_net(st_okn)[:, 0]                    # x_L−x_R < 0 → negate for display
     ni_okn    = ni_net(st_okn)[:, 0]
     eye_okn   = np.array(st_okn.plant[:, 0])
@@ -118,8 +116,7 @@ def _raphan(show):
                           target_present=jnp.zeros(T_vor),
                           key=2)
     ev_vvor    = np.gradient(np.array(st_vvor.plant[:, 0]), DT)
-    burst_vvor = extract_burst(st_vvor, theta)[:, 0]
-    spv_vvor_d = -extract_spv(t_vor, ev_vvor, burst_vvor)
+    spv_vvor_d = -extract_spv_states(st_vvor, t_vor)[:, 0]
     cup_vvor   = extract_canal(st_vvor)
     int_vvor   = vs_net(st_vvor)[:, 0]
     ni_vvor    = ni_net(st_vvor)[:, 0]
@@ -234,9 +231,8 @@ def _okn_zoom(show):
     st     = _simulate(THETA, t_arr, scene_vel=sv,
                        scene_present=sp, target_present=jnp.zeros(T), key=3)
     eye    = np.array(st.plant[:, 0])
-    ev     = np.gradient(eye, DT)
-    burst  = extract_burst(st, THETA)[:, 0]
-    spv    = extract_spv(t_np, ev, burst)
+    ev  = np.gradient(eye, DT)
+    spv = extract_spv_states(st, t_np)[:, 0]
 
     fig, axes = plt.subplots(2, 1, figsize=(14, 7), sharex=True)
     fig.suptitle('OKN Nystagmus — Sawtooth Waveform Zoom (30 deg/s scene)', fontsize=11)
@@ -290,7 +286,6 @@ def _cascade(show):
     x_ni_v = ni_net(st_v)[:, 0]
     eye_v  = np.array(st_v.plant[:, 0])
     ev_v   = np.gradient(eye_v, DT)
-    bst_v  = extract_burst(st_v, THETA)[:, 0]
 
     # ── OKR cascade ───────────────────────────────────────────────────────────
     t_okn  = jnp.arange(0.0, 20.0, DT); t_okn_np = np.array(t_okn); T_okn = len(t_okn)
@@ -336,9 +331,9 @@ def _cascade(show):
     axes[1, 0].plot(t_vor, u_can,        color=utils.C['canal'], lw=1.5, label='canal → u_canal')
     axes[2, 0].plot(t_vor, x_vs_v,       color=utils.C['vs'],    lw=1.5, label='x_VS net')
     axes[3, 0].plot(t_vor, x_ni_v,       color=utils.C['ni'],    lw=1.5, label='x_NI net')
-    axes[4, 0].plot(t_vor, ev_v,          color=utils.C['eye'],   lw=1.0, alpha=0.5, label='eye vel (raw)')
-    bst_spv = extract_spv(t_vor, ev_v, bst_v)
-    axes[4, 0].plot(t_vor, bst_spv,       color=utils.C['spv'],   lw=1.8, label='SPV')
+    bst_spv = extract_spv_states(st_v, t_vor)[:, 0]
+    axes[4, 0].plot(t_vor, ev_v,    color=utils.C['eye'], lw=1.0, alpha=0.5, label='eye vel (raw)')
+    axes[4, 0].plot(t_vor, bst_spv, color=utils.C['spv'], lw=1.8, label='SPV')
     axes[4, 0].set_xlabel('Time (s)', fontsize=8)
 
     for ax in axes[:5, 0]:
@@ -351,8 +346,7 @@ def _cascade(show):
     axes[2, 1].plot(t_okn_np, x_vs_o, color=utils.C['vs'],  lw=1.5, label='x_VS net')
     axes[3, 1].plot(t_okn_np, x_ni_o, color=utils.C['ni'],  lw=1.5, label='x_NI net')
     axes[4, 1].plot(t_okn_np, ev_o,   color=utils.C['eye'], lw=1.0, alpha=0.5, label='eye vel (raw)')
-    bst_o   = extract_burst(st_o, THETA)[:, 0]
-    spv_okn = extract_spv(t_okn_np, ev_o, bst_o)
+    spv_okn = extract_spv_states(st_o, t_okn_np)[:, 0]
     axes[4, 1].plot(t_okn_np, spv_okn, color=utils.C['spv'], lw=1.8, label='SPV')
     axes[4, 1].set_xlabel('Time (s)', fontsize=8)
 

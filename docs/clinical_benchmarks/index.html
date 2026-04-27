@@ -48,11 +48,17 @@ h1   { font-size: 22px; margin-bottom: 4px; }
 </head>
 <body>
   <nav>
+    <h2 style="margin-bottom:4px;">Pages</h2>
+    <a href="../">LLM Simulator</a>
+    <a href="../benchmarks/">Benchmarks</a>
+    <a href="../parameters.html">Parameters</a>
+    <div style="border-top:1px solid #2a2a4e;margin:10px 0 8px;"></div>
     <h2>Clinical Sections</h2>
     <a href="#clin_vestibular">A. Vestibular Lesions</a>
-    <a href="#clin_ni_vs">B. Gaze-Holding & Integrator Disorders</a>
-    <a href="#clin_cn_palsies">C. Cranial Nerve Palsies, Motor Nuclear Lesions & INO</a>
-    <a href="#clin_saccades">D. Saccadic Disorders</a>
+    <a href="#clin_cerebellum">B. Cerebellar Lesions</a>
+    <a href="#clin_ni_vs">C. Gaze-Holding & Integrator</a>
+    <a href="#clin_cn_palsies">D. CN Palsies & INO</a>
+    <a href="#clin_saccades">E. Saccadic Disorders</a>
   </nav>
   <main>
     <h1>OculomotorJax — Clinical Benchmarks</h1>
@@ -68,49 +74,92 @@ h1   { font-size: 22px; margin-bottom: 4px; }
 
   <section class="section" id="clin_vestibular">
     <h2>A. Vestibular Lesions</h2>
-    <p>Peripheral and central vestibular pathology: unilateral hypofunction, bilateral failure, nodulus/uvula lesion, and VOR gain asymmetry.</p>
+    <p>Peripheral vestibular pathology: spontaneous nystagmus in dark vs fixation suppression, video head impulse test (acute vs chronic UVH), and rotary chair / OKN time constants.</p>
     <div class="fig-grid">
-      
-    <div class="fig-card">
-      <a href="figures/clin_vest_uvh.png" target="_blank"><img src="figures/clin_vest_uvh.png" alt="Unilateral Vestibular Hypofunction — Spontaneous Nystagmus + vHIT"></a>
-      <h3>Unilateral Vestibular Hypofunction — Spontaneous Nystagmus + vHIT</h3>
-      <p class="desc">Left UVH (neuritis, 30% afferent loss) vs VN infarct (100%). Spontaneous nystagmus beats toward intact side. vHIT: reduced gain ipsilesionally.</p>
-      <div class="expected">
-        <strong>Expected finding</strong>
-        Neuritis SPV ≈ −20–30 deg/s. Infarct SPV ≈ −100 deg/s. Ipsilesional (leftward) impulse: gain < 0.5, catch-up saccade. Contraversive (rightward) impulse: gain ≈ 1.
-      </div>
-      <p class="citation">&#128214; Halmagyi & Curthoys (1988) Arch Neurol; Fetter & Zee (1988) JNEN</p>
-      <span class="badge cascade">cascade</span>
-    </div>
 
     <div class="fig-card">
-      <a href="figures/clin_vest_bilateral.png" target="_blank"><img src="figures/clin_vest_bilateral.png" alt="Bilateral Vestibular Failure"></a>
-      <h3>Bilateral Vestibular Failure</h3>
-      <p class="desc">Canal gains × 0.05 (ototoxicity / bilateral Ménière disease). VOR abolished: oscillopsia during head movement. Normal OKN.</p>
+      <a href="figures/clin_vest_spontaneous.png" target="_blank"><img src="figures/clin_vest_spontaneous.png" alt="Spontaneous Nystagmus — Dark vs Fixation Suppression"></a>
+      <h3>Spontaneous Nystagmus — Dark vs Fixation Suppression</h3>
+      <p class="desc">Left UVH (10% canal gain, τ_vs=10 s) vs VN infarct (τ_vs=5 s). Dark: spontaneous nystagmus driven by VN firing-rate asymmetry. Strobed fixation: saccades constrain gaze to target, reducing nystagmus amplitude.</p>
       <div class="expected">
         <strong>Expected finding</strong>
-        VOR gain ≈ 0 at all frequencies. Step rotation: no post-rotatory nystagmus. OKN/pursuit preserved (visual pathway intact).
+        Dark SPV: healthy ≈ 0; neuritis ≈ −20–40 deg/s; infarct ≈ −60–100 deg/s. Strobed fixation: saccades return eye to target each cycle; amplitude falls, SPV unchanged or slightly reduced vs dark.
       </div>
-      <p class="citation">&#128214; Gillespie & Minor (1999) Laryngoscope; Cohen et al. (1973)</p>
+      <p class="citation">&#128214; Halmagyi & Curthoys (1988); Bense et al. (2004)</p>
       <span class="badge behavior">behavior</span>
     </div>
 
     <div class="fig-card">
-      <a href="figures/clin_vest_nodulus.png" target="_blank"><img src="figures/clin_vest_nodulus.png" alt="Velocity-Storage Dysfunction (Nodulus Lesion)"></a>
-      <h3>Velocity-Storage Dysfunction (Nodulus Lesion)</h3>
-      <p class="desc">τ_vs → 0.5 s models cerebellar nodulus/uvula ablation. OKAN and post-rotatory VOR TC both reduced to ≈ canal TC.</p>
+      <a href="figures/clin_vest_vhit.png" target="_blank"><img src="figures/clin_vest_vhit.png" alt="vHIT — Acute vs Chronic Left UVH"></a>
+      <h3>vHIT — Acute vs Chronic Left UVH (10% left canal gain)</h3>
+      <p class="desc">150 deg/s half-sine impulse, left and right. Scene absent, fixation target only. Acute UVH: b_lesion=85 (mild tonic imbalance, spontaneous nystagmus visible pre-impulse). Chronic UVH: b_lesion=100 (central compensation restored VN balance). Gain = regression of early SPV (first 60 ms) onto head velocity.</p>
       <div class="expected">
         <strong>Expected finding</strong>
-        OKAN TC: healthy ≈ 15–20 s; nodulus ≈ 1–2 s (≈ canal TC). Post-rotatory VOR TC: same shortening.
+        Healthy gain ≈ 0.9 both directions. Acute/Chronic rightward (intact side) gain ≈ 0.7–0.9. Acute/Chronic leftward (lesioned) gain ≈ 0.1–0.25 with catch-up saccade.
       </div>
-      <p class="citation">&#128214; Cohen et al. (1981) Brain Res; Waespe et al. (1985) Science</p>
+      <p class="citation">&#128214; Halmagyi & Curthoys (1988); MacDougall et al. (2009)</p>
+      <span class="badge cascade">cascade</span>
+    </div>
+
+    <div class="fig-card">
+      <a href="figures/clin_vest_rotary_okn.png" target="_blank"><img src="figures/clin_vest_rotary_okn.png" alt="Rotary Chair (Dark) + OKN — SPV and VS State"></a>
+      <h3>Rotary Chair (Dark) + OKN — SPV and VS State</h3>
+      <p class="desc">Step rotation 60 deg/s × 20 s in dark, then post-rotatory nystagmus. Lesioned τ_vs (UVH=10 s, VN infarct=5 s) shortens post-rotatory TC. OKN/OKAN unaffected by peripheral vestibular lesion (VS driven by visual slip).</p>
+      <div class="expected">
+        <strong>Expected finding</strong>
+        Healthy post-rotatory TC ≈ 15–20 s. UVH: reduced onset SPV, TC ≈ 10 s. VN infarct: severely reduced onset SPV, TC ≈ 5 s. OKN/OKAN: healthy and lesioned cases similar (visual drive intact).
+      </div>
+      <p class="citation">&#128214; Raphan et al. (1977); Cohen et al. (1977); Baloh et al. (1984)</p>
+      <span class="badge behavior">behavior</span>
+    </div>
+    </div>
+  </section>
+
+  <section class="section" id="clin_cerebellum">
+    <h2>B. Cerebellar Lesions</h2>
+    <p>Flocculus/paraflocculus (FL/PFL) and nodulus/uvula pathology: gaze-evoked nystagmus with rebound, Bruns nystagmus (combined FL/PFL + UVH), and prolonged OKAN from VS null adaptation.</p>
+    <div class="fig-grid">
+
+    <div class="fig-card">
+      <a href="figures/clin_cereb_fl_pfl.png" target="_blank"><img src="figures/clin_cereb_fl_pfl.png" alt="FL/PFL Lesion — GEN, Rebound Nystagmus, Impaired Pursuit"></a>
+      <h3>FL/PFL Lesion — GEN, Rebound Nystagmus, Impaired Pursuit</h3>
+      <p class="desc">Leaky NI (τ_i = 2 s) causes centripetal slow drift during eccentric gaze. NI null adaptation persists after gaze return → rebound nystagmus. Reduced pursuit gain (K_pursuit = 0.5) with catch-up saccades.</p>
+      <div class="expected">
+        <strong>Expected finding</strong>
+        GEN: slow drift centripetal at eccentric position; SPV grows with eccentricity. Rebound: nystagmus reversal after return to primary; direction opposite to prior gaze. Pursuit: catch-up saccades; steady-state velocity error.
+      </div>
+      <p class="citation">&#128214; Cannon & Robinson (1985); Zee et al. (1980); Stone & Lisberger (1990)</p>
+      <span class="badge behavior">behavior</span>
+    </div>
+
+    <div class="fig-card">
+      <a href="figures/clin_cereb_bruns.png" target="_blank"><img src="figures/clin_cereb_bruns.png" alt="Bruns Nystagmus — FL/PFL + Left UVH"></a>
+      <h3>Bruns Nystagmus — FL/PFL + Left UVH</h3>
+      <p class="desc">Leaky NI (τ_i = 3 s) and left UVH (canal gain × 0.1, b_lesion=85). Ipsilesional gaze: large-amplitude slow GEN amplified by peripheral VS imbalance. Contraversive gaze: small faster rebound nystagmus.</p>
+      <div class="expected">
+        <strong>Expected finding</strong>
+        Primary position: mild spontaneous rightward nystagmus from UVH. Ipsilesional (leftward) gaze: large slow centripetal drift + fast phases. Contraversive (rightward) gaze: smaller oscillation with rebound component.
+      </div>
+      <p class="citation">&#128214; Bruns (1902); Leigh & Zee (2015) The Neurology of Eye Movements</p>
+      <span class="badge cascade">cascade</span>
+    </div>
+
+    <div class="fig-card">
+      <a href="figures/clin_cereb_nodulus.png" target="_blank"><img src="figures/clin_cereb_nodulus.png" alt="Nodulus/Uvula Lesion — Prolonged OKAN"></a>
+      <h3>Nodulus/Uvula Lesion — Prolonged OKAN</h3>
+      <p class="desc">Faster VS null adaptation (τ_vs_adapt = 60 s) causes the null to build during sustained OKN. After lights off, VS decays toward null (not 0), producing extended OKAN beyond what τ_vs alone predicts.</p>
+      <div class="expected">
+        <strong>Expected finding</strong>
+        OKN gain ≈ same in both conditions. OKAN: healthy decays with τ_vs ≈ 20 s; nodulus lesion OKAN sustained longer due to non-zero VS null floor. VS null plot shows build-up during OKN then persistence after lights off.
+      </div>
+      <p class="citation">&#128214; Cohen et al. (1992) J Neurophysiol</p>
       <span class="badge behavior">behavior</span>
     </div>
     </div>
   </section>
 
   <section class="section" id="clin_ni_vs">
-    <h2>B. Gaze-Holding & Integrator Disorders</h2>
+    <h2>C. Gaze-Holding & Integrator Disorders</h2>
     <p>Neural integrator and velocity-storage pathology: gaze-evoked nystagmus (leaky NI), rebound nystagmus (NI null adaptation), Bruns nystagmus, and extended OKAN (VS null adaptation / PAN precursor).</p>
     <div class="fig-grid">
       
@@ -165,7 +214,7 @@ h1   { font-size: 22px; margin-bottom: 4px; }
   </section>
 
   <section class="section" id="clin_cn_palsies">
-    <h2>C. Cranial Nerve Palsies, Motor Nuclear Lesions & INO</h2>
+    <h2>D. Cranial Nerve Palsies, Motor Nuclear Lesions & INO</h2>
     <p>Simulated 9 positions of gaze and saccade trajectories under CN VI (abducens nerve / nucleus), CN III (oculomotor), CN IV (trochlear) palsies and internuclear ophthalmoplegia (INO). Graded recovery series for CN VI nerve palsy and partial INO.</p>
     <div class="fig-grid">
       
@@ -208,7 +257,7 @@ h1   { font-size: 22px; margin-bottom: 4px; }
   </section>
 
   <section class="section" id="clin_saccades">
-    <h2>D. Saccadic Disorders</h2>
+    <h2>E. Saccadic Disorders</h2>
     <p>Slow saccades from reduced burst-neuron drive (PPRF/IBN lesion), ocular flutter and square wave jerks from reduced OPN tone, and complete saccadic palsy (absence of fast phases during VOR).</p>
     <div class="fig-grid">
       
@@ -233,18 +282,6 @@ h1   { font-size: 22px; margin-bottom: 4px; }
         Healthy: near-zero drift during fixation (microsaccade-free without noise). Flutter: high-frequency sinusoidal saccadic oscillation ~100 Hz, amplitude 2–5°. SWJ: paired saccades at ~1 Hz, right-left or left-right, separated by fixation interval of ~150–200 ms.
       </div>
       <p class="citation">&#128214; Zee DS & Robinson DA (1979) Ann Neurol 5:207-209 — flutter mechanism; Hepp K et al. (1989) Exp Brain Res 75:551-564 — OPN and saccadic control.</p>
-      <span class="badge cascade">cascade</span>
-    </div>
-
-    <div class="fig-card">
-      <a href="figures/clin_sac_palsy.png" target="_blank"><img src="figures/clin_sac_palsy.png" alt="Saccade Palsy — Loss of Fast Phases During VOR"></a>
-      <h3>Saccade Palsy — Loss of Fast Phases During VOR</h3>
-      <p class="desc">Sinusoidal head rotation (60 deg/s at 0.5 Hz) in the dark. Left column = eye position, right = velocity. Healthy: sawtooth nystagmus with fast phases. Partial palsy (g_burst=50): occasional slow corrective saccades. Complete palsy (g_burst=0): smooth sinusoidal eye motion only, no fast phases — VOR without nystagmus.</p>
-      <div class="expected">
-        <strong>Expected finding</strong>
-        Healthy: clear nystagmus sawtooth with fast phases resetting eye position. Complete palsy: smooth sinusoidal eye velocity matching VOR gain ~0.9; no reset saccades → progressive torsion-like drift without fast phases. Pattern seen in acute PPRF lesions.
-      </div>
-      <p class="citation">&#128214; Bhidayasiri R et al. (2001) Brain 124:2523-2547 — pontine gaze palsy; Leigh RJ & Zee DS (2015) The Neurology of Eye Movements.</p>
       <span class="badge cascade">cascade</span>
     </div>
     </div>

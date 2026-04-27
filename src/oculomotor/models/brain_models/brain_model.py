@@ -213,6 +213,9 @@ class BrainParams(NamedTuple):
     # Saccade target selection — handled inside the saccade generator
     orbital_limit:         float = 50.0   # oculomotor range half-width (deg); clip e_cmd to ±limit
     alpha_reset:           float = 1.0    # centering gain (0–1); e_center = −α·x_ni when out-of-field
+    k_center_vel:          float = 0.5    # quick-phase prediction gain (0=no look-ahead, 1=full τ_ref look-ahead)
+                                          # look-ahead = k·τ_ref; aims past centre to compensate for slow-phase
+                                          # drift during refractory.  Only applied in out-of-field (quick-phase) path.
 
     # Otolith / gravity estimation — Laurens & Angelaki (2011, 2017)
     K_grav:                float = 0.6    # otolith correction gain for gravity (1/s); go=0.6 Laurens & Angelaki 2011
@@ -491,7 +494,11 @@ def step(x_brain, sensory_out, brain_params):
 
     # ── Saccade generator (target selection handled internally) ───────────────
     # x_ni_for_sg is the brain's proxy for current eye position (avoids plant state dependency)
-    dx_sg, u_burst = sg.step(x_sg, pos_for_sg, percept.target_visible, x_ni_for_sg, brain_params)
+    # Use VS STATE (tonic slow phase) for prediction, NOT full w_est which includes the
+    # fast canal D-feedthrough (~head velocity during VOR). The D-feedthrough is phasic —
+    # a correct compensatory response — not a drift to correct for.
+    w_vs_tonic = x_vs[:3] - x_vs[3:6]   # VS state net (tonic imbalance source only)
+    dx_sg, u_burst = sg.step(x_sg, pos_for_sg, percept.target_visible, x_ni_for_sg, w_vs_tonic, brain_params)
 
     # ── Neural integrator: VOR + saccades + pursuit → version motor command ───
     dx_ni, motor_cmd_ni = ni.step(x_ni, -w_est + u_burst + u_pursuit_listing, brain_params)

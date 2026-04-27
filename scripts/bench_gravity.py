@@ -26,7 +26,7 @@ from oculomotor.sim.simulator import (
     PARAMS_DEFAULT, with_brain, simulate, SimConfig, _IDX_GRAV,
 )
 from oculomotor.sim import kinematics as km
-from oculomotor.analysis import ax_fmt, vs_net, fit_tc, extract_burst, extract_spv
+from oculomotor.analysis import ax_fmt, vs_net, fit_tc, extract_spv_states
 
 SHOW = '--show' in sys.argv
 DT   = 0.001
@@ -216,8 +216,7 @@ def _ovar(show):
 
         eye_pos = (np.array(st.plant[:, 0]) + np.array(st.plant[:, 3])) / 2.0
         eye_vel = np.gradient(eye_pos, DT)
-        burst   = np.array(extract_burst(st, params)[:, 0])
-        spv     = extract_spv(t, eye_vel, burst)
+        spv     = extract_spv_states(st, t)[:, 0]
         g_est   = np.array(st.brain[:, _IDX_GRAV])
 
         col = colors[ci]
@@ -327,8 +326,7 @@ def _tilt_suppression(show):
 
         eye_pos = (np.array(st.plant[:, 0]) + np.array(st.plant[:, 3])) / 2.0
         eye_vel = np.gradient(eye_pos, DT)
-        burst   = np.array(extract_burst(st, params)[:, 0])
-        spv     = extract_spv(t_arr, eye_vel, burst)
+        spv     = extract_spv_states(st, t_arr)[:, 0]
         g_est_y = np.array(st.brain[:, _IDX_GRAV])[:, 1]
 
         # Fit TC starting after tilt completes

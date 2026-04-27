@@ -26,7 +26,7 @@ from oculomotor.sim.simulator import (
 )
 from oculomotor.sim import kinematics as km
 from oculomotor.analysis import (
-    ax_fmt, extract_burst, vs_net, vs_null, ni_net, ni_null, extract_spv,
+    ax_fmt, vs_net, vs_null, ni_net, ni_null, extract_spv_states,
 )
 
 SHOW = '--show' in sys.argv
@@ -117,10 +117,9 @@ def _gen(show):
 
     for label, theta, col, ls in conds:
         st = _sim_lit(theta, t_arr, pt)
-        ep = np.array(st.plant[:, 0])
-        ev = np.gradient(ep, DT)
-        burst = np.array(extract_burst(st, theta)[:, 0])
-        spv   = extract_spv(t_arr, ev, burst)
+        ep  = np.array(st.plant[:, 0])
+        ev  = np.gradient(ep, DT)
+        spv = extract_spv_states(st, t_arr)[:, 0]
         ni    = ni_net(st)[:, 0]
         ni_n  = ni_null(st)[:, 0]
         axes[0].plot(t_arr, ep,  color=col, lw=1.5, ls=ls, label=f'{label} τ_i={theta.brain.tau_i:.0f}s')
@@ -179,13 +178,8 @@ def _rebound(show):
     st_null   = _sim_lit(THETA_CEREB,    t_arr, pt_full)
     st_nonull = _sim_lit(THETA_NO_NULL,  t_arr, pt_full)
 
-    def _spv(st, theta):
-        ev    = np.gradient(np.array(st.plant[:, 0]), DT)
-        burst = np.array(extract_burst(st, theta)[:, 0])
-        return extract_spv(t_arr, ev, burst)
-
-    spv_null   = _spv(st_null,   THETA_CEREB)
-    spv_nonull = _spv(st_nonull, THETA_NO_NULL)
+    spv_null   = extract_spv_states(st_null,   t_arr)[:, 0]
+    spv_nonull = extract_spv_states(st_nonull, t_arr)[:, 0]
 
     null_at_ret = float(ni_null(st_null)[int(HOLD_DUR / DT), 0])
 
@@ -260,8 +254,7 @@ def _bruns(show):
     pt = np.stack([tx, np.zeros(T, np.float32), np.ones(T, np.float32)], axis=1)
 
     st = _sim_lit(THETA_BRUNS, t_arr, pt)
-    burst = np.array(extract_burst(st, THETA_BRUNS)[:, 0])
-    spv   = extract_spv(t_arr, np.gradient(np.array(st.plant[:, 0]), DT), burst)
+    spv = extract_spv_states(st, t_arr)[:, 0]
     ni    = ni_net(st)[:, 0]
     ni_n  = ni_null(st)[:, 0]
 
@@ -347,13 +340,8 @@ def _okan_extension(show):
     st_h = _run(THETA)
     st_a = _run(THETA_ADAPT)
 
-    def _spv(st, theta):
-        ev    = np.gradient(np.array(st.plant[:, 0]), DT)
-        burst = np.array(extract_burst(st, theta)[:, 0])
-        return extract_spv(t_arr, ev, burst)
-
-    spv_h = _spv(st_h, THETA)
-    spv_a = _spv(st_a, THETA_ADAPT)
+    spv_h = extract_spv_states(st_h, t_arr)[:, 0]
+    spv_a = extract_spv_states(st_a, t_arr)[:, 0]
 
     fig, axes = plt.subplots(3, 1, figsize=(13, 9), sharex=True)
     fig.suptitle(

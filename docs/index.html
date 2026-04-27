@@ -104,6 +104,14 @@
   }
   @keyframes spin { to { transform: rotate(360deg); } }
 
+  /* Site footer links */
+  .site-footer {
+    margin-top: 40px; margin-bottom: 16px; font-size: 0.75rem; color: #444;
+    display: flex; gap: 20px; align-items: center;
+  }
+  .site-footer a { color: #555; text-decoration: none; }
+  .site-footer a:hover { color: #aaa; }
+  .site-footer .sep { color: #333; }
 
   /* Avatar section */
   #avatar-section {
@@ -633,5 +641,14 @@ function animate(ts) {
 }
 requestAnimationFrame(animate);
 </script>
+
+<div class="site-footer">
+  <a href="benchmarks/">Benchmarks</a>
+  <span class="sep">·</span>
+  <a href="clinical_benchmarks/">Clinical Benchmarks</a>
+  <span class="sep">·</span>
+  <a href="parameters.html">Parameters</a>
+</div>
+
 </body>
 </html>

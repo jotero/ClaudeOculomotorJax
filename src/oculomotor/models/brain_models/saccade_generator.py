@@ -130,7 +130,7 @@ import jax.numpy as jnp
 import jax
 
 N_STATES  = 9   # x_copy(3) + z_ref(1) + e_held(3) + z_sac(1) + z_acc(1)
-N_INPUTS  = 9   # pos_delayed(3) + target_in_vf(1) + x_ni(3) → e_cmd(3) computed internally
+N_INPUTS  = 9   # pos_delayed(3) + target_visible(1) + x_ni(3) → e_cmd(3) computed internally
 N_OUTPUTS = 3   # u_burst (3,)
 
 
@@ -156,23 +156,26 @@ def burst_velocity(e_residual, brain_params):
 
 # ── SSM step ──────────────────────────────────────────────────────────────────
 
-def step(x_sg, pos_delayed, target_in_vf, x_ni, brain_params):
+def step(x_sg, pos_delayed, target_visible, x_ni, w_est, brain_params):
     """Single ODE step: target selection + burst dynamics + burst output.
 
     Target selection (inside step — uses brain-internal x_ni, not plant state):
-        target_in_vf ≈ 1  (in visual field):
+        target_visible ≈ 1  (in visual field):
             e_cmd = clip(pos_delayed, −orbital_limit − x_ni,  +orbital_limit − x_ni)
-            Parks the eye at the oculomotor boundary when the target is visible but
+            Parks the eye at the oculomotor boundary when target is visible but
             beyond mechanical reach; otherwise a normal saccade error.
-        target_in_vf ≈ 0  (target outside ~90° visual field):
-            e_cmd = −alpha_reset · x_ni
-            Centripetal centering saccade; drives eye back toward primary position.
+        target_visible ≈ 0  (quick-phase generator — target outside ~90° visual field):
+            e_cmd = −alpha_reset · (x_ni − k_center_vel·τ_ref · w_vs)
+            Predictive centripetal quick phase: aims past centre to compensate for
+            slow-phase drift during the refractory period.  Prediction only applies
+            here (not in the in-field path) so voluntary saccades are unaffected.
 
     Args:
-        x_sg:        (N_STATES,)  [x_copy(3) | z_ref(1) | e_held(3) | z_sac(1) | z_acc(1)]
-        pos_delayed: (3,)         delayed retinal position error (deg, raw)
-        target_in_vf:     scalar       visual-field gate (≈1 in-field, ≈0 out-of-field)
-        x_ni:        (3,)         neural integrator state — brain's eye-position estimate (deg)
+        x_sg:         (N_STATES,)  [x_copy(3) | z_ref(1) | e_held(3) | z_sac(1) | z_acc(1)]
+        pos_delayed:  (3,)         delayed retinal position error (deg, raw)
+        target_visible: scalar       visual-field gate (≈1 in-field, ≈0 out-of-field)
+        x_ni:         (3,)         neural integrator state — brain's eye-position estimate (deg)
+        w_est:        (3,)         velocity storage output — head velocity estimate (deg/s)
         brain_params: BrainParams
 
     Returns:
@@ -195,14 +198,23 @@ def step(x_sg, pos_delayed, target_in_vf, x_ni, brain_params):
     orbital_limit = brain_params.orbital_limit
     alpha_reset   = brain_params.alpha_reset
 
-    # In-field case: clip so landing position x_ni + e_cmd stays within ±orbital_limit
+    # In-field saccade: aim for raw retinal error; clip to orbital range at current position.
+    # No velocity prediction here — voluntary saccades go where the retina says.
     e_target = jnp.clip(pos_delayed, -orbital_limit - x_ni, orbital_limit - x_ni)
 
-    # Out-of-field case: centripetal centering saccade toward primary position
-    e_center = -alpha_reset * x_ni
+    # ── Quick-phase generator (out-of-field / no target) ──────────────────────
+    # Predictive centripetal reset: aim past centre to compensate for slow-phase
+    # drift that accumulates during the refractory period (tau_ref).
+    #   x_ni_dot ≈ −w_vs  (VOR or spontaneous slow phase driven by VS)
+    #   x_ni_pred = x_ni − look_ahead · w_vs   (where NI will be when eye lands)
+    #   e_center  = −alpha_reset · x_ni_pred    (aim at predicted post-drift position)
+    # look_ahead = k_center_vel · tau_ref:  0 = no prediction, 1 = full τ_ref look-ahead.
+    look_ahead = brain_params.k_center_vel * brain_params.tau_ref
+    x_ni_pred  = x_ni - look_ahead * w_est
+    e_center   = -alpha_reset * x_ni_pred
 
-    # Blend by gate: target_in_vf=1 → track target; target_in_vf=0 → center
-    e_cur     = target_in_vf * e_target + (1.0 - target_in_vf) * e_center
+    # Blend by gate: target_visible=1 → track target; target_visible=0 → center
+    e_cur     = target_visible * e_target + (1.0 - target_visible) * e_center
     e_cur_mag = jnp.linalg.norm(e_cur)
 
     e_res     = e_held - x_copy          # ballistic residual (against HELD target)
@@ -282,22 +294,26 @@ def step(x_sg, pos_delayed, target_in_vf, x_ni, brain_params):
     de_held  = z_idl**2 * (e_cur - e_held) / tau_hold
 
     # ── Refractory (OPN) dynamics ─────────────────────────────────────────────
-    # charge = z_sac · (1 − gate_res)
+    # charge = z_act · (1 − gate_active_burst)
     #
-    #   Key insight: charge is driven by z_sac (active burst), NOT gate_opn.
-    #   This breaks the self-defeating loop where rising z_ref cuts gate_opn
-    #   which cuts the charge — preventing z_ref from reaching release threshold.
+    #   Key insight: charge fires whenever the BURST IS INACTIVE, for any reason:
+    #     • Normal completion:   gate_res → 0       (x_copy reached e_held)
+    #     • Overshoot stop:      gate_dir → 0       (x_copy passed e_held)
+    #   Using gate_active_burst = gate_res × gate_dir instead of gate_res alone
+    #   prevents the OPN from getting stuck when overshoot stops the burst before
+    #   gate_res can reach 0 — the old (1−gate_res) condition left z_ref uncharged
+    #   in the overshoot case, so z_opn never returned to 100.
     #
-    #   During burst:   gate_res ≈ 1  →  charge ≈ 0   (protected during burst)
-    #   At landing:     gate_res → 0, z_sac = 1  →  charge = 1
-    #                   z_ref charges to ~1 in τ_ref_charge ≈ 1ms
-    #   After z_ref → 1: release_sac → 1 → z_sac → 0 → charge = 0
-    #   During refrac:  z_sac = 0  →  charge = 0, z_ref decays with τ_ref
-    #   At rest:        z_sac = 0  →  charge = 0
+    #   During burst:          gate_active_burst ≈ 1  →  charge ≈ 0   (protected)
+    #   At landing (any stop): gate_active_burst → 0, z_act = 1  →  charge = 1
+    #                          z_ref charges to ~1 in τ_ref_charge ≈ 1ms
+    #   After z_ref → 1: release_sac → 1 → z_opn → 100 (OPN resumes)
+    #   During refrac:  z_act = 0  →  charge = 0, z_ref decays with τ_ref
+    #   At rest:        z_act = 0  →  charge = 0
 
     tau_ref_charge = brain_params.tau_ref_charge
     tau_ref        = brain_params.tau_ref
-    charge         = z_act * (1.0 - gate_res)
+    charge         = z_act * (1.0 - gate_active_burst)
     dz_ref         = (1.0 - z_ref) * charge / tau_ref_charge  -  z_ref / tau_ref
 
     # ── Rise-to-bound accumulator (z_acc) ────────────────────────────────────

@@ -68,6 +68,18 @@ PINV_SENS = jnp.linalg.pinv(ORIENTATIONS)   # (3, 6)
 def nonlinearity(x_c, gains, floor):
     """Soft push-pull rectification: maps inertia states → afferent firing rates.
 
+    gains scales only the MODULATION above/below the resting discharge floor,
+    not the resting discharge itself.  This models UVH as reduced sensitivity
+    (fewer functioning hair cells → less head-velocity signal) while preserving
+    the resting discharge of the surviving afferents.  At rest, all canals output
+    floor (deg/s) regardless of gains, so there is no spurious DC signal from a
+    unilateral gain reduction.  Complete deafferentation is modelled via b_vs → 0
+    (VN tonic firing rate) rather than canal_gains.
+
+    canal_gains = 1.0 → y = y_nl + floor   (healthy: resting + modulation)
+    canal_gains = 0.1 → y = 0.1*y_nl + floor  (UVH: reduced sensitivity, normal resting)
+    canal_gains = 0.0 → y = 0 + floor = floor  (paretic but resting preserved)
+
     Args:
         x_c:   (12,)        canal state [x1 (6) | x2 (6)]
         gains: (N_CANALS,)  per-canal scale; 0 = complete paresis
@@ -80,7 +92,7 @@ def nonlinearity(x_c, gains, floor):
     k    = _SOFTNESS
     f    = floor
     y_nl = -f + softplus(k * (x2 + f)) / k + softplus(k * (x2 - f)) / k
-    return gains * (y_nl + f)
+    return gains * y_nl + f   # resting discharge (f) is always present; gains scales modulation only
 
 
 # ── SSM step ───────────────────────────────────────────────────────────────────

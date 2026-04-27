@@ -28,7 +28,7 @@ from oculomotor.sim.simulator import (
     _IDX_VS_L, _IDX_VS_R,
 )
 from oculomotor.sim import kinematics as km
-from oculomotor.analysis import ax_fmt, extract_burst, vs_net, extract_spv, fit_tc
+from oculomotor.analysis import ax_fmt, vs_net, extract_spv_states, fit_tc
 
 SHOW = '--show' in sys.argv
 DT   = 0.001
@@ -104,7 +104,7 @@ def _sim_strobed_fixation(params, t_arr, key=0):
                     key=jax.random.PRNGKey(key))
 
 
-def _sim_hit_lit(params, t_arr, head_vel_3d=None, key=0):
+def _sim_hit_lit(params, t_arr, head_vel_3d=None, key=0, target_onset_s=None):
     """vHIT: fixation target (1 m), no full-field scene.
 
     Scene is excluded so OKR does not compensate the VOR deficit — this matches
@@ -112,28 +112,35 @@ def _sim_hit_lit(params, t_arr, head_vel_3d=None, key=0):
     too brief (150 ms) for full-field optokinetic feedback to act.
     Catch-up saccades for lesioned cases fire ~120 ms after impulse onset
     (visual delay cascade) and are visible in raw eye velocity.
-    warmup_s=2.0 lets NI and SG settle before the impulse.
+
+    target_onset_s: if given, target appears at this time (warmup uses arr[0]=0 → no
+    target during warmup, preventing corrective-saccade NI saturation for conditions
+    with spontaneous nystagmus). If None, target is present throughout.
     """
     T  = len(t_arr)
     t  = np.asarray(t_arr)
     hv = head_vel_3d if head_vel_3d is not None else np.zeros((T, 3), np.float32)
     pt_3d = np.tile(np.array([0.0, 0.0, 1.0], np.float32), (T, 1))
     lv    = np.zeros((T, 3), np.float32)
+    if target_onset_s is None:
+        tgt_pr = np.ones(T, np.float32)
+    else:
+        tgt_pr = np.where(t >= target_onset_s, 1.0, 0.0).astype(np.float32)
     return simulate(params, t,
                     head=km.build_kinematics(t, rot_vel=hv),
                     target=km.build_target(t, lin_pos=pt_3d, lin_vel=lv),
                     scene_present_array=np.zeros(T, np.float32),
-                    target_present_array=np.ones(T, np.float32),
+                    target_present_array=tgt_pr,
                     max_steps=int(T * 1.1) + 500,
                     sim_config=SimConfig(warmup_s=2.0),
                     return_states=True,
                     key=jax.random.PRNGKey(key))
 
 
-def _spv_from_state(st, theta, t_arr):
-    ev    = np.gradient(np.array(st.plant[:, 0]), DT)
-    burst = np.array(extract_burst(st, theta)[:, 0])
-    return ev, extract_spv(t_arr, ev, burst)
+def _spv_from_state(st, t_arr):
+    ev  = np.gradient(np.array(st.plant[:, 0]), DT)
+    spv = extract_spv_states(st, t_arr)[:, 0]
+    return ev, spv
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -153,7 +160,7 @@ def _test_spontaneous(show):
     dark_results = {}
     for label, theta, _ in conds:
         st = _sim_dark(theta, t)
-        ev, spv = _spv_from_state(st, theta, t)
+        ev, spv = _spv_from_state(st, t)
         dark_results[label] = dict(
             pos=np.array(st.plant[:, 0]),
             ev=ev, spv=spv,
@@ -163,7 +170,7 @@ def _test_spontaneous(show):
     fix_results = {}
     for label, theta, _ in conds:
         st = _sim_strobed_fixation(theta, t)
-        ev, spv = _spv_from_state(st, theta, t)
+        ev, spv = _spv_from_state(st, t)
         fix_results[label] = dict(
             pos=np.array(st.plant[:, 0]),
             ev=ev, spv=spv,
@@ -240,8 +247,8 @@ def _test_vhit(show):
     """
     HIT_V   = 150.0
     HIT_DUR = 0.15
-    PRE_S   = 0.5
-    POST_S  = 0.8
+    PRE_S   = 1.0    # 1 s pre-impulse: shows spontaneous nystagmus baseline for acute
+    POST_S  = 1.0
     t_hit   = np.arange(0.0, PRE_S + HIT_DUR + POST_S, DT)
     i0, i1  = int(PRE_S / DT), int((PRE_S + HIT_DUR) / DT)
 
@@ -270,13 +277,19 @@ def _test_vhit(show):
     GAIN_S = 0.060
     i_gain = i0 + int(GAIN_S / DT)
 
+    # Target appears 120 ms before impulse so target_visible ≈ 1.0 at impulse onset
+    # (tau_vis=80 ms cascade; 120 ms = 1.5× mean delay → ~99.9th percentile).
+    # This lets the SG fire one pre-impulse corrective saccade and clear x_NI
+    # before the measurement window, avoiding centering-mode contamination.
+    TARGET_LEAD_S = 0.12
+
     hit_results = {}
     for label, theta, _, _ in conds_hit:
         for d, dname in [(+1, 'right'), (-1, 'left')]:
-            st    = _sim_hit_lit(theta, t_hit, head_vel_3d=_impulse(d), key=d)
-            ev    = np.gradient(np.array(st.plant[:, 0]), DT)
-            burst = np.array(extract_burst(st, theta)[:, 0])
-            spv   = extract_spv(t_hit, ev, burst)
+            st    = _sim_hit_lit(theta, t_hit, head_vel_3d=_impulse(d), key=d,
+                                 target_onset_s=PRE_S - TARGET_LEAD_S)
+            ev  = np.gradient(np.array(st.plant[:, 0]), DT)
+            spv = extract_spv_states(st, t_hit)[:, 0]
             hv    = _impulse(d)[:, 0]
             hv_w  = hv[i0:i_gain]
             spv_w = spv[i0:i_gain]
@@ -381,7 +394,7 @@ def _test_rotary_okn(show):
     rot_spv = {}
     for label, theta, _ in conds:
         st = _sim_dark(theta, t, head_vel_3d=hv_3d)
-        _, spv = _spv_from_state(st, theta, t)
+        _, spv = _spv_from_state(st, t)
         rot_spv[label] = spv
 
     # OKN: same temporal profile but as visual scene motion (no head rotation)
@@ -403,7 +416,7 @@ def _test_rotary_okn(show):
     okn_spv = {}
     for label, theta, _ in conds:
         st = _sim_okn(theta)
-        _, spv = _spv_from_state(st, theta, t)
+        _, spv = _spv_from_state(st, t)
         okn_spv[label] = spv
 
     # Fit VOR and OKAN TCs

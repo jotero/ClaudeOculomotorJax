@@ -26,8 +26,14 @@ extract_sg(states, theta)
     Full SG signal extraction: x_copy, z_ref, e_held, z_sac, z_acc,
     e_res, e_pd, u_burst, x_ni.
 
-extract_spv(t, eye_vel, burst, burst_threshold, margin_s)
-    Slow-phase velocity using the burst signal to detect fast phases.
+extract_z_opn(states)
+    OPN latch state z_opn directly from state (no recomputation). (T,)
+
+extract_spv_states(states, t, margin_s)
+    Slow-phase velocity from SimState, all 3 axes (T, 3). Uses OPN latch.
+
+extract_spv(t, eye_vel, burst=None, burst_threshold, margin_s, z_opn=None)
+    Low-level SPV: mask one velocity trace. Prefers z_opn when given.
 
 saccade_metrics(eye_pos_yaw, eye_vel_yaw, t_jump_idx, dt)
     Amplitude, peak velocity, and duration of the primary saccade.
@@ -133,7 +139,8 @@ def extract_burst(states, theta):
         gate    = 0.5 * ((C_target_visible @ x_vis_L)[0] + (C_target_visible @ x_vis_R)[0])
         x_ni_   = state.brain[_IDX_NI]
         x_ni_net = x_ni_[:3] - x_ni_[3:6]   # net: x_L − x_R (3,)
-        _, u    = sg_mod.step(state.brain[_IDX_SG], e_pd, gate, x_ni_net, theta.brain)
+        _, u    = sg_mod.step(state.brain[_IDX_SG], e_pd, gate, x_ni_net,
+                              jnp.zeros(3), theta.brain)
         return u
     return np.array(jax.vmap(_at)(states))   # (T, 3)
 
@@ -183,28 +190,77 @@ def extract_sg(states, theta):
     )
 
 
+def extract_z_opn(states):
+    """OPN latch state directly from simulation states — no recomputation.
+
+    z_opn = 100 between saccades (OPN tonic, burst blocked).
+    z_opn = 0   during saccades (OPN paused, burst active).
+
+    Returns:
+        (T,) z_opn array
+    """
+    return np.array(states.brain[:, _IDX_SG])[:, 7]
+
+
+def extract_spv_states(states, t, margin_s=0.05):
+    """Slow-phase velocity from a SimState trajectory, all 3 axes.
+
+    Uses the OPN latch state (z_opn) for fast-phase detection, which is reliable
+    even when the slow phase is fast (high-velocity nystagmus, VN infarct, etc.).
+    Eye velocity is derived from the left-eye plant state (indices 0:3).
+
+    Args:
+        states:   SimState trajectory
+        t:        (T,) time array (s)
+        margin_s: symmetric window expansion around each fast-phase epoch (s)
+
+    Returns:
+        (T, 3) slow-phase velocity [yaw, pitch, roll] in deg/s.
+        Access yaw with extract_spv_states(states, t)[:, 0].
+    """
+    dt    = float(t[1] - t[0])
+    z_opn = extract_z_opn(states)
+    ep    = np.array(states.plant[:, :3])   # left-eye rotation vector (T, 3)
+    return np.stack([
+        extract_spv(t, np.gradient(ep[:, i], dt), z_opn=z_opn, margin_s=margin_s)
+        for i in range(3)
+    ], axis=1)
+
+
 # ── Slow-phase velocity ────────────────────────────────────────────────────────
 
-def extract_spv(t, eye_vel, burst, burst_threshold=10.0, margin_s=0.05):
-    """Slow-phase velocity using the saccade burst to detect fast phases.
+def extract_spv(t, eye_vel, burst=None, burst_threshold=10.0, margin_s=0.05,
+                z_opn=None):
+    """Slow-phase velocity by masking fast phases and interpolating.
 
-    The burst signal is zero during slow phases regardless of SPV magnitude,
-    making it more reliable than a velocity threshold (which misclassifies
-    high-SPV slow phases as fast phases).
+    Prefers z_opn (OPN latch state) when provided — z_opn transitions sharply at
+    saccade onset/offset regardless of how fast the slow phase is, so it never
+    misclassifies a high-velocity slow phase as a fast phase.  Falls back to a
+    burst-amplitude threshold when z_opn is not available.
 
     Args:
         t:               (T,) time array (s)
         eye_vel:         (T,) eye angular velocity (deg/s)
-        burst:           (T,) burst signal (yaw component from extract_burst)
-        burst_threshold: deg/s  — burst amplitude that declares a fast phase
-        margin_s:        s      — window expansion around each detected fast phase
+        burst:           (T,) burst signal (yaw component); used only when z_opn
+                         is None.  At least one of burst / z_opn must be given.
+        burst_threshold: deg/s — burst amplitude threshold (burst fallback only)
+        margin_s:        s    — symmetric window expansion around each fast-phase
+                         epoch; covers plant ringing after burst ends
+        z_opn:           (T,) OPN state from SG or extract_z_opn(states).
+                         Fast phases detected as z_opn < 50.
 
     Returns:
-        (T,) slow-phase velocity — fast phases replaced by linear interpolation.
+        (T,) slow-phase velocity — fast-phase samples replaced by linear
+        interpolation across the masked epochs.
     """
     dt       = float(t[1] - t[0])
     margin_n = max(1, int(margin_s / dt))
-    is_fast  = np.abs(burst) > burst_threshold
+    if z_opn is not None:
+        is_fast = np.asarray(z_opn) < 50.0
+    elif burst is not None:
+        is_fast = np.abs(np.asarray(burst)) > burst_threshold
+    else:
+        raise ValueError("extract_spv: provide either burst or z_opn")
     is_fast  = binary_dilation(is_fast, structure=np.ones(2 * margin_n + 1))
     slow     = ~is_fast
     if slow.sum() < 2:
