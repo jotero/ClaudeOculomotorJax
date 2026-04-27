@@ -98,8 +98,18 @@ def _velocity_range(show):
         ax_fmt(axes[1, ci])
         if ci == 0: axes[1, ci].legend(fontsize=7)
 
+        K_ph  = float(THETA.brain.K_phasic_pursuit)
+        K_int = float(THETA.brain.K_pursuit)
+        tau_p = float(THETA.brain.tau_pursuit)
+        dx_pur     = np.gradient(u_pur, DT)
+        e_pred_est = (dx_pur + u_pur / tau_p) / K_int
+        phasic     = K_ph * e_pred_est
+        u_total    = u_pur + phasic
+
         axes[2, ci].axhline(vel, color=utils.C['target'], lw=0.8, ls=':', alpha=0.7)
-        axes[2, ci].plot(t_np, u_pur, color=utils.C['pursuit'], lw=1.5, label='u_pursuit')
+        axes[2, ci].plot(t_np, u_total, color=utils.C['pursuit'], lw=1.8, label='u_pursuit (total)')
+        axes[2, ci].plot(t_np, u_pur,   color='#1a6ebd',          lw=1.1, ls='--', label='integrator x_p')
+        axes[2, ci].plot(t_np, phasic,  color='#d94801',          lw=1.1, ls='--', label='phasic K·e_pred')
         axes[2, ci].set_ylim(-vel * 0.1, vel * 1.35)
         ax_fmt(axes[2, ci])
         axes[2, ci].set_xlabel('Time (s)', fontsize=8)
@@ -111,7 +121,7 @@ def _velocity_range(show):
         title='Smooth Pursuit — Velocity Range',
         description='Step-ramp target at 5, 10, 20, 40 deg/s. '
                     'Blue: smooth pursuit enabled. Gray: saccades only (pursuit off). '
-                    'Rows: position, velocity, pursuit integrator state.',
+                    'Rows: position, velocity, pursuit drive (total + integrator + phasic).',
         expected='At 5–10 deg/s: pursuit tracks closely, steady-state gain > 0.8. '
                  'At higher velocities: catch-up saccades + partial pursuit.',
         citation='Lisberger & Westbrook (1985) J Neurosci; Rashbass (1961)',
@@ -192,38 +202,51 @@ def _sinusoidal(show):
 # ── Figure 3: pursuit signal cascade ─────────────────────────────────────────
 
 def _cascade(show):
-    """Signal cascade for 20 deg/s pursuit with catch-up saccades."""
-    vel   = 20.0
-    T_end = 3.0
-    t_np  = np.arange(0.0, T_end, DT)
-    tgt, pt3, vt3 = _ramp(t_np, vel, t_jump=0.2)
+    """Signal cascade for 20 deg/s pursuit: target on 0.2–2.0 s, then target stops."""
+    vel    = 20.0
+    t_jump = 0.2
+    t_stop = 2.0   # target stops; eye keeps moving (pursuit integrator decays slowly)
+    T_end  = 5.0
+    t_np   = np.arange(0.0, T_end, DT)
+    T      = len(t_np)
 
-    st  = _run(THETA, t_np, pt3, vt3, key=30)
+    # Position: ramp until t_stop, then hold at final position
+    tgt_pos = float(vel * (t_stop - t_jump))
+    tgt = np.where(t_np < t_jump, 0.0,
+          np.where(t_np < t_stop, vel * (t_np - t_jump), tgt_pos))
+    pt3 = np.zeros((T, 3)); pt3[:, 2] = 1.0
+    pt3[:, 0] = np.tan(np.radians(tgt))
+    # Velocity: on during ramp, zero after target stops
+    vt3 = np.zeros((T, 3))
+    vt3[:, 0] = np.where((t_np >= t_jump) & (t_np < t_stop), float(vel), 0.0).astype(np.float32)
+
+    st  = _run(THETA, t_np, jnp.array(pt3), jnp.array(vt3), key=30)
     sg  = extract_sg(st, THETA)
     eye = (np.array(st.plant[:, 0]) + np.array(st.plant[:, 3])) / 2.0
     ev  = np.gradient(eye, DT)
     x_pur = np.array(st.brain[:, _IDX_PURSUIT])[:, 0]
 
-    x_vis = np.array(st.sensory[:, _IDX_VIS])
-    e_vel_del = (x_vis @ np.array(C_pos).T)[:, 0]   # reuse pos channel as velocity proxy
-
     n_rows = 7
     fig, axes = plt.subplots(n_rows, 1, figsize=(12, 2.5 * n_rows))
-    fig.suptitle(f'Smooth Pursuit Signal Cascade — {vel:.0f} deg/s ramp\n'
-                 f'(velocity-driven pursuit integrator + catch-up saccades)', fontsize=11)
+    fig.suptitle(f'Smooth Pursuit Signal Cascade — {vel:.0f} deg/s ramp, target stops at {t_stop:.0f} s\n'
+                 f'(pursuit integrator persists after target stop, decays with τ ≈ {THETA.brain.tau_pursuit:.0f} s)',
+                 fontsize=11)
 
-    vl = dict(color='gray', lw=0.7, ls='--', alpha=0.5)
+    vl_start = dict(color='gray',   lw=0.7, ls='--', alpha=0.5)
+    vl_stop  = dict(color='tomato', lw=0.9, ls='--', alpha=0.7)
     for ax in axes:
-        ax.axvline(0.2, **vl); ax_fmt(ax)
+        ax.axvline(t_jump, **vl_start)
+        ax.axvline(t_stop, **vl_stop)
+        ax_fmt(ax)
 
-    axes[0].plot(t_np, tgt,          color=utils.C['target'],  lw=1.5, label='target pos')
+    axes[0].plot(t_np, tgt,          color=utils.C['target'],  lw=1.5, label='target pos (stops 2 s)')
     axes[0].plot(t_np, eye,          color=utils.C['eye'],     lw=1.5, label='eye pos')
     axes[0].plot(t_np, ni_net(st)[:,0], color=utils.C['ni'],   lw=0.9, ls='--', label='NI')
     axes[0].set_ylabel('Position (deg)'); axes[0].set_title('Eye + Target Position')
     axes[0].legend(fontsize=8)
 
-    axes[1].axhline(vel, color=utils.C['target'], lw=0.8, ls=':', alpha=0.7)
-    axes[1].plot(t_np, ev, color=utils.C['eye'], lw=1.2, label='eye vel')
+    axes[1].axhline(vel, color=utils.C['target'], lw=0.8, ls=':', alpha=0.7, label=f'{vel:.0f} deg/s')
+    axes[1].plot(t_np, ev, color=utils.C['eye'], lw=1.2, label='eye vel (persists after stop)')
     axes[1].set_ylabel('Velocity (deg/s)'); axes[1].set_title('Eye Velocity')
     axes[1].legend(fontsize=8)
 
@@ -272,12 +295,14 @@ def _cascade(show):
     path, rp = utils.save_fig(fig, 'pursuit_cascade', show=show)
     return utils.fig_meta(path, rp,
         title='Smooth Pursuit Signal Cascade (Internal)',
-        description='Full signal chain for 20 deg/s pursuit: position, velocity, pursuit drive '
-                    '(total + integrator memory + phasic feedthrough), '
-                    'visual cascade error, accumulator/latch for catch-up saccades, burst, refractory state.',
-        expected='Phasic drive (K_phasic·e_pred) rises fast at onset then decays to 0 as the integrator charges. '
-                 'Total u_pursuit approaches target velocity at steady state. '
-                 'Catch-up saccades fire when positional error exceeds threshold.',
+        description='Full signal chain for 20 deg/s pursuit: target ramps 0.2–2.0 s then holds. '
+                    'Pursuit integrator persists after target stop (τ ≈ 40 s). '
+                    'Rows: position, velocity, pursuit drive (total/integrator/phasic), '
+                    'visual error, saccade accumulator, burst, refractory state.',
+        expected='Phasic drive rises fast at onset, decays to 0 at steady state. '
+                 'After target stops at 2 s: phasic reverses (retinal slip now backward), '
+                 'integrator decays slowly — eye coasts then corrects with catch-up saccades. '
+                 'Integrator TC visible as slow drift in x_p post-stop.',
         citation='Lisberger & Westbrook (1985)',
         fig_type='cascade')
 

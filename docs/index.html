@@ -141,11 +141,24 @@
   .avatar-wrap {
     position: relative; display: flex; align-items: center; justify-content: center;
   }
-  /* Divider line between the two viewports */
+  /* Divider line between the two viewports — hidden in single-head mode */
   .avatar-wrap::after {
     content: ''; position: absolute; top: 0; bottom: 0; left: 50%;
     width: 1px; background: #2a2d3a; pointer-events: none;
   }
+  .avatar-wrap.single-view::after { display: none; }
+  /* Scenario tabs for comparison mode */
+  #avatar-tabs {
+    display: none; flex-wrap: wrap; gap: 6px;
+    padding: 8px 10px 0; background: #111118;
+  }
+  .avatar-tab {
+    padding: 4px 12px; font-size: 0.75rem; border-radius: 4px; cursor: pointer;
+    border: 1px solid #3a3d4a; background: #1a1d2a; color: #aaa;
+    transition: background 0.15s, color 0.15s;
+  }
+  .avatar-tab:hover  { background: #252836; color: #ddd; }
+  .avatar-tab.active { background: #2a4a7a; border-color: #4a7aaa; color: #eef; }
   .avatar-labels {
     position: absolute; top: 8px; left: 0; right: 0;
     display: flex; pointer-events: none; z-index: 1;
@@ -183,8 +196,9 @@
 
   <div class="result" id="result">
 
-    <!-- 3D Avatar + playback (single mode only, shown above plot) -->
+    <!-- 3D Avatar + playback -->
     <div id="avatar-section">
+      <div id="avatar-tabs"></div>
       <div class="avatar-wrap">
         <canvas id="avatar-canvas"></canvas>
         <span id="avatar-loading">Loading avatar…</span>
@@ -303,8 +317,30 @@ async function run() {
     document.getElementById('download-btn').style.display =
       (data.mode === 'single') ? 'inline-block' : 'none';
 
-    // Load eye trajectory into 3D avatar (single mode only)
-    if (data.eye_trajectory && typeof window.loadEyeTrajectory === 'function') {
+    // Load eye trajectory into 3D avatar
+    const avatarTabs = document.getElementById('avatar-tabs');
+    if (data.eye_trajectories && data.eye_trajectories.length > 0
+        && typeof window.loadEyeTrajectory === 'function') {
+      // Comparison mode: tabs to switch between scenarios
+      document.getElementById('avatar-section').style.display = 'block';
+      avatarTabs.innerHTML = '';
+      avatarTabs.style.display = 'flex';
+      data.eye_trajectories.forEach((traj, i) => {
+        const btn = document.createElement('button');
+        btn.className = 'avatar-tab' + (i === 0 ? ' active' : '');
+        btn.textContent = traj.label || `Scenario ${i + 1}`;
+        btn.onclick = () => {
+          avatarTabs.querySelectorAll('.avatar-tab').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+          window.loadEyeTrajectory(traj);
+        };
+        avatarTabs.appendChild(btn);
+      });
+      window.loadEyeTrajectory(data.eye_trajectories[0]);
+    } else if (data.eye_trajectory && typeof window.loadEyeTrajectory === 'function') {
+      // Single mode: no tabs
+      avatarTabs.innerHTML = '';
+      avatarTabs.style.display = 'none';
       document.getElementById('avatar-section').style.display = 'block';
       window.loadEyeTrajectory(data.eye_trajectory);
     }
@@ -551,9 +587,11 @@ window.loadEyeTrajectory = function(traj) {
     _headMoves = maxDisp > 1.0;
   }
 
-  // Show/hide world-view label
+  // Show/hide world-view label + divider
   const labels = document.querySelectorAll('.avatar-labels span');
   if (labels[0]) labels[0].style.display = _headMoves ? '' : 'none';
+  const wrap = document.querySelector('.avatar-wrap');
+  if (wrap) wrap.classList.toggle('single-view', !_headMoves);
 
   document.getElementById('play-btn').textContent = '▶';
   document.getElementById('scrubber').max         = traj.n_frames - 1;
@@ -593,7 +631,7 @@ function renderViewports() {
     const hw = Math.floor(w / 2);
     const a  = hw / h;
     worldCam.aspect = a; worldCam.updateProjectionMatrix();
-    headCam.aspect  = a; headCam.updateProjectionMatrix();
+    headCam.fov = 28; headCam.aspect = a; headCam.updateProjectionMatrix();
 
     // Left — world view: apply head rotation
     applyFrame(fi);
@@ -608,8 +646,8 @@ function renderViewports() {
     renderer.setScissor(hw, 0, w - hw, h);
     renderer.render(scene, headCam);
   } else {
-    // No head movement — single full-width head-fixed view
-    headCam.aspect = w / h; headCam.updateProjectionMatrix();
+    // No head movement — single full-width head-fixed view, zoomed in on eyes
+    headCam.fov = 14; headCam.aspect = w / h; headCam.updateProjectionMatrix();
     applyFrame(fi);
     if (headBone && restHead) headBone.rotation.copy(restHead);
     renderer.setViewport(0, 0, w, h);

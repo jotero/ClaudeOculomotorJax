@@ -118,13 +118,14 @@ class RunRequest(BaseModel):
 
 
 class RunResponse(BaseModel):
-    image_b64:       str
-    mode:            str        # 'single' or 'comparison'
-    title:           str
-    detail_json:     dict
-    run_id:          str
-    version:         str
-    eye_trajectory:  dict | None = None   # downsampled L/R eye positions for 3D animation
+    image_b64:        str
+    mode:             str        # 'single' or 'comparison'
+    title:            str
+    detail_json:      dict
+    run_id:           str
+    version:          str
+    eye_trajectory:   dict | None = None   # single mode: one trajectory
+    eye_trajectories: list | None = None   # comparison mode: one per scenario (with 'label' field)
 
 
 class FeedbackRequest(BaseModel):
@@ -195,16 +196,24 @@ async def run_endpoint(req: RunRequest):
         result = call_llm(req.description, model=req.model)
 
         if isinstance(result, SimulationComparison):
-            fig   = run_comparison(result)
+            fig, cmp_sim_data_list = run_comparison(result, return_data=True)
             title = result.title
             mode  = 'comparison'
             detail = result.model_dump()
-            sim_data = None    # comparison download not supported yet
+            sim_data = None    # comparison CSV download not supported yet
+            # Build per-scenario trajectories with short labels for avatar tabs
+            eye_trajectories = []
+            for scenario, sd in zip(result.scenarios, cmp_sim_data_list):
+                traj = _build_eye_trajectory(sd)
+                if traj is not None:
+                    traj['label'] = scenario.description
+                    eye_trajectories.append(traj)
         else:
             fig, sim_data = run_scenario(result, return_data=True)
-            title  = result.description
-            mode   = 'single'
-            detail = result.model_dump()
+            title            = result.description
+            mode             = 'single'
+            detail           = result.model_dump()
+            eye_trajectories = []
 
         # Save figure to disk
         fig_name = f'{run_id}.png'
@@ -236,13 +245,14 @@ async def run_endpoint(req: RunRequest):
         })
 
         return RunResponse(
-            image_b64      = img_b64,
-            mode           = mode,
-            title          = title,
-            detail_json    = detail,
-            run_id         = run_id,
-            version        = _SIM_VERSION,
-            eye_trajectory = _build_eye_trajectory(sim_data) if mode == 'single' else None,
+            image_b64        = img_b64,
+            mode             = mode,
+            title            = title,
+            detail_json      = detail,
+            run_id           = run_id,
+            version          = _SIM_VERSION,
+            eye_trajectory   = _build_eye_trajectory(sim_data) if mode == 'single' else None,
+            eye_trajectories = eye_trajectories if mode == 'comparison' else None,
         )
 
     except Exception as e:

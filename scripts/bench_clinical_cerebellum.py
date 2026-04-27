@@ -94,7 +94,7 @@ def _vs_null_yaw(states):
 
 def _test_fl_pfl(show):
     """FL/PFL lesion: GEN + rebound (Protocol A) + impaired smooth pursuit (Protocol B)."""
-    print('  1/3  FL/PFL — gaze-evoked nystagmus, rebound, impaired pursuit …')
+    print('  1/2  FL/PFL — gaze-evoked nystagmus, rebound, impaired pursuit …')
 
     # ── Protocol A: centre → eccentric hold → return ──────────────────────────
     PRE_DUR  = 1.0
@@ -239,7 +239,7 @@ def _test_fl_pfl(show):
 
 def _test_nodulus(show):
     """Nodulus/Uvula lesion: prolonged OKAN via velocity storage null adaptation."""
-    print('  3/3  Nodulus/Uvula — prolonged OKAN (VS null adaptation) …')
+    print('  2/2  Nodulus/Uvula — prolonged OKAN (VS null adaptation) …')
 
     ON_DUR  = 30.0
     OFF_DUR = 60.0

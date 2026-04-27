@@ -734,17 +734,22 @@ def _build_comparison_figure(
 def run_comparison(
     comparison: SimulationComparison,
     output_path: str | None = None,
-) -> plt.Figure:
+    return_data: bool = False,
+) -> 'plt.Figure | tuple[plt.Figure, list[dict]]':
     """Run all scenarios in a SimulationComparison and overlay them on one figure.
 
     Args:
         comparison:  Fully populated SimulationComparison object.
         output_path: If given, save figure to this path.
+        return_data: If True, return (fig, sim_data_list) where sim_data_list is
+                     one dict per scenario (same format as run_scenario return_data).
 
     Returns:
-        matplotlib.figure.Figure
+        fig                       when return_data=False (default)
+        (fig, sim_data_list)      when return_data=True
     """
-    results = []
+    results       = []
+    sim_data_list = []
     for scenario in comparison.scenarios:
         stim_kw = _build_stimulus(scenario)
         t_array = stim_kw.pop('t_array')
@@ -771,6 +776,8 @@ def run_comparison(
         )
         sig = _extract_signals(states, params, t_array)
         results.append((t_array, sig, stim_kw))
+        if return_data:
+            sim_data_list.append(_build_sim_data(t_array, sig, stim_kw))
         print(f"  ✓ {scenario.description}")
 
     fig = _build_comparison_figure(results, comparison)
@@ -779,4 +786,6 @@ def run_comparison(
         fig.savefig(output_path, dpi=150, bbox_inches='tight')
         print(f"Saved → {output_path}")
 
+    if return_data:
+        return fig, sim_data_list
     return fig
