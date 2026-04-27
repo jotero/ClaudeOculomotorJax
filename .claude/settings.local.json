@@ -25,7 +25,9 @@
       "PowerShell(& \"d:\\\\OneDrive\\\\UC Berkeley\\\\OMlab - JOM\\\\Code\\\\ClaudeOculomotorJax\\\\.venv\\\\Scripts\\\\python.exe\" -X utf8 \"d:\\\\OneDrive\\\\UC Berkeley\\\\OMlab - JOM\\\\Code\\\\ClaudeOculomotorJax\\\\scripts\\\\run_clinical_benchmarks.py\" 2>&1)",
       "PowerShell(& \"d:\\\\OneDrive\\\\UC Berkeley\\\\OMlab - JOM\\\\Code\\\\ClaudeOculomotorJax\\\\.venv\\\\Scripts\\\\python.exe\" -X utf8 \"d:\\\\OneDrive\\\\UC Berkeley\\\\OMlab - JOM\\\\Code\\\\ClaudeOculomotorJax\\\\scripts\\\\bench_clinical_ni_vs.py\" 2>&1)",
       "PowerShell(& \"d:\\\\OneDrive\\\\UC Berkeley\\\\OMlab - JOM\\\\Code\\\\ClaudeOculomotorJax\\\\.venv\\\\Scripts\\\\python.exe\" -X utf8 \"d:\\\\OneDrive\\\\UC Berkeley\\\\OMlab - JOM\\\\Code\\\\ClaudeOculomotorJax\\\\scripts\\\\bench_clinical_vestibular.py\" 2>&1)",
-      "PowerShell(& \"d:\\\\OneDrive\\\\UC Berkeley\\\\OMlab - JOM\\\\Code\\\\ClaudeOculomotorJax\\\\.venv\\\\Scripts\\\\python.exe\" -X utf8 \"d:\\\\OneDrive\\\\UC Berkeley\\\\OMlab - JOM\\\\Code\\\\ClaudeOculomotorJax\\\\scripts\\\\bench_clinical_vestibular.py\" 2>&1 | Tee-Object -Variable out; Write-Host \"EXIT: $LASTEXITCODE\")"
+      "PowerShell(& \"d:\\\\OneDrive\\\\UC Berkeley\\\\OMlab - JOM\\\\Code\\\\ClaudeOculomotorJax\\\\.venv\\\\Scripts\\\\python.exe\" -X utf8 \"d:\\\\OneDrive\\\\UC Berkeley\\\\OMlab - JOM\\\\Code\\\\ClaudeOculomotorJax\\\\scripts\\\\bench_clinical_vestibular.py\" 2>&1 | Tee-Object -Variable out; Write-Host \"EXIT: $LASTEXITCODE\")",
+      "Bash(Get-Content \"C:\\\\Users\\\\jom\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\d--OneDrive-UC-Berkeley-OMlab---JOM-Code-ClaudeOculomotorJax\\\\2953b690-52b2-4df4-adbe-c1792cb65217\\\\tasks\\\\b9ksacuty.output\" -Wait)",
+      "PowerShell(head -20)"
     ],
     "additionalDirectories": [
       "d:\\OneDrive\\UC Berkeley\\OMlab - JOM\\Code\\ClaudeOculomotorJax\\outputs"

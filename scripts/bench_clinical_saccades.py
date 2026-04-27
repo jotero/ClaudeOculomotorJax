@@ -138,60 +138,63 @@ def _slow_saccades(show):
               (eye_s1, C_SLOW,   labels[1]),
               (eye_s2, C_FLUTTER, labels[2])]
 
-    fig, axes = plt.subplots(1, 2, figsize=(13, 5))
+    from matplotlib.gridspec import GridSpec
+    fig = plt.figure(figsize=(14, 8))
+    gs  = GridSpec(2, 2, figure=fig, hspace=0.45, wspace=0.35)
 
-    # Panel A: main sequence curves
-    ax = axes[0]
+    ax_ms  = fig.add_subplot(gs[:, 0])           # main sequence — spans both rows
+    ax_pos = fig.add_subplot(gs[0, 1])            # position trace (top-right)
+    ax_vel = fig.add_subplot(gs[1, 1], sharex=ax_pos)  # velocity trace (bottom-right)
+
+    # ── Main sequence (left, full height) ────────────────────────────────────
     amps_arr = np.array(amplitudes)
     for gi, (col, lbl, mk) in enumerate(zip(colors, labels, markers)):
-        ax.plot(amps_arr, pv_all[gi], color=col, lw=1.8, marker=mk,
-                ms=6, label=lbl)
-    ax.set_xlabel('Saccade amplitude (deg)', fontsize=9)
-    ax.set_ylabel('Peak eye velocity (deg/s)', fontsize=9)
-    ax.set_title('Main Sequence: Peak Velocity vs Amplitude', fontsize=9)
-    ax.set_xlim(0, 45)
-    ax.set_ylim(0, 820)
-    ax.legend(fontsize=8)
-    ax.grid(True, alpha=0.2)
-    ax.tick_params(labelsize=8)
+        ax_ms.plot(amps_arr, pv_all[gi], color=col, lw=1.8, marker=mk, ms=6, label=lbl)
+    ax_ms.set_xlabel('Saccade amplitude (deg)', fontsize=9)
+    ax_ms.set_ylabel('Peak eye velocity (deg/s)', fontsize=9)
+    ax_ms.set_title('Main Sequence: Peak Velocity vs Amplitude', fontsize=9)
+    ax_ms.set_xlim(0, 45)
+    ax_ms.set_ylim(0, 820)
+    ax_ms.legend(fontsize=8)
+    ax_ms.grid(True, alpha=0.2)
+    ax_ms.tick_params(labelsize=8)
 
-    # Panel B: 20° saccade traces (position + velocity)
-    ax = axes[1]
-    ax2 = ax.twinx()
+    # ── Position trace (top-right) ───────────────────────────────────────────
     for eye, col, lbl in traces:
+        ax_pos.plot(t_ex, eye[:, 3], color=col, lw=1.5, label=lbl)
+    ax_pos.set_ylabel('R eye yaw position (deg)', fontsize=9)
+    ax_pos.set_title('20° Saccade — Position', fontsize=9)
+    ax_pos.set_xlim(t_ex[0], t_ex[0] + 0.5)
+    ax_pos.set_ylim(-2, 25)
+    ax_pos.legend(fontsize=8)
+    ax_pos.grid(True, alpha=0.15)
+    ax_pos.tick_params(labelsize=8)
+    plt.setp(ax_pos.get_xticklabels(), visible=False)
+
+    # ── Velocity trace (bottom-right) ────────────────────────────────────────
+    for eye, col, _ in traces:
         vel_r = np.gradient(eye[:, 3], DT)
-        ax.plot(t_ex, eye[:, 3], color=col, lw=1.5, ls='--', alpha=0.7)
-        ax2.plot(t_ex, vel_r,    color=col, lw=1.5, label=lbl)
-    ax.set_ylabel('R eye yaw position (deg)', fontsize=9, color='gray')
-    ax2.set_ylabel('R eye yaw velocity (deg/s)', fontsize=9)
-    ax.set_xlabel('Time (s)', fontsize=9)
-    ax.set_title('20° Saccade: Position (dashed) and Velocity (solid)', fontsize=9)
-    ax.set_xlim(t_ex[0], t_ex[0] + 0.5)
-    ax.set_ylim(-2, 25)
-    ax2.set_ylim(-50, 800)
-    ax2.legend(fontsize=8, loc='upper right')
-    ax.grid(True, alpha=0.15)
-    ax.tick_params(labelsize=8)
-    ax2.tick_params(labelsize=8)
+        ax_vel.plot(t_ex, vel_r, color=col, lw=1.5)
+    ax_vel.set_ylabel('R eye yaw velocity (deg/s)', fontsize=9)
+    ax_vel.set_xlabel('Time (s)', fontsize=9)
+    ax_vel.set_title('20° Saccade — Velocity', fontsize=9)
+    ax_vel.set_ylim(-50, 800)
+    ax_vel.grid(True, alpha=0.15)
+    ax_vel.tick_params(labelsize=8)
 
     fig.suptitle('Slow Saccades — Reduced Burst Neuron Drive (PPRF / IBN Lesion)',
                  fontsize=10, fontweight='bold')
-    plt.tight_layout()
 
     path, rp = utils.save_fig(fig, 'clin_sac_slow', show=show)
     return utils.fig_meta(path, rp,
         title='Slow Saccades (Main Sequence Shift)',
-        description='Main sequence curves and 20° saccade traces for three levels of '
-                    'burst-neuron ceiling (g_burst). Reduced g_burst models reduced '
-                    'excitatory burst neuron drive, as in PPRF or IBN lesions. '
-                    'Dashed = position, solid = velocity (right axis).',
-        expected='Reduced g_burst lowers peak velocity across all amplitudes, '
-                 'shifting the main sequence curve downward. Saccade duration '
-                 'increases but final position is preserved by the local feedback loop. '
-                 'Healthy: peak velocity ~600 deg/s at 40°. Severe (g=120): ~170 deg/s.',
-        citation='Zee DS et al. (1976) Ann Neurol 1:309-315 — PPRF slow saccades; '
-                 'Optican LM & Robinson DA (1980) J Neurophysiol 44:1058-1076 — '
-                 'cerebellar adaptive gain.',
+        description='Main sequence curves (left, full height) and 20° saccade position + '
+                    'velocity traces (right, stacked) for three levels of burst-neuron '
+                    'ceiling (g_burst). Reduced g_burst models PPRF / IBN lesion.',
+        expected='Reduced g_burst lowers peak velocity across all amplitudes. '
+                 'Healthy: peak ~600 deg/s at 40°. Severe (g=120): ~170 deg/s. '
+                 'Duration increases; final position preserved by local feedback.',
+        citation='Zee DS et al. (1976) Ann Neurol 1:309-315 — PPRF slow saccades.',
         fig_type='behavior',
     )
 
@@ -282,87 +285,6 @@ def _flutter_swj(show):
     )
 
 
-# ── Figure 3: Saccade palsy — no fast phases during VOR ──────────────────────
-
-def _saccade_palsy(show):
-    print('  Running saccade palsy during VOR...')
-
-    VEL_ROT   = 60.0    # deg/s
-    FREQ      = 0.5     # Hz
-    DUR_S     = 8.0
-
-    t_arr = np.arange(0.0, DUR_S, DT, dtype=np.float32)
-    T     = len(t_arr)
-    hv    = (VEL_ROT * np.sin(2 * np.pi * FREQ * t_arr)).astype(np.float32)
-
-    # Healthy: VOR with nystagmus fast phases
-    eye_h = np.array(_sim_vor_nystagmus(THETA, t_arr, hv, key=0))
-
-    # Saccade palsy: g_burst ≈ 0 (PPRF or IBN lesion)
-    THETA_PALSY = with_brain(THETA, g_burst=0.0)
-    eye_p = np.array(_sim_vor_nystagmus(THETA_PALSY, t_arr, hv, key=0))
-
-    # Partial: g_burst=50 — rare corrective fast phases
-    THETA_PART = with_brain(THETA, g_burst=50.0)
-    eye_part = np.array(_sim_vor_nystagmus(THETA_PART, t_arr, hv, key=0))
-
-    vel_h    = np.gradient(eye_h[:, 0],    DT)
-    vel_p    = np.gradient(eye_p[:, 0],    DT)
-    vel_part = np.gradient(eye_part[:, 0], DT)
-
-    fig, axes = plt.subplots(3, 2, figsize=(14, 9), sharex=True)
-    fig.suptitle(
-        f'Saccade Palsy — No Fast Phases During Sinusoidal VOR  '
-        f'({VEL_ROT:.0f} deg/s, {FREQ:.1f} Hz)',
-        fontsize=10, fontweight='bold',
-    )
-
-    cases = [
-        (eye_h,    vel_h,    hv, C_HEALTHY, f'Healthy  (g_burst=700)'),
-        (eye_part, vel_part, hv, C_SLOW,    f'Partial palsy  (g_burst=50)'),
-        (eye_p,    vel_p,    hv, C_PALSY,   f'Complete palsy  (g_burst=0)'),
-    ]
-
-    for row, (eye, vel, hv_r, col, title) in enumerate(cases):
-        axes[row, 0].plot(t_arr, eye[:, 0], color=col,   lw=0.9, label='L eye')
-        axes[row, 0].plot(t_arr, hv_r,      color='gray', lw=0.8, ls='--', alpha=0.6,
-                          label='Head vel (scaled)')
-        axes[row, 1].plot(t_arr, vel,        color=col,   lw=0.9)
-        axes[row, 0].set_title(title, fontsize=8)
-        axes[row, 1].set_title(title + ' — eye velocity', fontsize=8)
-        axes[row, 0].set_ylabel('L eye yaw (deg)', fontsize=8)
-        axes[row, 1].set_ylabel('L eye yaw vel (deg/s)', fontsize=8)
-        for ax in axes[row]:
-            ax.axhline(0, color='k', lw=0.4, alpha=0.3)
-            ax.grid(True, alpha=0.12)
-            ax.tick_params(labelsize=7)
-
-    for ax in axes[-1]:
-        ax.set_xlabel('Time (s)', fontsize=8)
-
-    axes[0, 0].legend(fontsize=7, loc='upper right')
-
-    plt.tight_layout()
-
-    path, rp = utils.save_fig(fig, 'clin_sac_palsy', show=show)
-    return utils.fig_meta(path, rp,
-        title='Saccade Palsy — Loss of Fast Phases During VOR',
-        description=f'Sinusoidal head rotation ({VEL_ROT:.0f} deg/s at {FREQ:.1f} Hz) '
-                    'in the dark. Left column = eye position, right = velocity. '
-                    'Healthy: sawtooth nystagmus with fast phases. '
-                    'Partial palsy (g_burst=50): occasional slow corrective saccades. '
-                    'Complete palsy (g_burst=0): smooth sinusoidal eye motion only, '
-                    'no fast phases — VOR without nystagmus.',
-        expected='Healthy: clear nystagmus sawtooth with fast phases resetting eye position. '
-                 'Complete palsy: smooth sinusoidal eye velocity matching VOR gain ~0.9; '
-                 'no reset saccades → progressive torsion-like drift without fast phases. '
-                 'Pattern seen in acute PPRF lesions.',
-        citation='Bhidayasiri R et al. (2001) Brain 124:2523-2547 — '
-                 'pontine gaze palsy; '
-                 'Leigh RJ & Zee DS (2015) The Neurology of Eye Movements.',
-        fig_type='cascade',
-    )
-
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
@@ -373,7 +295,6 @@ def run(show=False):
     figs = [
         _slow_saccades(show),
         _flutter_swj(show),
-        _saccade_palsy(show),
     ]
     FIGURES = figs
     return figs
