@@ -156,7 +156,7 @@ def burst_velocity(e_residual, brain_params):
 
 # ── SSM step ──────────────────────────────────────────────────────────────────
 
-def step(x_sg, pos_delayed, target_visible, x_ni, w_est, brain_params):
+def step(x_sg, pos_delayed, target_visible, x_ni, w_est, brain_params, noise_acc=0.0):
     """Single ODE step: target selection + burst dynamics + burst output.
 
     Target selection (inside step — uses brain-internal x_ni, not plant state):
@@ -188,9 +188,11 @@ def step(x_sg, pos_delayed, target_visible, x_ni, w_est, brain_params):
     z_opn  = x_sg[7]     # scalar OPN state: 100=tonic (burst blocked), 0=paused (burst active)
     z_acc  = x_sg[8]     # scalar rise-to-bound accumulator
 
-    # Normalised convenience aliases (equivalent to old z_sac and 1−z_sac)
-    z_act = (100.0 - z_opn) / 100.0   # 0=idle, 1=saccade active
-    z_idl = z_opn / 100.0             # 0=during saccade, 1=idle
+    # Firing-rate clip: IBN inhibition drives z_opn membrane potential below 0,
+    # but OPN firing rate cannot go negative — clip before computing gates.
+    z_opn_fr = jnp.clip(z_opn, 0.0, 100.0)
+    z_act = (100.0 - z_opn_fr) / 100.0   # 0=idle, 1=saccade active
+    z_idl = z_opn_fr / 100.0             # 0=during saccade, 1=idle
 
     # ── Target selection ──────────────────────────────────────────────────────
     # Use x_ni (NI state) as brain's proxy for current eye position.
@@ -230,7 +232,11 @@ def step(x_sg, pos_delayed, target_visible, x_ni, w_est, brain_params):
     threshold_ref  = brain_params.threshold_ref
 
     # Trigger: is current retinal error large enough to warrant a saccade?
-    gate_err = jax.nn.sigmoid(k_sac * (e_cur_mag - threshold_sac))
+    # Quick phases (target_visible≈0) use a higher threshold — require larger drift error
+    # before starting to accumulate, reducing spurious centripetal resets during slow phases.
+    threshold_sac_eff = (target_visible * threshold_sac
+                         + (1.0 - target_visible) * brain_params.threshold_sac_qp)
+    gate_err = jax.nn.sigmoid(k_sac * (e_cur_mag - threshold_sac_eff))
 
     # OPN bistable gate: hard switch at z_ref = threshold_ref.
     gate_opn = jax.nn.sigmoid(-k_ref * (z_ref - threshold_ref))
@@ -333,8 +339,9 @@ def step(x_sg, pos_delayed, target_visible, x_ni, w_est, brain_params):
     k_acc         = brain_params.k_acc
 
     # Accumulate while gate is on AND OPN is tonic (not paused); drain otherwise.
+    # noise_acc is a pre-generated diffusion term for RT variability (units: 1/s, scaled by sqrt(dt)).
     gate_drive = gate_err * gate_opn * z_idl
-    dz_acc     = gate_drive / tau_acc  -  z_acc / tau_drain
+    dz_acc     = gate_drive / tau_acc  -  z_acc / tau_drain  +  noise_acc
 
     # ── Saccade latch dynamics ────────────────────────────────────────────────
     # z_sac fires (fast, 1ms) when accumulator crosses threshold.
@@ -342,9 +349,12 @@ def step(x_sg, pos_delayed, target_visible, x_ni, w_est, brain_params):
 
     tau_sac               = brain_params.tau_sac
     threshold_sac_release = brain_params.threshold_sac_release
-    charge_sac  = jax.nn.sigmoid(k_acc * (z_acc - threshold_acc))          # fires when accumulated
+    charge_sac  = jax.nn.sigmoid(k_acc * (z_acc - threshold_acc))           # fires when accumulated
     release_sac = jax.nn.sigmoid(k_ref * (z_ref - threshold_sac_release))  # fires when refractory
-    dz_opn      = ((100.0 - z_opn) * release_sac  -  z_opn * charge_sac) / tau_sac
+    # IBN inhibitory overshoot: drive z_opn toward −g_opn_pause when charge fires.
+    # State can go negative (hyperpolarised); firing rate is clipped at 0 above (z_opn_fr).
+    g_opn_pause = brain_params.g_opn_pause
+    dz_opn      = ((100.0 - z_opn) * release_sac  -  (z_opn + g_opn_pause) * charge_sac) / tau_sac
 
     dx_sg = jnp.concatenate([dx_copy, jnp.array([dz_ref]), de_held,
                               jnp.array([dz_opn]), jnp.array([dz_acc])])

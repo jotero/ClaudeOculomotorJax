@@ -204,7 +204,7 @@ def ODE_ocular_motor(t, state, args):
     Args:
         t:     scalar time (s)
         state: SimState pytree
-        args:  24-element tuple — see simulate() for layout
+        args:  25-element tuple — see simulate() for layout
 
     Returns:
         SimState of derivatives (dsensory, dbrain, dplant)
@@ -218,7 +218,8 @@ def ODE_ocular_motor(t, state, args):
      target_strobed_interp,
      noise_canal_interp, noise_slip_L_interp, noise_slip_R_interp,
      noise_pos_L_interp, noise_pos_R_interp,
-     noise_vel_L_interp, noise_vel_R_interp) = args
+     noise_vel_L_interp, noise_vel_R_interp,
+     noise_acc_interp) = args
 
     # ── External inputs at time t ────────────────────────────────────────────
     q_head  = head_q_interp.evaluate(t)       # (3,) [yaw,pitch,roll] deg
@@ -269,7 +270,8 @@ def ODE_ocular_motor(t, state, args):
     )
 
     # ── Brain: VS + NI + SG + EC + vergence ──────────────────────────────────
-    dx_brain, motor_cmd_L, motor_cmd_R = brain_model.step(state.brain, sensory_out, theta.brain)
+    dx_brain, motor_cmd_L, motor_cmd_R = brain_model.step(
+        state.brain, sensory_out, theta.brain, noise_acc_interp.evaluate(t))
 
     # ── Plant ─────────────────────────────────────────────────────────────────
     dx_p_L, q_eye_L, w_eye_L = plant_model.step(state.plant[_IDX_P_L], motor_cmd_L, theta.plant, M_PLANT_EYE_L)
@@ -398,7 +400,7 @@ def simulate(
     # ── Sensory noise ─────────────────────────────────────────────────────────
     if key is None:
         key = jax.random.PRNGKey(0)
-    k_canal, k_slip, k_pos, k_vel = jax.random.split(key, 4)
+    k_canal, k_slip, k_pos, k_vel, k_acc_n = jax.random.split(key, 5)
     k_slip_L, k_slip_R = jax.random.split(k_slip, 2)
     k_vel_L,  k_vel_R  = jax.random.split(k_vel,  2)
     k_pos_L,  k_pos_R  = jax.random.split(k_pos,  2)
@@ -408,6 +410,9 @@ def simulate(
     noise_slip_R = jax.random.normal(k_slip_R, (T, 3)) * params.sensory.sigma_slip
     noise_vel_L  = jax.random.normal(k_vel_L,  (T, 3)) * params.sensory.sigma_vel
     noise_vel_R  = jax.random.normal(k_vel_R,  (T, 3)) * params.sensory.sigma_vel
+    # Accumulator diffusion noise: pre-scaled so that after ODE multiply-by-dt gives
+    # N(0, sigma_acc·√dt) per step — standard Euler-Maruyama / Langevin scaling.
+    noise_acc    = jax.random.normal(k_acc_n,  (T,))   * (params.brain.sigma_acc / jnp.sqrt(dt))
 
     alpha_ou = jnp.exp(-dt / params.sensory.tau_pos_drift)
     ou_drive = jnp.sqrt(1.0 - alpha_ou ** 2) * params.sensory.sigma_pos
@@ -449,6 +454,7 @@ def simulate(
         noise_pos_R  = jnp.concatenate([_z3, noise_pos_R],  axis=0)
         noise_vel_L  = jnp.concatenate([_z3, noise_vel_L],  axis=0)
         noise_vel_R  = jnp.concatenate([_z3, noise_vel_R],  axis=0)
+        noise_acc    = jnp.concatenate([jnp.zeros(warmup_T), noise_acc])
     else:
         t_full   = t_array
         warmup_T = 0
@@ -470,6 +476,7 @@ def simulate(
     noise_slip_L_interp = _interp(noise_slip_L);  noise_slip_R_interp = _interp(noise_slip_R)
     noise_pos_L_interp  = _interp(noise_pos_L);   noise_pos_R_interp  = _interp(noise_pos_R)
     noise_vel_L_interp  = _interp(noise_vel_L);   noise_vel_R_interp  = _interp(noise_vel_R)
+    noise_acc_interp    = _interp(noise_acc)
 
     # ── Initial state ─────────────────────────────────────────────────────────
     sensory_x0 = jnp.zeros(sensory_model.N_STATES)
@@ -496,6 +503,7 @@ def simulate(
         noise_canal_interp, noise_slip_L_interp, noise_slip_R_interp,
         noise_pos_L_interp, noise_pos_R_interp,
         noise_vel_L_interp, noise_vel_R_interp,
+        noise_acc_interp,
     )
 
     solution = diffrax.diffeqsolve(

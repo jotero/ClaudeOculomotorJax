@@ -240,6 +240,7 @@ def retinal_signals(p_target, eye_offset_head, q_head, w_head, x_head, v_head,
     w_eye_world = w_head_xyz + R_head @ w_eye_xyz            # total eye velocity, xyz world frame
     scene_vel   = _rv2q(R_gaze_T @ (w_scene_xyz - w_eye_world))   # eye frame, [yaw,pitch,roll]
     target_vel  = _rv2q(R_gaze_T @ (vt_xyz      - w_eye_world))   # eye frame, [yaw,pitch,roll]
+    target_vel  = target_vel.at[2].set(0.0)   # retina is 2D: target translates H/V only
 
     # ── Visual-field gate ─────────────────────────────────────────────────────
     e_mag  = jnp.linalg.norm(target_pos) + 1e-9

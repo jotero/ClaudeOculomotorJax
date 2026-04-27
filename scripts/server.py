@@ -318,7 +318,19 @@ async def download_endpoint(run_id: str):
     )
 
 
-# ── Serve docs/ as the frontend (must be last — catches all unmatched routes) ──
+# ── Admin page ───────────────────────────────────────────────────────────────
+
+from fastapi.responses import RedirectResponse as _Redirect
+
+@app.get('/admin')
+async def admin_redirect():
+    """Redirect /admin → /outputs/admin.html (served via HTTP, no file:// issues)."""
+    return _Redirect('/outputs/admin.html')
+
+
+# ── Static file mounts (specific paths before the catch-all /) ────────────────
+
+app.mount('/outputs', StaticFiles(directory=str(_OUTPUTS_DIR)), name='outputs')
 
 _DOCS_DIR = Path(__file__).parent.parent / 'docs'
 app.mount('/', StaticFiles(directory=str(_DOCS_DIR), html=True), name='frontend')

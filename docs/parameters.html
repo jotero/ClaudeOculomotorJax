@@ -616,7 +616,24 @@ tr.hidden { display: none; }
           <td class="desc-cell">Sigmoid steepness for trigger and stop gates. Large value → effectively a step function.</td>
           <td></td>
         </tr>
+        <tr>
+          <td class="param-name">threshold_sac_qp</td>
+          <td><span class="default">2.0</span></td>
+          <td class="units">deg</td>
+          <td class="desc-cell">Error threshold to START accumulating for quick phases (target_visible ≈ 0). Blended with threshold_sac: gate_err uses this higher value when the target is out of field. Requires larger slow-phase drift before a centripetal reset fires — prevents spurious quick phases during small-amplitude slow phases.</td>
+          <td><div class="pathologies"><span class="tag tag-saccade">↓ → more frequent quick phases</span></div></td>
+        </tr>
         <tr class="sub-head"><td colspan="5">OPN refractory</td></tr>
+        <tr>
+          <td class="param-name">g_opn_pause</td>
+          <td><span class="default">500.0</span></td>
+          <td class="units">fr units</td>
+          <td class="desc-cell">OPN inhibitory overshoot amplitude. IBN inhibition drives z_opn membrane potential to −g_opn_pause below spike threshold; firing rate clips at 0. Large value (500) → OPN pauses in ~2 ms after z_acc crosses threshold, so x_copy barely grows before z_act reaches 1. Mimics the near-instantaneous OPN pause seen in primate recordings.
+            <div class="ref">Yoshida et al. (1999); Scudder et al. (2002)</div></td>
+          <td><div class="pathologies">
+            <span class="tag tag-saccade">↓ → slower OPN pause → reduced peak velocity (hypometric main sequence)</span>
+          </div></td>
+        </tr>
         <tr>
           <td class="param-name">tau_ref</td>
           <td><span class="default">0.15</span></td>
@@ -673,19 +690,26 @@ tr.hidden { display: none; }
         </tr>
         <tr>
           <td class="param-name">tau_acc</td>
-          <td><span class="default">0.080</span></td>
+          <td><span class="default">0.130</span></td>
           <td class="units">s</td>
-          <td class="desc-cell">Accumulator rise TC. Ensures ~80 ms latency before saccade trigger. Noise-robust: brief retinal error spikes (&lt; τ_acc) cannot cross threshold.</td>
+          <td class="desc-cell">Accumulator rise TC. Noise-robust: brief retinal error spikes (&lt; τ_acc) cannot cross threshold. Controls saccade reaction time (RT ≈ τ_vis + τ_acc + OPN latch ≈ 200 ms).</td>
           <td><div class="pathologies">
             <span class="tag tag-saccade">Reduced → shorter latency, less noise robustness</span>
           </div></td>
         </tr>
         <tr>
           <td class="param-name">tau_drain</td>
-          <td><span class="default">0.120</span></td>
+          <td><span class="default">0.200</span></td>
           <td class="units">s</td>
           <td class="desc-cell">Accumulator drain TC. When gate is off (target gone or refractory), z_acc decays toward 0. tau_drain &gt; tau_acc ensures equilibrium z_acc &gt; threshold for sustained targets.</td>
           <td></td>
+        </tr>
+        <tr>
+          <td class="param-name">sigma_acc</td>
+          <td><span class="default">0.0</span></td>
+          <td class="units">1/√s</td>
+          <td class="desc-cell">Accumulator diffusion noise SD. Adds trial-to-trial RT variability. At 0: all saccades to the same target have identical latency. Realistic ~0.5–1 gives ±20 ms jitter.</td>
+          <td><div class="pathologies"><span class="tag tag-noise">RT variability</span></div></td>
         </tr>
         <tr>
           <td class="param-name">threshold_acc</td>
@@ -696,9 +720,9 @@ tr.hidden { display: none; }
         </tr>
         <tr>
           <td class="param-name">k_acc</td>
-          <td><span class="default">50.0</span></td>
+          <td><span class="default">500.0</span></td>
           <td class="units">—</td>
-          <td class="desc-cell">Accumulator sigmoid steepness. Larger → sharper threshold crossing → more abrupt OPN pause.</td>
+          <td class="desc-cell">Accumulator→OPN sigmoid steepness. Near-hard threshold: OPN only starts declining in the last ~0.2 ms before z_acc crosses threshold_acc, so x_copy barely grows during the OPN transition. Required for correct main sequence peak velocities.</td>
           <td></td>
         </tr>
         <tr>
@@ -732,14 +756,14 @@ tr.hidden { display: none; }
         </tr>
         <tr>
           <td class="param-name">alpha_reset</td>
-          <td><span class="default">1.0</span></td>
+          <td><span class="default">1.25</span></td>
           <td class="units">—</td>
-          <td class="desc-cell">Quick-phase centering gain. e_center = −α·x_ni_pred. 1 = full recentering; &lt;1 = partial reset (residual eccentricity).</td>
+          <td class="desc-cell">Quick-phase centering gain. e_center = −α·x_ni_pred. 1 = full recentering; &gt;1 = slight overshoot toward center (reduces half-cycle drift accumulation); &lt;1 = partial reset (residual eccentricity).</td>
           <td></td>
         </tr>
         <tr>
           <td class="param-name">k_center_vel</td>
-          <td><span class="default">0.5</span></td>
+          <td><span class="default">0.75</span></td>
           <td class="units">—</td>
           <td class="desc-cell">Quick-phase prediction gain. look_ahead = k·τ_ref; x_ni_pred = x_ni − look_ahead·w_vs_tonic. Prediction only in the quick-phase (out-of-field) path; voluntary saccades are unaffected. 0 = no prediction; 1 = full τ_ref look-ahead.</td>
           <td></td>

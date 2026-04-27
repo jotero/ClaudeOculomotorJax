@@ -216,7 +216,7 @@ def _refractoriness(show):
     ISIs span 50–500 ms to show refractoriness → full two-saccade range.
     """
     AMPS = [10, 20, 30, 40]    # full target amplitude (first step = A/2)
-    isis = [0.05, 0.10, 0.15, 0.20, 0.35, 0.50]
+    isis = [0.02, 0.05, 0.10, 0.15, 0.20, 0.35, 0.50]
     T_end = 1.2
     t1    = 0.15
 
@@ -283,7 +283,7 @@ def _refractoriness(show):
     return utils.fig_meta(path, rp,
         title='Saccade Double-Step Refractoriness',
         description='Double-step paradigm: target jumps 0→A/2 then A/2→A for A=10,20,30,40° '
-                    'after variable ISI (50–500 ms). '
+                    'after variable ISI (20–500 ms). '
                     'Target shown dashed in same colour as eye trace. '
                     'Short ISIs produce one amended saccade; longer ISIs produce two.',
         expected='ISI < ~100 ms: 1 saccade (merged). ISI > ~150 ms: 2 separate saccades. '

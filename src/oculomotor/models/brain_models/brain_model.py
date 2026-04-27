@@ -205,10 +205,19 @@ class BrainParams(NamedTuple):
     threshold_ref:         float = 0.1    # OPN threshold
     tau_hold:              float = 0.005  # sample-and-hold tracking TC (s)
     tau_sac:               float = 0.001  # saccade latch TC (s)
-    tau_acc:               float = 0.080  # accumulator rise TC (s)
-    tau_drain:             float = 0.120  # accumulator drain TC (s)
+    g_opn_pause:           float = 500.0  # OPN inhibitory overshoot (fr units); IBN inhibition drives OPN
+                                           # membrane potential to −g_opn_pause (below spike threshold).
+                                           # Firing rate clips at 0; large value → OPN pauses in ~2 ms.
+    tau_acc:               float = 0.130  # accumulator rise TC (s); ~80 ms to threshold → ~200 ms RT with visual delay
+    tau_drain:             float = 0.200  # accumulator drain TC (s)
     threshold_acc:         float = 0.5    # accumulator trigger threshold
-    k_acc:                 float = 50.0   # accumulator sigmoid steepness
+    threshold_sac_qp:      float = 2.0    # error threshold to START accumulating for quick phases (target_visible≈0)
+                                           # Higher → requires larger drift error before accumulation begins → fewer spurious resets
+    k_acc:                 float = 500.0  # accumulator→OPN sigmoid steepness; high value = near-hard threshold
+                                           # OPN only starts dropping in the last ~0.2 ms before z_acc crosses
+                                           # threshold_acc, so x_copy barely grows during the OPN transition
+    sigma_acc:             float = 0.0    # accumulator diffusion noise (1/√s); adds RT variability
+                                           # ~0.15–0.25 gives ±15–25 ms SD; 0 = deterministic
 
     # Saccade target selection — handled inside the saccade generator
     orbital_limit:         float = 50.0   # oculomotor range half-width (deg); clip e_cmd to ±limit
@@ -408,7 +417,7 @@ def _cyclopean_percept(sensory_out, brain_params) -> CyclopeanPercept:
 
 # ── Step function ──────────────────────────────────────────────────────────────
 
-def step(x_brain, sensory_out, brain_params):
+def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
     """Single ODE step for the brain subsystem.
 
     Args:
@@ -480,12 +489,18 @@ def step(x_brain, sensory_out, brain_params):
     # The retina cannot sense torsion, so torsional errors from Listing's law
     # (T_required = OCR − H·V·π/360) must be injected explicitly as the [2]
     # component of the SG error signal.
-    # x_ni_for_sg has its torsion expressed relative to OCR so that the
-    # out-of-field centering saccade aims at OCR rather than zero.
+    # x_ni_for_sg has its torsion expressed as the full listing_error relative to
+    # T_required (which includes OCR), so the SG aims at zero Listing's error.
     ocr_val     = ocr[2]
     primary_pos = brain_params.listing_primary
+    # OCR is added to motor_cmd AFTER the NI step, so x_ni_net[2] does not include
+    # the OCR offset. The Listing's calculation needs the full torsion estimate
+    # (NI + OCR) so listing_error is zero when the eye is correctly at OCR torsion.
+    # Without this, listing_error = -ocr_val at primary position → SG fires spurious
+    # torsional saccades that fight the OCR motor command.
+    x_ni_net_with_ocr = x_ni_net.at[2].add(ocr_val)
     pos_for_sg, x_ni_for_sg, vel_torsion = listing.corrections(
-        x_ni_net,
+        x_ni_net_with_ocr,
         (-w_est + u_pursuit)[:2],   # smooth H/V velocity (no saccade burst)
         percept.target_pos,
         ocr_val,
@@ -498,7 +513,7 @@ def step(x_brain, sensory_out, brain_params):
     # fast canal D-feedthrough (~head velocity during VOR). The D-feedthrough is phasic —
     # a correct compensatory response — not a drift to correct for.
     w_vs_tonic = x_vs[:3] - x_vs[3:6]   # VS state net (tonic imbalance source only)
-    dx_sg, u_burst = sg.step(x_sg, pos_for_sg, percept.target_visible, x_ni_for_sg, w_vs_tonic, brain_params)
+    dx_sg, u_burst = sg.step(x_sg, pos_for_sg, percept.target_visible, x_ni_for_sg, w_vs_tonic, brain_params, noise_acc)
 
     # ── Neural integrator: VOR + saccades + pursuit → version motor command ───
     dx_ni, motor_cmd_ni = ni.step(x_ni, -w_est + u_burst + u_pursuit_listing, brain_params)
