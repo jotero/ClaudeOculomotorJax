@@ -74,8 +74,8 @@ def _velocity_range(show):
         st_pur = _run(theta_pur, t_np, pt3, vt3, key=ci)
         st_nop = _run(theta_nop, t_np, pt3,      key=ci + 10)
 
-        eye_pur = np.array(st_pur.plant[:, 0])
-        eye_nop = np.array(st_nop.plant[:, 0])
+        eye_pur = (np.array(st_pur.plant[:, 0]) + np.array(st_pur.plant[:, 3])) / 2.0
+        eye_nop = (np.array(st_nop.plant[:, 0]) + np.array(st_nop.plant[:, 3])) / 2.0
         ev_pur  = np.gradient(eye_pur, DT)
         ev_nop  = np.gradient(eye_nop, DT)
         u_pur   = np.array(st_pur.brain[:, _IDX_PURSUIT])[:, 0]
@@ -152,16 +152,23 @@ def _sinusoidal(show):
         vt3[:, 1] = vel_v.astype(np.float32)
 
         st   = _run(THETA, t_np, jnp.array(pt3), jnp.array(vt3), key=ci + 20)
-        eye  = np.array(st.plant[:, :2])
+        # Version eye position = mean of left and right
+        eye_L = np.array(st.plant[:, :2])
+        eye_R = np.array(st.plant[:, 3:5])
+        eye   = (eye_L + eye_R) / 2.0
 
         mask = t_np > 2.0  # skip warm-up
         axes[0, ci].plot(t_np[mask], tgt_h[mask], color=utils.C['target'], lw=1.2, label='target H')
-        axes[0, ci].plot(t_np[mask], eye[mask, 0], color=utils.C['eye'],   lw=1.5, label='eye H')
+        axes[0, ci].plot(t_np[mask], eye[mask, 0], color=utils.C['eye'],   lw=1.5, label='eye H (version)')
         ax_fmt(axes[0, ci]); axes[0, ci].legend(fontsize=7)
+        absmax = max(np.abs(tgt_h[mask]).max(), np.abs(eye[mask, 0]).max()) * 1.1
+        axes[0, ci].set_ylim(-absmax, absmax)
 
         axes[1, ci].plot(t_np[mask], tgt_v[mask], color=utils.C['target'], lw=1.2, ls='--', label='target V')
-        axes[1, ci].plot(t_np[mask], eye[mask, 1], color=utils.C['eye'],   lw=1.5, ls='--', label='eye V')
+        axes[1, ci].plot(t_np[mask], eye[mask, 1], color=utils.C['eye'],   lw=1.5, ls='--', label='eye V (version)')
         ax_fmt(axes[1, ci]); axes[1, ci].legend(fontsize=7)
+        absmax = max(np.abs(tgt_v[mask]).max(), np.abs(eye[mask, 1]).max()) * 1.1
+        axes[1, ci].set_ylim(-absmax, absmax)
 
         axes[2, ci].plot(tgt_h[mask], tgt_v[mask], color=utils.C['target'], lw=1.0, label='target')
         axes[2, ci].plot(eye[mask, 0], eye[mask, 1], color=utils.C['eye'],  lw=1.5, label='eye')
@@ -193,7 +200,7 @@ def _cascade(show):
 
     st  = _run(THETA, t_np, pt3, vt3, key=30)
     sg  = extract_sg(st, THETA)
-    eye = np.array(st.plant[:, 0])
+    eye = (np.array(st.plant[:, 0]) + np.array(st.plant[:, 3])) / 2.0
     ev  = np.gradient(eye, DT)
     x_pur = np.array(st.brain[:, _IDX_PURSUIT])[:, 0]
 
@@ -220,9 +227,23 @@ def _cascade(show):
     axes[1].set_ylabel('Velocity (deg/s)'); axes[1].set_title('Eye Velocity')
     axes[1].legend(fontsize=8)
 
-    axes[2].plot(t_np, x_pur, color=utils.C['pursuit'], lw=1.5, label='u_pursuit (integrator memory)')
-    axes[2].axhline(vel, color=utils.C['target'], lw=0.8, ls=':', alpha=0.7)
-    axes[2].set_ylabel('u_pursuit (deg/s)'); axes[2].set_title('Pursuit Velocity Integrator State')
+    # Reconstruct phasic drive from integrator state:
+    #   dx_p/dt = -x_p/tau + K_int * e_pred  →  e_pred = (dx_p/dt + x_p/tau) / K_int
+    #   phasic  = K_phasic * e_pred  (fast onset, decays to 0 at steady state)
+    #   u_total = x_p + phasic        (full pursuit command)
+    K_ph  = float(THETA.brain.K_phasic_pursuit)
+    K_int = float(THETA.brain.K_pursuit)
+    tau_p = float(THETA.brain.tau_pursuit)
+    dx_pur     = np.gradient(x_pur, DT)
+    e_pred_est = (dx_pur + x_pur / tau_p) / K_int
+    phasic     = K_ph * e_pred_est
+    u_total    = x_pur + phasic
+
+    axes[2].axhline(vel, color=utils.C['target'], lw=0.8, ls=':', alpha=0.7, label=f'target {vel:.0f} deg/s')
+    axes[2].plot(t_np, u_total, color=utils.C['pursuit'],  lw=1.8, label='u_pursuit (total)')
+    axes[2].plot(t_np, x_pur,   color='#1a6ebd',           lw=1.3, ls='--', label='integrator x_p (slow)')
+    axes[2].plot(t_np, phasic,  color='#d94801',           lw=1.3, ls='--', label='phasic K·e_pred (fast)')
+    axes[2].set_ylabel('Pursuit drive (deg/s)'); axes[2].set_title('Pursuit Drive: Integrator + Phasic Feedthrough')
     axes[2].legend(fontsize=8)
 
     axes[3].plot(t_np, sg['e_pd'][:,0],   color='darkorange', lw=1.0, ls='--', label='e_delayed')
@@ -251,10 +272,12 @@ def _cascade(show):
     path, rp = utils.save_fig(fig, 'pursuit_cascade', show=show)
     return utils.fig_meta(path, rp,
         title='Smooth Pursuit Signal Cascade (Internal)',
-        description='Full signal chain for 20 deg/s pursuit: position, velocity, pursuit integrator state, '
+        description='Full signal chain for 20 deg/s pursuit: position, velocity, pursuit drive '
+                    '(total + integrator memory + phasic feedthrough), '
                     'visual cascade error, accumulator/latch for catch-up saccades, burst, refractory state.',
-        expected='Pursuit integrator charges to target velocity; catch-up saccades fire when positional '
-                 'error exceeds threshold; saccade refractory period visible between bursts.',
+        expected='Phasic drive (K_phasic·e_pred) rises fast at onset then decays to 0 as the integrator charges. '
+                 'Total u_pursuit approaches target velocity at steady state. '
+                 'Catch-up saccades fire when positional error exceeds threshold.',
         citation='Lisberger & Westbrook (1985)',
         fig_type='cascade')
 

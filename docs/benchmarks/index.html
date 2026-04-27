@@ -312,9 +312,12 @@ h1   { font-size: 22px; margin-bottom: 4px; }
       <p class="desc">Saccades to a (H, V) grid; torsion measured at steady state. g_ocr=0 so OCR=0 and T_required = −H·V·π/360.</p>
       <div class="expected">
         <strong>Expected behavior</strong>
-        Scatter points lie on identity line; cross-sections linear with slope −V·π/360.
+        Scatter points should lie on the identity line; cross-sections linear with slope −V·π/360 (half-angle rule).
+        Tonic (between-saccade) torsion slightly under-tracks because the NI-driven torsion lags the geometric demand
+        — saccades bring the eye back to Listing's plane. Some residual under-tracking between saccades is
+        physiologically normal (Tweed et al. 1998 measured ~20% under-shoot in inter-saccadic intervals).
       </div>
-      <p class="citation">&#128214; Tweed, Haslwanter & Fetter (1998) IOVS; van Rijn & van den Berg (1993) EBR</p>
+      <p class="citation">&#128214; Tweed, Haslwanter &amp; Fetter (1998) IOVS 39:1449; van Rijn &amp; van den Berg (1993) Exp Brain Res 95:507; Listing (1854) <em>Beitrag zur physiologischen Optik</em></p>
       <span class="badge behavior">behavior</span>
     </div>
 

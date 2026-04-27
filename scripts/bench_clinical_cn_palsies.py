@@ -331,62 +331,93 @@ def _ino_timeseries(show):
 # ── Figure 3: Graded palsy recovery series ────────────────────────────────────
 
 def _graded_palsy(show):
+    """Continuous ipsilateral → contralateral saccade sequence at 5 gain levels.
+
+    Ipsilateral = rightward (reveals both CN VI R and left INO defects).
+    Contralateral = leftward.
+    Both eyes shown on same axes: L eye dashed, R eye solid.
+    """
     print('  Running graded CN VI / INO recovery series...')
 
-    gains   = [1.0, 0.75, 0.5, 0.25, 0.0]
-    colors  = plt.cm.plasma(np.linspace(0.15, 0.85, len(gains)))
-    t       = T_ARR
+    gains  = [1.0, 0.75, 0.5, 0.25, 0.0]
+    colors = plt.cm.plasma(np.linspace(0.15, 0.85, len(gains)))
 
-    # Pre-simulate
-    cn6_eyes = []
-    ino_eyes = []
-    for g in gains:
-        p_cn6 = with_brain(THETA, g_nerve=G_NERVE_DEFAULT.at[LR_R].set(float(g)))
-        p_ino = with_brain(THETA, g_mlf_ver_L=float(g))
-        cn6_eyes.append(_sim_saccade(p_cn6, H_DEG, 0.0, key=0))
-        ino_eyes.append(_sim_saccade(p_ino,  H_DEG, 0.0, key=0))
+    # Continuous trace: centre → ipsilateral (+H_DEG) → contralateral (−H_DEG)
+    T_TOTAL  = 2.0
+    T_IPSI   = 0.3    # target jumps ipsilaterally at this time
+    T_CONTRA = 1.1    # target jumps contralaterally at this time
 
-    fig, axes = plt.subplots(2, 2, figsize=(12, 8), sharex=True)
+    t   = np.arange(0.0, T_TOTAL, DT)
+    T   = len(t)
+
+    tgt_yaw = np.where(t < T_IPSI, 0.0,
+              np.where(t < T_CONTRA, float(H_DEG), -float(H_DEG))).astype(np.float32)
+    pt = np.zeros((T, 3), np.float32)
+    pt[:, 0] = np.tan(np.radians(tgt_yaw))
+    pt[:, 2] = 1.0
+    tgt_km = km.build_target(t, lin_pos=pt, lin_vel=np.zeros((T, 3), np.float32))
+    cfg    = SimConfig(warmup_s=0.5)
+
+    def _sim_seq(params):
+        return np.array(simulate(
+            params, t,
+            target=tgt_km,
+            scene_present_array=np.ones(T, np.float32),
+            target_present_array=np.ones(T, np.float32),
+            max_steps=int(T_TOTAL / DT) + 2500,
+            sim_config=cfg,
+            return_states=False,
+        ))
+
+    cn6_eyes = [_sim_seq(with_brain(THETA, g_nerve=G_NERVE_DEFAULT.at[LR_R].set(float(g))))
+                for g in gains]
+    ino_eyes = [_sim_seq(with_brain(THETA, g_mlf_ver_L=float(g)))
+                for g in gains]
+
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+    fig.suptitle(
+        f'Graded Palsy Recovery — Ipsilateral (+{H_DEG}°) then Contralateral (−{H_DEG}°) Saccade\n'
+        'Scene on · Target on  |  dashed = left eye · solid = right eye',
+        fontsize=10, fontweight='bold')
 
     for g, col, cn6, ino in zip(gains, colors, cn6_eyes, ino_eyes):
-        lbl = f'g = {g:.2f}'
-        # CN VI: R eye = paretic (LR_R → can't abduct), L eye = fellow (unaffected)
-        axes[0, 0].plot(t, cn6[:, 3], color=col, lw=1.6, label=lbl)  # R eye yaw
-        axes[0, 1].plot(t, cn6[:, 0], color=col, lw=1.6, label=lbl)  # L eye yaw
-        # Left INO: L eye = adducting (affected), R eye = abducting (fellow)
-        axes[1, 0].plot(t, ino[:, 0], color=col, lw=1.6, label=lbl)  # L eye yaw
-        axes[1, 1].plot(t, ino[:, 3], color=col, lw=1.6, label=lbl)  # R eye yaw
+        lbl = f'g={g:.2f}'
+        axes[0].plot(t, cn6[:, 0], color=col, lw=1.0, ls='--')        # L eye (fellow)
+        axes[0].plot(t, cn6[:, 3], color=col, lw=1.6, ls='-',  label=lbl)  # R eye (paretic)
+        axes[1].plot(t, ino[:, 0], color=col, lw=1.6, ls='--', label=lbl)  # L eye (adducting, affected)
+        axes[1].plot(t, ino[:, 3], color=col, lw=1.0, ls='-')          # R eye (abducting)
 
-    axes[0, 0].set_title(f'Graded CN VI nerve palsy (R)\nRight eye — paretic (LR_R g)', fontsize=8)
-    axes[0, 1].set_title(f'Graded CN VI nerve palsy (R)\nLeft eye — fellow', fontsize=8)
-    axes[1, 0].set_title(f'Graded left INO (g_mlf_ver_L)\nLeft eye — adducting (affected)', fontsize=8)
-    axes[1, 1].set_title(f'Graded left INO (g_mlf_ver_L)\nRight eye — abducting (fellow)', fontsize=8)
-
-    for ax in axes.flat:
-        ax.axhline(0, color='k', lw=0.4, alpha=0.3)
-        ax.set_ylabel('Eye yaw (deg)', fontsize=8)
-        ax.set_xlabel('Time (s)', fontsize=8)
+    for ax in axes:
+        ax.plot(t, tgt_yaw, color='k', lw=0.6, ls=':', alpha=0.35, label='Target')
+        ax.axvline(T_IPSI,   color='gray', lw=0.7, ls='--', alpha=0.4)
+        ax.axvline(T_CONTRA, color='gray', lw=0.7, ls='--', alpha=0.4)
+        ax.axhline(0, color='k', lw=0.3, alpha=0.25)
         ax.grid(True, alpha=0.15)
-        ax.legend(title='gain', fontsize=7, loc='upper left')
+        ax.set_xlabel('Time (s)', fontsize=9)
+        ax.set_ylabel('Eye yaw (deg)', fontsize=9)
         ax.tick_params(labelsize=7)
 
-    fig.suptitle(f'Graded Palsy Recovery — {H_DEG}° Rightward Saccade',
-                 fontsize=10, fontweight='bold')
-    plt.tight_layout()
+    axes[0].set_title(f'CN VI nerve palsy (R)\n'
+                      'solid = R paretic eye · dashed = L fellow', fontsize=9)
+    axes[0].legend(title='nerve gain', fontsize=7, loc='lower left', ncol=2)
 
+    axes[1].set_title(f'Left INO (g_mlf_ver_L)\n'
+                      'dashed = L adducting (affected) · solid = R abducting', fontsize=9)
+    axes[1].legend(title='MLF gain', fontsize=7, loc='lower right', ncol=2)
+
+    plt.tight_layout()
     path, rp = utils.save_fig(fig, 'clin_cn_graded', show=show)
     return utils.fig_meta(path, rp,
         title='Graded CN VI and INO Recovery',
-        description=f'Rightward {H_DEG}° saccade for partial CN VI nerve palsy '
-                    '(top, g_nerve[LR_R]) and partial left INO (bottom, g_mlf_ver_L) '
-                    'at five gain levels (1.0 = healthy, 0.0 = complete lesion). '
-                    'Models incomplete recovery or graded paresis.',
-        expected='CN VI paretic (R) eye undershoots and converges with decreasing gain; '
-                 'fellow (L) eye unchanged. INO adducting (L) eye progressively slows '
-                 'and undershoots; abducting (R) eye normal throughout.',
-        citation='Keller EL & Robinson DA (1972) J Neurophysiol 35:466-476 — '
-                 'partial lesion quantification; '
-                 'Frohman TC et al. (2003) J Neuro-ophthalmol 23:106-113 — graded INO.',
+        description=f'Continuous ipsilateral (+{H_DEG}°) then contralateral (−{H_DEG}°) saccade. '
+                    'CN VI R nerve palsy (left): R (paretic) eye undershoots and slows. '
+                    'Left INO (right): L (adducting) eye lags and undershoots on rightward saccade. '
+                    'Both eyes on same axes; lit room, target present.',
+        expected='CN VI: R eye undershoots rightward saccade, proportional to gain; L eye normal. '
+                 'Left INO: L eye adduction lag/undershoot on rightward saccade; R eye normal. '
+                 'Both eyes normal on leftward saccade (CN VI fellow normal; INO abducting R normal).',
+        citation='Keller & Robinson (1972) J Neurophysiol 35:466; '
+                 'Frohman et al. (2003) J Neuro-ophthalmol 23:106.',
         fig_type='behavior',
     )
 

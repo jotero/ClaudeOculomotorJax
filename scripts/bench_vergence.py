@@ -32,7 +32,8 @@ SECTION = dict(
     id='vergence', title='5. Vergence',
     description='Binocular vergence eye movements driven by disparity. '
                 'Symmetric convergence isolates vergence dynamics. '
-                'Asymmetric vergence combines a version saccade with a depth change.',
+                'Asymmetric vergence combines a version saccade with a depth change. '
+                'Fixation disparity benchmark measures residual vergence error vs. target distance.',
 )
 
 
@@ -183,13 +184,129 @@ def _asymmetric(show):
     )
 
 
+def _fixation_distance(show):
+    """Fixation disparity vs. target distance.
+
+    For each of several midline target distances, run a simulation long enough
+    to reach vergence steady-state, then compare the model's vergence angle to
+    the geometric prediction 2·arctan(IPD/2/d).  The residual is fixation
+    disparity — the small systematic error that persists even with binocular
+    fusion.
+    """
+    DISTANCES = [0.2, 0.3, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0]   # metres
+    T_STEP  = 0.5    # far-fixation baseline
+    T_TOTAL = 7.0    # long enough for vergence to settle
+    T_SS    = 6.0    # average from here to T_TOTAL for steady-state
+
+    t    = np.arange(0.0, T_TOTAL, DT)
+    T    = len(t)
+    p_far = np.array([0.0, 0.0, 3.0])
+
+    geo_verg    = np.array([_verg_angle_deg(d) for d in DISTANCES])
+    meas_verg   = np.zeros(len(DISTANCES))
+    tc_traces   = {}
+
+    params = with_brain(PARAMS_DEFAULT, g_burst=0.0)   # no saccades → isolate vergence
+
+    for i, d in enumerate(DISTANCES):
+        p_near = np.array([0.0, 0.0, float(d)])
+        pt = np.where((t >= T_STEP)[:, None], p_near, p_far)
+
+        st = simulate(params, t,
+                      target=km.build_target(t, lin_pos=pt),
+                      scene_present_array=np.ones(T),
+                      return_states=True)
+
+        eye_L_yaw = np.array(st.plant[:, 0])
+        eye_R_yaw = np.array(st.plant[:, 3])
+        vergence  = eye_L_yaw - eye_R_yaw
+
+        ss_mask = t >= T_SS
+        meas_verg[i] = float(vergence[ss_mask].mean())
+        tc_traces[d] = vergence
+
+    fixation_disparity = geo_verg - meas_verg   # positive = lag (under-convergence)
+
+    # ── colours: near → warm, far → cool ────────────────────────────────────
+    cmap = plt.cm.plasma
+    norm = plt.Normalize(vmin=min(DISTANCES), vmax=max(DISTANCES))
+    colors = [cmap(1.0 - norm(d)) for d in DISTANCES]   # near = bright
+
+    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+    fig.suptitle('Fixation Disparity vs. Target Distance', fontsize=12, fontweight='bold')
+
+    # Panel 0 — vergence time-courses ─────────────────────────────────────────
+    ax = axes[0]
+    for i, d in enumerate(DISTANCES):
+        ax.plot(t, tc_traces[d], color=colors[i], lw=1.3,
+                label=f'{d:.2g} m  (geo {geo_verg[i]:.1f}°)')
+    ax.axvline(T_STEP, color='gray', lw=0.8, ls=':')
+    ax_fmt(ax, ylabel='Vergence L−R (deg)', xlabel='Time (s)')
+    ax.legend(fontsize=7.5, ncol=2, loc='upper left')
+    ax.set_title('Vergence time-courses', fontsize=9)
+
+    # Panel 1 — measured vs. geometric ────────────────────────────────────────
+    ax = axes[1]
+    d_arr = np.linspace(0.15, 3.5, 200)
+    geo_curve = np.degrees(2 * np.arctan(IPD / 2.0 / d_arr))
+    ax.plot(d_arr, geo_curve, 'k-', lw=1.2, label='Geometric (ideal)')
+    for i, d in enumerate(DISTANCES):
+        ax.scatter(d, meas_verg[i], color=colors[i], zorder=5, s=55)
+    ax.set_xlabel('Target distance (m)')
+    ax.set_ylabel('Steady-state vergence (deg)')
+    ax.set_xscale('log')
+    ax.set_xticks(DISTANCES)
+    ax.set_xticklabels([f'{d:.2g}' for d in DISTANCES], fontsize=8)
+    ax.legend(fontsize=9)
+    ax.set_title('Vergence vs. distance (log scale)', fontsize=9)
+    ax.grid(True, which='both', alpha=0.3)
+
+    # Panel 2 — fixation disparity ────────────────────────────────────────────
+    ax = axes[2]
+    for i, d in enumerate(DISTANCES):
+        ax.scatter(d, fixation_disparity[i] * 60.0, color=colors[i], zorder=5, s=55)
+    ax.plot(DISTANCES, fixation_disparity * 60.0, 'k-', lw=0.8, alpha=0.5)
+    ax.axhline(0, color='gray', lw=0.8, ls='--')
+    ax.set_xlabel('Target distance (m)')
+    ax.set_ylabel('Fixation disparity (arcmin)')
+    ax.set_xscale('log')
+    ax.set_xticks(DISTANCES)
+    ax.set_xticklabels([f'{d:.2g}' for d in DISTANCES], fontsize=8)
+    ax.set_title('Fixation disparity (geometric − measured)', fontsize=9)
+    ax.grid(True, which='both', alpha=0.3)
+    note = ('Note: prism-induced disparity not yet implemented.\n'
+            'Positive = under-convergence (exo FD).')
+    ax.text(0.98, 0.97, note, transform=ax.transAxes, fontsize=7.5,
+            ha='right', va='top', color='#555555')
+
+    fig.tight_layout()
+    path, rp = utils.save_fig(fig, 'vergence_fixation_distance', show=show)
+    return utils.fig_meta(
+        path, rp,
+        title='Fixation Disparity vs. Distance',
+        description='Steady-state vergence angle measured at eight distances (0.2–3 m). '
+                    'Left: vergence time-courses. Centre: measured vs. geometric curve. '
+                    'Right: fixation disparity (residual error, arcmin). '
+                    'Prism-induced vergence not yet implemented.',
+        expected='Fixation disparity typically <10 arcmin across the physiological range. '
+                 'Model should track geometric demand to within ~5–15% (slight under-convergence '
+                 'at near distances is typical; Ogle 1964 reports 0–6 arcmin eso or exo FD). '
+                 'Vergence TC ~ 0.5–2 s depending on amplitude.',
+        citation='Ogle, Martens & Dyer (1967) Oculomotor Imbalance; '
+                 'Semmlow & Hung (1983) Vision Research 23(3); '
+                 'Mitchell & Millodot (1968) Am J Optom',
+    )
+
+
 def run(show=False):
     print('\n=== Vergence ===')
     figs = []
-    print('  1/2  symmetric convergence …')
+    print('  1/3  symmetric convergence …')
     figs.append(_symmetric(show))
-    print('  2/2  asymmetric vergence …')
+    print('  2/3  asymmetric vergence …')
     figs.append(_asymmetric(show))
+    print('  3/3  fixation disparity vs. distance …')
+    figs.append(_fixation_distance(show))
     return figs
 
 

@@ -34,7 +34,7 @@ G0   = 9.81
 
 K_GD   = 0.5
 K_GRAV = 0.6
-G_OCR  = 6.0 / 9.81    # OCR gain (deg/(m/s²)): ~6° at 90° tilt (Howard & Templeton 1966)
+G_OCR  = 10.0 / 9.81   # OCR gain (deg/(m/s²)): ~10° at 90° tilt (Howard & Templeton 1966)
 
 
 SECTION = dict(
@@ -231,11 +231,11 @@ def _ovar(show):
     # Twin axis: right = initial roll tilt per condition (horizontal colored lines)
     ax3b = axes[3].twinx()
     for ci, tilt_deg in enumerate(TILTS_DEG):
-        ax3b.axhline(tilt_deg, color=colors[ci], lw=1.5, ls='--', label=f'{tilt_deg:.0f}° tilt')
+        ax3b.axhline(tilt_deg, color=colors[ci], lw=1.5, ls='--',
+                     label=f'Initial roll tilt = {tilt_deg:.0f}°')
     ax3b.set_ylabel('Initial roll tilt (°)', fontsize=9, color='gray')
     ax3b.tick_params(axis='y', labelcolor='gray')
     ax3b.set_ylim(-5, 100)
-    ax3b.legend(fontsize=7, loc='center right', ncol=2)
 
     pm = np.arange(period, TOTAL, period)
     for ax in axes[:3]:
@@ -245,22 +245,24 @@ def _ovar(show):
     axes[3].grid(True, alpha=0.15); axes[3].axhline(0, color='k', lw=0.4)
     for p in pm: axes[3].axvline(p, color='gray', lw=0.4, ls=':', alpha=0.5)
 
-    axes[0].set_ylabel('Eye SPV (deg/s)', fontsize=9); axes[0].legend(fontsize=8)
+    axes[0].set_ylabel('Slow Phase Velocity (SPV, deg/s)', fontsize=9); axes[0].legend(fontsize=8)
     axes[0].set_title('SPV sinusoidally modulated at rotation period', fontsize=9)
 
     amp_ref = G0 * np.sin(np.radians(TILTS_DEG[-1]))
-    axes[1].set_ylabel('g_est[1] interaural (m/s²)', fontsize=9); axes[1].legend(fontsize=8)
-    axes[1].set_title(f'Gravity oscillates ±G₀ sin(α); 90°: ±{amp_ref:.1f} m/s²', fontsize=9)
+    axes[1].set_ylabel('Gravity estimate — interaural (m/s²)', fontsize=9); axes[1].legend(fontsize=8)
+    axes[1].set_title(f'Gravity estimate oscillates ±G₀ sin(α); 90°: ±{amp_ref:.1f} m/s²', fontsize=9)
     axes[1].set_ylim(-12, 12)
 
-    axes[2].set_ylabel('VS net yaw (deg/s)', fontsize=9); axes[2].legend(fontsize=8)
-    axes[2].set_title('VS modulated by gravity dumping (K_gd)', fontsize=9)
+    axes[2].set_ylabel('Velocity Storage (VS) net yaw (deg/s)', fontsize=9); axes[2].legend(fontsize=8)
+    axes[2].set_title('Velocity Storage modulated by gravity dumping (K_gd)', fontsize=9)
 
     axes[3].set_ylabel('Head yaw velocity (°/s)', fontsize=9, color='k')
     axes[3].set_xlabel('Time (s)', fontsize=9)
-    axes[3].set_title('Stimulus: constant body-yaw rotation (left) + initial roll tilt per condition (right)',
+    axes[3].set_title('Stimulus: constant body-yaw rotation (solid) + initial roll tilt per condition (dashed, right axis)',
                       fontsize=9)
-    axes[3].legend(fontsize=8, loc='lower right')
+    lines_l, labels_l = axes[3].get_legend_handles_labels()
+    lines_r, labels_r = ax3b.get_legend_handles_labels()
+    axes[3].legend(lines_l + lines_r, labels_l + labels_r, fontsize=7, loc='center right', ncol=2)
 
     fig.tight_layout()
     path, rp = utils.save_fig(fig, 'gravity_ovar', show=show)
@@ -350,13 +352,15 @@ def _tilt_suppression(show):
 
     # Stimulus panel: right axis = yaw velocity (identical for all → plot once)
     ax_stim2 = axes[2].twinx()
-    ax_stim2.plot(t_rel, hv_yaw_base, 'k--', lw=1.2, alpha=0.6, label='yaw vel (all)')
+    ax_stim2.plot(t_rel, hv_yaw_base, 'k--', lw=1.2, alpha=0.6, label='Head yaw velocity (all cond.)')
     ax_stim2.set_ylabel('Head yaw velocity (°/s)', fontsize=8, color='gray')
     ax_stim2.tick_params(axis='y', labelcolor='gray')
     axes[2].set_ylabel('Head roll orientation (°)', fontsize=8)
-    axes[2].set_title('Stimulus: upright yaw rotation (dashed, all conditions); '
-                      'post-stop roll tilt (solid, per condition)', fontsize=9)
-    axes[2].legend(fontsize=7, ncol=2, loc='upper left')
+    axes[2].set_title('Stimulus: upright yaw rotation (dashed, right axis); '
+                      'post-stop roll tilt (solid, left axis, per condition)', fontsize=9)
+    lines_l, labels_l = axes[2].get_legend_handles_labels()
+    lines_r, labels_r = ax_stim2.get_legend_handles_labels()
+    axes[2].legend(lines_l + lines_r, labels_l + labels_r, fontsize=7, ncol=2, loc='upper left')
 
     xlim = (-ROT_T - 2.0, max_tilt_dur + COAST_T + 2.0)
     for ax in axes:
@@ -377,8 +381,8 @@ def _tilt_suppression(show):
 
     axes[2].set_xlabel('Time relative to rotation stop (s)', fontsize=9)
 
-    # Inset: TC vs tilt
-    ax_ins = axes[0].inset_axes([0.72, 0.55, 0.25, 0.38])
+    # Inset: TC vs tilt — bottom-right to avoid overlap with data and legend
+    ax_ins = axes[0].inset_axes([0.72, 0.05, 0.25, 0.38])
     valid = [(α, τ) for α, τ in taus.items() if τ is not None]
     if valid:
         alphas, tau_vals = zip(*valid)

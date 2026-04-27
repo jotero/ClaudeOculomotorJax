@@ -23,7 +23,7 @@ import matplotlib.pyplot as plt
 
 from oculomotor.sim.simulator import (
     PARAMS_DEFAULT, with_brain, with_sensory, simulate, SimConfig,
-    with_uvh,
+
 )
 from oculomotor.sim import kinematics as km
 from oculomotor.analysis import (
@@ -62,7 +62,7 @@ SECTION = dict(
 
 C_HEALTHY = '#2166ac'
 C_FL      = '#d6604d'
-C_BRUNS   = '#35978f'
+
 C_NOD     = '#1a9641'
 
 
@@ -235,100 +235,7 @@ def _test_fl_pfl(show):
     )
 
 
-# ── 2. Bruns Nystagmus ─────────────────────────────────────────────────────────
-
-def _test_bruns(show):
-    """Bruns nystagmus: FL/PFL lesion combined with left UVH (CPA tumour model)."""
-    print('  2/3  Bruns nystagmus — FL/PFL + left UVH …')
-
-    # Bruns: leaky NI + null adaptation + left UVH (canal asymmetry).
-    # b_lesion=85 keeps spontaneous nystagmus moderate (w_est ≈ 15 deg/s)
-    # to avoid NI saturation over the 48 s protocol.
-    THETA_BRUNS = with_brain(
-        with_uvh(THETA, side='left', canal_gain_frac=0.1, b_lesion=85.0),
-        tau_i=3.0,
-        tau_ni_adapt=15.0,
-        tau_vs=10.0,
-    )
-
-    SEG   = 12.0
-    TOTAL = 4 * SEG
-    t_br  = np.arange(0.0, TOTAL, DT)
-    T_BR  = len(t_br)
-
-    # Four gaze positions: centre → +20° contra → centre → −20° ipsi (lesioned side)
-    def _step_target(t_arr, segs):
-        yaw = np.zeros_like(t_arr)
-        for t_start, deg in segs:
-            yaw[t_arr >= t_start] = deg
-        return yaw
-
-    yaw_br = _step_target(t_br, [(0, 0), (SEG, 20), (2*SEG, 0), (3*SEG, -20)])
-    tgt_br = km.build_target(t_br, yaw_deg=yaw_br,
-                              lin_vel=np.zeros((T_BR, 3), np.float32))
-
-    max_br = int(TOTAL / DT) + 2000
-    sp_br  = jnp.ones(T_BR)
-
-    st_br = simulate(THETA_BRUNS, t_br, target=tgt_br,
-                     scene_present_array=sp_br,
-                     max_steps=max_br, return_states=True)
-
-    spv_br = _spv(t_br, st_br)
-
-    seg_labels = ['Centre', '+20° contra\n(intact side)', 'Centre', '−20° ipsi\n(lesioned side)']
-    seg_vlines = [SEG * i for i in range(1, 4)]
-
-    # ── Figure: 3 rows × 1 col ────────────────────────────────────────────────
-    fig, axes = plt.subplots(3, 1, figsize=(14, 10), sharex=True)
-    fig.suptitle(
-        'Bruns Nystagmus — Leaky NI + Rebound + Left UVH\n'
-        'Cerebellopontine angle lesion: large slow ipsilesional, small fast contraversive',
-        fontsize=11, fontweight='bold')
-
-    ax = axes[0]
-    ax.plot(t_br, yaw_br,            color='gray', lw=0.8, ls='--', label='Target')
-    ax.plot(t_br, _eye_pos(st_br),   color=C_BRUNS, lw=1.2, label='Eye pos')
-    for v in seg_vlines:
-        ax.axvline(v, color='k', lw=0.5, ls='--', alpha=0.3)
-    for i, lbl in enumerate(seg_labels):
-        ax.text(i * SEG + SEG / 2, -32, lbl, ha='center', fontsize=7.5, color='#444444')
-    ax_fmt(ax, ylabel='Eye position (deg)')
-    ax.legend(fontsize=8)
-    ax.set_title('Eye position — large drift ipsilesional; smaller oscillation contraversive')
-
-    ax = axes[1]
-    ax.plot(t_br, spv_br, color=C_BRUNS, lw=2.0)
-    for v in seg_vlines:
-        ax.axvline(v, color='k', lw=0.5, ls='--', alpha=0.3)
-    ax.axhline(0, color='gray', lw=0.5, alpha=0.5)
-    ax_fmt(ax, ylabel='SPV (deg/s)', ylim=(-60, 60))
-    ax.set_title('SPV — spontaneous at centre; large slow ipsilesional; rebound after each shift')
-
-    ax = axes[2]
-    ax.plot(t_br, _ni_net_yaw(st_br),  color=C_BRUNS,   lw=1.5, label='NI net')
-    ax.plot(t_br, _ni_null_yaw(st_br), color='#e08214',  lw=1.5, ls='--', label='NI null')
-    for v in seg_vlines:
-        ax.axvline(v, color='k', lw=0.5, ls='--', alpha=0.3)
-    ax_fmt(ax, ylabel='NI state (deg)', xlabel='Time (s)')
-    ax.legend(fontsize=8)
-    ax.set_title('Neural Integrator — null follows eye position; persists after shift → rebound')
-
-    fig.tight_layout()
-    path, rp = utils.save_fig(fig, 'clin_cereb_bruns', show=show)
-    return utils.fig_meta(path, rp,
-        title='Bruns Nystagmus — FL/PFL + Left UVH',
-        description='Combination of leaky NI (τ_i = 3 s) and left UVH (canal gain × 0.1, '
-                    'b_lesion = 85). Ipsilesional gaze: large-amplitude, slow GEN amplified by '
-                    'peripheral VS imbalance. Contraversive gaze: small, faster rebound nystagmus.',
-        expected='Primary position: mild spontaneous rightward nystagmus from UVH. '
-                 'Ipsilesional (leftward) gaze: large slow centripetal drift + fast phases. '
-                 'Contraversive (rightward) gaze: smaller oscillation with rebound component.',
-        citation='Bruns (1902); Leigh & Zee (2015) The Neurology of Eye Movements',
-    )
-
-
-# ── 3. Nodulus / Uvula ─────────────────────────────────────────────────────────
+# ── 2. Nodulus / Uvula ─────────────────────────────────────────────────────────
 
 def _test_nodulus(show):
     """Nodulus/Uvula lesion: prolonged OKAN via velocity storage null adaptation."""
@@ -421,7 +328,6 @@ def main():
     print(f'\n=== Clinical: Cerebellar Lesions ===')
     figs = [
         _test_fl_pfl(SHOW),
-        _test_bruns(SHOW),
         _test_nodulus(SHOW),
     ]
     print()

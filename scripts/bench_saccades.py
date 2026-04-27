@@ -209,74 +209,85 @@ def _oblique(show):
 # ── Figure 3: double-step refractoriness ──────────────────────────────────────
 
 def _refractoriness(show):
-    """Double-step paradigm: first step to 10°, second step to 20° at varying ISI."""
-    T_end  = 0.8
-    t_np   = np.arange(0.0, T_end, DT)
-    T      = len(t_np)
-    t1     = 0.15   # first step
-    isis   = [0.05, 0.10, 0.15, 0.20, 0.35]   # s — inter-step intervals
+    """Double-step paradigm: 4 amplitude pairs × 6 ISIs.
 
-    fig, axes = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
-    fig.suptitle('Saccade Double-Step Refractoriness\n'
-                 'First step: 0→10° at t=0.15 s;  second step: 10→20° at varying ISI',
-                 fontsize=11)
+    Each column: first step to A/2, second step to A (A = 10, 20, 30, 40°).
+    Rows: eye + target position (target dashed, same colour), burst signal.
+    ISIs span 50–500 ms to show refractoriness → full two-saccade range.
+    """
+    AMPS = [10, 20, 30, 40]    # full target amplitude (first step = A/2)
+    isis = [0.05, 0.10, 0.15, 0.20, 0.35, 0.50]
+    T_end = 1.2
+    t1    = 0.15
 
-    cmap  = plt.get_cmap('viridis')
+    t_np = np.arange(0.0, T_end, DT)
+    T    = len(t_np)
+
+    cmap   = plt.get_cmap('viridis')
     colors = [cmap(i / (len(isis) - 1)) for i in range(len(isis))]
 
-    isi_found = []
-    for i, isi in enumerate(isis):
-        t2 = t1 + isi
-        pt3 = np.zeros((T, 3)); pt3[:, 2] = 1.0
-        pt3[:, 0] = np.where(t_np < t1, 0.0,
-                    np.where(t_np < t2, np.tan(np.radians(10.0)),
-                             np.tan(np.radians(20.0))))
+    fig, axes = plt.subplots(2, len(AMPS), figsize=(4.5 * len(AMPS), 8),
+                             sharex=True)
+    fig.suptitle(
+        'Saccade Double-Step Refractoriness\n'
+        'First step: 0→A/2  |  Second step: A/2→A  at varying ISI  '
+        '(dashed = target, solid = eye version)',
+        fontsize=11)
 
-        st  = _run(t_np, jnp.array(pt3), key=i)
-        eye = (np.array(st.plant[:, 0]) + np.array(st.plant[:, 3])) / 2.0
-        vel = np.gradient(eye, DT)
-        bst = extract_burst(st, THETA)[:, 0]
+    for ci, A in enumerate(AMPS):
+        A1 = A / 2.0
+        A2 = float(A)
 
-        lbl = f'ISI={isi*1000:.0f}ms'
-        axes[0].plot(t_np, eye, color=colors[i], lw=1.8, label=lbl)
-        axes[1].plot(t_np, bst, color=colors[i], lw=1.5, alpha=0.8)
+        for ri, isi in enumerate(isis):
+            t2  = t1 + isi
+            tgt = np.where(t_np < t1, 0.0,
+                  np.where(t_np < t2, A1, A2)).astype(np.float32)
+            pt3 = np.zeros((T, 3)); pt3[:, 2] = 1.0
+            pt3[:, 0] = np.tan(np.radians(tgt))
 
-        # Count saccades via burst crossings
-        is_sac  = np.abs(bst) > 20.0
-        n_sac   = int(np.sum(np.diff(is_sac.astype(int)) > 0))
-        isi_found.append(n_sac)
+            st  = _run(t_np, jnp.array(pt3), key=ri * len(AMPS) + ci)
+            eye = (np.array(st.plant[:, 0]) + np.array(st.plant[:, 3])) / 2.0
+            bst = extract_burst(st, THETA)[:, 0]
 
-    # Target reference lines
-    axes[0].axhline(10.0, color=utils.C['target'], lw=1.0, ls=':', alpha=0.6, label='10°')
-    axes[0].axhline(20.0, color=utils.C['target'], lw=1.5, ls=':', alpha=0.6, label='20°')
-    axes[0].axvline(t1,   color='gray', lw=0.8, ls='--', alpha=0.5)
+            lbl = f'ISI={isi*1000:.0f}ms'
+            col = colors[ri]
 
-    # Second step markers per ISI
-    for i, isi in enumerate(isis):
-        axes[0].axvline(t1 + isi, color=colors[i], lw=0.7, ls=':', alpha=0.4)
+            # Row 0: eye (solid) + target (dashed, same colour, thinner)
+            axes[0, ci].plot(t_np, eye, color=col, lw=1.8)
+            axes[0, ci].plot(t_np, tgt, color=col, lw=0.9, ls='--', alpha=0.55,
+                             label=lbl if ci == 0 else None)
+            # Row 1: burst
+            axes[1, ci].plot(t_np, bst, color=col, lw=1.4, alpha=0.85)
 
-    axes[0].set_ylabel('Eye position (deg)'); axes[0].set_title('Eye Position (5 ISIs)')
-    axes[0].legend(fontsize=9, loc='upper left'); axes[0].grid(True, alpha=0.25)
-    axes[0].axhline(0, color='k', lw=0.4)
+        axes[0, ci].set_title(f'0→{A1:.0f}°→{A2:.0f}°', fontsize=10)
+        axes[0, ci].axhline(A1, color='gray', lw=0.5, ls=':', alpha=0.3)
+        axes[0, ci].axhline(A2, color='gray', lw=0.5, ls=':', alpha=0.3)
+        axes[0, ci].axhline(0.0, color='k', lw=0.4)
+        axes[0, ci].axvline(t1, color='gray', lw=0.8, ls='--', alpha=0.5)
+        axes[0, ci].grid(True, alpha=0.2)
 
-    axes[1].set_ylabel('Burst command (deg/s)'); axes[1].set_xlabel('Time (s)')
-    axes[1].set_title('Saccade Burst Signal (each peak = one saccade)')
-    axes[1].grid(True, alpha=0.25); axes[1].axhline(0, color='k', lw=0.4)
-    axes[1].axvline(t1, color='gray', lw=0.8, ls='--', alpha=0.5)
+        axes[1, ci].axhline(0.0, color='k', lw=0.4)
+        axes[1, ci].axvline(t1, color='gray', lw=0.8, ls='--', alpha=0.5)
+        axes[1, ci].set_xlabel('Time (s)', fontsize=8)
+        axes[1, ci].grid(True, alpha=0.2)
 
-    # Annotation: number of saccades per ISI
-    for i, (isi, n) in enumerate(zip(isis, isi_found)):
-        axes[1].annotate(f'ISI={isi*1000:.0f}ms → {n} sac',
-                         xy=(0.02, 0.92 - i * 0.12), xycoords='axes fraction',
-                         fontsize=8, color=colors[i])
+    axes[0, 0].set_ylabel('Eye / target position (deg)', fontsize=8)
+    axes[0, 0].legend(fontsize=8, loc='upper left')
+    axes[1, 0].set_ylabel('Burst command (deg/s)', fontsize=8)
+
+    axes[0, 0].set_title(
+        f'0→{AMPS[0]//2}°→{AMPS[0]}°\n(Eye solid · target dashed)', fontsize=9)
 
     fig.tight_layout()
     path, rp = utils.save_fig(fig, 'saccade_refractoriness', show=show)
     return utils.fig_meta(path, rp,
         title='Saccade Double-Step Refractoriness',
-        description='Double-step paradigm: target jumps 0→10° then 10→20° after variable ISI. '
-                    'Short ISIs produce a single amended saccade (refractory); longer ISIs produce two.',
-        expected='ISI < 100 ms: only 1 saccade. ISI > 150 ms: 2 separate saccades.',
+        description='Double-step paradigm: target jumps 0→A/2 then A/2→A for A=10,20,30,40° '
+                    'after variable ISI (50–500 ms). '
+                    'Target shown dashed in same colour as eye trace. '
+                    'Short ISIs produce one amended saccade; longer ISIs produce two.',
+        expected='ISI < ~100 ms: 1 saccade (merged). ISI > ~150 ms: 2 separate saccades. '
+                 'Refractory period roughly constant across amplitudes (~150 ms).',
         citation='Becker & Jürgens (1979) Vision Res',
         fig_type='behavior')
 

@@ -212,8 +212,8 @@ class BrainParams(NamedTuple):
 
     # Saccade target selection — handled inside the saccade generator
     orbital_limit:         float = 50.0   # oculomotor range half-width (deg); clip e_cmd to ±limit
-    alpha_reset:           float = 1.0    # centering gain (0–1); e_center = −α·x_ni when out-of-field
-    k_center_vel:          float = 0.5    # quick-phase prediction gain (0=no look-ahead, 1=full τ_ref look-ahead)
+    alpha_reset:           float = 1.25   # centering gain; e_center = −α·x_ni when out-of-field
+    k_center_vel:          float = 0.75   # quick-phase prediction gain (0=no look-ahead, 1=full τ_ref look-ahead)
                                           # look-ahead = k·τ_ref; aims past centre to compensate for slow-phase
                                           # drift during refractory.  Only applied in out-of-field (quick-phase) path.
 
@@ -514,6 +514,9 @@ def step(x_brain, sensory_out, brain_params):
 
     # ── Vergence: binocular disparity only (AC/A drive disconnected) ─────────
     # bino = tv_L * tv_R ≈ 1 when both eyes fuse, 0 when either covered.
+    # TODO: add saccade vergence interactions from zee's paper: transient vergence 
+    # response to saccades, even in darkness (Zee et al. 1987 J Neurophysiol).
+    # TODO: add L2: extended listings law, how vergence affects listings plane tilt and therefore saccade torsion. Extended horopter paper
     dx_verg, u_verg = vg.step(x_verg, percept.target_disparity, 0.0, brain_params)   # 0.0: AC/A off
 
     # ── Two-stage motor nucleus encode → per-muscle nerve activations ────────

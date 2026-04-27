@@ -37,6 +37,7 @@ from oculomotor import __version__ as _SIM_VERSION
 from oculomotor.llm_pipeline.scenario import SimulationScenario, SimulationComparison
 from oculomotor.llm_pipeline.runner import run_scenario, run_comparison
 from oculomotor.llm_pipeline.simulate import call_llm
+from gen_admin import generate as _gen_admin
 
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
@@ -78,6 +79,7 @@ def _append_log(row: dict) -> None:
         if write_header:
             w.writeheader()
         w.writerow(row)
+    _gen_admin(list(_log_entries.values()))
 
 
 def _rewrite_log() -> None:
@@ -87,6 +89,7 @@ def _rewrite_log() -> None:
         w.writeheader()
         for row in _log_entries.values():
             w.writerow(row)
+    _gen_admin(list(_log_entries.values()))
 
 
 # ── FastAPI app ────────────────────────────────────────────────────────────────
@@ -102,8 +105,9 @@ app.add_middleware(
     allow_headers=['Content-Type'],
 )
 
-# Load any existing log at startup
+# Load any existing log at startup and write a fresh admin page
 _load_log()
+_gen_admin(list(_log_entries.values()))
 
 
 # ── Request / response models ─────────────────────────────────────────────────

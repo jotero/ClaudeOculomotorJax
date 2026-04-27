@@ -231,13 +231,16 @@ def _rebound(show):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 3. Bruns nystagmus — GEN + UVH + null adaptation
+# 3. Alexander's law — UVH with gaze-dependent nystagmus amplitude
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _bruns(show):
-    # Cerebellopontine angle tumor: left peripheral UVH + cerebellar compression.
-    # Cerebellar component → leaky NI + NI null adaptation + reduced pursuit.
-    THETA_BRUNS = with_uvh(
+def _alexander_law(show):
+    # Alexander's law: peripheral vestibular nystagmus is LARGER when gazing in
+    # the direction of the fast phase and smaller when gazing toward the slow phase.
+    # Here: left UVH → fast phase rightward → nystagmus larger on rightward gaze.
+    # The leaky NI adds centripetal drift at eccentric positions, but the dominant
+    # pattern is gaze-dependent modulation of nystagmus amplitude via Alexander's law.
+    THETA_UVH = with_uvh(
         with_brain(THETA, tau_i=3.0, tau_ni_adapt=15.0,
                    K_pursuit=0.5, K_phasic_pursuit=1.0),
         side='left', canal_gain_frac=0.1)
@@ -253,41 +256,45 @@ def _bruns(show):
         tx = np.where(np.asarray(t_arr) >= t_start, np.tan(np.radians(deg)), tx).astype(np.float32)
     pt = np.stack([tx, np.zeros(T, np.float32), np.ones(T, np.float32)], axis=1)
 
-    st = _sim_lit(THETA_BRUNS, t_arr, pt)
+    st = _sim_lit(THETA_UVH, t_arr, pt)
     spv = extract_spv_states(st, t_arr)[:, 0]
     ni    = ni_net(st)[:, 0]
     ni_n  = ni_null(st)[:, 0]
 
     fig, axes = plt.subplots(3, 1, figsize=(14, 10), sharex=True)
     fig.suptitle(
-        'Bruns Nystagmus — CPA Tumor Model\n'
-        '(Left UVH + Leaky NI τ_i=3 s + Null Adaptation τ_ni_adapt=15 s)',
-        fontsize=12, fontweight='bold')
+        "Alexander's Law — Left UVH, Gaze-Dependent Nystagmus Amplitude\n"
+        '(Left UVH + Leaky NI τ_i=3 s + Null Adaptation τ_ni_adapt=15 s)\n'
+        'Fast phase rightward → nystagmus larger on rightward (contraversive) gaze',
+        fontsize=11, fontweight='bold')
 
-    seg_labels = ['Center\n(spontaneous)', '+20° contra\n(right)', 'Center', '−20° ipsi\n(left)']
+    seg_labels = ['Center\n(spontaneous)', '+20° contra\n(right — fast phase dir.)',
+                  'Center', '−20° ipsi\n(left — slow phase dir.)']
 
     ax = axes[0]
     ax.plot(t_arr, np.array(st.plant[:, 0]), color=C_BRUNS, lw=1.2, label='Eye pos')
     ax.plot(t_arr, np.degrees(np.arctan(tx)), color='gray', lw=0.8, ls='--', alpha=0.7, label='Target')
     ax_fmt(ax, ylabel='Eye yaw (deg)')
-    ax.set_title('Eye position — large drift during ipsilesional gaze')
+    ax.set_title("Eye position — Alexander's law: nystagmus larger in fast-phase direction (rightward gaze)")
     ax.legend(fontsize=8)
 
     ax = axes[1]
-    ax.plot(t_arr, spv, color=C_BRUNS, lw=2.0, label='SPV')
+    ax.plot(t_arr, spv, color=C_BRUNS, lw=2.0, label='Slow Phase Velocity (SPV)')
+    ax.fill_between(t_arr, spv, 0,
+                    where=(np.asarray(t_arr) >= SEG_DUR) & (np.asarray(t_arr) < 2*SEG_DUR),
+                    color='#2166ac', alpha=0.15, label='Contraversive gaze (fast-phase dir.)')
     ax.fill_between(t_arr, spv, 0,
                     where=(np.asarray(t_arr) >= 3*SEG_DUR),
-                    color=C_BRUNS, alpha=0.2, label='Ipsilesional segment')
+                    color='#d6604d', alpha=0.15, label='Ipsilesional gaze (slow-phase dir.)')
     ax_fmt(ax, ylabel='SPV (deg/s)', ylim=(-80, 60))
-    ax.set_title('SPV — spontaneous at rest; large ipsilesional; '
-                 'small fast rebound on return')
+    ax.set_title("SPV — larger contraversively (Alexander's law 1st degree); smaller ipsilesionally")
     ax.legend(fontsize=8)
 
     ax = axes[2]
-    ax.plot(t_arr, ni,  color=C_BRUNS,   lw=1.5, label='NI net')
-    ax.plot(t_arr, ni_n, color='#e08214', lw=1.5, ls='--', label='NI null')
+    ax.plot(t_arr, ni,   color=C_BRUNS,   lw=1.5, label='NI net')
+    ax.plot(t_arr, ni_n, color='#e08214', lw=1.5, ls='--', label='NI null (rebound adaptation)')
     ax_fmt(ax, ylabel='NI state (deg)', xlabel='Time (s)')
-    ax.set_title('NI null tracks gaze position; rebound after each shift')
+    ax.set_title('NI null tracks gaze position; rebound after each shift (cerebellar sign)')
     ax.legend(fontsize=8)
 
     for ax in axes:
@@ -299,15 +306,18 @@ def _bruns(show):
                      ha='center', fontsize=7.5, color='gray')
 
     fig.tight_layout()
-    path, rp = utils.save_fig(fig, 'clin_ni_bruns', show=show)
+    path, rp = utils.save_fig(fig, 'clin_ni_alexander_law', show=show)
     return utils.fig_meta(path, rp,
-        title='Bruns Nystagmus (CPA Tumor)',
-        description='Left UVH + leaky NI (τ_i=3 s) + null adaptation (τ=15 s). '
-                    'Large nystagmus ipsilesionally; small fast rebound contraversively.',
-        expected='Ipsilesional gaze: large-amplitude slow nystagmus. '
-                 'Contraversive gaze: small fast nystagmus. '
-                 'Spontaneous nystagmus beating toward intact side at rest.',
-        citation='Bruns (1902); Leigh & Zee (2015) Neurology of Eye Movements',
+        title="Alexander's Law (UVH + GEN)",
+        description="Left UVH + leaky NI (τ_i=3 s) + NI null adaptation (τ=15 s). "
+                    "Demonstrates Alexander's law: nystagmus amplitude larger when gazing "
+                    "in the fast-phase direction (rightward = contraversive for left UVH). "
+                    "NI null adaptation adds a rebound component when returning to center.",
+        expected="Contraversive (rightward) gaze: larger SPV amplitude (Alexander's law 1st degree). "
+                 "Ipsilesional (leftward) gaze: smaller SPV. "
+                 "Spontaneous nystagmus beating rightward (fast phase toward intact side). "
+                 "Rebound nystagmus after each shift due to NI null adaptation.",
+        citation="Alexander G (1912) Pflügers Arch; Leigh & Zee (2015) Neurology of Eye Movements, 5th ed.",
         fig_type='behavior')
 
 
@@ -400,8 +410,8 @@ def run(show=False):
     figs.append(_gen(show))
     print('  2/4  Rebound nystagmus …')
     figs.append(_rebound(show))
-    print('  3/4  Bruns nystagmus …')
-    figs.append(_bruns(show))
+    print("  3/4  Alexander's law (UVH + GEN) …")
+    figs.append(_alexander_law(show))
     print('  4/4  Extended OKAN / VS null adaptation …')
     figs.append(_okan_extension(show))
     return figs

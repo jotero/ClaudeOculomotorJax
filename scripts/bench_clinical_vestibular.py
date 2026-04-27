@@ -1,7 +1,7 @@
 """Clinical vestibular lesion benchmarks.
 
 Three standardised tests applied to healthy, UVH (neuritis), and VN infarct:
-  1. Spontaneous / gaze-evoked nystagmus  — dark vs strobed fixation
+  1. Spontaneous / gaze-evoked nystagmus  — dark vs lit-room fixation
   2. Video head impulse test (vHIT)        — lit, raw velocity + gain
   3. Rotary chair (dark) + OKN            — SPV only
 
@@ -82,21 +82,15 @@ def _sim_dark(params, t_arr, head_vel_3d=None, key=0):
                     key=jax.random.PRNGKey(key))
 
 
-def _sim_strobed_fixation(params, t_arr, key=0):
-    """Dark + strobed fixation target (position feedback, no motion cue).
-
-    Strobed target gates target_motion_visible → 0, so pursuit integrator
-    cannot use visual velocity → fixation suppression without smooth pursuit
-    contamination.  No scene (no OKR drive).
-    """
+def _sim_fixation_lit(params, t_arr, key=0):
+    """Lit room with fixation target — scene on, target on, no strobing."""
     T  = len(t_arr)
     t  = np.asarray(t_arr)
     pt_3d = np.tile(np.array([0.0, 0.0, 1.0], np.float32), (T, 1))
     lv    = np.zeros((T, 3), np.float32)
     return simulate(params, t,
                     target=km.build_target(t, lin_pos=pt_3d, lin_vel=lv),
-                    target_strobed_array=np.ones(T, np.float32),
-                    scene_present_array=np.zeros(T, np.float32),
+                    scene_present_array=np.ones(T, np.float32),
                     target_present_array=np.ones(T, np.float32),
                     max_steps=int(T * 1.1) + 500,
                     sim_config=SimConfig(warmup_s=3.0),
@@ -148,7 +142,7 @@ def _spv_from_state(st, t_arr):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _test_spontaneous(show):
-    """Dark vs strobed-fixation for healthy, UVH, VN infarct."""
+    """Dark vs lit-room fixation for healthy, UVH, VN infarct."""
     DUR = 10.0
     t   = np.arange(0.0, DUR, DT)
 
@@ -166,10 +160,10 @@ def _test_spontaneous(show):
             ev=ev, spv=spv,
             spv_ss=float(np.mean(spv[t > 5.0])))
 
-    # Strobed fixation simulations
+    # Lit fixation simulations (scene on + target on)
     fix_results = {}
     for label, theta, _ in conds:
-        st = _sim_strobed_fixation(theta, t)
+        st = _sim_fixation_lit(theta, t)
         ev, spv = _spv_from_state(st, t)
         fix_results[label] = dict(
             pos=np.array(st.plant[:, 0]),
@@ -179,7 +173,7 @@ def _test_spontaneous(show):
     # ── Plot ──────────────────────────────────────────────────────────────────
     fig, axes = plt.subplots(2, 2, figsize=(14, 9))
     fig.suptitle('Spontaneous Nystagmus — Left UVH (Neuritis vs VN Infarct)\n'
-                 'Dark vs Fixation Suppression (Strobed Target)',
+                 'Dark vs Fixation Suppression (Lit Room)',
                  fontsize=11, fontweight='bold')
 
     # Top row: dark condition
@@ -199,12 +193,12 @@ def _test_spontaneous(show):
     ax.set_title('SPV — dark  (beats RIGHT = negative = leftward drift)')
     ax.legend(fontsize=8)
 
-    # Bottom row: strobed fixation
+    # Bottom row: lit fixation
     ax = axes[1, 0]
     for label, theta, color in conds:
         ax.plot(t, fix_results[label]['pos'], color=color, lw=0.8, label=label)
     ax_fmt(ax, ylabel='Eye position (deg)', xlabel='Time (s)')
-    ax.set_title('Eye position — strobed fixation (fixation suppression)')
+    ax.set_title('Eye position — lit room, fixation target (fixation suppression)')
     ax.legend(fontsize=8)
 
     ax = axes[1, 1]
@@ -213,7 +207,7 @@ def _test_spontaneous(show):
         ax.plot(t, r['spv'], color=color, lw=1.8,
                 label=f'{label}  SPV≈{r["spv_ss"]:.0f} deg/s')
     ax_fmt(ax, ylabel='SPV (deg/s)', xlabel='Time (s)', ylim=(-120, 20))
-    ax.set_title('SPV — strobed fixation  (nystagmus partially suppressed)')
+    ax.set_title('SPV — lit room  (nystagmus suppressed by fixation)')
     ax.legend(fontsize=8)
 
     fig.tight_layout()
@@ -222,10 +216,11 @@ def _test_spontaneous(show):
         title='Spontaneous Nystagmus — Dark vs Fixation Suppression',
         description='Left UVH (10% canal gain, tau_vs=10 s) vs VN infarct (tau_vs=5 s). '
                     'Dark: spontaneous nystagmus driven by VN firing-rate asymmetry. '
-                    'Strobed fixation: saccades constrain gaze to target, reducing nystagmus amplitude.',
+                    'Lit room with fixation target: scene and target both on; '
+                    'OKR and saccadic correction suppress nystagmus.',
         expected='Dark SPV: healthy ≈ 0; neuritis ≈ −20–40 deg/s; infarct ≈ −60–100 deg/s. '
-                 'Strobed fixation: saccades return eye to target each cycle; amplitude falls, '
-                 'SPV is unchanged or slightly reduced vs dark.',
+                 'Lit fixation: nystagmus reduced or abolished by combined fixation and OKR. '
+                 'Failure to suppress (infarct) indicates severely reduced visual–vestibular interaction.',
         citation='Halmagyi & Curthoys (1988); Bense et al. (2004)',
         fig_type='behavior')
 
