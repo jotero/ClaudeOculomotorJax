@@ -149,7 +149,7 @@ class PlantParams(NamedTuple):
     tau_p
 
 class BrainParams(NamedTuple):
-    tau_vs, K_vs, K_vis, g_vis, b_vs, tau_vs_adapt,  # VS
+    tau_vs, tau_vs_pitch_frac, tau_vs_roll_frac, K_vs, K_vis, g_vis, b_vs, tau_vs_adapt,  # VS
     tau_i, tau_p, tau_vis, b_ni, tau_ni_adapt,                    # NI
     g_burst, e_sat_sac, k_sac, threshold_sac, ...
     K_pursuit, K_phasic_pursuit, tau_pursuit,
@@ -220,15 +220,16 @@ Each behavior has a corresponding demo script and output figure.
 8. **Fixational eye movements** — canal noise filtered by VS/NI/plant; retinal position OU drift produces sparse corrective microsaccades; retinal velocity noise drives pursuit-like slow drift.
    - Demo: `scripts/demo_fixation.py` → `outputs/fixation.png`
 
-## Current status (2026-04-18)
+## Current status (2026-04-28)
 
-- **Working well**: VOR, VVOR, OKN/OKAN, saccades (main sequence, refractory, oblique), smooth pursuit (velocity-driven), efference copy slip cancellation, otolith LP adaptation, sensory noise system, fixational eye movements.
+- **Working well**: VOR, VVOR, OKN/OKAN, saccades (main sequence, refractory, oblique), smooth pursuit (velocity-driven), efference copy slip cancellation, otolith LP adaptation, sensory noise system, fixational eye movements, OCR (ocular counter-rolling).
+- **Recent change (2026-04-28)**: VS time constants now per-axis via scalar + two fractions. `tau_vs` (yaw, 20 s) is unchanged — all existing lesion code still works. New params: `tau_vs_pitch_frac=0.4` (→ 8 s pitch) and `tau_vs_roll_frac=0.15` (→ 3 s roll). Driven by physiological evidence (Raphan 1979, Dai 1991, Angelaki 1995). Roll decay at 3 s fixes torsion overshoot in OCR benchmarks. `with_brain(p, tau_vs=X)` still works — all axes scale together.
 - **Recent change (2026-04-18)**: NI expanded to bilateral push-pull architecture (9 states: x_L, x_R, x_null). Null adaptation added to both NI (`tau_ni_adapt=20s`) and VS (`tau_vs_adapt=600s`). Net output `x_L − x_R` identical to old scalar `x_ni` in healthy symmetric case. Models rebound nystagmus (NI) and extended OKAN / velocity storage adaptation (VS). Brain: 147→156 states; model total: 971→980. New BrainParams: `b_ni=0`, `tau_ni_adapt=20s`, `tau_vs_adapt=600s`.
 - **Recent change (prior session)**: VS expanded to bilateral push-pull architecture (6→9 states including x_null). Net output `x_L − x_R` identical to old scalar `x_vs` in healthy symmetric case — all existing demos/notebooks work unchanged (use `vs_net()` helper for extraction). New `b_vs` parameter (default 100 deg/s) sets VN resting bias.
 - **New notebook**: `notebooks/integrator_disorders.ipynb` — gaze-evoked nystagmus, rebound nystagmus (NI null adaptation), Bruns nystagmus, VS null / extended OKAN, PAN placeholder.
 - **Pending improvement**: Pursuit position sensitivity (`K_pursuit_pos` — see future work).
-- **Not yet debugged**: Gravity estimator (`gravity_estimator.py`) — implemented but behavior not verified. Will be debugged together with vergence, since T-VOR is strongly vergence-dependent.
-- **Next focus**: Verify integrator_disorders.ipynb runs end-to-end; then binocularity and vergence.
+- **Not yet debugged**: Gravity estimator (`gravity_estimator.py`) — partially validated (OCR benchmarks pass); torsion drift during static tilt being investigated. T-VOR debugging deferred until vergence is implemented.
+- **Next focus**: Complete OCR torsion debugging; then binocularity and vergence.
 
 ## Not yet implemented / pending (future work)
 

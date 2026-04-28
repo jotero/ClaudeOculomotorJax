@@ -142,8 +142,12 @@ def step(x_vs, u, brain_params):
 
     # ── ABCD matrices ──────────────────────────────────────────────────────────
 
-    # A (6×6): state decay toward adapted bias — diagonal, single TC for both pops
-    A = -(1.0 / brain_params.tau_vs) * jnp.eye(6)
+    # A (6×6): per-axis decay  [yaw, pitch, roll] × 2 populations.
+    tau3   = jnp.array([brain_params.tau_vs,
+                         brain_params.tau_vs * brain_params.tau_vs_pitch_frac,
+                         brain_params.tau_vs * brain_params.tau_vs_roll_frac])
+    inv_t6 = jnp.concatenate([1.0 / tau3, 1.0 / tau3])   # (6,) same per-axis TC for both pops
+    A = -jnp.diag(inv_t6)
 
     # B (6×9): push-pull canal and visual inputs, scaled by per-population health
     # Future work: correctly combining canal (head-frame) and optokinetic (eye-frame)

@@ -141,7 +141,16 @@ class BrainParams(NamedTuple):
 
     # Velocity storage — Raphan, Matsuo & Cohen (1979)
     # Bilateral push-pull (L/R VN populations); net = x_L − x_R; OKAN decays with tau_vs.
-    tau_vs:                float = 20.0   # storage / OKAN TC (s); ~20 s monkey (Cohen 1977)
+    #
+    # VS time constants — per-axis via fractions of the main (yaw) TC.
+    #   tau_vs             : yaw   ~15–20 s  (Raphan et al. 1979; Cohen et al. 1981)
+    #   tau_vs * f_pitch   : pitch ~5–10 s   (Hess & Dieringer 1991; Angelaki & Henn 2000)
+    #   tau_vs * f_roll    : roll  ~2–5 s    (Dai et al. 1991; Angelaki et al. 1995)
+    # Disorders that shorten tau_vs (nodulus lesion, UVH) only need to set tau_vs —
+    # the ratios stay fixed, so all axes scale together and no existing code breaks.
+    tau_vs:                float = 20.0   # yaw (main) VS TC (s); ~20 s monkey (Cohen 1977)
+    tau_vs_pitch_frac:     float = 0.4    # pitch TC = tau_vs × this  → 8 s healthy
+    tau_vs_roll_frac:      float = 0.15   # roll  TC = tau_vs × this  → 3 s healthy
     b_vs:                  float = 100.0  # VN resting bias AND population gain (deg/s).
                                           # Scalar broadcasts to all 6 states; pass a (6,) array for asymmetry.
                                           # velocity_storage scales canal drive by b_vs / B_NOMINAL, so b_vs
