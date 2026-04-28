@@ -181,7 +181,7 @@ def _listing_ocr(show):
     """Head tilts 30°; OCR drives listing error → torsional saccade fires."""
 
     TILT_DEG  = 30.0
-    TILT_VEL  = 60.0
+    TILT_VEL  = 15.0   # 30° over 2 s
     PRE_REST  = 0.5       # settle at rest before tilt starts
     TILT_DUR  = TILT_DEG / TILT_VEL
     HOLD_T    = 10.0
@@ -200,9 +200,12 @@ def _listing_ocr(show):
     params_no_sac  = with_brain(PARAMS_DEFAULT, g_ocr=G_OCR, g_burst=0.0)
     params_with_sac = with_brain(PARAMS_DEFAULT, g_ocr=G_OCR, g_burst=700.0)
 
+    tgt_straight = km.build_target(t, yaw_deg=np.zeros(T), pitch_deg=np.zeros(T))
+
     common = dict(
         head=head_km,
-        target_present_array=np.zeros(T),
+        target=tgt_straight,
+        target_present_array=np.ones(T),
         scene_present_array=np.zeros(T),
         sim_config=SimConfig(warmup_s=0.0),
         return_states=True,
@@ -231,7 +234,7 @@ def _listing_ocr(show):
     axes[0].plot(t_rel, head_roll_pos, color=utils.C['head'], lw=1.5)
     axes[0].axvline(0.0, color='gray', lw=0.8, ls=':')
     ax_fmt(axes[0], ylabel='Head roll (deg)')
-    axes[0].set_title('Stimulus: 30° head roll at 60°/s then hold', fontsize=9)
+    axes[0].set_title(f'Stimulus: {TILT_DEG:.0f}° head roll at {TILT_VEL:.0f}°/s then hold', fontsize=9)
 
     axes[1].plot(t_rel, g_est_sac[:, 1], color=utils.C['canal'], lw=1.2,
                  label='g_est[1] interaural (m/s²)')

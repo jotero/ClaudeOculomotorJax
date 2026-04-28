@@ -483,6 +483,7 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
     # Strobe gate: when target is strobed, EC is also zeroed — stroboscopic illumination
     # provides no continuous motion signal, so eye-movement EC would create a spurious drive.
     # strobe_delayed matches the timing of the already-zeroed target_slip (same delay cascade).
+    # pursuit EC cascade already carries no torsion (zeroed at input, matching retina's 2D surface)
     dx_pursuit, u_pursuit = pu.step(x_pursuit, percept.target_slip, motor_ec_pursuit*percept.target_motion_visible, brain_params)
 
     # ── Listing's law — inject torsional target into the saccade generator ───
@@ -564,10 +565,11 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
     # previous code used _q2rv_ec([yaw, pitch, roll]) = [-pitch, yaw, roll],
     # which created a pitch-axis rotation for a yaw gaze angle — wrong axis —
     # introducing ~sin(gaze)·g_burst of spurious roll into the EC cascade.
-    R_gaze_T = rotation_matrix(x_ni_net).T   # R_eye.T  (head → eye frame)
-    u_motor  = R_gaze_T @ (u_burst + u_pursuit)
-    dx_ec     = ec.step(x_ec,     velocity_saturation(u_motor, brain_params.v_max_pursuit, v_offset=percept.target_slip),  brain_params)
-    dx_ec_okr = ec.step(x_ec_okr, velocity_saturation(u_motor, brain_params.v_max_okr,     v_offset=percept.scene_slip),   brain_params)
+    R_gaze_T    = rotation_matrix(x_ni_net).T   # R_eye.T  (head → eye frame)
+    u_motor     = R_gaze_T @ (u_burst + u_pursuit)
+    u_motor_2d  = u_motor.at[2].set(0.0)   # pursuit EC carries no torsion (retina is 2D)
+    dx_ec     = ec.step(x_ec,     velocity_saturation(u_motor_2d, brain_params.v_max_pursuit, v_offset=percept.target_slip), brain_params)
+    dx_ec_okr = ec.step(x_ec_okr, velocity_saturation(u_motor,    brain_params.v_max_okr,     v_offset=percept.scene_slip),  brain_params)
 
     # ── Pack state derivative ─────────────────────────────────────────────────
     dx_brain = jnp.concatenate([dx_vs, dx_ni, dx_sg, dx_ec, dx_ec_okr, dx_grav, dx_pursuit, dx_verg, dx_acc])
