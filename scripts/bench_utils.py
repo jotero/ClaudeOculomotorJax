@@ -24,16 +24,27 @@ BENCH_DIR = os.path.join(_DOCS, 'benchmarks')
 FIGS_DIR  = os.path.join(BENCH_DIR, 'figures')
 HTML_PATH = os.path.join(BENCH_DIR, 'index.html')
 
+EXPT_DIR      = os.path.join(_DOCS, 'experiments')
+EXPT_FIGS_DIR = os.path.join(EXPT_DIR, 'figures')
+EXPT_HTML_PATH = os.path.join(EXPT_DIR, 'index.html')
 
-def save_fig(fig, name, show=False, dpi=150):
-    """Save figure to docs/figures/{name}.png with watermark; return (path, rel).
+
+def save_fig(fig, name, show=False, dpi=150, figs_dir=None, base_dir=None):
+    """Save figure to {figs_dir}/{name}.png with watermark; return (path, rel).
 
     The timestamp and git version are embedded as small text in the bottom-right
     corner of the figure image itself.  The filename is fixed (no timestamp) so
     re-running a script simply overwrites the previous figure.
+
+    figs_dir: directory to save PNGs (default: FIGS_DIR)
+    base_dir: root for computing rel path in HTML (default: BENCH_DIR)
     """
     import matplotlib.pyplot as plt
-    os.makedirs(FIGS_DIR, exist_ok=True)
+    if figs_dir is None:
+        figs_dir = FIGS_DIR
+    if base_dir is None:
+        base_dir = BENCH_DIR
+    os.makedirs(figs_dir, exist_ok=True)
 
     ts  = datetime.datetime.now().strftime('%Y-%m-%d %H:%M')
     ver = oculomotor.__version__
@@ -41,12 +52,12 @@ def save_fig(fig, name, show=False, dpi=150):
              ha='right', va='bottom', fontsize=6, color='#888888',
              transform=fig.transFigure)
 
-    path = os.path.join(FIGS_DIR, f'{name}.png')
+    path = os.path.join(figs_dir, f'{name}.png')
     fig.savefig(path, dpi=dpi, bbox_inches='tight')
     if show:
         plt.show()
     plt.close(fig)
-    rp = os.path.relpath(path, BENCH_DIR).replace('\\', '/')
+    rp = os.path.relpath(path, base_dir).replace('\\', '/')
     print(f'  [{name}] saved → {os.path.basename(path)}')
     return path, rp
 

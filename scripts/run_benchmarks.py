@@ -32,6 +32,7 @@ MODULES = [
     'bench_vergence',
     'bench_fixation',
     'bench_listing',
+    'bench_experiments',
 ]
 
 
