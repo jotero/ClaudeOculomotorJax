@@ -190,5 +190,137 @@ def run(show=False):
     return figs
 
 
+# ── HTML generation ────────────────────────────────────────────────────────────
+
+_CSS = """
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+       background: #f5f5f5; color: #222; display: flex; }
+nav  { width: 200px; min-height: 100vh; background: #1a1a2e; color: #eee;
+       padding: 20px 0; position: sticky; top: 0; flex-shrink: 0; }
+nav h2  { font-size: 13px; padding: 0 16px 12px; color: #aaa;
+          text-transform: uppercase; letter-spacing: 0.05em; }
+nav a   { display: block; padding: 8px 16px; color: #ccc; text-decoration: none;
+          font-size: 13px; border-left: 3px solid transparent; }
+nav a:hover { background: #2a2a4e; color: #fff; border-left-color: #9b59b6; }
+main { flex: 1; padding: 32px; max-width: 1400px; }
+h1   { font-size: 22px; margin-bottom: 4px; }
+.meta { font-size: 12px; color: #888; margin-bottom: 32px; }
+.section    { margin-bottom: 48px; }
+.section h2 { font-size: 18px; margin-bottom: 6px; border-bottom: 2px solid #9b59b6;
+              padding-bottom: 6px; }
+.section > p { font-size: 13px; color: #555; margin-bottom: 16px; }
+.fig-grid   { display: grid; grid-template-columns: repeat(auto-fill, minmax(580px, 1fr));
+              gap: 20px; }
+.fig-card   { background: #fff; border: 1px solid #e0e0e0; border-radius: 8px;
+              padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+.fig-card a img { width: 100%; border-radius: 4px; display: block;
+                  border: 1px solid #eee; cursor: zoom-in; }
+.fig-card h3 { font-size: 14px; margin: 12px 0 6px; }
+.fig-card .desc { font-size: 12px; color: #555; margin-bottom: 8px; }
+.expected   { background: #f5eeff; border-left: 3px solid #9b59b6;
+              padding: 8px 10px; font-size: 12px; border-radius: 0 4px 4px 0;
+              margin-bottom: 8px; }
+.expected strong { display: block; font-size: 11px; color: #888;
+                   text-transform: uppercase; margin-bottom: 2px; }
+.citation   { font-size: 11px; color: #888; font-style: italic; }
+.badge      { display: inline-block; padding: 2px 8px; border-radius: 12px;
+              font-size: 10px; font-weight: 600; letter-spacing: 0.04em;
+              text-transform: uppercase; margin-top: 8px; }
+.badge.behavior { background: #d4edda; color: #155724; }
+.badge.cascade  { background: #cce5ff; color: #004085; }
+"""
+
+_LIGHTBOX = """
+<div id="lb" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;
+     background:rgba(0,0,0,.85);z-index:1000;cursor:zoom-out;align-items:center;
+     justify-content:center;">
+  <img id="lb-img" style="max-width:95vw;max-height:95vh;border-radius:4px;">
+</div>
+<script>
+(function(){
+  var lb=document.getElementById('lb'),li=document.getElementById('lb-img');
+  document.querySelectorAll('.fig-card a').forEach(function(a){
+    a.addEventListener('click',function(e){e.preventDefault();li.src=a.href;lb.style.display='flex';});
+  });
+  lb.addEventListener('click',function(){lb.style.display='none';});
+})();
+</script>
+"""
+
+
+def _fig_card(fig):
+    rel, title = fig.get('rel',''), fig.get('title','')
+    desc, exp  = fig.get('description',''), fig.get('expected','')
+    cit        = fig.get('citation','')
+    ftype      = fig.get('type','behavior')
+    path       = fig.get('path','')
+    if path and not os.path.isfile(path):
+        img = '<div style="padding:30px;text-align:center;color:#aaa;font-size:13px;">Figure not yet generated</div>'
+    else:
+        img = f'<a href="{rel}" target="_blank"><img src="{rel}" alt="{title}"></a>'
+    badge = f'<span class="badge {ftype}">{ftype}</span>'
+    return f"""
+    <div class="fig-card">
+      {img}
+      <h3>{title}</h3>
+      <p class="desc">{desc}</p>
+      <div class="expected"><strong>Expected behavior</strong>{exp}</div>
+      <p class="citation">&#128214; {cit}</p>
+      {badge}
+    </div>"""
+
+
+def generate_html(figs):
+    import datetime, oculomotor
+    ts  = datetime.datetime.now().strftime('%Y-%m-%d %H:%M')
+    ver = oculomotor.__version__
+    nav_sections = '\n'.join(
+        f'    <a href="#{f["title"].lower().replace(" ","_")}">{f["title"]}</a>' for f in figs
+    )
+    cards = '\n'.join(_fig_card(f) for f in figs)
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OculomotorJax — Experiments</title>
+  <style>{_CSS}</style>
+</head>
+<body>
+  <nav>
+    <h2 style="margin-bottom:4px;">Pages</h2>
+    <a href="../">LLM Simulator</a>
+    <a href="../benchmarks/">Benchmarks</a>
+    <a href="../clinical_benchmarks/">Clinical Benchmarks</a>
+    <a href="../parameters.html">Parameters</a>
+    <div style="border-top:1px solid #2a2a4e;margin:10px 0 8px;"></div>
+    <h2>Experiments</h2>
+{nav_sections}
+  </nav>
+  <main>
+    <h1>OculomotorJax — Experiments</h1>
+    <p class="meta">
+      Generated: <strong>{ts}</strong> &nbsp;|&nbsp;
+      Version: <strong>{ver}</strong>
+    </p>
+    <section class="section">
+      <h2>{SECTION['title']}</h2>
+      <p>{SECTION['description']}</p>
+      <div class="fig-grid">
+        {cards}
+      </div>
+    </section>
+  </main>
+  {_LIGHTBOX}
+</body>
+</html>"""
+    os.makedirs(utils.EXPT_DIR, exist_ok=True)
+    with open(utils.EXPT_HTML_PATH, 'w', encoding='utf-8') as f:
+        f.write(html)
+    print(f'\nHTML report written: {utils.EXPT_HTML_PATH}')
+
+
 if __name__ == '__main__':
-    run(show=SHOW)
+    figs = run(show=SHOW)
+    generate_html(figs)

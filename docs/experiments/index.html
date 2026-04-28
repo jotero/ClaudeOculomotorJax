@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OculomotorJax — Experiments</title>
+  <style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+       background: #f5f5f5; color: #222; display: flex; }
+nav  { width: 200px; min-height: 100vh; background: #1a1a2e; color: #eee;
+       padding: 20px 0; position: sticky; top: 0; flex-shrink: 0; }
+nav h2  { font-size: 13px; padding: 0 16px 12px; color: #aaa;
+          text-transform: uppercase; letter-spacing: 0.05em; }
+nav a   { display: block; padding: 8px 16px; color: #ccc; text-decoration: none;
+          font-size: 13px; border-left: 3px solid transparent; }
+nav a:hover { background: #2a2a4e; color: #fff; border-left-color: #9b59b6; }
+main { flex: 1; padding: 32px; max-width: 1400px; }
+h1   { font-size: 22px; margin-bottom: 4px; }
+.meta { font-size: 12px; color: #888; margin-bottom: 32px; }
+.section    { margin-bottom: 48px; }
+.section h2 { font-size: 18px; margin-bottom: 6px; border-bottom: 2px solid #9b59b6;
+              padding-bottom: 6px; }
+.section > p { font-size: 13px; color: #555; margin-bottom: 16px; }
+.fig-grid   { display: grid; grid-template-columns: repeat(auto-fill, minmax(580px, 1fr));
+              gap: 20px; }
+.fig-card   { background: #fff; border: 1px solid #e0e0e0; border-radius: 8px;
+              padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+.fig-card a img { width: 100%; border-radius: 4px; display: block;
+                  border: 1px solid #eee; cursor: zoom-in; }
+.fig-card h3 { font-size: 14px; margin: 12px 0 6px; }
+.fig-card .desc { font-size: 12px; color: #555; margin-bottom: 8px; }
+.expected   { background: #f5eeff; border-left: 3px solid #9b59b6;
+              padding: 8px 10px; font-size: 12px; border-radius: 0 4px 4px 0;
+              margin-bottom: 8px; }
+.expected strong { display: block; font-size: 11px; color: #888;
+                   text-transform: uppercase; margin-bottom: 2px; }
+.citation   { font-size: 11px; color: #888; font-style: italic; }
+.badge      { display: inline-block; padding: 2px 8px; border-radius: 12px;
+              font-size: 10px; font-weight: 600; letter-spacing: 0.04em;
+              text-transform: uppercase; margin-top: 8px; }
+.badge.behavior { background: #d4edda; color: #155724; }
+.badge.cascade  { background: #cce5ff; color: #004085; }
+</style>
+</head>
+<body>
+  <nav>
+    <h2 style="margin-bottom:4px;">Pages</h2>
+    <a href="../">LLM Simulator</a>
+    <a href="../benchmarks/">Benchmarks</a>
+    <a href="../clinical_benchmarks/">Clinical Benchmarks</a>
+    <a href="../parameters.html">Parameters</a>
+    <div style="border-top:1px solid #2a2a4e;margin:10px 0 8px;"></div>
+    <h2>Experiments</h2>
+    <a href="#monocular_occlusion">Monocular occlusion</a>
+  </nav>
+  <main>
+    <h1>OculomotorJax — Experiments</h1>
+    <p class="meta">
+      Generated: <strong>2026-04-27 21:59</strong> &nbsp;|&nbsp;
+      Version: <strong>ebd95e7-dirty</strong>
+    </p>
+    <section class="section">
+      <h2>Experimental</h2>
+      <p>Exploratory paradigms: monocular occlusion, binocular fixation maintenance.</p>
+      <div class="fig-grid">
+        
+    <div class="fig-card">
+      <a href="figures/occlusion.png" target="_blank"><img src="figures/occlusion.png" alt="Monocular occlusion"></a>
+      <h3>Monocular occlusion</h3>
+      <p class="desc">Binocular fixation at 15 cm under dark, strobed, and continuous monocular viewing.</p>
+      <div class="expected"><strong>Expected behavior</strong>Both eyes maintain stable vergence during binocular phase. After occlusion: dark → slow drift, strobed → position hold without velocity, continuous → stable monocular fixation.</div>
+      <p class="citation">&#128214; Typical clinical dissociated nystagmus / monocular occlusion paradigm</p>
+      <span class="badge behavior">behavior</span>
+    </div>
+      </div>
+    </section>
+  </main>
+  
+<div id="lb" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;
+     background:rgba(0,0,0,.85);z-index:1000;cursor:zoom-out;align-items:center;
+     justify-content:center;">
+  <img id="lb-img" style="max-width:95vw;max-height:95vh;border-radius:4px;">
+</div>
+<script>
+(function(){
+  var lb=document.getElementById('lb'),li=document.getElementById('lb-img');
+  document.querySelectorAll('.fig-card a').forEach(function(a){
+    a.addEventListener('click',function(e){e.preventDefault();li.src=a.href;lb.style.display='flex';});
+  });
+  lb.addEventListener('click',function(){lb.style.display='none';});
+})();
+</script>
+
+</body>
+</html>

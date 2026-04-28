@@ -32,7 +32,6 @@ MODULES = [
     'bench_vergence',
     'bench_fixation',
     'bench_listing',
-    'bench_experiments',
 ]
 
 
@@ -169,6 +168,12 @@ def generate_html(sections_data):
 </head>
 <body>
   <nav>
+    <h2 style="margin-bottom:4px;">Pages</h2>
+    <a href="../">LLM Simulator</a>
+    <a href="../clinical_benchmarks/">Clinical Benchmarks</a>
+    <a href="../experiments/">Experiments</a>
+    <a href="../parameters.html">Parameters</a>
+    <div style="border-top:1px solid #2a2a4e;margin:10px 0 8px;"></div>
     <h2>Sections</h2>
 {nav_links}
   </nav>
