@@ -108,7 +108,7 @@ def _ocr(show):
         t_hold   = t - tilt_dur
         traces_t[tilt_deg]    = t_hold
         traces_eye[tilt_deg]  = eye_roll
-        traces_gest[tilt_deg] = g_est[:, 1]
+        traces_gest[tilt_deg] = g_est[:, 0]
         torsion_ss.append(float(eye_roll[-1]))
 
     torsion_expected = [-G_OCR * G0 * np.sin(np.radians(d)) for d in TILTS_DEG]
@@ -131,21 +131,21 @@ def _ocr(show):
     ax1.legend(fontsize=7, ncol=4, title='Tilt angle', title_fontsize=7)
     ax1.set_xlim(-1.0, HOLD_T)
 
-    # Row 2: g_est[1] traces
+    # Row 2: g_est[0] traces (world x = right/interaural)
     ax2 = axes[1]
     for i, tilt_deg in enumerate(TILTS_DEG):
-        expected_y = -G0 * np.sin(np.radians(tilt_deg))
+        expected_y = G0 * np.sin(np.radians(tilt_deg))   # +G0·sin(θ) in world frame
         ax2.plot(traces_t[tilt_deg], traces_gest[tilt_deg],
                  color=colors[i], lw=1.2, label=f'{tilt_deg:.0f}°')
         ax2.axhline(expected_y, color=colors[i], lw=0.6, ls=':', alpha=0.5)
     ax2.axvline(0.0, color='gray', lw=0.8, ls='-')
     ax2.axhline(0.0, color='k', lw=0.4)
-    ax2.text(-0.85, 0.3, '0 = upright', fontsize=7, color='k', style='italic')
-    ax2.set_ylabel('g_est[1] interaural (m/s²)', fontsize=8)
-    ax2.set_title('Gravity estimate (dotted = −G0·sin(θ)); stays flat during hold', fontsize=9)
+    ax2.text(-0.85, -0.3, '0 = upright', fontsize=7, color='k', style='italic')
+    ax2.set_ylabel('g_est[0] interaural/right (m/s²)', fontsize=8)
+    ax2.set_title('Gravity estimate (dotted = +G0·sin(θ)); stays flat during hold', fontsize=9)
     ax2.legend(fontsize=7, ncol=3)
     ax2.set_xlim(-1.0, HOLD_T)
-    ax2.set_ylim(-12, 1)
+    ax2.set_ylim(-1, 12)
     ax2.grid(True, alpha=0.15)
     ax2.set_xlabel('Time rel. hold onset (s)', fontsize=8)
 
@@ -225,7 +225,7 @@ def _ovar(show):
         col = colors[ci]
         lbl = f'{tilt_deg:.0f}° tilt'
         axes[0].plot(t, spv,             color=col, lw=1.2, alpha=0.85, label=lbl)
-        axes[1].plot(t, g_est[:, 1],     color=col, lw=1.2, label=lbl)
+        axes[1].plot(t, g_est[:, 0],     color=col, lw=1.2, label=lbl)
         axes[2].plot(t, vs_net(st)[:,0], color=col, lw=1.2, label=lbl)
         # Stimulus: yaw velocity is identical for all conditions — plot once
         if ci == 0:
@@ -252,8 +252,8 @@ def _ovar(show):
     axes[0].set_title('SPV sinusoidally modulated at rotation period', fontsize=9)
 
     amp_ref = G0 * np.sin(np.radians(TILTS_DEG[-1]))
-    axes[1].set_ylabel('Gravity estimate — interaural (m/s²)', fontsize=9); axes[1].legend(fontsize=8)
-    axes[1].set_title(f'Gravity estimate oscillates ±G₀ sin(α); 90°: ±{amp_ref:.1f} m/s²', fontsize=9)
+    axes[1].set_ylabel('g_est[0] interaural/right (m/s²)', fontsize=9); axes[1].legend(fontsize=8)
+    axes[1].set_title(f'Gravity estimate oscillates ±G0 sin(a); 90 deg: ±{amp_ref:.1f} m/s²', fontsize=9)
     axes[1].set_ylim(-12, 12)
 
     axes[2].set_ylabel('Velocity Storage (VS) net yaw (deg/s)', fontsize=9); axes[2].legend(fontsize=8)
@@ -332,7 +332,7 @@ def _tilt_suppression(show):
         eye_pos = (np.array(st.plant[:, 0]) + np.array(st.plant[:, 3])) / 2.0
         eye_vel = np.gradient(eye_pos, DT)
         spv     = extract_spv_states(st, t_arr)[:, 0]
-        g_est_y = np.array(st.brain[:, _IDX_GRAV])[:, 1]
+        g_est_y = np.array(st.brain[:, _IDX_GRAV])[:, 0]
 
         # Fit TC starting after tilt completes
         fit_start = tilt_dur
@@ -376,11 +376,11 @@ def _tilt_suppression(show):
     axes[0].set_title('Post-rotatory SPV: all conditions identical during rotation; '
                       'TC shortened by tilt after stop', fontsize=9)
 
-    axes[1].set_ylabel('g_est[1] interaural (m/s²)', fontsize=9)
+    axes[1].set_ylabel('g_est[0] interaural/right (m/s²)', fontsize=9)
     axes[1].legend(fontsize=8, ncol=2)
     axes[1].set_ylim(-12, 12)
     axes[1].set_title('Gravity estimate (interaural): 0 during upright rotation; '
-                      'steps to −G₀·sin(θ) after tilt', fontsize=9)
+                      'steps to +G0·sin(θ) after tilt', fontsize=9)
 
     axes[2].set_xlabel('Time relative to rotation stop (s)', fontsize=9)
 
@@ -463,7 +463,7 @@ def _somatogravic_frequency(show):
 
         if freq in SHOW_FREQS:
             trace_data[freq] = {
-                't': t, 'a_lat': a_lat, 'eye_roll': eye_roll, 'g_est_1': g_est[:, 1],
+                't': t, 'a_lat': a_lat, 'eye_roll': eye_roll, 'g_est_0': g_est[:, 0],
                 'i_ss': i_ss,
             }
 
@@ -505,15 +505,15 @@ def _somatogravic_frequency(show):
         if j == 0: ax_acc.set_ylabel('Lateral accel (m/s²)', fontsize=8)
         ax_acc.grid(True, alpha=0.15)
 
-        # Middle row: g_est[1] (left, m/s²) and eye torsion (right, deg) on twin axes.
+        # Middle row: g_est[0] (right/interaural, m/s²) and eye torsion (right, deg) on twin axes.
         # LP theory is only shown in the Bode plot below — not here, to avoid axis confusion.
         ax_ge = axes_gest[j]
-        ax_ge.plot(t_show, d['g_est_1'][i_ss:], color=col, lw=1.5)
+        ax_ge.plot(t_show, d['g_est_0'][i_ss:], color=col, lw=1.5)
         ax_ge.axhline(0, color='k', lw=0.4)
-        ax_ge.set_ylabel('g_est[1] (m/s²)', fontsize=7, color=col)
+        ax_ge.set_ylabel('g_est[0] (m/s²)', fontsize=7, color=col)
         ax_ge.tick_params(axis='y', labelcolor=col, labelsize=7)
         ax_ge.grid(True, alpha=0.15)
-        if j == 1: ax_ge.set_title('g_est[1] interaural (left axis, m/s²)  |  '
+        if j == 1: ax_ge.set_title('g_est[0] interaural/right (left axis, m/s²)  |  '
                                     'eye torsion (right axis, deg)', fontsize=8)
 
         ax_eye2 = ax_ge.twinx()
@@ -580,7 +580,7 @@ def _ocr_cascade(show):
 
     Rows (top→bottom):
         1.  Head roll velocity (stimulus — same all conditions)
-        2.  OCR = g_ocr × g_est[1] (deg)
+        2.  OCR = -g_ocr × g_est[0] (deg)
         3.  VS net torsion (deg/s)
         4.  −VS → NI input (deg/s)
         5.  Total NI input (numerical: d/dt NI + (1/τ_i)·NI, deg/s)
@@ -614,7 +614,7 @@ def _ocr_cascade(show):
 
     def _extract(st):
         grav           = np.array(st.brain[:, _IDX_GRAV])
-        ocr_sig        = G_OCR * grav[:, 1]
+        ocr_sig        = -G_OCR * grav[:, 0]
 
         vs_tor         = vs_net(st)[:, 2]
         ni_tor         = ni_net(st)[:, 2]
@@ -651,7 +651,7 @@ def _ocr_cascade(show):
     # Panel definitions: (key or '_hv', row label, row color for left axis label)
     PANELS = [
         ('_hv',   'Head roll vel (deg/s)',              '#555555'),
-        ('ocr',   'OCR = g_ocr×g_est[1] (deg)',        '#d6604d'),
+        ('ocr',   'OCR = -g_ocr×g_est[0] (deg)',        '#d6604d'),
         ('vs',    'VS net torsion (deg/s)',             '#2166ac'),
         ('vs_neg','-VS → NI input (deg/s)',            '#92c5de'),
         ('ni_in', 'Total NI input (deg/s)',            '#8073ac'),

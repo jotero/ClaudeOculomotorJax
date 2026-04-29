@@ -152,6 +152,32 @@ C_target_visible = jnp.zeros((1, N_STATES)).at[0, _OFF_TARGET_VIS + _N_SCALAR - 
 C_strobed        = jnp.zeros((1, N_STATES)).at[0, _OFF_STROBED    + _N_SCALAR - 1       ].set(1.0)
 
 
+# ── Coordinate helpers ──────────────────────────────────────────────────────────
+#
+# World frame is LEFT-HANDED: x=right, y=up, z=forward  (x × y = −z).
+#
+# Angular vectors are stored as [yaw, pitch, roll] — NOT the same index order
+# as xyz.  The mapping to xyz rotation axes used by rotation_matrix / cross():
+#
+#   ypr_to_xyz([yaw, pitch, roll]) = [−pitch,  yaw,  roll]
+#   xyz_to_ypr([x,   y,     z  ]) = [y,       −x,   z   ]
+#
+#   yaw   (idx 0): rotation about +y  (left-hand: forward → right = rightward turn)
+#   pitch (idx 1): rotation about −x  (left-hand: forward → up   = look up)
+#   roll  (idx 2): rotation about +z  (left-hand: right → up)
+#
+# Always call ypr_to_xyz() before matrix ops; xyz_to_ypr() after.
+
+def ypr_to_xyz(q):
+    """[yaw, pitch, roll] (deg or deg/s) → xyz rotation-axis vector (same units)."""
+    return jnp.array([-q[1], q[0], q[2]])
+
+
+def xyz_to_ypr(v):
+    """xyz rotation-axis vector → [yaw, pitch, roll] (same units). Inverse of ypr_to_xyz."""
+    return jnp.array([v[1], -v[0], v[2]])
+
+
 # ── Geometry ────────────────────────────────────────────────────────────────────
 
 def retinal_signals(p_target, eye_offset_head, q_head, w_head, x_head, v_head,
@@ -162,7 +188,8 @@ def retinal_signals(p_target, eye_offset_head, q_head, w_head, x_head, v_head,
     All head and eye geometry is handled here — sensory_model only passes
     anatomical offsets (eye_offset_head) and does not touch rotation matrices.
 
-    World-frame convention: x=right, y=up, z=forward.
+    World frame is LEFT-HANDED: x=right, y=up, z=forward  (x × y = −z).
+    See module-level ypr_to_xyz / xyz_to_ypr for the [yaw,pitch,roll] ↔ xyz mapping.
 
     Inputs
     ------
@@ -178,7 +205,7 @@ def retinal_signals(p_target, eye_offset_head, q_head, w_head, x_head, v_head,
     w_eye:           eye angular velocity relative to head (deg/s, head frame)
     w_scene:         scene angular velocity [yaw,pitch,roll] (deg/s, world frame)
     v_target:        target angular velocity [yaw,pitch,roll] (deg/s, world frame)
-                     = _rv2q( cross(p_target, dp_target/dt) / |p_target|² )
+                     = xyz_to_ypr( cross(p_target, dp_target/dt) / |p_target|² )
     vf_limit:        visual field half-width (deg)
     k_vf:            visual field gate sigmoid steepness (1/deg)
 
@@ -207,15 +234,9 @@ def retinal_signals(p_target, eye_offset_head, q_head, w_head, x_head, v_head,
         target_in_vf: scalar geometric visual-field gate ∈ [0, 1]
     """
     # ── Rotation matrices ─────────────────────────────────────────────────────
-    # World frame: x=right, y=up, z=fwd.
-    # [yaw,pitch,roll] → xyz rotation vector: yaw→y, pitch→-x, roll→z.
-    # Rodrigues R_x(+θ) maps [0,0,1] → [0,-sinθ,cosθ] (looks DOWN), so negate
-    # pitch to get R_x(−pitch) which maps [0,0,1]→[0,sinθ,cosθ] (looks UP).
-    def _q2rv(q): return jnp.array([-q[1], q[0], q[2]])   # [yaw,pitch,roll] → xyz
-    def _rv2q(v): return jnp.array([v[1], -v[0], v[2]])   # xyz → [yaw,pitch,roll]
-    R_head   = rotation_matrix(_q2rv(q_head))   # world ← head
-    R_eye    = rotation_matrix(_q2rv(q_eye))    # head  ← eye
-    R_gaze_T = R_eye.T @ R_head.T              # world → eye frame
+    R_head   = rotation_matrix(ypr_to_xyz(q_head))   # world ← head
+    R_eye    = rotation_matrix(ypr_to_xyz(q_eye))    # head  ← eye
+    R_gaze_T = R_eye.T @ R_head.T                    # world → eye frame
 
     # ── Target position in eye frame ──────────────────────────────────────────
     eye_world  = x_head + R_head @ eye_offset_head           # eye position, world frame
@@ -228,18 +249,17 @@ def retinal_signals(p_target, eye_offset_head, q_head, w_head, x_head, v_head,
     target_pos = jnp.array([yaw_e, pitch_e, 0.0])           # roll=0: target direction has only 2 DOF
 
     # ── Retinal velocities in eye frame ───────────────────────────────────────
-    # Velocity vectors are in [yaw,pitch,roll] notation but R_head / R_gaze_T
-    # are built in xyz (via _q2rv). Convert velocities to xyz for the matrix
-    # operations so the transformation is correct at large head angles.
+    # Angular velocities are stored as [yaw,pitch,roll] but rotation matrices
+    # operate in xyz — convert via ypr_to_xyz before matrix ops, xyz_to_ypr after.
     # Without this, sustained rotation (e.g. 90° cumulative yaw) rotates the
     # yaw velocity into the pitch/roll directions, causing OKR to fight VOR.
-    w_head_xyz  = _q2rv(w_head)
-    w_eye_xyz   = _q2rv(w_eye)
-    w_scene_xyz = _q2rv(w_scene)
-    vt_xyz      = _q2rv(v_target)
-    w_eye_world = w_head_xyz + R_head @ w_eye_xyz            # total eye velocity, xyz world frame
-    scene_vel   = _rv2q(R_gaze_T @ (w_scene_xyz - w_eye_world))   # eye frame, [yaw,pitch,roll]
-    target_vel  = _rv2q(R_gaze_T @ (vt_xyz      - w_eye_world))   # eye frame, [yaw,pitch,roll]
+    w_head_xyz  = ypr_to_xyz(w_head)
+    w_eye_xyz   = ypr_to_xyz(w_eye)
+    w_scene_xyz = ypr_to_xyz(w_scene)
+    vt_xyz      = ypr_to_xyz(v_target)
+    w_eye_world = w_head_xyz + R_head @ w_eye_xyz                        # total eye velocity, xyz world frame
+    scene_vel   = xyz_to_ypr(R_gaze_T @ (w_scene_xyz - w_eye_world))   # eye frame, [yaw,pitch,roll]
+    target_vel  = xyz_to_ypr(R_gaze_T @ (vt_xyz      - w_eye_world))   # eye frame, [yaw,pitch,roll]
     target_vel  = target_vel.at[2].set(0.0)   # retina is 2D: target translates H/V only
 
     # ── Visual-field gate ─────────────────────────────────────────────────────

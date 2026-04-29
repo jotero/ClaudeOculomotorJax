@@ -1,7 +1,7 @@
 """Kinematic trajectory builder for oculomotor simulations.
 
-Coordinate convention (world frame and head frame at rest):
-    x = right,  y = up,  z = forward
+World frame is LEFT-HANDED: x=right, y=up, z=forward  (x × y = −z).
+See retina.ypr_to_xyz / xyz_to_ypr for the [yaw,pitch,roll] ↔ xyz axis mapping.
 
 KinematicTrajectory holds a 6-DOF trajectory (orientation + position) with all
 three time derivatives pre-computed.  TargetTrajectory holds a 3-DOF position
@@ -31,7 +31,7 @@ from scipy.spatial.transform import Rotation
 class KinematicTrajectory:
     """6-DOF kinematic trajectory: orientation + position with all derivatives.
 
-    Coordinate convention: x=right, y=up, z=forward (world frame).
+    World frame: x=right, y=up, z=forward (left-handed; x × y = −z).
 
     Rotation uses [yaw, pitch, roll] convention:
         yaw   = rotation around y-axis (rightward positive)
@@ -59,13 +59,13 @@ class KinematicTrajectory:
 class TargetTrajectory:
     """3-DOF target position trajectory with Cartesian velocity.
 
-    Coordinate convention: x=right, y=up, z=forward (world frame).
+    World frame: x=right, y=up, z=forward (left-handed; x × y = −z).
 
     lin_vel is the Cartesian derivative of lin_pos — always derived from
     lin_pos by central difference so the two are mutually consistent.
     It is used in the ODE to compute the angular velocity of the target
     direction:
-        v_target_ypr = _rv2q( cross(lin_pos, lin_vel) / |lin_pos|² )  [deg/s]
+        v_target_ypr = xyz_to_ypr( cross(lin_pos, lin_vel) / |lin_pos|² )  [deg/s]
 
     Fields
     ------
@@ -140,27 +140,27 @@ def _angle_to_3d(yaw_deg: np.ndarray, pitch_deg: np.ndarray,
     return np.stack([x, y, z], axis=-1).astype(np.float32)
 
 
-# ── Rotation ↔ YPR helpers (consistent with retina.py _q2rv / _rv2q) ──────────
+# ── Rotation ↔ YPR helpers (numpy; consistent with retina.py ypr_to_xyz / xyz_to_ypr) ──
 
-def _ypr_to_xyz(ypr_deg: np.ndarray) -> np.ndarray:
-    """[yaw,pitch,roll] deg → xyz rotation-vector rad.  _q2rv convention."""
+def ypr_to_xyz(ypr_deg: np.ndarray) -> np.ndarray:
+    """[yaw,pitch,roll] deg → xyz rotation-axis vector rad (left-handed world frame)."""
     r = np.radians(ypr_deg)
     return np.array([-r[1], r[0], r[2]])    # [-pitch, yaw, roll]
 
 
-def _xyz_to_ypr(xyz_rad: np.ndarray) -> np.ndarray:
-    """xyz rotation-vector rad → [yaw,pitch,roll] deg.  _rv2q convention."""
+def xyz_to_ypr(xyz_rad: np.ndarray) -> np.ndarray:
+    """xyz rotation-axis vector rad → [yaw,pitch,roll] deg (left-handed world frame)."""
     return np.degrees([xyz_rad[1], -xyz_rad[0], xyz_rad[2]])   # [y, -x, z]
 
 
-def _ypr_batch_to_xyz(ypr_deg: np.ndarray) -> np.ndarray:
-    """(N,3) [yaw,pitch,roll] deg → (N,3) xyz rad."""
+def ypr_batch_to_xyz(ypr_deg: np.ndarray) -> np.ndarray:
+    """(N,3) [yaw,pitch,roll] deg → (N,3) xyz rotation-axis rad."""
     r = np.radians(ypr_deg)
     return np.stack([-r[:, 1], r[:, 0], r[:, 2]], axis=1)
 
 
-def _xyz_batch_to_ypr(xyz_rad: np.ndarray) -> np.ndarray:
-    """(N,3) xyz rad → (N,3) [yaw,pitch,roll] deg."""
+def xyz_batch_to_ypr(xyz_rad: np.ndarray) -> np.ndarray:
+    """(N,3) xyz rotation-axis rad → (N,3) [yaw,pitch,roll] deg."""
     return np.degrees(np.stack([xyz_rad[:, 1], -xyz_rad[:, 0], xyz_rad[:, 2]], axis=1))
 
 
@@ -196,15 +196,15 @@ def _integrate_rotation(vel_ypr_degs: np.ndarray, t: np.ndarray,
     dt  = np.diff(t.astype(np.float64))
 
     if pos_0_ypr_deg is not None:
-        r = Rotation.from_rotvec(_ypr_to_xyz(np.asarray(pos_0_ypr_deg, np.float64)))
+        r = Rotation.from_rotvec(ypr_to_xyz(np.asarray(pos_0_ypr_deg, np.float64)))
     else:
         r = Rotation.identity()
 
     pos = np.empty((T, 3), np.float64)
     for i in range(T):
-        pos[i] = _xyz_to_ypr(r.as_rotvec())
+        pos[i] = xyz_to_ypr(r.as_rotvec())
         if i < T - 1:
-            dr = Rotation.from_rotvec(_ypr_to_xyz(vel[i]) * dt[i])
+            dr = Rotation.from_rotvec(ypr_to_xyz(vel[i]) * dt[i])
             r  = r * dr   # body-frame: right-compose increment
     return pos.astype(np.float32)
 
@@ -231,7 +231,7 @@ def _differentiate_rotation(pos_ypr_deg: np.ndarray, t: np.ndarray) -> np.ndarra
     t64  = t.astype(np.float64)
     pos  = np.asarray(pos_ypr_deg, np.float64)
 
-    rv_xyz = _ypr_batch_to_xyz(pos)           # (T, 3) xyz rad
+    rv_xyz = ypr_batch_to_xyz(pos)           # (T, 3) xyz rad
     rs     = Rotation.from_rotvec(rv_xyz)     # batch of T rotations
 
     vel = np.empty((T, 3), np.float64)
@@ -240,11 +240,11 @@ def _differentiate_rotation(pos_ypr_deg: np.ndarray, t: np.ndarray) -> np.ndarra
     for i in range(1, T - 1):
         dt2  = t64[i + 1] - t64[i - 1]
         dr   = rs[i - 1].inv() * rs[i + 1]   # body-frame: R_{i-1}^{-1} · R_{i+1}
-        vel[i] = _xyz_to_ypr(dr.as_rotvec() / dt2)
+        vel[i] = xyz_to_ypr(dr.as_rotvec() / dt2)
 
     # Endpoints (first-order)
-    vel[0]  = _xyz_to_ypr((rs[0].inv() * rs[1]) .as_rotvec() / (t64[1]  - t64[0]))
-    vel[-1] = _xyz_to_ypr((rs[-2].inv() * rs[-1]).as_rotvec() / (t64[-1] - t64[-2]))
+    vel[0]  = xyz_to_ypr((rs[0].inv() * rs[1]) .as_rotvec() / (t64[1]  - t64[0]))
+    vel[-1] = xyz_to_ypr((rs[-2].inv() * rs[-1]).as_rotvec() / (t64[-1] - t64[-2]))
 
     return vel.astype(np.float32)
 

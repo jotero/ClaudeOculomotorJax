@@ -444,7 +444,12 @@ Planned approach when ready:
 
 - All angles in **degrees**, angular velocity in **deg/s**
 - Eye position = `x_p` (plant state, 3D rotation vector)
-- 3D axes: `[yaw, pitch, roll]`
+- **World frame is LEFT-HANDED**: x=right, y=up, z=forward (x × y = −z)
+- **Angular vectors** `[yaw, pitch, roll]` are NOT in xyz order — use `ypr_to_xyz` / `xyz_to_ypr` (from `retina.py` for JAX, `kinematics.py` for numpy) before/after rotation-matrix ops:
+  - `ypr_to_xyz([yaw, pitch, roll]) = [−pitch, yaw, roll]`
+  - yaw (idx 0): rotation about +y — left-hand: forward→right (rightward turn)
+  - pitch (idx 1): rotation about −x — left-hand: forward→up (look up)
+  - roll (idx 2): rotation about +z — left-hand: right→up
 - Head velocity input can be 1D (horizontal only) or 3D
 - Gravity / specific force axis convention: **x = up** (matches `canal.py` and `gravity_estimator.py`); at rest upright, `g_head = [9.81, 0, 0]` m/s²
 - `scene_present`: scalar in [0,1] — is the visual scene physically on? (external input)

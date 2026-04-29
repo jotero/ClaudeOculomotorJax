@@ -474,19 +474,15 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
     # ── Velocity storage + gravity estimator + OCR ───────────────────────────
     # Canal velocity for gravity transport (decays with tau_c~5s).
     canal_vel = PINV_SENS @ sensory_out.canal
-    # GE convention [x=up, y=interaural(leftward), z=fwd]: w_x=canal[0] (yaw), w_y=-canal[1] (pitch sign flip).
-    w_for_ge  = jnp.array([canal_vel[0], -canal_vel[1], canal_vel[2]])
-    # sensory_out.otolith = f_gia in world convention x=right, y=up, z=fwd.
-    # Convert to GE/VS convention [x=up, y=interaural(leftward), z=fwd]: ge_x=f[1], ge_y=−f[0], ge_z=f[2].
-    # At upright: f_gia=[0,G0,0] → f_oto_ge=[G0,0,0]=X0 ✓; left-ear-down: f_oto_ge[1]<0 → OCR<0 ✓.
-    f_oto_ge  = jnp.array([sensory_out.otolith[1], -sensory_out.otolith[0], sensory_out.otolith[2]])
 
     okr      = percept.scene_slip + motor_ec_okr * percept.scene_visible
     g_est_now = x_grav[ge._IDX_G]   # (3,) gravity estimate from GE state (first 3 of 6)
-    dx_vs,   w_est = vs.step(x_vs,   jnp.concatenate([sensory_out.canal, okr, g_est_now, f_oto_ge]), brain_params)
-    dx_grav, g_est = ge.step(x_grav, jnp.concatenate([w_for_ge, f_oto_ge]), brain_params)
-    # OCR: g_est[1] < 0 when left-ear-down (positive roll) → torsion negative = eye rolls left-ear-down.
-    ocr            = jnp.array([0.0, 0.0, brain_params.g_ocr * g_est[1]])
+    dx_vs,   w_est = vs.step(x_vs,   jnp.concatenate([sensory_out.canal, okr, g_est_now, sensory_out.otolith]), brain_params)
+    dx_grav, g_est = ge.step(x_grav, jnp.concatenate([canal_vel, sensory_out.otolith]), brain_params)
+    # OCR: world frame [x=right, y=up, z=fwd]. Right-ear-down → g_est[0] < 0 → -g_est[0] > 0.
+    # Positive motor roll = left-ear-down (left-hand rule); negative = right-ear-down (same as head tilt).
+    # Partial compensatory: eyes roll right-ear-down when head is right-ear-down (−g_est[0] < 0 → roll < 0).
+    ocr            = jnp.array([0.0, 0.0, -brain_params.g_ocr * g_est[0]])
 
     # ── Pursuit: target-gated EC-corrected velocity → pursuit integrator ─────────
     # Strobe gate: when target is strobed, EC is also zeroed — stroboscopic illumination

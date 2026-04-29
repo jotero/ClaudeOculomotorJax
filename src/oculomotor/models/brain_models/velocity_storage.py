@@ -84,6 +84,7 @@ Parameters:
 
 import jax.numpy as jnp
 from oculomotor.models.sensory_models.sensory_model import PINV_SENS, N_CANALS
+from oculomotor.models.sensory_models.retina import xyz_to_ypr
 
 N_STATES  = 9   # x_L(3) + x_R(3) + x_null(3)
 N_INPUTS  = N_CANALS + 3 + 3 + 3   # 6 canal afferents + 3 slip + 3 g_est + 3 f_oto
@@ -102,21 +103,20 @@ def step(x_vs, u, brain_params):
 
     Args:
         x_vs:         (9,)   VS state [x_L (3,) | x_R (3,) | x_null (3,)]
-                             axes: [x=up/yaw, y=left/interaural, z=fwd/naso-occipital] (deg/s)
+                             axes: [yaw, pitch, roll] (deg/s)
         u:            (15,)  [y_canals (6,) | e_slip_delayed (3,) | g_est (3,) | f_oto (3,)]
                              y_canals:       6 semicircular canal afferents (deg/s)
-                             e_slip_delayed: retinal slip, head frame [x=up, y=left, z=fwd] (deg/s)
-                             g_est:          gravity estimate from GE state, head frame (m/s²)
-                                             [x=up/yaw, y=left/interaural, z=fwd/naso-occipital]
-                                             upright rest: [+9.81, 0, 0]
-                             f_oto:          raw GIA from otolith, same head frame (m/s²)
+                             e_slip_delayed: retinal slip, world [yaw, pitch, roll] (deg/s)
+                             g_est:          gravity estimate from GE state, world frame (m/s²)
+                                             [x=right, y=up, z=fwd]; upright rest: [0, +9.81, 0]
+                             f_oto:          raw GIA from otolith, world frame (m/s²)
                                              = gravity + linear acceleration (specific force)
                                              Used for gravity dumping: cross(f_oto, g_est).
         brain_params: BrainParams
 
     Returns:
-        dx:    (9,)  dx_vs/dt  — same head frame as x_vs
-        w_est: (3,)  angular velocity estimate → NI (deg/s), head frame [x=up, y=left, z=fwd]
+        dx:    (9,)  dx_vs/dt  — [yaw, pitch, roll] (deg/s)
+        w_est: (3,)  angular velocity estimate → NI (deg/s), [yaw, pitch, roll]
     """
     x_L    = x_vs[_IDX_L]    # (3,) left  pop
     x_R    = x_vs[_IDX_R]    # (3,) right pop
@@ -124,9 +124,9 @@ def step(x_vs, u, brain_params):
     x_pop  = x_vs[:6]        # (6,) bilateral populations (for ABCD)
 
     canal_in = jnp.clip(u[:N_CANALS], -brain_params.v_max_vor, brain_params.v_max_vor)  # (6,)
-    slip_in  = u[N_CANALS:N_CANALS+3]    # (3,) head frame [x=up, y=left, z=fwd]
-    g_est    = u[N_CANALS+3:N_CANALS+6]  # (3,) gravity estimate, head frame (m/s²)
-    f_oto    = u[N_CANALS+6:]            # (3,) raw GIA from otolith, head frame (m/s²)
+    slip_in  = u[N_CANALS:N_CANALS+3]    # (3,) world [yaw, pitch, roll] (deg/s)
+    g_est    = u[N_CANALS+3:N_CANALS+6]  # (3,) gravity estimate, world frame (m/s²)
+    f_oto    = u[N_CANALS+6:]            # (3,) raw GIA from otolith, world frame (m/s²)
     u_lin    = jnp.concatenate([canal_in, slip_in])   # (9,) linear inputs
 
     # Population equilibria: b_vs bias ± half-null shift
@@ -168,9 +168,12 @@ def step(x_vs, u, brain_params):
     # otolith measurement and the gravity estimate.  Zero when they are aligned
     # (upright head OR stable tilt with well-calibrated g_est); nonzero when VS
     # transport has rotated g_est away from f_oto during post-rotatory nystagmus.
+    # cross() result is in world [x,y,z] → convert to VS [yaw,pitch,roll] via xyz_to_ypr
+    # so that yaw-transport errors drive VS yaw (not VS pitch).
     # Push-pull: +gd drives L pop down, -gd drives R pop up (net = 2×gd_signal).
     g_norm_sq  = jnp.dot(g_est, g_est) + 1e-9
-    gd_signal  = brain_params.K_gd * jnp.cross(f_oto, g_est) / g_norm_sq
+    gd_xyz     = jnp.cross(f_oto, g_est) / g_norm_sq
+    gd_signal  = brain_params.K_gd * xyz_to_ypr(gd_xyz)
     gd         = jnp.concatenate([gd_signal, -gd_signal])
 
     # ── Bilateral dynamics: leak toward adapted bias ───────────────────────────

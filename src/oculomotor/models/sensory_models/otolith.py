@@ -22,7 +22,7 @@ Physical signal
         g_head  — gravity resolved into head frame = R(q_head)ᵀ · g_world
         a_head  — head linear acceleration (m/s²)
 
-    Axis convention (world frame: x=right, y=up, z=forward):
+    Axis convention (left-handed world frame: x=right, y=up, z=forward):
         specific force is +y when head is upright (y=up)
         g_world = [0, +9.81, 0] m/s²
 
@@ -107,7 +107,7 @@ def step(x_oto, u, sensory_params):
     x_R = x_oto[_IDX_R]   # (3,) right adaptation state
 
     # Rotate q_head [yaw,pitch,roll] → xyz rotation vector for rotation_matrix.
-    # Convention: yaw→y, pitch→-x, roll→z  (matches retina.py _q2rv).
+    # Uses ypr_to_xyz convention: yaw→+y, pitch→−x, roll→+z  (left-handed world frame).
     q_xyz = jnp.array([-q_head[1], q_head[0], q_head[2]])
     R      = rotation_matrix(q_xyz)    # (3,3) world←head rotation
     g_head = R.T @ G_WORLD             # (3,) specific force in head frame

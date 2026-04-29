@@ -239,7 +239,7 @@ def step(x_sensory,
     Computes retinal signals for each eye using IPD geometry, then advances
     the canal, otolith, and two visual delay cascades (one per eye).
 
-    World-frame convention: x=right, y=up, z=forward.
+    World frame is LEFT-HANDED: x=right, y=up, z=forward  (x × y = −z).
 
     Args:
         x_sensory:        (978,)  sensory state [x_c(12)|x_oto(6)|x_vis_L(480)|x_vis_R(480)]
@@ -257,7 +257,7 @@ def step(x_sensory,
         x_scene:          (3,)    scene linear position (m, world frame) — future parallax
         v_scene:          (3,)    scene linear velocity (m/s, world frame) — future parallax
         v_target:         (3,)    target angular velocity [yaw,pitch,roll] (deg/s, world frame)
-                                  = _rv2q(cross(p_target, dp_target/dt) / |p_target|²)
+                                  = xyz_to_ypr(cross(p_target, dp_target/dt) / |p_target|²)
         p_target:         (3,)    target 3-D position [x,y,z] (m, world frame)
         scene_present_L:  scalar  0=L eye dark, 1=L eye lit
         scene_present_R:  scalar  0=R eye dark, 1=R eye lit

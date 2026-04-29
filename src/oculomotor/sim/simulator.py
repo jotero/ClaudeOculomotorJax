@@ -1,6 +1,23 @@
 """Full oculomotor simulator — wires sensory_model, brain_model, and plant_model.
 
-World-frame convention: x=right, y=up, z=forward.
+World frame is LEFT-HANDED: x=right, y=up, z=forward  (x × y = −z).
+
+Coordinate conventions
+----------------------
+Positional / linear vectors  (p_target, x_head, …):   [x, y, z] = [right, up, fwd]
+
+Angular vectors  (w_head, w_eye, motor_cmd, …):        [yaw, pitch, roll]
+    ≠ xyz order — element 0 (yaw) is rotation about +y, not +x.
+
+    ypr_to_xyz([yaw, pitch, roll]) = [−pitch,  yaw,  roll]   # → xyz rotation axis
+    xyz_to_ypr([x,   y,     z  ]) = [y,       −x,   z   ]   # → [yaw,pitch,roll]
+
+    yaw   (idx 0): rotation about +y  (left-hand: forward → right = rightward turn)
+    pitch (idx 1): rotation about −x  (left-hand: forward → up   = look up)
+    roll  (idx 2): rotation about +z  (left-hand: right → up)
+
+All rotation matrices (Rodrigues) and cross products operate in xyz.
+Call ypr_to_xyz() before matrix ops; xyz_to_ypr() after.
 
 Signal flow (3-D, binocular):
 
@@ -23,7 +40,7 @@ Signal flow (3-D, binocular):
 
     v_target (target angular velocity for pursuit) is computed in the ODE
     from the Cartesian target position and velocity:
-        v_target = _rv2q( cross(p_target, dp_target/dt) / |p_target|² )  [deg/s]
+        v_target = xyz_to_ypr( cross(p_target, dp_target/dt) / |p_target|² )  [deg/s]
 
 State structure — SimState NamedTuple:
 
@@ -45,6 +62,7 @@ import jax.numpy as jnp
 import diffrax
 
 from oculomotor.sim.kinematics import KinematicTrajectory, TargetTrajectory, build_kinematics, build_target
+from oculomotor.models.sensory_models.retina import ypr_to_xyz, xyz_to_ypr
 
 from oculomotor.models.sensory_models.sensory_model import (
     _IDX_C, _IDX_OTO, _IDX_VIS, _IDX_VIS_L, _IDX_VIS_R, SensoryParams,
@@ -192,7 +210,7 @@ def ODE_ocular_motor(t, state, args):
 
     Compatible with diffrax: signature f(t, state, args).
 
-    World-frame convention: x=right, y=up, z=forward.
+    World frame is LEFT-HANDED: x=right, y=up, z=forward  (x × y = −z).
 
     Evaluation order:
         1. read_outputs  — slice delayed signals from sensory state for brain
@@ -242,17 +260,14 @@ def ODE_ocular_motor(t, state, args):
     target_present_R = target_present_R_interp.evaluate(t)
     target_strobed   = target_strobed_interp.evaluate(t)
 
-    # ── v_target: angular velocity of target direction (deg/s, world frame) ──
-    # v_target_ypr = _rv2q( cross(p, dp/dt) / |p|² )
-    # where _rv2q([x,y,z]) = [y, -x, z]  (xyz → [yaw,pitch,roll])
-    p_norm_sq  = jnp.dot(p_target, p_target) + 1e-9
-    cross_xyz  = jnp.cross(p_target, dp_dt)                    # (3,) in xyz frame
-    v_target   = jnp.degrees(
-        jnp.array([cross_xyz[1], -cross_xyz[0], cross_xyz[2]]) / p_norm_sq
-    )
+    # ── v_target: angular velocity of target direction (deg/s, [yaw,pitch,roll]) ──
+    # ω = cross(p, dp/dt) / |p|²  in xyz, then convert to [yaw,pitch,roll].
+    target_dist = jnp.sqrt(jnp.dot(p_target, p_target) + 1e-9)   # m; +1e-9 avoids div-by-zero
+    cross_xyz   = jnp.cross(p_target, dp_dt)                      # (3,) xyz world frame
+    v_target    = jnp.degrees(xyz_to_ypr(cross_xyz) / target_dist ** 2)
 
-    # ── Accommodation demand: 1/z_depth (diopters) ───────────────────────────
-    acc_demand = 1.0 / jnp.maximum(p_target[2], 0.05)
+    # ── Accommodation demand: 1/distance (diopters) ──────────────────────────
+    acc_demand = 1.0 / target_dist
 
     # ── Sensory: read delayed cascade outputs ────────────────────────────────
     sensory_out = sensory_model.read_outputs(state.sensory, theta.sensory, q_head, a_head)
@@ -276,7 +291,6 @@ def ODE_ocular_motor(t, state, args):
     # ── Plant ─────────────────────────────────────────────────────────────────
     dx_p_L, q_eye_L, w_eye_L = plant_model.step(state.plant[_IDX_P_L], motor_cmd_L, theta.plant, M_PLANT_EYE_L)
     dx_p_R, q_eye_R, w_eye_R = plant_model.step(state.plant[_IDX_P_R], motor_cmd_R, theta.plant, M_PLANT_EYE_R)
-    dx_plant = jnp.concatenate([dx_p_L, dx_p_R])
 
     # ── Sensory: ODE step — must follow plant ────────────────────────────────
     dx_sensory = sensory_model.step(
@@ -292,7 +306,7 @@ def ODE_ocular_motor(t, state, args):
     return SimState(
         sensory = dx_sensory,
         brain   = dx_brain,
-        plant   = dx_plant,
+        plant   = jnp.concatenate([dx_p_L, dx_p_R]),
     )
 
 
@@ -318,7 +332,7 @@ def simulate(
 ):
     """Integrate the oculomotor ODE and return eye rotation vectors.
 
-    World-frame convention: x=right, y=up, z=forward.
+    World frame is LEFT-HANDED: x=right, y=up, z=forward  (x × y = −z).
 
     Args:
         params:     Params — model parameters (see default_params()).
