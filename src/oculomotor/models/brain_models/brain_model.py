@@ -98,7 +98,7 @@ from oculomotor.models.plant_models.muscle_geometry import (
 # ── State layout ───────────────────────────────────────────────────────────────
 
 N_STATES = vs.N_STATES + ni.N_STATES + sg.N_STATES + 2*ec.N_STATES + ge.N_STATES + he.N_STATES + pu.N_STATES + vg.N_STATES + acc_mod.N_STATES
-#        = 9 + 9 + 9 + 240 + 6 + 3 + 3 + 3 + 2 = 284
+#        = 9 + 9 + 9 + 240 + 9 + 3 + 3 + 3 + 2 = 287  (ge.N_STATES now 9: g_est+a_lin+rf)
 
 # ── Index constants — relative to x_brain ─────────────────────────────────────
 # Computed from module N_STATES to stay in sync automatically.
@@ -109,9 +109,9 @@ _o_sg    = _o_ni  + ni.N_STATES    # 18
 _o_ec    = _o_sg  + sg.N_STATES    # 27   pursuit EC
 _o_ec_ok = _o_ec  + ec.N_STATES    # 147  OKR EC
 _o_gv    = _o_ec_ok + ec.N_STATES  # 267
-_o_hd    = _o_gv  + ge.N_STATES    # 273
-_o_pu    = _o_hd  + he.N_STATES    # 276
-_o_vg    = _o_pu  + pu.N_STATES    # 279
+_o_hd    = _o_gv  + ge.N_STATES    # 276  (ge.N_STATES=9: g_est+a_lin+rf)
+_o_pu    = _o_hd  + he.N_STATES    # 279
+_o_vg    = _o_pu  + pu.N_STATES    # 282
 
 # Velocity storage (9 states: L pop + R pop + null)
 _IDX_VS      = slice(_o_vs,     _o_vs + 9)   # (9,)
@@ -129,12 +129,12 @@ _IDX_NI_NULL = slice(_o_ni + 6, _o_ni + 9)   # (3,) null adaptation
 _IDX_SG      = slice(_o_sg,   _o_sg   + sg.N_STATES)   # (9,)
 _IDX_EC      = slice(_o_ec,   _o_ec   + ec.N_STATES)   # (120,) pursuit EC  [27:147]
 _IDX_EC_OKR  = slice(_o_ec_ok, _o_ec_ok + ec.N_STATES) # (120,) OKR EC      [147:267]
-_IDX_GRAV    = slice(_o_gv,   _o_gv   + ge.N_STATES)   # (6,)               [267:273]
-_IDX_HEAD    = slice(_o_hd,   _o_hd   + he.N_STATES)   # (3,)               [273:276]
-_IDX_PURSUIT = slice(_o_pu,   _o_pu   + pu.N_STATES)   # (3,)               [276:279]
-_IDX_VERG    = slice(_o_vg,   _o_vg   + vg.N_STATES)   # (3,)               [279:282]
-_o_acc       = _o_vg + vg.N_STATES                     # 282
-_IDX_ACC     = slice(_o_acc,  _o_acc  + acc_mod.N_STATES)  # (2,)            [282:284]
+_IDX_GRAV    = slice(_o_gv,   _o_gv   + ge.N_STATES)   # (9,)               [267:276]
+_IDX_HEAD    = slice(_o_hd,   _o_hd   + he.N_STATES)   # (3,)               [276:279]
+_IDX_PURSUIT = slice(_o_pu,   _o_pu   + pu.N_STATES)   # (3,)               [279:282]
+_IDX_VERG    = slice(_o_vg,   _o_vg   + vg.N_STATES)   # (3,)               [282:285]
+_o_acc       = _o_vg + vg.N_STATES                     # 285
+_IDX_ACC     = slice(_o_acc,  _o_acc  + acc_mod.N_STATES)  # (2,)            [285:287]
 
 
 # ── Brain parameters ────────────────────────────────────────────────────────────
@@ -463,6 +463,7 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
     x_grav    = x_brain[_IDX_GRAV]
     x_head    = x_brain[_IDX_HEAD]
     x_pursuit = x_brain[_IDX_PURSUIT]
+    rf_state  = x_grav[ge._IDX_RF]   # (3,) rotational feedback: 1-step delayed, owned by GE
     x_verg    = x_brain[_IDX_VERG]
     x_acc     = x_brain[_IDX_ACC]     # (2,): [x_fast, x_slow] diopters
 
@@ -481,14 +482,14 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
     motor_ec_okr     = ec.read_delayed(x_ec_okr)
 
     # ── Velocity storage + gravity estimator + OCR ───────────────────────────
-    okr        = percept.scene_slip + motor_ec_okr * percept.scene_visible
-    # VS tonic net: proxy for slow-phase velocity — used by GE for gravity transport
-    # (VN → uvula/nodulus anatomical pathway) and by SG for quick-phase prediction.
-    # Uses current VS state, not w_est (which includes canal D-feedthrough).
-    w_vs = x_vs[:3] - x_vs[3:6]
-    dx_grav, g_est, rf = ge.step(x_grav, jnp.concatenate([w_vs, sensory_out.otolith]), brain_params)
-    dx_head, v_lin  = he.step(x_head, jnp.concatenate([g_est, sensory_out.otolith]), brain_params)
-    dx_vs, w_est = vs.step(x_vs, jnp.concatenate([sensory_out.canal, okr, rf]), brain_params)
+    # Ordering: VS runs first (using rf_state from ODE state, 1 ODE step delayed),
+    # then GE runs with the accurate w_est from VS this step.
+    # rf_state (read from x_grav above) is 1 ODE step delayed — negligible vs gravity dynamics.
+    # This breaks the algebraic loop: VS needs rf (from GE), GE needs w_est (from VS).
+    okr  = percept.scene_slip + motor_ec_okr * percept.scene_visible
+    dx_vs, w_est   = vs.step(x_vs, jnp.concatenate([sensory_out.canal, okr, rf_state]), brain_params)
+    dx_grav, g_est = ge.step(x_grav, jnp.concatenate([w_est, sensory_out.otolith]), brain_params)
+    dx_head, v_lin = he.step(x_head, jnp.concatenate([g_est, sensory_out.otolith]), brain_params)
     # OCR: world frame [x=right, y=up, z=fwd]. Right-ear-down → g_est[0] < 0 → -g_est[0] > 0.
     # Positive motor roll = left-ear-down (left-hand rule); negative = right-ear-down (same as head tilt).
     # Partial compensatory: eyes roll right-ear-down when head is right-ear-down (−g_est[0] < 0 → roll < 0).
@@ -525,10 +526,7 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
 
     # ── Saccade generator (target selection handled internally) ───────────────
     # x_ni_for_sg is the brain's proxy for current eye position (avoids plant state dependency)
-    # Use VS STATE (tonic slow phase) for prediction, NOT full w_est which includes the
-    # fast canal D-feedthrough (~head velocity during VOR). The D-feedthrough is phasic —
-    # a correct compensatory response — not a drift to correct for.
-    dx_sg, u_burst = sg.step(x_sg, pos_for_sg, percept.target_visible, x_ni_for_sg, w_vs, brain_params, noise_acc)
+    dx_sg, u_burst = sg.step(x_sg, pos_for_sg, percept.target_visible, x_ni_for_sg, w_est, brain_params, noise_acc)
 
     # ── Neural integrator: VOR + saccades + pursuit → version motor command ───
     dx_ni, motor_cmd_ni = ni.step(x_ni, -w_est + u_burst + u_pursuit_listing, brain_params)
