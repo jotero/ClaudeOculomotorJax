@@ -162,7 +162,7 @@ def _build_params(patient: Patient):
         K_pursuit       = patient.K_pursuit,
         K_phasic_pursuit= patient.K_phasic_pursuit,
         tau_pursuit     = patient.tau_pursuit,
-        K_grav          = patient.K_grav,
+        tau_grav        = patient.tau_grav,
         tau_vs_adapt    = patient.tau_vs_adapt,
         tau_ni_adapt    = patient.tau_ni_adapt,
         K_verg          = patient.K_verg,

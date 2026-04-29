@@ -248,7 +248,7 @@ All defaults match the healthy model. Only specify parameters that differ from h
 | K_pursuit (1/s) | 4.0 | Pursuit integration gain. 0.1–0.5 = severe deficit (cerebellar, MT/MST) |
 | K_phasic_pursuit | 5.0 | Pursuit direct feedthrough. Controls fast onset |
 | tau_pursuit (s) | 40.0 | 5–15 s = poor pursuit maintenance |
-| K_grav | 0.5 | Otolith correction gain. Relevant for tilt / OVAR |
+| tau_grav (s) | 5.0 | Gravity estimate TC. Relevant for tilt / OVAR |
 | tau_vs_adapt (s) | 600.0 | VS null adaptation. Reduce to 30–60 s for PAN (periodic alternating nystagmus) |
 | tau_ni_adapt (s) | 20.0 | NI null adaptation. Controls rebound nystagmus amplitude after eccentric gaze |
 | K_verg (1/s) | 4.0 | Vergence integration gain. Reduce for convergence insufficiency |

@@ -35,8 +35,8 @@ SHOW = '--show' in sys.argv
 DT   = 0.001
 G0   = 9.81
 
-K_GD   = 0.05 * (180 / 3.14159265)   # 0.05 rad/s² → deg/s² ≈ 2.86
-K_GRAV = 0.6
+K_GD     = 0.05 * (180 / 3.14159265)   # 0.05 rad/s² → deg/s² ≈ 2.86
+TAU_GRAV = 5.0                          # gravity estimate TC (s); somatogravic BW = 1/(2π×5) ≈ 0.032 Hz
 G_OCR  = 10.0 / 9.81   # OCR gain (deg/(m/s²)): ~10° at 90° tilt (Howard & Templeton 1966)
 
 
@@ -44,7 +44,7 @@ SECTION = dict(
     id='gravity', title='4. Gravity Estimator',
     description='Canal-otolith interaction: OCR, OVAR, VOR tilt suppression, '
                 'OCR vs tilt angle, somatogravic OCR frequency dependence. '
-                f'Parameters: K_grav={K_GRAV}, K_gd={K_GD}, g_ocr={G_OCR} (Laurens & Angelaki 2011).',
+                f'Parameters: tau_grav={TAU_GRAV}, K_gd={K_GD}, g_ocr={G_OCR} (Laurens & Angelaki 2011).',
 )
 
 
@@ -114,7 +114,7 @@ def _ocr(show):
     torsion_expected = [-G_OCR * G0 * np.sin(np.radians(d)) for d in TILTS_DEG]
 
     fig, axes = plt.subplots(3, 1, figsize=(11, 10))
-    fig.suptitle(f'Ocular Counterroll (OCR)  (g_ocr={G_OCR:.2f}, K_grav={K_GRAV})',
+    fig.suptitle(f'Ocular Counterroll (OCR)  (g_ocr={G_OCR:.2f}, tau_grav={TAU_GRAV})',
                  fontsize=12, fontweight='bold')
 
     # Row 1: eye torsion traces aligned to hold onset
@@ -198,7 +198,7 @@ def _ovar(show):
     fig, axes = plt.subplots(4, 1, figsize=(14, 12), sharex=True)
     fig.suptitle(
         f'OVAR — Off-Vertical Axis Rotation  (Laurens & Angelaki 2011, Fig 5)\n'
-        f'{SPIN_VEL:.0f} °/s rotation, K_gd={K_GD}, K_grav={K_GRAV}',
+        f'{SPIN_VEL:.0f} °/s rotation, K_gd={K_GD}, tau_grav={TAU_GRAV}',
         fontsize=12, fontweight='bold')
 
     for ci, tilt_deg in enumerate(TILTS_DEG):
@@ -307,7 +307,7 @@ def _tilt_suppression(show):
     fig.suptitle(
         f'VOR Tilt Suppression  (Laurens & Angelaki 2011, Fig 6)\n'
         f'Upright {ROT_VEL:.0f}°/s yaw for {ROT_T:.0f} s; tilt applied after stop;  '
-        f'K_gd={K_GD}, K_grav={K_GRAV}',
+        f'K_gd={K_GD}, tau_grav={TAU_GRAV}',
         fontsize=12, fontweight='bold')
 
     taus = {}
@@ -419,7 +419,7 @@ def _somatogravic_frequency(show):
     FREQS_HZ = [0.03, 0.07, 0.15, 0.3, 0.7, 1.5]
     A_ACCEL  = 2.0       # m/s² peak lateral acceleration (≈ 0.2g)
     N_CYCLES = 6
-    SETTLE_S = 5.0 / K_GRAV
+    SETTLE_S = 5.0 * TAU_GRAV
 
     params = with_brain(PARAMS_DEFAULT, g_ocr=G_OCR, g_burst=0.0)
 
@@ -463,7 +463,7 @@ def _somatogravic_frequency(show):
                 'i_ss': i_ss,
             }
 
-    fc          = K_GRAV / (2.0 * np.pi)
+    fc          = 1.0 / (2.0 * np.pi * TAU_GRAV)
     f_theory    = np.logspace(np.log10(0.01), np.log10(5.0), 200)
     gain_theory = 1.0 / np.sqrt(1.0 + (f_theory / fc) ** 2)
     torsion_dc  = G_OCR * A_ACCEL
@@ -473,7 +473,7 @@ def _somatogravic_frequency(show):
     fig.suptitle(
         f'Somatogravic OCR — Frequency Dependence of Lateral Translation\n'
         f'Constant {A_ACCEL:.0f} m/s² peak acceleration;  g_ocr={G_OCR},  '
-        f'K_grav={K_GRAV}  (corner freq fc ≈ {fc:.3f} Hz)',
+        f'tau_grav={TAU_GRAV}  (corner freq fc ≈ {fc:.3f} Hz)',
         fontsize=12, fontweight='bold')
 
     gs        = fig.add_gridspec(3, len(SHOW_FREQS), hspace=0.45, wspace=0.3,
@@ -518,7 +518,7 @@ def _somatogravic_frequency(show):
         ax_eye2.tick_params(axis='y', labelcolor='darkorange', labelsize=7)
 
     ax_bode.loglog(f_theory, amp_theory, color='gray', lw=2.0, ls='--',
-                   label=f'LP theory: fc={fc:.3f} Hz  (TC=1/K_grav={1/K_GRAV:.1f} s)')
+                   label=f'LP theory: fc={fc:.3f} Hz  (TC=tau_grav={TAU_GRAV:.1f} s)')
     ax_bode.axvline(fc, color='gray', lw=0.8, ls=':', alpha=0.7)
     ax_bode.text(fc * 1.15, amp_theory[0] * 0.6, f'fc={fc:.3f} Hz', fontsize=8, color='gray')
 

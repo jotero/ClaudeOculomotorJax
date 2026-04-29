@@ -253,7 +253,7 @@ class Patient(BaseModel):
         ))
     K_phasic_pursuit: float = Field(default=5.0,  description="Pursuit direct feedthrough gain. Healthy 5.0. Controls fast pursuit onset velocity step.")
     tau_pursuit:      float = Field(default=40.0, description="Pursuit leak TC (s). Healthy 40 s → ~97% gain at 1 Hz. Short (5–15 s) → poor pursuit maintenance.")
-    K_grav: float = Field(default=0.5, description="Otolith gravity correction gain. Healthy 0.5. Relevant for tilt / OVAR / off-vertical axis rotation.")
+    tau_grav: float = Field(default=5.0, description="Gravity estimate TC (s). Healthy 5 s (somatogravic BW ≈ 0.032 Hz). Relevant for tilt / OVAR / off-vertical axis rotation.")
 
     # Adaptation time constants
     tau_vs_adapt: float = Field(
@@ -403,7 +403,7 @@ class Patient(BaseModel):
             raise ValueError(f'g_burst={v} is physiologically unrealistic (max ~700)')
         return v
 
-    @field_validator('g_vor', 'K_vs', 'K_vis', 'K_pursuit', 'K_phasic_pursuit', 'K_grav',
+    @field_validator('g_vor', 'K_vs', 'K_vis', 'K_pursuit', 'K_phasic_pursuit', 'tau_grav',
                      'K_verg', 'K_phasic_verg')
     @classmethod
     def _check_nonneg_gains(cls, v, info):

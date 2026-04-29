@@ -236,7 +236,8 @@ class BrainParams(NamedTuple):
                                           # drift during refractory.  Only applied in out-of-field (quick-phase) path.
 
     # Otolith / gravity estimation — Laurens & Angelaki (2011, 2017)
-    K_grav:                float = 0.6    # otolith correction gain for gravity (1/s); go=0.6 Laurens & Angelaki 2011
+    tau_grav:              float = 5.0    # gravity estimate TC (s); somatogravic bandwidth = 1/(2π·tau_grav) ≈ 0.032 Hz
+                                          # sets how fast g_est tracks GIA changes (OCR rise time, OVAR following)
     K_lin:                 float = 0.1    # linear acceleration adaptation gain (1/s); 0 disables â state
                                           # smaller → more somatogravic effect; larger → faster a_lin adaptation
     K_gd:                  float = 0.0    # gravity dumping gain (1/s); 0 = disabled
@@ -475,7 +476,7 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
     okr       = percept.scene_slip + motor_ec_okr * percept.scene_visible
     g_est_now = x_grav[ge._IDX_G]   # (3,) g_est only — x_grav is 6 elements [g_est | a_lin]
     dx_vs,   w_est = vs.step(x_vs,   jnp.concatenate([sensory_out.canal, okr, g_est_now, sensory_out.otolith]), brain_params)
-    dx_grav, g_est, a_lin = ge.step(x_grav, jnp.concatenate([sensory_out.otolith, w_est]), brain_params)
+    dx_grav, g_est, a_est = ge.step(x_grav, jnp.concatenate([sensory_out.otolith, w_est]), brain_params)
     # OCR: world frame [x=right, y=up, z=fwd]. Right-ear-down → g_est[0] < 0 → -g_est[0] > 0.
     # Positive motor roll = left-ear-down (left-hand rule); negative = right-ear-down (same as head tilt).
     # Partial compensatory: eyes roll right-ear-down when head is right-ear-down (−g_est[0] < 0 → roll < 0).
