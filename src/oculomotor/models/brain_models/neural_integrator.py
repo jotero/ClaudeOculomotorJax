@@ -63,13 +63,15 @@ _IDX_R    = slice(3, 6)
 _IDX_NULL = slice(6, 9)
 
 
-def step(x_ni, u_vel, brain_params):
+def step(x_ni, u_vel, brain_params, u_tonic=0.0):
     """Single ODE step: bilateral NI dynamics + null adaptation + motor command.
 
     Args:
         x_ni:         (9,)  NI state [x_L (3,) | x_R (3,) | x_null (3,)]
         u_vel:        (3,)  combined eye-velocity command (deg/s) — sign-flipped upstream
         brain_params: BrainParams
+        u_tonic:      (3,)  tonic position offset added to output (e.g. OCR).
+                            Not integrated — does not affect state dynamics.
 
     Returns:
         dx:  (9,)  dx_ni/dt
@@ -105,6 +107,6 @@ def step(x_ni, u_vel, brain_params):
     dx_null = (x_net - x_null) / brain_params.tau_ni_adapt
 
     # ── Pulse-step motor command: lag cancellation feedthrough ────────────────
-    u_p = x_net + brain_params.tau_p * u_vel
+    u_p = x_net + brain_params.tau_p * u_vel + u_tonic
 
     return jnp.concatenate([dx_L, dx_R, dx_null]), u_p

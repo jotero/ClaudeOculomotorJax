@@ -260,18 +260,8 @@ def ODE_ocular_motor(t, state, args):
     target_present_R = target_present_R_interp.evaluate(t)
     target_strobed   = target_strobed_interp.evaluate(t)
 
-    # ── v_target: angular velocity of target direction (deg/s, [yaw,pitch,roll]) ──
-    # ω = cross(p, dp/dt) / |p|²  in xyz, then convert to [yaw,pitch,roll].
-    target_dist = jnp.sqrt(jnp.dot(p_target, p_target) + 1e-9)   # m; +1e-9 avoids div-by-zero
-    cross_xyz   = jnp.cross(p_target, dp_dt)                      # (3,) xyz world frame
-    v_target    = jnp.degrees(xyz_to_ypr(cross_xyz) / target_dist ** 2)
-
-    # ── Accommodation demand: 1/distance (diopters) ──────────────────────────
-    acc_demand = 1.0 / target_dist
-
     # ── Sensory: read delayed cascade outputs ────────────────────────────────
-    sensory_out = sensory_model.read_outputs(state.sensory, theta.sensory, q_head, a_head)
-    sensory_out = sensory_out._replace(acc_demand=acc_demand)
+    sensory_out = sensory_model.read_outputs(state.sensory, theta.sensory, q_head, a_head, p_target)
 
     # ── Sensory noise ─────────────────────────────────────────────────────────
     sensory_out = sensory_out._replace(
@@ -285,12 +275,12 @@ def ODE_ocular_motor(t, state, args):
     )
 
     # ── Brain: VS + NI + SG + EC + vergence ──────────────────────────────────
-    dx_brain, motor_cmd_L, motor_cmd_R = brain_model.step(
+    dx_brain, nerves = brain_model.step(
         state.brain, sensory_out, theta.brain, noise_acc_interp.evaluate(t))
 
     # ── Plant ─────────────────────────────────────────────────────────────────
-    dx_p_L, q_eye_L, w_eye_L = plant_model.step(state.plant[_IDX_P_L], motor_cmd_L, theta.plant, M_PLANT_EYE_L)
-    dx_p_R, q_eye_R, w_eye_R = plant_model.step(state.plant[_IDX_P_R], motor_cmd_R, theta.plant, M_PLANT_EYE_R)
+    dx_p_L, q_eye_L, w_eye_L = plant_model.step(state.plant[_IDX_P_L], nerves[:6], theta.plant, M_PLANT_EYE_L)
+    dx_p_R, q_eye_R, w_eye_R = plant_model.step(state.plant[_IDX_P_R], nerves[6:], theta.plant, M_PLANT_EYE_R)
 
     # ── Sensory: ODE step — must follow plant ────────────────────────────────
     dx_sensory = sensory_model.step(
@@ -298,7 +288,7 @@ def ODE_ocular_motor(t, state, args):
         q_head, w_head, x_head, v_head, a_head,
         q_eye_L, w_eye_L, q_eye_R, w_eye_R,
         q_scene, w_scene, x_scene, v_scene,
-        v_target, p_target,
+        dp_dt, p_target,
         scene_present_L, scene_present_R,
         target_present_L, target_present_R, target_strobed,
         theta.sensory)

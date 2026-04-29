@@ -84,15 +84,13 @@ from oculomotor.models.brain_models import gravity_estimator   as ge
 from oculomotor.models.brain_models import heading_estimator   as he
 from oculomotor.models.brain_models import pursuit             as pu
 from oculomotor.models.brain_models import vergence            as vg
-from oculomotor.models.brain_models import accommodation       as acc_mod
+from oculomotor.models.brain_models import accommodation           as acc_mod
 from oculomotor.models.brain_models import listing
+from oculomotor.models.brain_models import final_common_pathway    as fcp
 
 from oculomotor.models.sensory_models.sensory_model import SensoryOutput
 from oculomotor.models.plant_models.readout import rotation_matrix
-from oculomotor.models.plant_models.muscle_geometry import (
-    M_NUCLEUS, M_NERVE_PROJ, G_NUCLEUS_DEFAULT, G_NERVE_DEFAULT,
-    CN3_MR_L, CN3_MR_R,
-)
+from oculomotor.models.brain_models.final_common_pathway import G_NUCLEUS_DEFAULT, G_NERVE_DEFAULT
 
 
 # ── State layout ───────────────────────────────────────────────────────────────
@@ -301,7 +299,11 @@ class BrainParams(NamedTuple):
     #   CN nerve lesion isolates individual muscles without affecting other nuclei.
     # Healthy default: all ones → transparent round-trip through plant.
     g_nucleus:             jnp.ndarray  = G_NUCLEUS_DEFAULT  # (12,) motor nucleus gains
-    g_nerve:               jnp.ndarray  = G_NERVE_DEFAULT    # (12,) per-nerve gains
+    g_nerve:               jnp.ndarray  = G_NERVE_DEFAULT    # (12,) per-nerve ceiling fraction: clips nerve at g_nerve×_NERVE_MAX
+                                                              # 1.0 = transparent (ceiling >> normal burst); <1 = conduction block
+                                                              # Nerve order: [LR_L,MR_L,SR_L,IR_L,SO_L,IO_L, LR_R,MR_R,SR_R,IR_R,SO_R,IO_R]
+                                                              # INO: g_nerve[MR_L or MR_R] ↓  →  adducting saccades slow, fixation preserved
+                                                              # CN6: g_nerve[LR_L or LR_R] ↓  →  abduction limited
 
     # INO (internuclear ophthalmoplegia) — version_yaw gain for each MR subnucleus.
     # The MLF (ABN → contralateral MR) is modelled as the version component of CN3_MR.
@@ -450,9 +452,8 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
         brain_params: BrainParams   model parameters
 
     Returns:
-        dx_brain:    (156,)  dx_brain/dt
-        motor_cmd_L: (6,)    per-muscle activation vector → left  plant
-        motor_cmd_R: (6,)    per-muscle activation vector → right plant
+        dx_brain: (287,)  dx_brain/dt
+        nerves:   (12,)   per-muscle nerve activations [L6 | R6] → plant (split in simulator)
     """
     x_vs      = x_brain[_IDX_VS]      # (9,): bilateral VS + null
     x_ni      = x_brain[_IDX_NI]      # (9,): bilateral NI + null
@@ -518,7 +519,7 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
     x_ni_net_with_ocr = x_ni_net.at[2].add(ocr_val)
     pos_for_sg, x_ni_for_sg, vel_torsion = listing.corrections(
         x_ni_net_with_ocr,
-        (-w_est + u_pursuit)[:2],   # smooth H/V velocity (no saccade burst)
+        u_pursuit[:2],   # pursuit H/V only — VOR follows its own 3D canal structure
         percept.target_pos,
         ocr_val,
         primary_pos)
@@ -529,16 +530,13 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
     dx_sg, u_burst = sg.step(x_sg, pos_for_sg, percept.target_visible, x_ni_for_sg, w_est, brain_params, noise_acc)
 
     # ── Neural integrator: VOR + saccades + pursuit → version motor command ───
-    dx_ni, motor_cmd_ni = ni.step(x_ni, -w_est + u_burst + u_pursuit_listing, brain_params)
-    # OCR is a tonic position offset (gravity-driven, ~100–500 ms latency via plant TC).
-    # Added directly to motor command rather than through the NI (25 s TC) so that
-    # dynamic OCR (somatogravic, OVAR) is not attenuated above the NI passband (~0.006 Hz).
-    motor_cmd_ni = motor_cmd_ni + ocr
+    # OCR is a tonic position offset (gravity-driven); passed as u_tonic so it is added
+    # to the output but not integrated into the NI state (avoids 25 s TC attenuation).
+    dx_ni, motor_cmd_ni = ni.step(x_ni, -w_est + u_burst + u_pursuit_listing, brain_params, u_tonic=ocr)
 
     # ── Accommodation: blur-driven lens adjustment (AC/A and CA/C cross-links disabled) ──
     # TODO: re-enable cross-links once accommodation–vergence interaction is validated.
-    dx_acc, _ = acc_mod.step(
-        x_acc, sensory_out.acc_demand, 0.0, brain_params)   # 0.0: CA/C off
+    dx_acc, _ = acc_mod.step(x_acc, sensory_out.acc_demand, 0.0, brain_params)   # 0.0: CA/C off
 
     # ── Vergence: binocular disparity only (AC/A drive disconnected) ─────────
     # bino = tv_L * tv_R ≈ 1 when both eyes fuse, 0 when either covered.
@@ -547,22 +545,8 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
     # TODO: add L2: extended listings law, how vergence affects listings plane tilt and therefore saccade torsion. Extended horopter paper
     dx_verg, u_verg = vg.step(x_verg, percept.target_disparity, 0.0, brain_params)   # 0.0: AC/A off
 
-    # ── Two-stage motor nucleus encode → per-muscle nerve activations ────────
-    # Stage 1: [version, vergence] (6,) → nuclei (12,) via M_NUCLEUS
-    # Stage 2: nuclei → nerves (12,) via M_NERVE_PROJ (CN4 → contralateral SO;
-    #          all other projections ipsilateral)
-    # Non-negative encoding: relu + factor-2 is exact for all antipodal pairs
-    # (M_NUCLEUS rows are antipodal by construction — see muscle_geometry.py).
-    version_vergence = jnp.concatenate([motor_cmd_ni, u_verg])               # (6,)
-    # Apply INO gains: scale version_yaw (col 0) of CN3_MR rows before projecting.
-    m_nuc = M_NUCLEUS \
-        .at[CN3_MR_L, 0].mul(brain_params.g_mlf_ver_L) \
-        .at[CN3_MR_R, 0].mul(brain_params.g_mlf_ver_R)
-    nuclei_raw = m_nuc @ version_vergence                                         # (12,) signed
-    nuclei   = jnp.diag(brain_params.g_nucleus) @ (2 * jnp.maximum(nuclei_raw, 0.0))  # (12,) non-neg
-    nerves   = jnp.diag(brain_params.g_nerve) @ (M_NERVE_PROJ @ nuclei)          # (12,)
-    motor_cmd_L = nerves[:6]   # (6,) left  eye nerve activations
-    motor_cmd_R = nerves[6:]   # (6,) right eye nerve activations
+    # ── Final common pathway: nucleus encode → nerve activations ─────────────
+    nerves = fcp.step(jnp.concatenate([motor_cmd_ni, u_verg]), brain_params)   # (12,) [L6|R6]
 
     # ── Efference copy: advance delay cascade with version motor command ──────
     # Rotate (u_burst + u_pursuit) into eye frame before delaying, to match the
@@ -586,4 +570,4 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
     # ── Pack state derivative ─────────────────────────────────────────────────
     dx_brain = jnp.concatenate([dx_vs, dx_ni, dx_sg, dx_ec, dx_ec_okr, dx_grav, dx_head, dx_pursuit, dx_verg, dx_acc])
 
-    return dx_brain, motor_cmd_L, motor_cmd_R
+    return dx_brain, nerves

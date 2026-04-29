@@ -54,6 +54,7 @@ from oculomotor.models.sensory_models import canal   as _canal
 from oculomotor.models.sensory_models import otolith as _otolith
 from oculomotor.models.sensory_models import retina  as _retina
 from oculomotor.models.plant_models.readout import rotation_matrix as _rotation_matrix
+from oculomotor.models.sensory_models.retina import xyz_to_ypr as _xyz_to_ypr
 
 
 # ── Sensory parameters ──────────────────────────────────────────────────────────
@@ -176,7 +177,7 @@ class SensoryOutput(NamedTuple):
     acc_demand:       float = 0.0  # 1/z_depth (D) — instantaneous blur demand; set in ODE
 
 
-def read_outputs(x_sensory, sensory_params, q_head, a_head):
+def read_outputs(x_sensory, sensory_params, q_head, a_head, p_target):
     """Read all sensory outputs from the current state (pure state readout).
 
     Returns per-eye raw cascade readouts and delayed visibility gates.
@@ -187,9 +188,10 @@ def read_outputs(x_sensory, sensory_params, q_head, a_head):
         sensory_params: SensoryParams
         q_head:         (3,)    head rotation vector [yaw,pitch,roll] (deg) — for GIA
         a_head:         (3,)    head linear acceleration (m/s², world frame) — for GIA
+        p_target:       (3,)    target 3-D position [x,y,z] (m, world frame) — for acc_demand
 
     Returns:
-        SensoryOutput with per-eye raw signals and delayed visibility gates.
+        SensoryOutput with per-eye raw signals, delayed visibility gates, and acc_demand.
     """
     x_c     = x_sensory[_IDX_C]
     x_vis_L = x_sensory[_IDX_VIS_L]
@@ -206,8 +208,12 @@ def read_outputs(x_sensory, sensory_params, q_head, a_head):
     R     = _rotation_matrix(q_xyz)
     f_gia = R.T @ _otolith.G_WORLD + R.T @ a_head   # GIA in head frame (m/s²)
 
+    # Accommodation demand: 1/distance (diopters); +1e-9 avoids div-by-zero at far targets.
+    target_dist = jnp.sqrt(jnp.dot(p_target, p_target) + 1e-9)
+    acc_demand  = 1.0 / target_dist
+
     return SensoryOutput(
-        canal        = canal_out,
+        canal      = canal_out,
         otolith    = f_gia,
         slip_L       = _retina.C_slip @ x_vis_L,
         slip_R       = _retina.C_slip @ x_vis_R,
@@ -221,6 +227,7 @@ def read_outputs(x_sensory, sensory_params, q_head, a_head):
         target_vis_R     = (_retina.C_target_visible @ x_vis_R)[0],
         strobe_delayed_L = (_retina.C_strobed        @ x_vis_L)[0],
         strobe_delayed_R = (_retina.C_strobed        @ x_vis_R)[0],
+        acc_demand       = acc_demand,
     )
 
 
@@ -230,7 +237,7 @@ def step(x_sensory,
          q_head, w_head, x_head, v_head, a_head,
          q_eye_L, w_eye_L, q_eye_R, w_eye_R,
          q_scene, w_scene, x_scene, v_scene,
-         v_target, p_target,
+         dp_dt, p_target,
          scene_present_L, scene_present_R,
          target_present_L, target_present_R, target_strobed,
          sensory_params):
@@ -256,8 +263,8 @@ def step(x_sensory,
         w_scene:          (3,)    scene angular velocity (deg/s, world frame) → OKR drive
         x_scene:          (3,)    scene linear position (m, world frame) — future parallax
         v_scene:          (3,)    scene linear velocity (m/s, world frame) — future parallax
-        v_target:         (3,)    target angular velocity [yaw,pitch,roll] (deg/s, world frame)
-                                  = xyz_to_ypr(cross(p_target, dp_target/dt) / |p_target|²)
+        dp_dt:            (3,)    target Cartesian velocity [x,y,z] (m/s, world frame)
+                                  v_target = xyz_to_ypr(cross(p_target, dp_dt) / |p_target|²) computed internally
         p_target:         (3,)    target 3-D position [x,y,z] (m, world frame)
         scene_present_L:  scalar  0=L eye dark, 1=L eye lit
         scene_present_R:  scalar  0=R eye dark, 1=R eye lit
@@ -277,6 +284,10 @@ def step(x_sensory,
     ipd_half  = sensory_params.ipd * 0.5
     eye_off_L = jnp.array([-ipd_half, 0.0, 0.0])
     eye_off_R = jnp.array([ ipd_half, 0.0, 0.0])
+
+    # Target angular velocity: ω = cross(p, dp/dt) / |p|²  (xyz → ypr)
+    target_dist = jnp.sqrt(jnp.dot(p_target, p_target) + 1e-9)
+    v_target    = jnp.degrees(_xyz_to_ypr(jnp.cross(p_target, dp_dt)) / target_dist ** 2)
 
     dx_c,   _ = _canal.step(x_c,   w_head, sensory_params)
     dx_oto, _ = _otolith.step(x_oto, jnp.concatenate([a_head, q_head]), sensory_params)
