@@ -108,10 +108,9 @@ Parameters:
 
 import jax.numpy as jnp
 from oculomotor.models.sensory_models.sensory_model import PINV_SENS, N_CANALS
-from oculomotor.models.sensory_models.retina import xyz_to_ypr
 
 N_STATES  = 9   # x_A(3) + x_B(3) + x_null(3)
-N_INPUTS  = N_CANALS + 3 + 3 + 3   # 6 canal afferents + 3 slip + 3 g_est + 3 GIA
+N_INPUTS  = N_CANALS + 3 + 3   # 6 canal afferents + 3 slip + 3 rf (rotational feedback)
 N_OUTPUTS = 3   # w_est (3,)
 
 _IDX_NULL = slice(6, 9)   # null adaptation state within x_vs
@@ -124,13 +123,11 @@ def step(x_vs, u, brain_params):
 
     Args:
         x_vs:         (9,)   VS state [x_A (3,) | x_B (3,) | x_null (3,)], (deg/s)
-        u:            (15,)  [y_canals (6,) | e_slip_delayed (3,) | g_est (3,) | GIA (3,)]
+        u:            (12,)  [y_canals (6,) | e_slip_delayed (3,) | grav_mismatch (3,)]
                              y_canals:       6 canal afferents (deg/s)
                              e_slip_delayed: scene retinal slip, head frame [yaw, pitch, roll] (deg/s)
-                             g_est:          gravity estimate, head frame (m/s²);
-                                             upright rest: [0, +9.81, 0]
-                             GIA:            specific force from otolith, head frame (m/s²)
-                                             = gravity + linear acceleration
+                             rf:             rotational feedback from gravity estimator [yaw, pitch, roll]
+                                             = xyz_to_ypr(GIA × (−g_est)) / G0²  (Laurens & Angelaki 2011)
         brain_params: BrainParams
 
     Returns:
@@ -141,9 +138,8 @@ def step(x_vs, u, brain_params):
     x_pop  = x_vs[:6]        # (6,) [x_A | x_B] both populations (for ABCD)
 
     canal_in = jnp.clip(u[:N_CANALS], -brain_params.v_max_vor, brain_params.v_max_vor)  # (6,)
-    slip_in  = u[N_CANALS:N_CANALS+3]    # (3,) [yaw, pitch, roll] (deg/s)
-    g_est    = u[N_CANALS+3:N_CANALS+6]  # (3,) gravity estimate, head frame (m/s²)
-    GIA      = u[N_CANALS+6:]            # (3,) specific force, head frame (m/s²)
+    slip_in  = u[N_CANALS:N_CANALS+3]   # (3,) [yaw, pitch, roll] (deg/s)
+    rf       = u[N_CANALS+3:]           # (3,) rotational feedback from GE [yaw, pitch, roll]
     u_lin    = jnp.concatenate([canal_in, slip_in])   # (9,) linear inputs
 
     # b_vs is (6,) float32 — normalised by simulate() before ODE entry.
@@ -171,14 +167,10 @@ def step(x_vs, u, brain_params):
     # D (3×9): canal and visual feedthrough on net output
     D = jnp.concatenate([brain_params.g_vor * PINV_SENS, -brain_params.g_vis * jnp.eye(3)], axis=1)
 
-    # ── Rotational feedback — GIA × G_down (Angelaki 2011) ────────────────────
-    # cross(GIA, G_down) where G_down = -g_est (gravity points DOWN; g_est is specific force UP).
-    # Yields the rotation that would bring G_down back into alignment with GIA.
-    # Zero at steady state (GIA ≈ -G_down); active when gravity estimate lags GIA.
-    _G0_SQ = 9.81 ** 2                                   # fixed normalizer: standard gravity²
-    rf_xyz = jnp.cross(GIA, -g_est) / _G0_SQ             # GIA × G_down (Angelaki 2011); g_est points UP, G points DOWN
-    rf     = brain_params.K_gd * xyz_to_ypr(rf_xyz)      # (3,) rotational feedback, ypr
-    rf6    = jnp.concatenate([rf, -rf])                   # push-pull across populations
+    # ── Rotational feedback — Laurens & Angelaki (2011) ───────────────────────
+    # rf pre-computed in gravity_estimator: xyz_to_ypr(GIA × (−g_est)) / G0²
+    # Zero at steady state (GIA ≈ −g_est); active when gravity estimate lags GIA.
+    rf6 = brain_params.K_gd * jnp.concatenate([rf, -rf])   # push-pull across populations
 
     # ── Bilateral dynamics ─────────────────────────────────────────────────────
     dx_pop = A @ (x_pop - SP) + B @ u_lin - rf6

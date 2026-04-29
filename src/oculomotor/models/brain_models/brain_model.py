@@ -81,6 +81,7 @@ from oculomotor.models.brain_models import neural_integrator   as ni
 from oculomotor.models.brain_models import saccade_generator   as sg
 from oculomotor.models.brain_models import efference_copy      as ec
 from oculomotor.models.brain_models import gravity_estimator   as ge
+from oculomotor.models.brain_models import heading_estimator   as he
 from oculomotor.models.brain_models import pursuit             as pu
 from oculomotor.models.brain_models import vergence            as vg
 from oculomotor.models.brain_models import accommodation       as acc_mod
@@ -96,8 +97,8 @@ from oculomotor.models.plant_models.muscle_geometry import (
 
 # ── State layout ───────────────────────────────────────────────────────────────
 
-N_STATES = vs.N_STATES + ni.N_STATES + sg.N_STATES + 2*ec.N_STATES + ge.N_STATES + pu.N_STATES + vg.N_STATES + acc_mod.N_STATES
-#        = 9 + 9 + 9 + 240 + 6 + 3 + 3 + 2 = 281
+N_STATES = vs.N_STATES + ni.N_STATES + sg.N_STATES + 2*ec.N_STATES + ge.N_STATES + he.N_STATES + pu.N_STATES + vg.N_STATES + acc_mod.N_STATES
+#        = 9 + 9 + 9 + 240 + 6 + 3 + 3 + 3 + 2 = 284
 
 # ── Index constants — relative to x_brain ─────────────────────────────────────
 # Computed from module N_STATES to stay in sync automatically.
@@ -108,8 +109,9 @@ _o_sg    = _o_ni  + ni.N_STATES    # 18
 _o_ec    = _o_sg  + sg.N_STATES    # 27   pursuit EC
 _o_ec_ok = _o_ec  + ec.N_STATES    # 147  OKR EC
 _o_gv    = _o_ec_ok + ec.N_STATES  # 267
-_o_pu    = _o_gv  + ge.N_STATES    # 270
-_o_vg    = _o_pu  + pu.N_STATES    # 273
+_o_hd    = _o_gv  + ge.N_STATES    # 273
+_o_pu    = _o_hd  + he.N_STATES    # 276
+_o_vg    = _o_pu  + pu.N_STATES    # 279
 
 # Velocity storage (9 states: L pop + R pop + null)
 _IDX_VS      = slice(_o_vs,     _o_vs + 9)   # (9,)
@@ -127,11 +129,12 @@ _IDX_NI_NULL = slice(_o_ni + 6, _o_ni + 9)   # (3,) null adaptation
 _IDX_SG      = slice(_o_sg,   _o_sg   + sg.N_STATES)   # (9,)
 _IDX_EC      = slice(_o_ec,   _o_ec   + ec.N_STATES)   # (120,) pursuit EC  [27:147]
 _IDX_EC_OKR  = slice(_o_ec_ok, _o_ec_ok + ec.N_STATES) # (120,) OKR EC      [147:267]
-_IDX_GRAV    = slice(_o_gv,   _o_gv   + ge.N_STATES)   # (3,)               [267:270]
-_IDX_PURSUIT = slice(_o_pu,   _o_pu   + pu.N_STATES)   # (3,)               [270:273]
-_IDX_VERG    = slice(_o_vg,   _o_vg   + vg.N_STATES)   # (3,)               [273:276]
-_o_acc       = _o_vg + vg.N_STATES                     # 276
-_IDX_ACC     = slice(_o_acc,  _o_acc  + acc_mod.N_STATES)  # (2,)            [276:278]
+_IDX_GRAV    = slice(_o_gv,   _o_gv   + ge.N_STATES)   # (6,)               [267:273]
+_IDX_HEAD    = slice(_o_hd,   _o_hd   + he.N_STATES)   # (3,)               [273:276]
+_IDX_PURSUIT = slice(_o_pu,   _o_pu   + pu.N_STATES)   # (3,)               [276:279]
+_IDX_VERG    = slice(_o_vg,   _o_vg   + vg.N_STATES)   # (3,)               [279:282]
+_o_acc       = _o_vg + vg.N_STATES                     # 282
+_IDX_ACC     = slice(_o_acc,  _o_acc  + acc_mod.N_STATES)  # (2,)            [282:284]
 
 
 # ── Brain parameters ────────────────────────────────────────────────────────────
@@ -242,6 +245,10 @@ class BrainParams(NamedTuple):
                                           # smaller → more somatogravic effect; larger → faster a_lin adaptation
     K_gd:                  float = 0.0    # gravity dumping gain (1/s); 0 = disabled
     g_ocr:                 float = 0.0    # OCR amplitude (deg); healthy ~10°; 0 = disabled until verified
+
+    # Heading estimator — linear velocity in head-fixed frame
+    tau_head:              float = 2.0    # linear velocity integration TC (s); corner freq ≈ 0.08 Hz
+                                          # leaky integral of a_est = GIA − g_est; prevents drift
 
     # Listing's law — torsional constraint (Listing 1854; Tweed et al. 1998)
     listing_primary:       jnp.ndarray = jnp.zeros(2)  # primary position [yaw₀, pitch₀] (deg)
@@ -454,6 +461,7 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
     x_ec      = x_brain[_IDX_EC]      # (120,): pursuit EC cascade
     x_ec_okr  = x_brain[_IDX_EC_OKR]  # (120,): OKR EC cascade
     x_grav    = x_brain[_IDX_GRAV]
+    x_head    = x_brain[_IDX_HEAD]
     x_pursuit = x_brain[_IDX_PURSUIT]
     x_verg    = x_brain[_IDX_VERG]
     x_acc     = x_brain[_IDX_ACC]     # (2,): [x_fast, x_slow] diopters
@@ -473,10 +481,14 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
     motor_ec_okr     = ec.read_delayed(x_ec_okr)
 
     # ── Velocity storage + gravity estimator + OCR ───────────────────────────
-    okr       = percept.scene_slip + motor_ec_okr * percept.scene_visible
-    g_est_now = x_grav[ge._IDX_G]   # (3,) g_est only — x_grav is 6 elements [g_est | a_lin]
-    dx_vs,   w_est = vs.step(x_vs,   jnp.concatenate([sensory_out.canal, okr, g_est_now, sensory_out.otolith]), brain_params)
-    dx_grav, g_est, a_est = ge.step(x_grav, jnp.concatenate([sensory_out.otolith, w_est]), brain_params)
+    okr        = percept.scene_slip + motor_ec_okr * percept.scene_visible
+    # VS tonic net: proxy for slow-phase velocity — used by GE for gravity transport
+    # (VN → uvula/nodulus anatomical pathway) and by SG for quick-phase prediction.
+    # Uses current VS state, not w_est (which includes canal D-feedthrough).
+    w_vs = x_vs[:3] - x_vs[3:6]
+    dx_grav, g_est, rf = ge.step(x_grav, jnp.concatenate([w_vs, sensory_out.otolith]), brain_params)
+    dx_head, v_lin  = he.step(x_head, jnp.concatenate([g_est, sensory_out.otolith]), brain_params)
+    dx_vs, w_est = vs.step(x_vs, jnp.concatenate([sensory_out.canal, okr, rf]), brain_params)
     # OCR: world frame [x=right, y=up, z=fwd]. Right-ear-down → g_est[0] < 0 → -g_est[0] > 0.
     # Positive motor roll = left-ear-down (left-hand rule); negative = right-ear-down (same as head tilt).
     # Partial compensatory: eyes roll right-ear-down when head is right-ear-down (−g_est[0] < 0 → roll < 0).
@@ -516,8 +528,7 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
     # Use VS STATE (tonic slow phase) for prediction, NOT full w_est which includes the
     # fast canal D-feedthrough (~head velocity during VOR). The D-feedthrough is phasic —
     # a correct compensatory response — not a drift to correct for.
-    w_vs_tonic = x_vs[:3] - x_vs[3:6]   # VS state net (tonic imbalance source only)
-    dx_sg, u_burst = sg.step(x_sg, pos_for_sg, percept.target_visible, x_ni_for_sg, w_vs_tonic, brain_params, noise_acc)
+    dx_sg, u_burst = sg.step(x_sg, pos_for_sg, percept.target_visible, x_ni_for_sg, w_vs, brain_params, noise_acc)
 
     # ── Neural integrator: VOR + saccades + pursuit → version motor command ───
     dx_ni, motor_cmd_ni = ni.step(x_ni, -w_est + u_burst + u_pursuit_listing, brain_params)
@@ -575,6 +586,6 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
     dx_ec_okr = ec.step(x_ec_okr, velocity_saturation(u_motor,    brain_params.v_max_okr,     v_offset=percept.scene_slip),  brain_params)
 
     # ── Pack state derivative ─────────────────────────────────────────────────
-    dx_brain = jnp.concatenate([dx_vs, dx_ni, dx_sg, dx_ec, dx_ec_okr, dx_grav, dx_pursuit, dx_verg, dx_acc])
+    dx_brain = jnp.concatenate([dx_vs, dx_ni, dx_sg, dx_ec, dx_ec_okr, dx_grav, dx_head, dx_pursuit, dx_verg, dx_acc])
 
     return dx_brain, motor_cmd_L, motor_cmd_R

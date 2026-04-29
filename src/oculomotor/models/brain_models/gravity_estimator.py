@@ -14,7 +14,7 @@ Dynamics:
 where:
     ĝ        (3,)   gravity estimate in head frame (m/s²)
     â        (3,)   linear acceleration estimate in head frame (m/s²)
-    ω̂        (3,)   angular velocity estimate (deg/s, converted to rad/s)
+    ω̂        (3,)   VS tonic angular velocity (deg/s, converted to rad/s)
     f        (3,)   specific force (GIA) from otolith (m/s²)
     τ_grav         gravity estimate time constant (s); somatogravic bandwidth = 1/(2π·τ_grav)
     K_lin          linear acceleration tracking gain (1/s)
@@ -44,13 +44,14 @@ Derived quantities:
     a_trans    = gia - g_est - a_lin    (LVOR drive; zero at rest)
 
 Parameters (in BrainParams):
-    tau_grav (s)  gravity estimate TC. Default 5 s (somatogravic bandwidth ~0.032 Hz).
+    tau_grav (s)  gravity estimate TC. Default 5 s (somatogravic BW ~0.032 Hz).
     K_lin  (1/s)  linear accel tracking gain. Typical: 0.1.
+    K_gd          rotational feedback gain for VS (dim'less). Default 0 (disabled).
 """
 
 import jax.numpy as jnp
 
-from oculomotor.models.sensory_models.retina import ypr_to_xyz
+from oculomotor.models.sensory_models.retina import ypr_to_xyz, xyz_to_ypr
 
 # ── Standard gravity ────────────────────────────────────────────────────────────
 
@@ -62,8 +63,8 @@ X0 = jnp.array([0.0, G0, 0.0, 0.0, 0.0, 0.0])
 # ── State layout ────────────────────────────────────────────────────────────────
 
 N_STATES  = 6   # [g_est (3,) | a_lin (3,)]
-N_INPUTS  = 6   # [gia (3,) | w_est (3,)]
-N_OUTPUTS = 6   # [g_est (3,) | a_est (3,)]
+N_INPUTS  = 6   # [w_vs_tonic (3,) | gia (3,)]
+N_OUTPUTS = 6   # [g_est (3,) | rf (3,)]
 
 # Slice indices within x_grav
 _IDX_G = slice(0, 3)
@@ -79,29 +80,33 @@ def step(x_grav, u, brain_params):
                                   upright rest: [0, +9.81, 0]
                            a_lin: linear acceleration state, same world frame (m/s²)
                                   zero at rest; reserved for LVOR
-        u:           (6,)  [gia (3, m/s²) | w_est (3, deg/s)]
-                           gia:   gravitoinertial acceleration from otolith, world frame (m/s²)
-                                  [x=right, y=up, z=fwd]; upright rest: [0, +9.81, 0]
-                           w_est: angular velocity estimate from VS, world [yaw, pitch, roll] (deg/s)
-        brain_params: BrainParams  (reads tau_grav, K_lin)
+        u:           (6,)  [w_vs_tonic (3, deg/s) | gia (3, m/s²)]
+                           w_vs_tonic: VS tonic net (x_A − x_B), [yaw, pitch, roll] (deg/s)
+                                       used for gravity transport (VN → uvula/nodulus)
+                           gia:        gravitoinertial acceleration from otolith, world frame (m/s²)
+                                       [x=right, y=up, z=fwd]; upright rest: [0, +9.81, 0]
+        brain_params: BrainParams  (reads tau_grav, K_lin, K_gd)
 
     Returns:
         dx_grav: (6,)  d[ĝ; â]/dt  — world frame
         g_est:   (3,)  current gravity estimate ĝ (= x_grav[:3], passed through)
-        a_est:   (3,)  estimated linear acceleration = gia − g_est (instantaneous)
+        rf:      (3,)  rotational feedback for VS — Laurens & Angelaki (2011)
+                       = xyz_to_ypr(GIA × (−g_est)) / G0²  [yaw, pitch, roll]
+                       applied as K_gd · rf in VS (push-pull: [rf, −rf])
+                       a_est = gia − g_est is computed internally; heading_estimator owns its output
     """
-    g_est = x_grav[_IDX_G]  # gravity estimate,  world frame (m/s²)
-    gia   = u[:3]            # otolith GIA,       world frame [x=right, y=up, z=fwd] (m/s²)
-    w_est = u[3:]            # angular velocity from VS, world [yaw, pitch, roll] (deg/s)
+    g_est      = x_grav[_IDX_G]   # gravity estimate,  world frame (m/s²)
+    w_vs_tonic = u[:3]             # VS tonic net, world [yaw, pitch, roll] (deg/s)
+    gia        = u[3:]             # otolith GIA, world frame [x=right, y=up, z=fwd] (m/s²)
 
     # Estimated linear acceleration: GIA minus gravity estimate.
     # g_est tracks full GIA with TC = tau_grav (DC gain = 1, full somatogravic effect).
     # a_lin accumulates a_est for LVOR: a_trans = gia − g_est − a_lin (zero at rest).
     a_est = gia - g_est
 
-    # Transport: rotate gravity estimate with VS angular velocity estimate
+    # Transport: rotate gravity estimate with VS tonic velocity (VN → uvula/nodulus pathway)
     # ypr_to_xyz converts [yaw,pitch,roll] → xyz rotation-axis vector for cross product
-    w_rad_xyz = jnp.radians(ypr_to_xyz(w_est))
+    w_rad_xyz = jnp.radians(ypr_to_xyz(w_vs_tonic))
     transport = -jnp.cross(w_rad_xyz, g_est)
 
     # Gravity correction: pull toward GIA with TC = tau_grav
@@ -110,4 +115,9 @@ def step(x_grav, u, brain_params):
     # Linear acceleration: tracks a_est for LVOR / a_trans
     da = brain_params.K_lin * a_est
 
-    return jnp.concatenate([dg, da]), g_est, a_est
+    # Rotational feedback for VS — Laurens & Angelaki (2011): GIA × G_down / G0²
+    # G_down = −g_est (g_est is specific force UP; G_down points DOWN).
+    # Zero at steady state (GIA ≈ −G_down); active when gravity estimate lags GIA.
+    rf = xyz_to_ypr(jnp.cross(gia, -g_est)) / (G0 ** 2)
+
+    return jnp.concatenate([dg, da]), g_est, rf
