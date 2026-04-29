@@ -85,7 +85,6 @@ from oculomotor.models.brain_models import heading_estimator   as he
 from oculomotor.models.brain_models import pursuit             as pu
 from oculomotor.models.brain_models import vergence            as vg
 from oculomotor.models.brain_models import accommodation           as acc_mod
-from oculomotor.models.brain_models import listing
 from oculomotor.models.brain_models import final_common_pathway    as fcp
 
 from oculomotor.models.sensory_models.sensory_model import SensoryOutput
@@ -501,38 +500,15 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
     # provides no continuous motion signal, so eye-movement EC would create a spurious drive.
     # strobe_delayed matches the timing of the already-zeroed target_slip (same delay cascade).
     # pursuit EC cascade already carries no torsion (zeroed at input, matching retina's 2D surface)
-    dx_pursuit, u_pursuit = pu.step(x_pursuit, percept.target_slip, motor_ec_pursuit*percept.target_motion_visible, brain_params)
+    dx_pursuit, u_pursuit = pu.step(x_pursuit, percept.target_slip, motor_ec_pursuit*percept.target_motion_visible, x_ni_net, brain_params)
 
-    # ── Listing's law — inject torsional target into the saccade generator ───
-    # The retina cannot sense torsion, so torsional errors from Listing's law
-    # (T_required = OCR − H·V·π/360) must be injected explicitly as the [2]
-    # component of the SG error signal.
-    # x_ni_for_sg has its torsion expressed as the full listing_error relative to
-    # T_required (which includes OCR), so the SG aims at zero Listing's error.
-    ocr_val     = ocr[2]
-    primary_pos = brain_params.listing_primary
-    # OCR is added to motor_cmd AFTER the NI step, so x_ni_net[2] does not include
-    # the OCR offset. The Listing's calculation needs the full torsion estimate
-    # (NI + OCR) so listing_error is zero when the eye is correctly at OCR torsion.
-    # Without this, listing_error = -ocr_val at primary position → SG fires spurious
-    # torsional saccades that fight the OCR motor command.
-    x_ni_net_with_ocr = x_ni_net.at[2].add(ocr_val)
-    pos_for_sg, x_ni_for_sg, vel_torsion = listing.corrections(
-        x_ni_net_with_ocr,
-        u_pursuit[:2],   # pursuit H/V only — VOR follows its own 3D canal structure
-        percept.target_pos,
-        ocr_val,
-        primary_pos)
-    u_pursuit_listing = u_pursuit.at[2].add(vel_torsion)
-
-    # ── Saccade generator (target selection handled internally) ───────────────
-    # x_ni_for_sg is the brain's proxy for current eye position (avoids plant state dependency)
-    dx_sg, u_burst = sg.step(x_sg, pos_for_sg, percept.target_visible, x_ni_for_sg, w_est, brain_params, noise_acc)
+    # ── Saccade generator (target selection + Listing's corrections handled internally) ──
+    dx_sg, u_burst = sg.step(x_sg, percept.target_pos, percept.target_visible, x_ni_net, ocr[2], w_est, brain_params, noise_acc)
 
     # ── Neural integrator: VOR + saccades + pursuit → version motor command ───
     # OCR is a tonic position offset (gravity-driven); passed as u_tonic so it is added
     # to the output but not integrated into the NI state (avoids 25 s TC attenuation).
-    dx_ni, motor_cmd_ni = ni.step(x_ni, -w_est + u_burst + u_pursuit_listing, brain_params, u_tonic=ocr)
+    dx_ni, motor_cmd_ni = ni.step(x_ni, -w_est + u_burst + u_pursuit, brain_params, u_tonic=ocr)
 
     # ── Accommodation: blur-driven lens adjustment (AC/A and CA/C cross-links disabled) ──
     # TODO: re-enable cross-links once accommodation–vergence interaction is validated.

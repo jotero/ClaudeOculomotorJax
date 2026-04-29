@@ -63,8 +63,8 @@ h1   { font-size: 22px; margin-bottom: 4px; }
   <main>
     <h1>OculomotorJax — Benchmark Report</h1>
     <p class="meta">
-      Generated: <strong>2026-04-29 06:23</strong> &nbsp;|&nbsp;
-      Version: <strong>018a31f-dirty</strong> &nbsp;|&nbsp;
+      Generated: <strong>2026-04-29 16:24</strong> &nbsp;|&nbsp;
+      Version: <strong>b848f0e-dirty</strong> &nbsp;|&nbsp;
       <a href="../BENCHMARKS.md">BENCHMARKS.md</a>
     </p>
 
@@ -156,7 +156,7 @@ h1   { font-size: 22px; margin-bottom: 4px; }
 
   <section class="section" id="gravity">
     <h2>4. Gravity Estimator</h2>
-    <p>Canal-otolith interaction: OCR, OVAR, VOR tilt suppression, OCR vs tilt angle, somatogravic OCR frequency dependence. Parameters: K_grav=0.6, K_gd=0.5, g_ocr=1.019367991845056 (Laurens & Angelaki 2011).</p>
+    <p>Canal-otolith interaction: OCR, OVAR, VOR tilt suppression, OCR vs tilt angle, somatogravic OCR frequency dependence. Parameters: tau_grav=5.0, K_gd=2.864788978927615, g_ocr=1.019367991845056 (Laurens & Angelaki 2011).</p>
     <div class="fig-grid">
       
     <div class="fig-card">
@@ -177,7 +177,7 @@ h1   { font-size: 22px; margin-bottom: 4px; }
       <p class="desc">30.0° tilt — VS, NI torsion cascade + SPV for scene+target / target only / scene only / dark.</p>
       <div class="expected">
         <strong>Expected behavior</strong>
-        Torsion stabilises at ≈-4.32°. SPV row: -VS (dashed) and -canal FT (dotted) should bracket the measured SPV. Yaw/pitch near 0 (pure roll tilt).
+        Torsion stabilises at ≈-4.95°. SPV row: -VS (dashed) and -canal FT (dotted) should bracket the measured SPV. Yaw/pitch near 0 (pure roll tilt).
       </div>
       <p class="citation">&#128214; Debug diagnostic</p>
       <span class="badge cascade">cascade</span>
@@ -213,7 +213,7 @@ h1   { font-size: 22px; margin-bottom: 4px; }
       <p class="desc">Sinusoidal lateral translation at [0.03, 0.07, 0.15, 0.3, 0.7, 1.5] Hz, 2.0 m/s² peak. OCR via gravity estimator LP filter.</p>
       <div class="expected">
         <strong>Expected behavior</strong>
-        Corner frequency fc = K_grav/(2π) ≈ 0.095 Hz. OCR amplitude ∝ 1/√(1+(f/fc)²). Low f → peak ≈ 2.04°; high f → near 0°.
+        Corner frequency fc = K_grav/(2π) ≈ 0.032 Hz. OCR amplitude ∝ 1/√(1+(f/fc)²). Low f → peak ≈ 2.04°; high f → near 0°.
       </div>
       <p class="citation">&#128214; Mayne (1974); Laurens & Angelaki (2011)</p>
       <span class="badge behavior">behavior</span>

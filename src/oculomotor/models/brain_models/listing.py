@@ -72,56 +72,44 @@ def listing_error(eye_pos, ocr, primary_pos):
     return eye_pos[2] - T_req
 
 
-def corrections(eye_pos, eye_vel_hv, target_pos, ocr, primary_pos):
-    """All Listing's law corrections — single call for brain_model.
-
-    Computes three outputs in one pass:
-
-    1. pos_for_sg  — target_pos with torsional landing correction in [2].
-       The torsion to add so the saccade lands on Listing's plane at (H+ΔH, V+ΔV).
-
-    2. x_ni_for_sg — eye_pos with listing_error in [2].
-       Shifts the SG's eye-position reference so the out-of-field centering
-       saccade targets OCR rather than zero.
-
-    3. vel_torsion — torsional velocity (deg/s) to maintain Listing's plane
-       during smooth pursuit.  Equals dT_required/dt for the current eye
-       velocity:
-
-           vel_torsion = −π/360 · [ (H−H₀)·V̇  +  (V−V₀)·Ḣ ]
-
-       Pass this as an additive torsional drive to the NI input.
+def saccade_corrections(eye_pos, target_pos, ocr, primary_pos):
+    """Listing's law corrections for saccade targeting.
 
     Args:
-        eye_pos     : (3,) current eye position [H, V, T] deg (rotation-vector)
-        eye_vel_hv  : (2,) smooth H/V eye velocity [Ḣ, V̇] deg/s
-                      (−w_est + u_pursuit, excluding saccade burst)
+        eye_pos     : (3,) current eye position [H, V, T] deg
         target_pos  : (3,) SG position error [e_H, e_V, ~0] deg
         ocr         : scalar OCR from gravity estimator (deg)
         primary_pos : (2,) [H₀, V₀] primary position (deg)
 
     Returns:
-        pos_for_sg   : (3,)  corrected SG position error
-        x_ni_for_sg  : (3,)  corrected eye-position proxy for SG
-        vel_torsion  : float  torsional velocity demand (deg/s)
+        pos_for_sg   : (3,)  target_pos with torsional landing correction in [2]
+        x_ni_for_sg  : (3,)  eye_pos with listing_error in [2] (SG centering reference)
     """
-    # Listing error at current position (for SG centering reference)
-    err_now = listing_error(eye_pos, ocr, primary_pos)
-
-    # Torsional target at saccade landing position
+    err_now    = listing_error(eye_pos, ocr, primary_pos)
     T_req_land = required_torsion(
         eye_pos[0] + target_pos[0],
         eye_pos[1] + target_pos[1],
         ocr, primary_pos)
+    return (
+        target_pos.at[2].set(T_req_land - eye_pos[2]),
+        eye_pos.at[2].set(err_now),
+    )
 
-    # Torsional velocity demand to keep T on Listing's plane during smooth pursuit
-    # dT_required/dt = −HALF_ANGLE · [(H−H₀)·V̇  +  (V−V₀)·Ḣ]
+
+def pursuit_torsion(eye_pos, eye_vel_hv, primary_pos):
+    """Torsional velocity (deg/s) to maintain Listing's plane during smooth pursuit.
+
+    vel_torsion = −π/360 · [ (H−H₀)·V̇  +  (V−V₀)·Ḣ ]
+
+    Args:
+        eye_pos     : (3,) current eye position [H, V, T] deg
+        eye_vel_hv  : (2,) smooth pursuit H/V velocity [Ḣ, V̇] deg/s
+                      (pursuit only — VOR follows its own 3D canal structure)
+        primary_pos : (2,) [H₀, V₀] primary position (deg)
+
+    Returns:
+        vel_torsion : float  torsional velocity demand (deg/s)
+    """
     dH = eye_pos[0] - primary_pos[0]
     dV = eye_pos[1] - primary_pos[1]
-    vel_torsion = -HALF_ANGLE * (dH * eye_vel_hv[1] + dV * eye_vel_hv[0])
-
-    return (
-        target_pos.at[2].set(T_req_land - eye_pos[2]),   # pos_for_sg
-        eye_pos.at[2].set(err_now),                       # x_ni_for_sg
-        vel_torsion,                                      # pursuit torsional demand
-    )
+    return -HALF_ANGLE * (dH * eye_vel_hv[1] + dV * eye_vel_hv[0])

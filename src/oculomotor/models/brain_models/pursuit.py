@@ -49,12 +49,14 @@ Parameters:
 
 import jax.numpy as jnp
 
+from oculomotor.models.brain_models import listing
+
 N_STATES  = 3   # x_p: pursuit velocity memory (deg/s, one per axis)
 N_INPUTS  = 3   # e_vel_delayed after saccade EC subtraction
 N_OUTPUTS = 3   # u_pursuit: velocity command → NI and VS
 
 
-def step(x_pursuit, target_slip, motor_ec, brain_params):
+def step(x_pursuit, target_slip, motor_ec, eye_pos, brain_params):
     """Single ODE step: Smith predictor → pursuit derivative + output command.
 
     Args:
@@ -63,11 +65,13 @@ def step(x_pursuit, target_slip, motor_ec, brain_params):
                              v_max_target_vel before visual cascade input
         motor_ec:     (3,)   efference copy pre-clipped at v_max_pursuit before EC cascade;
                              gated by target_motion_visible at call site
+        eye_pos:      (3,)   current eye position [H, V, T] deg (NI net, proxy for gaze)
         brain_params: BrainParams  (reads K_pursuit, K_phasic_pursuit, tau_pursuit)
 
     Returns:
         dx_pursuit: (3,)  dx_p/dt  (deg/s²)
-        u_pursuit:  (3,)  pursuit velocity command (deg/s)
+        u_pursuit:  (3,)  pursuit velocity command (deg/s), torsional component includes
+                          Listing's half-angle correction
     """
     K_ph = brain_params.K_phasic_pursuit
     # Both target_slip and motor_ec are pre-clipped at v_max_pursuit before their
@@ -79,4 +83,7 @@ def step(x_pursuit, target_slip, motor_ec, brain_params):
     A  = -(1.0 / brain_params.tau_pursuit) * jnp.eye(3)
     dx_pursuit = A @ x_pursuit + brain_params.K_pursuit * e_pred
     u_pursuit  = x_pursuit + K_ph * e_pred
+
+    vel_torsion = listing.pursuit_torsion(eye_pos, u_pursuit, brain_params.listing_primary)
+    u_pursuit   = u_pursuit.at[2].add(vel_torsion)
     return dx_pursuit, u_pursuit

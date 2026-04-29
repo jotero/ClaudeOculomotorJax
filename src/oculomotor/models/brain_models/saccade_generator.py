@@ -129,6 +129,8 @@ Parameters
 import jax.numpy as jnp
 import jax
 
+from oculomotor.models.brain_models import listing
+
 N_STATES  = 9   # x_copy(3) + z_ref(1) + e_held(3) + z_sac(1) + z_acc(1)
 N_INPUTS  = 9   # pos_delayed(3) + target_visible(1) + x_ni(3) → e_cmd(3) computed internally
 N_OUTPUTS = 3   # u_burst (3,)
@@ -156,7 +158,7 @@ def burst_velocity(e_residual, brain_params):
 
 # ── SSM step ──────────────────────────────────────────────────────────────────
 
-def step(x_sg, pos_delayed, target_visible, x_ni, w_est, brain_params, noise_acc=0.0):
+def step(x_sg, pos_delayed, target_visible, x_ni, ocr, w_est, brain_params, noise_acc=0.0):
     """Single ODE step: target selection + burst dynamics + burst output.
 
     Target selection (inside step — uses brain-internal x_ni, not plant state):
@@ -171,17 +173,25 @@ def step(x_sg, pos_delayed, target_visible, x_ni, w_est, brain_params, noise_acc
             here (not in the in-field path) so voluntary saccades are unaffected.
 
     Args:
-        x_sg:         (N_STATES,)  [x_copy(3) | z_ref(1) | e_held(3) | z_sac(1) | z_acc(1)]
-        pos_delayed:  (3,)         delayed retinal position error (deg, raw)
+        x_sg:          (N_STATES,)  [x_copy(3) | z_ref(1) | e_held(3) | z_sac(1) | z_acc(1)]
+        pos_delayed:   (3,)         delayed retinal position error (deg, raw)
         target_visible: scalar       visual-field gate (≈1 in-field, ≈0 out-of-field)
-        x_ni:         (3,)         neural integrator state — brain's eye-position estimate (deg)
-        w_est:        (3,)         velocity storage output — head velocity estimate (deg/s)
-        brain_params: BrainParams
+        x_ni:          (3,)         NI net state — brain's eye-position estimate (deg, without OCR)
+        ocr:           scalar        torsional OCR offset (deg); added to x_ni[2] before Listing's
+        w_est:         (3,)         velocity storage output — head velocity estimate (deg/s)
+        brain_params:  BrainParams
 
     Returns:
         dx_sg:   (N_STATES,)  state derivative
         u_burst: (3,)         saccade velocity command (deg/s)
     """
+    # ── Listing's law corrections ─────────────────────────────────────────────
+    # Inject torsion into the SG: retina cannot sense torsion, so Listing's
+    # errors are added explicitly.  eye_pos includes OCR so listing_error is
+    # zero when the eye is correctly positioned (avoids spurious torsional saccades).
+    eye_pos = x_ni.at[2].add(ocr)
+    pos_delayed, x_ni = listing.saccade_corrections(
+        eye_pos, pos_delayed, ocr, brain_params.listing_primary)
     x_copy = x_sg[:3]    # (3,) internal copy integrator
     z_ref  = x_sg[3]     # scalar refractory state
     e_held = x_sg[4:7]   # (3,) held target error (frozen during burst)

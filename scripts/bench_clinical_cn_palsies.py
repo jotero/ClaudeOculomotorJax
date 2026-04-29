@@ -169,53 +169,55 @@ def _nine_position(show):
         print(f'    {cond_name}')
 
     # ── Plot ──────────────────────────────────────────────────────────────────
-    fig, axes = plt.subplots(2, 4, figsize=(16, 8))
-    axes_flat  = axes.flatten()
+    # 4×4 grid: each condition occupies one column of 2 stacked panels
+    # (top = L eye, bottom = R eye), laid out as 2 condition-rows of 4.
+    fig, axes = plt.subplots(4, 4, figsize=(16, 14))
 
     lim_h = H_DEG + 8
     lim_v = V_DEG + 7
+    names  = list(TARGETS_DEG.keys())
 
-    for i, (ax, (cond_name, _), results) in enumerate(
-            zip(axes_flat, CONDITIONS_9POS, all_results)):
-        names = list(TARGETS_DEG.keys())
+    offsets = {'Center': (-2, 1.5), 'Right': (0.5, 1), 'Left': (-5, 1),
+               'Up': (-2, 1.5), 'Down': (-2, -2.5),
+               'Up-Right': (0.5, 1), 'Up-Left': (-6, 1),
+               'Down-Right': (0.5, -2.5), 'Down-Left': (-6, -2.5)}
+
+    for i, ((cond_name, _), results) in enumerate(zip(CONDITIONS_9POS, all_results)):
         L = np.array([results[n][0] for n in names])  # (9, 2)
         R = np.array([results[n][1] for n in names])  # (9, 2)
 
-        # Connect L–R pairs with a thin line (shows diplopia gap)
-        for j in range(len(names)):
-            ax.plot([L[j, 0], R[j, 0]], [L[j, 1], R[j, 1]],
-                    color='gray', lw=0.8, alpha=0.35, zorder=1)
+        row_l = (i // 4) * 2      # 0 for conditions 0-3, 2 for conditions 4-7
+        row_r = row_l + 1
+        col   = i % 4
+        ax_l  = axes[row_l, col]
+        ax_r  = axes[row_r, col]
 
-        ax.scatter(L[:, 0], L[:, 1], c='royalblue', s=55, zorder=3,
-                   label='L eye', marker='o')
-        ax.scatter(R[:, 0], R[:, 1], c='crimson',   s=55, zorder=3,
-                   label='R eye', marker='s')
+        for ax, pts, color, marker, eye_label in [
+            (ax_l, L, 'royalblue', 'o', 'L eye'),
+            (ax_r, R, 'crimson',   's', 'R eye'),
+        ]:
+            ax.scatter(pts[:, 0], pts[:, 1], c=color, s=55, zorder=3, marker=marker)
+            ax.axhline(0, color='k', lw=0.4, alpha=0.25)
+            ax.axvline(0, color='k', lw=0.4, alpha=0.25)
+            ax.set_xlim(-lim_h, lim_h)
+            ax.set_ylim(-lim_v, lim_v)
+            ax.set_aspect('equal')
+            ax.tick_params(labelsize=6)
+            ax.grid(True, alpha=0.12)
+            ax.set_ylabel(f'{eye_label}\nPitch (deg)', fontsize=7)
+            if ax is ax_r:
+                ax.set_xlabel('Yaw (deg)', fontsize=7)
 
-        # Label target positions in first panel
+        ax_l.set_title(cond_name, fontsize=8, fontweight='bold')
+
+        # Label target positions in the first condition's L-eye panel only
         if i == 0:
-            offsets = {'Center': (-2, 1.5), 'Right': (0.5, 1), 'Left': (-5, 1),
-                       'Up': (-2, 1.5), 'Down': (-2, -2.5),
-                       'Up-Right': (0.5, 1), 'Up-Left': (-6, 1),
-                       'Down-Right': (0.5, -2.5), 'Down-Left': (-6, -2.5)}
-            for j, name in enumerate(names):
-                dx, dy = offsets.get(name, (1, 1))
-                ax.annotate(name, xy=L[j], xytext=(L[j, 0]+dx, L[j, 1]+dy),
-                            fontsize=5.5, color='navy', alpha=0.8)
+            for j, n in enumerate(names):
+                dx, dy = offsets.get(n, (1, 1))
+                ax_l.annotate(n, xy=L[j], xytext=(L[j, 0]+dx, L[j, 1]+dy),
+                              fontsize=5.5, color='navy', alpha=0.8)
 
-        ax.axhline(0, color='k', lw=0.4, alpha=0.25)
-        ax.axvline(0, color='k', lw=0.4, alpha=0.25)
-        ax.set_xlim(-lim_h, lim_h)
-        ax.set_ylim(-lim_v, lim_v)
-        ax.set_aspect('equal')
-        ax.set_title(cond_name, fontsize=8, fontweight='bold')
-        ax.set_xlabel('Yaw (deg)', fontsize=7)
-        ax.set_ylabel('Pitch (deg)', fontsize=7)
-        ax.tick_params(labelsize=6)
-        ax.grid(True, alpha=0.12)
-        if i == 0:
-            ax.legend(fontsize=7, loc='lower right', markerscale=0.9)
-
-    fig.suptitle('9 Positions of Gaze  –  blue circles = L eye,  red squares = R eye',
+    fig.suptitle('9 Positions of Gaze  –  top row: L eye (blue)  ·  bottom row: R eye (red)',
                  fontsize=10, fontweight='bold')
     plt.tight_layout()
 
