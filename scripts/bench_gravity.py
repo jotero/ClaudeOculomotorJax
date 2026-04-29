@@ -11,7 +11,7 @@ Usage:
     python -X utf8 scripts/bench_gravity.py --show
 """
 
-import sys, os
+import sys, os, argparse
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import bench_utils as utils
 
@@ -81,7 +81,7 @@ def _ocr(show):
     TILT_VEL  = 60.0
     HOLD_T    = 10.0
 
-    params = with_brain(PARAMS_DEFAULT, g_ocr=G_OCR, g_burst=700.0)
+    params = with_brain(PARAMS_DEFAULT, g_ocr=G_OCR)
     cmap   = plt.get_cmap('plasma')
     colors = [cmap(i / (len(TILTS_DEG) - 1)) for i in range(len(TILTS_DEG))]
 
@@ -187,7 +187,7 @@ def _ovar(show):
     TOTAL     = 60.0
     TILTS_DEG = [10.0, 30.0, 60.0, 90.0]
 
-    params = with_brain(PARAMS_DEFAULT, K_gd=K_GD, g_burst=700.0)
+    params = with_brain(PARAMS_DEFAULT, K_gd=K_GD)
     cfg    = SimConfig(warmup_s=0.0)   # start from rest (v[0]=0 required)
     t      = np.arange(0.0, TOTAL, DT)
     T      = len(t)
@@ -592,11 +592,11 @@ def _ocr_cascade(show):
         11. SG z_sac (saccade accumulator)
     """
     TILT_DEG = 30.0
-    TILT_VEL = 60.0
+    TILT_VEL = 20.0
     HOLD_T   = 30.0
     tilt_dur = TILT_DEG / TILT_VEL
 
-    params  = with_brain(PARAMS_DEFAULT, g_ocr=G_OCR, K_grav=K_GRAV, g_burst=700.0)
+    params  = with_brain(PARAMS_DEFAULT, g_ocr=G_OCR)
     t_np    = np.arange(0.0, tilt_dur + HOLD_T, DT)
     T       = len(t_np)
     hv_roll = np.where(t_np < tilt_dur, TILT_VEL, 0.0)
@@ -604,83 +604,73 @@ def _ocr_cascade(show):
     t_rel   = t_np - tilt_dur
     tau_i   = float(params.brain.tau_i)
 
-    CONDITIONS = [
-        ('Scene + Target', np.ones(T),  np.ones(T)),
-        ('Target only',    np.zeros(T), np.ones(T)),
-        ('Scene only',     np.ones(T),  np.zeros(T)),
-        ('Dark',           np.zeros(T), np.zeros(T)),
+    COLUMNS = [
+        ('Roll (tilt)',   2, km.build_kinematics(t_np, rot_vel=_pad3(hv_roll, 'roll'))),
+        ('Yaw (horiz)',   0, km.build_kinematics(t_np, rot_vel=_pad3(hv_roll, 'yaw'))),
+        ('Pitch (vert)',  1, km.build_kinematics(t_np, rot_vel=_pad3(hv_roll, 'pitch'))),
     ]
-    COL_COLORS = ['#2166ac', '#4dac26', '#e08214', '#555555']
+    COL_COLORS = ['#2166ac', '#e08214', '#c51b7d']
 
-    def _extract(st):
-        grav           = np.array(st.brain[:, _IDX_GRAV])
-        ocr_sig        = -G_OCR * grav[:, 0]
-
-        vs_tor         = vs_net(st)[:, 2]
-        ni_tor         = ni_net(st)[:, 2]
-        ni_input_total = np.gradient(ni_tor, DT) + (1.0 / tau_i) * ni_tor
-        vs_contrib     = -vs_tor
-        mc_tor         = ni_tor + ocr_sig
-
-        plant          = np.array(st.plant)
-        eye_yaw        = (plant[:, 0] + plant[:, 3]) / 2.0   # mean L+R yaw
-        eye_pit        = (plant[:, 1] + plant[:, 4]) / 2.0   # mean L+R pitch
-        eye_tor_L      = plant[:, 2]
-        z_sac          = np.array(st.brain[:, _IDX_SG])[:, 7]
+    def _extract(st, axis):
+        grav       = np.array(st.brain[:, _IDX_GRAV])
+        ocr_sig    = -G_OCR * grav[:, 0]              # always torsion (g_est x-component)
+        vs_a       = vs_net(st)[:, axis]
+        ni_a       = ni_net(st)[:, axis]
+        spv_a      = extract_spv_states(st, t_np)[:, axis]
+        x2         = np.array(st.sensory[:, _IDX_C])[:, 6:12]
+        canal_ft_a = float(params.brain.g_vor) * (np.array(CANAL_PINV) @ x2.T)[axis, :]
         return dict(
-            ocr=ocr_sig, vs=vs_tor,
-            vs_neg=vs_contrib, ni_in=ni_input_total,
-            ni=ni_tor, mc=mc_tor,
-            eye_L=eye_tor_L, eye_yaw=eye_yaw, eye_pit=eye_pit,
-            z_sac=z_sac,
+            ocr=ocr_sig, vs_neg=-vs_a, ni=ni_a,
+            eye_L=np.array(st.plant)[:, axis],
+            spv_tor=spv_a, canal_ft=canal_ft_a,
         )
 
-    # Run 4 simulations
     results = []
-    for _lbl, scene_arr, target_arr in CONDITIONS:
+    for _lbl, axis, head in COLUMNS:
         st = simulate(params, t_np,
-                      head=head_km,
-                      scene_present_array=scene_arr,
-                      target_present_array=target_arr,
+                      head=head,
+                      scene_present_array=np.ones(T),
+                      target_present_array=np.ones(T),
                       sim_config=SimConfig(warmup_s=0.0),
                       return_states=True)
-        results.append(_extract(st))
+        results.append(_extract(st, axis))
 
     ocr_ss = float(results[0]['ocr'][-1])
 
-    # Panel definitions: (key or '_hv', row label, row color for left axis label)
     PANELS = [
-        ('_hv',   'Head roll vel (deg/s)',              '#555555'),
-        ('ocr',   'OCR = -g_ocr×g_est[0] (deg)',        '#d6604d'),
-        ('vs',    'VS net torsion (deg/s)',             '#2166ac'),
-        ('vs_neg','-VS → NI input (deg/s)',            '#92c5de'),
-        ('ni_in', 'Total NI input (deg/s)',            '#8073ac'),
-        ('ni',    'NI net torsion (deg)',              '#4dac26'),
-        ('mc',    'Motor cmd torsion (deg)',           '#b2182b'),
-        ('eye_L', 'L eye torsion (deg)',               '#1a9641'),
-        ('eye_yaw','Eye yaw (deg)',                    '#e08214'),
-        ('eye_pit','Eye pitch (deg)',                  '#c51b7d'),
-        ('z_sac', 'SG z_sac',                         '#999999'),
+        ('_hv',    'Head roll vel (deg/s)',             '#555555'),
+        ('ocr',    'OCR = -g_ocr×g_est[0] (deg)',       '#d6604d'),
+        ('vs_neg', '-VS → NI input (deg/s)',           '#92c5de'),
+        ('ni',     'NI net torsion (deg)',             '#4dac26'),
+        ('eye_L',  'L eye torsion (deg)',              '#1a9641'),
+        ('spv_tor','Eye SPV torsion (deg/s)',          '#e08214'),
     ]
     N_ROWS = len(PANELS)
-    N_COLS = len(CONDITIONS)
+    N_COLS = len(COLUMNS)
 
     fig, axes = plt.subplots(N_ROWS, N_COLS,
                              figsize=(4.5 * N_COLS, 2.1 * N_ROWS),
-                             sharex=True, sharey='row')
+                             sharex=True, squeeze=False)
     fig.suptitle(
-        f'OCR cascade — {TILT_DEG:.0f}° left-ear-down tilt, {HOLD_T:.0f} s hold — 4 visual conditions\n'
-        f'g_ocr={G_OCR:.2f}, K_grav={K_GRAV:.2f}, K_gd=0, g_burst=700  |  SS OCR ≈ {ocr_ss:.2f}°',
+        f'OCR cascade — {TILT_DEG:.0f}° tilt, {HOLD_T:.0f} s hold — roll vs. yaw vs. pitch\n'
+        f'g_ocr={G_OCR:.2f}  |  roll SS OCR ≈ {ocr_ss:.2f}°',
         fontsize=11, fontweight='bold')
 
-    for col_idx, (cond_label, col_color, res) in enumerate(
-            zip([c[0] for c in CONDITIONS], COL_COLORS, results)):
-        axes[0, col_idx].set_title(cond_label, fontsize=10, fontweight='bold', color=col_color)
+    for col_idx, ((col_label, axis, _head), col_color, res) in enumerate(
+            zip(COLUMNS, COL_COLORS, results)):
+        axes[0, col_idx].set_title(col_label, fontsize=10, fontweight='bold', color=col_color)
 
         for row_idx, (key, ylabel, row_color) in enumerate(PANELS):
             ax = axes[row_idx, col_idx]
             sig = hv_roll if key == '_hv' else res[key]
             ax.plot(t_rel, sig, color=col_color, lw=0.9)
+            if key == 'spv_tor':
+                ax.plot(t_rel, res['vs_neg'], color='#2166ac', lw=0.7, ls='--', alpha=0.8,
+                        label='-VS' if col_idx == 0 else None)
+                ax.plot(t_rel, -res['canal_ft'], color='#d6604d', lw=0.7, ls=':', alpha=0.8,
+                        label='-canal FT' if col_idx == 0 else None)
+                if col_idx == 0:
+                    ax.legend(fontsize=5, loc='upper right')
             ax.axvline(0.0, color='gray', lw=0.6, ls='--')
             ax.axhline(0.0, color='k', lw=0.3, alpha=0.4)
             ax.grid(True, alpha=0.12)
@@ -690,53 +680,58 @@ def _ocr_cascade(show):
             if col_idx == 0:
                 ax.set_ylabel(ylabel, fontsize=6.5, color=row_color)
 
-        # Mark OCR target level on motor cmd (row 6) and L eye torsion (row 7)
-        for row_idx in (6, 7):
-            axes[row_idx, col_idx].axhline(
-                ocr_ss, color='tomato', lw=0.7, ls=':', alpha=0.8,
-                label=f'{ocr_ss:.2f}°')
-            if col_idx == N_COLS - 1:
-                axes[row_idx, col_idx].legend(fontsize=5.5, loc='upper right')
+        # Mark OCR target on eye_L (row 4) for roll column only
+        if col_idx == 0:
+            axes[4, 0].axhline(ocr_ss, color='tomato', lw=0.7, ls=':', alpha=0.8,
+                               label=f'{ocr_ss:.2f}°')
+            axes[4, 0].legend(fontsize=5.5, loc='upper right')
 
         axes[N_ROWS - 1, col_idx].set_xlabel('Time rel. hold onset (s)', fontsize=8)
 
-    # Enforce minimum y-range on yaw/pitch rows to prevent numerical noise
-    # from autoscaling to appear significant (values are ~1e-6 °).
-    MIN_EYE_RANGE = 1.0   # degrees
+    # Clamp SPV y-axis so slow-phase structure is visible.
+    SPV_LIM = 15.0
     for row_idx, (key, *_) in enumerate(PANELS):
-        if key in ('eye_yaw', 'eye_pit'):
+        if key == 'spv_tor':
             for col_idx in range(N_COLS):
-                ax = axes[row_idx, col_idx]
-                ylo, yhi = ax.get_ylim()
-                if yhi - ylo < MIN_EYE_RANGE:
-                    mid = (ylo + yhi) / 2.0
-                    ax.set_ylim(mid - MIN_EYE_RANGE / 2, mid + MIN_EYE_RANGE / 2)
+                axes[row_idx, col_idx].set_ylim(-SPV_LIM, SPV_LIM)
 
     fig.tight_layout()
     path, rp = utils.save_fig(fig, 'gravity_ocr_cascade', show=show)
     return utils.fig_meta(
         path, rp,
         title='OCR cascade (4-condition comparison)',
-        description=(f'{TILT_DEG}° tilt — VS, NI torsion cascade + H/V eye pos for '
+        description=(f'{TILT_DEG}° tilt — VS, NI torsion cascade + SPV for '
                      f'scene+target / target only / scene only / dark.'),
         expected=(f'Torsion stabilises at ≈{ocr_ss:.2f}°. '
-                  f'Yaw/pitch should stay near 0 (pure roll tilt). '
-                  f'Dark: clean VS decay; visual conditions: OKR oscillations in VS.'),
+                  f'SPV row: -VS (dashed) and -canal FT (dotted) should bracket the measured SPV. '
+                  f'Yaw/pitch near 0 (pure roll tilt).'),
         citation='Debug diagnostic',
         fig_type='cascade')
 
 
-def run(show=False):
-    print('\n=== Gravity Estimator ===')
+_BENCH_MAP = {
+    'ocr':            _ocr,
+    'ocr_cascade':    _ocr_cascade,
+    'ovar':           _ovar,
+    'tilt':           _tilt_suppression,
+    'somatogravic':   _somatogravic_frequency,
+}
+
+
+def run(show=False, only=None):
+    names = list(_BENCH_MAP.keys()) if only is None else [only]
+    print(f'\n=== Gravity Estimator ({", ".join(names)}) ===')
     figs = []
-    print('  1/5  OCR …'); figs.append(_ocr(show))
-    print('  2/5  OCR cascade (debug) …'); figs.append(_ocr_cascade(show))
-    print('  3/5  OVAR (Fig 5) …'); figs.append(_ovar(show))
-    print('  4/5  tilt suppression (Fig 6) …'); figs.append(_tilt_suppression(show))
-    print('  5/5  somatogravic OCR frequency dependence …')
-    figs.append(_somatogravic_frequency(show))
+    for i, name in enumerate(names, 1):
+        print(f'  {i}/{len(names)}  {name} …')
+        figs.append(_BENCH_MAP[name](show))
     return figs
 
 
 if __name__ == '__main__':
-    run(show=SHOW)
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--show', action='store_true')
+    ap.add_argument('--bench', choices=list(_BENCH_MAP.keys()), default=None,
+                    help='Run only this benchmark (default: all)')
+    args = ap.parse_args()
+    run(show=args.show, only=args.bench)

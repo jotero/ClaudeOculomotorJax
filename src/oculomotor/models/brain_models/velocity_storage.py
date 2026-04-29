@@ -84,7 +84,7 @@ Parameters:
 
 import jax.numpy as jnp
 from oculomotor.models.sensory_models.sensory_model import PINV_SENS, N_CANALS
-from oculomotor.models.sensory_models.retina import xyz_to_ypr
+from oculomotor.models.sensory_models.retina import xyz_to_ypr, ypr_to_xyz
 
 N_STATES  = 9   # x_L(3) + x_R(3) + x_null(3)
 N_INPUTS  = N_CANALS + 3 + 3 + 3   # 6 canal afferents + 3 slip + 3 g_est + 3 f_oto
@@ -163,18 +163,18 @@ def step(x_vs, u, brain_params):
     # D (3×9): feedthrough on net output — canal + visual
     D = jnp.concatenate([brain_params.g_vor * PINV_SENS, -brain_params.g_vis * jnp.eye(3)], axis=1)
 
-    # ── Gravity dumping — mismatch between GIA and gravity estimate ─────────────
-    # cross(f_oto, g_est) / |g_est|² measures the angular error between the raw
-    # otolith measurement and the gravity estimate.  Zero when they are aligned
-    # (upright head OR stable tilt with well-calibrated g_est); nonzero when VS
-    # transport has rotated g_est away from f_oto during post-rotatory nystagmus.
-    # cross() result is in world [x,y,z] → convert to VS [yaw,pitch,roll] via xyz_to_ypr
-    # so that yaw-transport errors drive VS yaw (not VS pitch).
-    # Push-pull: +gd drives L pop down, -gd drives R pop up (net = 2×gd_signal).
-    g_norm_sq  = jnp.dot(g_est, g_est) + 1e-9
-    gd_xyz     = jnp.cross(f_oto, g_est) / g_norm_sq
-    gd_signal  = brain_params.K_gd * xyz_to_ypr(gd_xyz)
-    gd         = jnp.concatenate([gd_signal, -gd_signal])
+    # ── Gravity dumping — suppress VS components perpendicular to gravity ────────
+    # Damps the stored VS component (x_L − x_R) in directions ⊥ to g_est.
+    # Upright (g_est ∥ y): yaw/roll VS are ⊥ gravity → damped; pitch VS ∥ gravity → spared.
+    # 90° tilt (g_est ∥ x): yaw VS fully ⊥ gravity → TC collapses to canal TC.
+    # Scales as sin²(tilt) for yaw VS → 0 suppression upright, full suppression at 90°.
+    # Previous formula cross(f_oto, g_est) was zero at steady-state tilt (wrong).
+    g_norm_sq   = jnp.dot(g_est, g_est) + 1e-9
+    w_stored    = C @ x_pop                                           # x_L − x_R, stored only
+    w_xyz       = ypr_to_xyz(w_stored)                               # → xyz rotation-axis space
+    w_perp_xyz  = w_xyz - (jnp.dot(g_est, w_xyz) / g_norm_sq) * g_est  # component ⊥ g_est
+    gd_signal   = -brain_params.K_gd * xyz_to_ypr(w_perp_xyz)
+    gd          = jnp.concatenate([gd_signal, -gd_signal])
 
     # ── Bilateral dynamics: leak toward adapted bias ───────────────────────────
     dx_pop = A @ (x_pop - b_eff) + B @ u_lin + gd

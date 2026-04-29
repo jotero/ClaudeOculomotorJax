@@ -34,7 +34,10 @@
       "PowerShell(& \"d:\\\\OneDrive\\\\UC Berkeley\\\\OMlab - JOM\\\\Code\\\\ClaudeOculomotorJax\\\\.venv\\\\Scripts\\\\python.exe\" -X utf8 scripts\\\\bench_pursuit.py 2>&1)",
       "Bash(Get-Content \"C:\\\\Users\\\\jom\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\d--OneDrive-UC-Berkeley-OMlab---JOM-Code-ClaudeOculomotorJax\\\\0295bc5f-d6ba-42a2-a9f5-0c82cfe14298\\\\tasks\\\\bxhi8w2z8.output\" -Wait)",
       "Bash(Select-String -Pattern \"saved|done|Error|Traceback|cascade\" --SimpleMatch)",
-      "PowerShell(Start-Process \"d:\\\\OneDrive\\\\UC Berkeley\\\\OMlab - JOM\\\\Code\\\\ClaudeOculomotorJax\\\\docs\\\\benchmarks\\\\figures\\\\gravity_ocr_cascade.png\")"
+      "PowerShell(Start-Process \"d:\\\\OneDrive\\\\UC Berkeley\\\\OMlab - JOM\\\\Code\\\\ClaudeOculomotorJax\\\\docs\\\\benchmarks\\\\figures\\\\gravity_ocr_cascade.png\")",
+      "PowerShell(& \"d:\\\\OneDrive\\\\UC Berkeley\\\\OMlab - JOM\\\\Code\\\\ClaudeOculomotorJax\\\\.venv\\\\Scripts\\\\python.exe\" -X utf8 scripts/bench_gravity.py 2>&1)",
+      "PowerShell(& \"d:\\\\OneDrive\\\\UC Berkeley\\\\OMlab - JOM\\\\Code\\\\ClaudeOculomotorJax\\\\.venv\\\\Scripts\\\\python.exe\" -X utf8 scripts/run_clinical_benchmarks.py 2>&1)",
+      "PowerShell(& \"d:\\\\OneDrive\\\\UC Berkeley\\\\OMlab - JOM\\\\Code\\\\ClaudeOculomotorJax\\\\.venv\\\\Scripts\\\\python.exe\" -X utf8 scripts/bench_gravity.py --bench tilt 2>&1)"
     ],
     "additionalDirectories": [
       "d:\\OneDrive\\UC Berkeley\\OMlab - JOM\\Code\\ClaudeOculomotorJax\\outputs"
