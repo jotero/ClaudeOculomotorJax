@@ -86,7 +86,7 @@ from oculomotor.models.brain_models import vergence            as vg
 from oculomotor.models.brain_models import accommodation       as acc_mod
 from oculomotor.models.brain_models import listing
 
-from oculomotor.models.sensory_models.sensory_model import SensoryOutput, PINV_SENS  # noqa: F401 (re-exported)
+from oculomotor.models.sensory_models.sensory_model import SensoryOutput
 from oculomotor.models.plant_models.readout import rotation_matrix
 from oculomotor.models.plant_models.muscle_geometry import (
     M_NUCLEUS, M_NERVE_PROJ, G_NUCLEUS_DEFAULT, G_NERVE_DEFAULT,
@@ -322,9 +322,9 @@ def make_x0(brain_params=None):
     x0 = x0.at[_IDX_GRAV].set(ge.X0)   # [G0,0,0, 0,0,0] — upright gravity, zero linear accel
     if brain_params is not None:
         # VS: both populations start at resting bias; null starts at 0.
-        b6 = jnp.broadcast_to(jnp.asarray(brain_params.b_vs, dtype=jnp.float32), (6,))
-        x0 = x0.at[_IDX_VS_L].set(b6[:3])
-        x0 = x0.at[_IDX_VS_R].set(b6[3:])
+        # b_vs is (6,) float32 — normalised by simulate() before this is called.
+        x0 = x0.at[_IDX_VS_L].set(brain_params.b_vs[:3])
+        x0 = x0.at[_IDX_VS_R].set(brain_params.b_vs[3:])
         # _IDX_VS_NULL stays at 0 (no initial adaptation)
         # NI: b_ni populations (b_ni=0 default → stays zero)
         # _IDX_NI_L/R/NULL all stay at 0
@@ -472,13 +472,10 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
     motor_ec_okr     = ec.read_delayed(x_ec_okr)
 
     # ── Velocity storage + gravity estimator + OCR ───────────────────────────
-    # Canal velocity for gravity transport (decays with tau_c~5s).
-    canal_vel = PINV_SENS @ sensory_out.canal
-
-    okr      = percept.scene_slip + motor_ec_okr * percept.scene_visible
-    g_est_now = x_grav[ge._IDX_G]   # (3,) gravity estimate from GE state (first 3 of 6)
+    okr       = percept.scene_slip + motor_ec_okr * percept.scene_visible
+    g_est_now = x_grav[ge._IDX_G]   # (3,) g_est only — x_grav is 6 elements [g_est | a_lin]
     dx_vs,   w_est = vs.step(x_vs,   jnp.concatenate([sensory_out.canal, okr, g_est_now, sensory_out.otolith]), brain_params)
-    dx_grav, g_est = ge.step(x_grav, jnp.concatenate([canal_vel, sensory_out.otolith]), brain_params)
+    dx_grav, g_est, a_lin = ge.step(x_grav, jnp.concatenate([sensory_out.otolith, w_est]), brain_params)
     # OCR: world frame [x=right, y=up, z=fwd]. Right-ear-down → g_est[0] < 0 → -g_est[0] > 0.
     # Positive motor roll = left-ear-down (left-hand rule); negative = right-ear-down (same as head tilt).
     # Partial compensatory: eyes roll right-ear-down when head is right-ear-down (−g_est[0] < 0 → roll < 0).

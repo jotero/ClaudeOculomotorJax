@@ -371,6 +371,11 @@ def simulate(
     dt  = cfg.dt_solve
     T   = len(t_array)
 
+    # ── Normalise scalar parameters to their required array shapes ────────────
+    # Done once here so ODE step functions receive ready-to-use arrays.
+    b_vs_6 = jnp.broadcast_to(jnp.asarray(params.brain.b_vs, dtype=jnp.float32), (6,))
+    params = params._replace(brain=params.brain._replace(b_vs=b_vs_6))
+
     # ── Default trajectories ──────────────────────────────────────────────────
     if head is None:
         head = build_kinematics(t_array)

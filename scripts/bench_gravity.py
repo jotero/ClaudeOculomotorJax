@@ -35,7 +35,7 @@ SHOW = '--show' in sys.argv
 DT   = 0.001
 G0   = 9.81
 
-K_GD   = 0.5
+K_GD   = 0.05 * (180 / 3.14159265)   # 0.05 rad/s² → deg/s² ≈ 2.86
 K_GRAV = 0.6
 G_OCR  = 10.0 / 9.81   # OCR gain (deg/(m/s²)): ~10° at 90° tilt (Howard & Templeton 1966)
 
@@ -349,21 +349,17 @@ def _tilt_suppression(show):
         if t_fit is not None:
             axes[0].plot(t_fit, y_fit, color=col, lw=2.5, ls=':', alpha=0.9)
 
-        # Stimulus panel (plot once; all conditions share same yaw, differ only in roll)
-        axes[2].plot(t_rel, head_km.rot_pos[:, 2], color=col, lw=1.5,
-                     label=f'{tilt_deg:.0f}° roll')
+        # Stimulus panel: 3D head velocity — yaw (shared) and roll (per condition)
+        if ci == 0:
+            axes[2].plot(t_rel, hv_yaw_base, color='#333333', lw=1.5, ls='--',
+                         label='Yaw vel (all cond.)')
+        axes[2].plot(t_rel, hv_roll, color=col, lw=1.5, ls='-',
+                     label=f'Roll vel {tilt_deg:.0f}°')
 
-    # Stimulus panel: right axis = yaw velocity (identical for all → plot once)
-    ax_stim2 = axes[2].twinx()
-    ax_stim2.plot(t_rel, hv_yaw_base, 'k--', lw=1.2, alpha=0.6, label='Head yaw velocity (all cond.)')
-    ax_stim2.set_ylabel('Head yaw velocity (°/s)', fontsize=8, color='gray')
-    ax_stim2.tick_params(axis='y', labelcolor='gray')
-    axes[2].set_ylabel('Head roll orientation (°)', fontsize=8)
-    axes[2].set_title('Stimulus: upright yaw rotation (dashed, right axis); '
-                      'post-stop roll tilt (solid, left axis, per condition)', fontsize=9)
-    lines_l, labels_l = axes[2].get_legend_handles_labels()
-    lines_r, labels_r = ax_stim2.get_legend_handles_labels()
-    axes[2].legend(lines_l + lines_r, labels_l + labels_r, fontsize=7, ncol=2, loc='upper left')
+    axes[2].set_ylabel('Head velocity (°/s)', fontsize=8)
+    axes[2].set_title('Stimulus: head velocity 3D — yaw (dashed, shared); roll (solid, per condition)',
+                      fontsize=9)
+    axes[2].legend(fontsize=7, ncol=2, loc='upper left')
 
     xlim = (-ROT_T - 2.0, max_tilt_dur + COAST_T + 2.0)
     for ax in axes:

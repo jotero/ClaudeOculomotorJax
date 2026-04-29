@@ -66,8 +66,8 @@ X0 = jnp.array([0.0, G0, 0.0, 0.0, 0.0, 0.0])
 # ── State layout ────────────────────────────────────────────────────────────────
 
 N_STATES  = 6   # [g_est (3,) | a_lin (3,)]
-N_INPUTS  = 6   # [w_est (3,) | f_otolith (3,)]
-N_OUTPUTS = 3   # g_est  (first 3 states)
+N_INPUTS  = 6   # [f_otolith (3,) | w_est (3,)]
+N_OUTPUTS = 6   # [g_est (3,) | a_lin (3,)]
 
 # Slice indices within x_grav
 _IDX_G = slice(0, 3)
@@ -83,25 +83,26 @@ def step(x_grav, u, brain_params):
                                   upright rest: [0, +9.81, 0]
                            a_lin: linear acceleration estimate, same world frame (m/s²)
                                   zero at rest
-        u:           (6,)  [w_est (3, deg/s) | f_otolith (3, m/s²)]
-                           w_est:     angular velocity from canal, world [yaw, pitch, roll] (deg/s)
+        u:           (6,)  [f_otolith (3, m/s²) | w_est (3, deg/s)]
                            f_otolith: specific force (GIA) from otolith, world frame (m/s²)
                                       [x=right, y=up, z=fwd]; upright rest: [0, +9.81, 0]
+                           w_est:     angular velocity estimate from VS, world [yaw, pitch, roll] (deg/s)
         brain_params: BrainParams  (reads K_grav, K_lin)
 
     Returns:
         dx_grav: (6,)  d[ĝ; â]/dt  — world frame
         g_est:   (3,)  current gravity estimate ĝ (= x_grav[:3], passed through)
+        a_lin:   (3,)  current linear acceleration estimate (= x_grav[3:], passed through)
     """
     g_est     = x_grav[_IDX_G]  # gravity estimate,              world frame (m/s²)
     a_lin     = x_grav[_IDX_A]  # linear acceleration estimate,  world frame (m/s²)
-    w_est     = u[:3]            # angular velocity, world [yaw, pitch, roll] (deg/s)
-    f_otolith = u[3:]            # otolith GIA,      world frame [x=right, y=up, z=fwd] (m/s²)
+    f_otolith = u[:3]            # otolith GIA,      world frame [x=right, y=up, z=fwd] (m/s²)
+    w_est     = u[3:]            # angular velocity from VS, world [yaw, pitch, roll] (deg/s)
 
     # Unexplained residual: GIA minus both estimates
     residual = f_otolith - a_lin - g_est
 
-    # Transport: rotate gravity estimate with head motion (canal-driven)
+    # Transport: rotate gravity estimate with VS angular velocity estimate
     # ypr_to_xyz converts [yaw,pitch,roll] → xyz rotation-axis vector for cross product
     w_rad_xyz = jnp.radians(ypr_to_xyz(w_est))
     transport = -jnp.cross(w_rad_xyz, g_est)
@@ -112,4 +113,4 @@ def step(x_grav, u, brain_params):
     # Linear acceleration adaptation: absorb slowly-varying non-gravity GIA
     da = brain_params.K_lin * residual
 
-    return jnp.concatenate([dg, da]), g_est
+    return jnp.concatenate([dg, da]), g_est, a_lin
