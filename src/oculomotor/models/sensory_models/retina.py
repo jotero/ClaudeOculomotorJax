@@ -11,7 +11,7 @@ Two responsibilities:
      delay of tau_vis seconds.  With N_STAGES=40 and tau_vis=0.08 s:
          Mean delay = 0.08 s,  std ≈ 0.013 s,  −3 dB BW ≈ 66 Hz
 
-     Eight signals are delayed in the SINGLE CYCLOPEAN cascade (binocular
+     Nine signals are delayed in the SINGLE CYCLOPEAN cascade (binocular
      fusion happens BEFORE the delay in cyclopean_vision.pre_delay_fusion):
          Signal 0 — scene_angular_vel  (3,)  cyclopean rotational optic flow  → OKR / VS
          Signal 1 — scene_linear_vel   (3,)  cyclopean translational optic flow → looming
@@ -21,21 +21,23 @@ Two responsibilities:
          Signal 5 — scene_visible      (1,)  delay(scene_present) — cyclopean
          Signal 6 — target_visible     (1,)  delay(target_present × target_in_vf) — cyclopean
          Signal 7 — target_motion_vis  (1,)  delay(target_visible × (1−strobe)) — pursuit gate
+         Signal 8 — target_fusable     (1,)  delay(NPC fusion gate) — binocular fusability
 
-     State layout (720,):
+     State layout (760,):
          [scene_angular_vel(120) | scene_linear_vel(120) | target_pos(120)
           | target_vel(120) | target_disparity(120)
-          | scene_visible(40) | target_visible(40) | target_motion_visible(40)]
+          | scene_visible(40) | target_visible(40) | target_motion_visible(40) | target_fusable(40)]
 
      Module-level readout matrices (exported for sensory_model / efference copy):
-         C_slip             (3, 720)  last stage of scene_angular_vel cascade
-         C_scene_linear_vel (3, 720)  last stage of scene_linear_vel cascade
-         C_pos              (3, 720)  last stage of target_pos cascade
-         C_vel              (3, 720)  last stage of target_vel cascade
-         C_target_disp      (3, 720)  last stage of target_disparity cascade
-         C_scene_visible    (1, 720)  last stage of scene_visible cascade
-         C_target_visible   (1, 720)  last stage of target_visible cascade
-         C_target_motion_visible (1, 720)  last stage of target_motion_visible cascade
+         C_slip             (3, 760)  last stage of scene_angular_vel cascade
+         C_scene_linear_vel (3, 760)  last stage of scene_linear_vel cascade
+         C_pos              (3, 760)  last stage of target_pos cascade
+         C_vel              (3, 760)  last stage of target_vel cascade
+         C_target_disp      (3, 760)  last stage of target_disparity cascade
+         C_scene_visible    (1, 760)  last stage of scene_visible cascade
+         C_target_visible   (1, 760)  last stage of target_visible cascade
+         C_target_motion_visible (1, 760)  last stage of target_motion_visible cascade
+         C_target_fusable   (1, 760)  last stage of target_fusable cascade
 """
 
 import jax
@@ -50,20 +52,21 @@ N_STAGES      = 40    # cascade depth (stages per signal)
 _N_SIG        = 5     # number of 3-D signals: scene_angular_vel, scene_linear_vel, target_pos, target_vel, target_disparity
 _N_PER_SIG    = N_STAGES * 3     # 120  states per 3-D signal
 _N_SCALAR     = N_STAGES         # 40   states per scalar signal
-N_STATES      = _N_SIG * _N_PER_SIG + 3 * _N_SCALAR  # 5*120 + 3*40 = 720
+N_STATES      = _N_SIG * _N_PER_SIG + 4 * _N_SCALAR  # 5*120 + 4*40 = 760
 
-# ── State offsets (3-D signals) ─────────────────────────────────────────────────
+# ── State offsets ───────────────────────────────────────────────────────────────
 # State layout: [scene_angular_vel(120) | scene_linear_vel(120) | target_pos(120)
 #                | target_vel(120) | target_disparity(120)
-#                | scene_visible(40) | target_visible(40) | target_motion_visible(40)]
+#                | scene_visible(40) | target_visible(40) | target_motion_visible(40) | target_fusable(40)]
 
-_OFF_SCENE_LINEAR = _N_PER_SIG                        # 120
-_OFF_TARGET_POS   = 2 * _N_PER_SIG                    # 240
-_OFF_TARGET_VEL   = 3 * _N_PER_SIG                    # 360
-_OFF_TARGET_DISP  = 4 * _N_PER_SIG                    # 480  NEW: target disparity cascade
-_OFF_SCENE_VIS    = 5 * _N_PER_SIG                    # 600
-_OFF_TARGET_VIS   = _OFF_SCENE_VIS  + _N_SCALAR       # 640
-_OFF_STROBED      = _OFF_TARGET_VIS + _N_SCALAR       # 680
+_OFF_SCENE_LINEAR    = _N_PER_SIG                            # 120
+_OFF_TARGET_POS      = 2 * _N_PER_SIG                        # 240
+_OFF_TARGET_VEL      = 3 * _N_PER_SIG                        # 360
+_OFF_TARGET_DISP     = 4 * _N_PER_SIG                        # 480
+_OFF_SCENE_VIS       = 5 * _N_PER_SIG                        # 600
+_OFF_TARGET_VIS      = _OFF_SCENE_VIS    + _N_SCALAR          # 640
+_OFF_STROBED         = _OFF_TARGET_VIS   + _N_SCALAR          # 680
+_OFF_TARGET_FUSABLE  = _OFF_STROBED      + _N_SCALAR          # 720
 
 # ── Readout matrices ────────────────────────────────────────────────────────────
 # Exported so sensory_model / efference_copy can read cascade outputs directly.
@@ -73,9 +76,10 @@ C_scene_linear_vel = jnp.zeros((3, N_STATES)).at[:, 2*_N_PER_SIG-3      : 2*_N_P
 C_pos              = jnp.zeros((3, N_STATES)).at[:, 3*_N_PER_SIG-3      : 3*_N_PER_SIG      ].set(jnp.eye(3))
 C_vel              = jnp.zeros((3, N_STATES)).at[:, 4*_N_PER_SIG-3      : 4*_N_PER_SIG      ].set(jnp.eye(3))
 C_target_disp      = jnp.zeros((3, N_STATES)).at[:, 5*_N_PER_SIG-3      : 5*_N_PER_SIG      ].set(jnp.eye(3))
-C_scene_visible    = jnp.zeros((1, N_STATES)).at[0, _OFF_SCENE_VIS  + _N_SCALAR - 1          ].set(1.0)
-C_target_visible   = jnp.zeros((1, N_STATES)).at[0, _OFF_TARGET_VIS + _N_SCALAR - 1          ].set(1.0)
-C_target_motion_visible = jnp.zeros((1, N_STATES)).at[0, _OFF_STROBED + _N_SCALAR - 1].set(1.0)
+C_scene_visible    = jnp.zeros((1, N_STATES)).at[0, _OFF_SCENE_VIS     + _N_SCALAR - 1].set(1.0)
+C_target_visible   = jnp.zeros((1, N_STATES)).at[0, _OFF_TARGET_VIS    + _N_SCALAR - 1].set(1.0)
+C_target_motion_visible = jnp.zeros((1, N_STATES)).at[0, _OFF_STROBED   + _N_SCALAR - 1].set(1.0)
+C_target_fusable   = jnp.zeros((1, N_STATES)).at[0, _OFF_TARGET_FUSABLE + _N_SCALAR - 1].set(1.0)
 
 
 # ── Coordinate helpers ──────────────────────────────────────────────────────────
@@ -107,8 +111,9 @@ def xyz_to_ypr(v):
 # ── Geometry ────────────────────────────────────────────────────────────────────
 
 def world_to_retina(p_target, eye_offset_head, q_head, w_head, x_head,
-                    q_eye, w_eye, w_scene, v_scene, dp_dt, vf_limit, k_vf):
-    """Compute instantaneous retinal signals and visual-field gate.
+                    q_eye, w_eye, w_scene, v_scene, dp_dt,
+                    scene_present, target_present, vf_limit, k_vf):
+    """Compute instantaneous retinal signals and per-eye visibility gates.
 
     Angular outputs (scene_angular_vel, target_vel) are in EYE coordinates
     [yaw, pitch, roll] (deg/s).  scene_linear_vel is in eye-frame xyz [right,
@@ -134,6 +139,8 @@ def world_to_retina(p_target, eye_offset_head, q_head, w_head, x_head,
     w_scene:         scene angular velocity [yaw,pitch,roll] (deg/s, world frame)
     v_scene:         scene linear velocity  [x,y,z]          (m/s,   world frame)
     dp_dt:           target Cartesian velocity [x,y,z] (m/s, world frame)
+    scene_present:   scalar ∈ [0,1] — is the scene lit for this eye?
+    target_present:  scalar ∈ [0,1] — is the target visible (not occluded) for this eye?
     vf_limit:        visual field half-width (deg)
     k_vf:            visual field gate sigmoid steepness (1/deg)
 
@@ -164,7 +171,8 @@ def world_to_retina(p_target, eye_offset_head, q_head, w_head, x_head,
         scene_angular_vel:(3,)   rotational optic flow [yaw,pitch,roll] (deg/s)
         scene_linear_vel: (3,)   translational optic flow [x,y,z] (m/s, eye frame)
         target_vel:       (3,)   target velocity on retina [yaw,pitch,roll] (deg/s)
-        target_in_vf:     scalar geometric visual-field gate ∈ [0, 1]
+        scene_vis:        scalar scene presence gate = scene_present ∈ [0,1]
+        target_vis:       scalar combined target gate = target_present × target_in_vf ∈ [0,1]
     """
     # ── Rotation matrices ─────────────────────────────────────────────────────
     R_head   = rotation_matrix(ypr_to_xyz(q_head))   # world ← head
@@ -198,11 +206,13 @@ def world_to_retina(p_target, eye_offset_head, q_head, w_head, x_head,
     target_vel        = xyz_to_ypr(R_gaze_T @ (vt_xyz - w_eye_world))        # [yaw,pitch,roll] deg/s
     target_vel        = target_vel.at[2].set(0.0)   # retina is 2D: target translates H/V only
 
-    # ── Visual-field gate ─────────────────────────────────────────────────────
-    e_mag  = jnp.linalg.norm(target_pos) + 1e-9
+    # ── Visibility gates ──────────────────────────────────────────────────────
+    e_mag      = jnp.linalg.norm(target_pos) + 1e-9
     target_in_vf = 1.0 - jax.nn.sigmoid(k_vf * (e_mag - vf_limit))
+    scene_vis  = jnp.asarray(scene_present, dtype=jnp.float32)
+    target_vis = jnp.asarray(target_present, dtype=jnp.float32) * target_in_vf
 
-    return target_pos, scene_angular_vel, scene_linear_vel, target_vel, target_in_vf
+    return target_pos, scene_angular_vel, scene_linear_vel, target_vel, scene_vis, target_vis
 
 
 # ── Delay cascade ───────────────────────────────────────────────────────────────

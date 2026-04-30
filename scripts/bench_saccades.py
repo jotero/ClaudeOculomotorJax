@@ -361,10 +361,10 @@ def _cascade(show):
         if ci == 0: axes[4, ci].legend(fontsize=7)
 
         # ── Pursuit / OKR signal chain (rows 5–7) ────────────────────────────
-        x_vis_L      = np.array(st.sensory[:, _IDX_VIS_L])          # (T, 720) cyclopean cascade
-        vel_del      = x_vis_L @ np.array(C_vel_sm).T                # (T, 3) delayed target vel
-        slip_del     = x_vis_L @ np.array(C_slip_sm).T               # (T, 3) delayed scene slip
-x_purs       = np.array(st.brain[:, _IDX_PURSUIT])           # (T, 3) pursuit memory
+        x_vis_L      = np.array(st.sensory[:, _IDX_VIS_L])          # (T, 760) cyclopean cascade
+        vel_del      = x_vis_L @ np.array(C_vel_sm).T                # (T, 3) delayed target vel (EC pre-applied)
+        slip_del     = x_vis_L @ np.array(C_slip_sm).T               # (T, 3) delayed scene slip (EC pre-applied)
+        x_purs       = np.array(st.brain[:, _IDX_PURSUIT])           # (T, 3) pursuit memory
 
         # Row 5: raw delayed velocities
         axes[5, ci].plot(t_np, vel_del[:, 0],  color='darkorange', lw=1.2, label='tgt_vel')
@@ -372,11 +372,11 @@ x_purs       = np.array(st.brain[:, _IDX_PURSUIT])           # (T, 3) pursuit me
         ax_fmt(axes[5, ci])
         if ci == 0: axes[5, ci].legend(fontsize=7)
 
-        # Row 6: EC-corrected + saturated (pursuit path uses pursuit EC; OKR path uses OKR EC)
-        tgt_ec_sat   = _vel_sat_np(vel_del  + motor_ec_pu,  THETA.brain.v_max_pursuit)
-        scene_ec_sat = _vel_sat_np(slip_del + motor_ec_okr, THETA.brain.v_max_okr)
-        axes[6, ci].plot(t_np, tgt_ec_sat[:, 0],   color='#7b2d8b', lw=1.2, label='tgt−EC (sat)')
-        axes[6, ci].plot(t_np, scene_ec_sat[:, 0],  color='#1a7a4a', lw=1.2, label='scene−EC (sat)')
+        # Row 6: saturated — EC correction is pre-delay so cascade outputs already include it
+        tgt_ec_sat   = _vel_sat_np(vel_del,  THETA.sensory.v_max_target_vel)
+        scene_ec_sat = _vel_sat_np(slip_del, THETA.sensory.v_max_scene_vel)
+        axes[6, ci].plot(t_np, tgt_ec_sat[:, 0],   color='#7b2d8b', lw=1.2, label='tgt (sat)')
+        axes[6, ci].plot(t_np, scene_ec_sat[:, 0],  color='#1a7a4a', lw=1.2, label='scene (sat)')
         ax_fmt(axes[6, ci])
         if ci == 0: axes[6, ci].legend(fontsize=7)
 

@@ -300,26 +300,30 @@ def step(x_sensory,
     dx_c,   _ = _canal.step(x_c,   w_head, sensory_params)
     dx_oto, _ = _otolith.step(x_oto, jnp.concatenate([a_head, q_head]), sensory_params)
 
-    # World → retina projection (one call per eye; geometry lives in retina.py)
-    target_pos_L, scene_angular_vel_L, scene_linear_vel_L, target_vel_L, target_in_vf_L = \
+    # World → retina projection (one call per eye; geometry + visibility live in retina.py)
+    target_pos_L, scene_angular_vel_L, scene_linear_vel_L, target_vel_L, scene_vis_L, target_vis_L = \
         _retina.world_to_retina(
             p_target, eye_off_L, q_head, w_head, x_head,
             q_eye_L, w_eye_L, w_scene, v_scene, dp_dt,
+            scene_present_L, target_present_L,
             sensory_params.visual_field_limit, sensory_params.k_visual_field)
 
-    target_pos_R, scene_angular_vel_R, scene_linear_vel_R, target_vel_R, target_in_vf_R = \
+    target_pos_R, scene_angular_vel_R, scene_linear_vel_R, target_vel_R, scene_vis_R, target_vis_R = \
         _retina.world_to_retina(
             p_target, eye_off_R, q_head, w_head, x_head,
             q_eye_R, w_eye_R, w_scene, v_scene, dp_dt,
+            scene_present_R, target_present_R,
             sensory_params.visual_field_limit, sensory_params.k_visual_field)
+
+    # Strobe gate: applied here so cyclopean fusion only receives _visible signals
+    target_motion_vis_L = target_vis_L * (1.0 - target_strobed)
+    target_motion_vis_R = target_vis_R * (1.0 - target_strobed)
 
     # Pre-delay cyclopean fusion + cascade advance (single call)
     dx_vis = _cv.step(
         x_vis,
-        scene_angular_vel_L, scene_linear_vel_L, target_pos_L, target_vel_L, target_in_vf_L,
-        scene_angular_vel_R, scene_linear_vel_R, target_pos_R, target_vel_R, target_in_vf_R,
-        scene_present_L, target_present_L,
-        scene_present_R, target_present_R,
-        target_strobed, sensory_params, ec_vel, ec_pos, ec_verg)
+        scene_angular_vel_L, scene_linear_vel_L, target_pos_L, target_vel_L, scene_vis_L, target_vis_L, target_motion_vis_L,
+        scene_angular_vel_R, scene_linear_vel_R, target_pos_R, target_vel_R, scene_vis_R, target_vis_R, target_motion_vis_R,
+        sensory_params, ec_vel, ec_pos, ec_verg)
 
     return jnp.concatenate([dx_c, dx_oto, dx_vis])
