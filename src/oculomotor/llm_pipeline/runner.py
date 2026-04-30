@@ -168,7 +168,7 @@ def _build_params(patient: Patient):
         K_verg          = patient.K_verg,
         K_phasic_verg   = patient.K_phasic_verg,
         tau_verg        = patient.tau_verg,
-        phoria          = jnp.array(patient.phoria, dtype=float),
+        tonic_verg      = patient.tonic_verg,
         g_nucleus       = jnp.array(patient.g_nucleus, dtype=jnp.float32),
         g_nerve         = jnp.array(patient.g_nerve,   dtype=jnp.float32),
         g_mlf_ver_L     = patient.g_mlf_ver_L,
@@ -413,10 +413,10 @@ def _draw_panel(ax, panel_name: str, t: np.ndarray, sig: dict,
     elif panel_name == 'vergence':
         ax.plot(t, sig['vergence'][:, 0],  color='#1b7837', lw=1.5, label='Vergence angle')
         ax.plot(t, sig['x_verg'][:, 0],    color='#762a83', lw=1.0, ls=':', label='Vergence integrator')
-        phoria_val = scenario.patient.phoria[0]
-        if abs(phoria_val) > 0.1:
-            ax.axhline(phoria_val, color='#ff8c00', lw=1.0, ls='--',
-                       label=f'Phoria ({phoria_val:+.1f}°)')
+        tonic_val = scenario.patient.tonic_verg
+        if abs(tonic_val) > 0.1:
+            ax.axhline(tonic_val, color='#ff8c00', lw=1.0, ls='--',
+                       label=f'Tonic verg ({tonic_val:+.1f}°)')
         ax.legend(fontsize=6, loc='upper right')
         ax.set_ylabel('Vergence angle (deg)', fontsize=8)
 

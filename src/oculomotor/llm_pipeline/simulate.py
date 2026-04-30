@@ -158,14 +158,14 @@ time to settle and provides a clear pre-stimulus reference in the figure.
   ... (same target / scene / visual as rightward)
 
 ### Alternating cover test (esophoric patient, target at 2 m, 25 s):
-  # Baseline 5 s → cover R eye 10 s (R drifts toward phoria) → uncover 10 s (re-fusion saccade)
+  # Baseline 5 s → cover R eye 10 s (R drifts toward tonic_verg) → uncover 10 s (re-fusion saccade)
   head:   [{duration_s: 25}]
   target: [{duration_s: 25, lin_z_0: 2.0}]
   scene:  [{duration_s: 25}]
   visual: [{duration_s: 5},
            {duration_s: 10, target_present_L: true, target_present_R: false},
            {duration_s: 10}]
-  patient: {phoria: [8, 0, 0]}
+  patient: {tonic_verg: 8.0}   # elevated tonic drive = esophoric resting state
   plot: {panels: ["visual_flags", "eye_position", "vergence"]}
 
 ### VOR step in the dark (5 s rotation + 15 s coast):
@@ -253,7 +253,7 @@ All defaults match the healthy model. Only specify parameters that differ from h
 | tau_ni_adapt (s) | 20.0 | NI null adaptation. Controls rebound nystagmus amplitude after eccentric gaze |
 | K_verg (1/s) | 4.0 | Vergence integration gain. Reduce for convergence insufficiency |
 | tau_verg (s) | 25.0 | Vergence leak TC. Short → vergence can't hold |
-| phoria [H,V,T] (deg) | [0,0,0] | Resting vergence at rest. >0 = esophoria, <0 = exophoria |
+| tonic_verg (deg) | 3.67 | Tonic (brainstem) vergence baseline. 3.67° ≈ 1 m dark vergence. Increase for esophoric patients |
 
 ### Cranial nerve and MLF lesions — use ONLY the parameters below, not VN/cerebellar params
 
@@ -288,7 +288,7 @@ The table below maps all conditions to parameters — use it:
 | Pursuit deficit (cerebellar) | K_pursuit=0.3, K_phasic_pursuit=1.0, tau_pursuit=8 |
 | Rebound nystagmus | tau_ni_adapt=10.0 |
 | PAN | tau_vs_adapt=45.0 |
-| Esophoria / cover test | phoria=[8,0,0] |
+| Esophoria / cover test | tonic_verg=8.0 |
 | Left INO | g_mlf_ver_L=0.0 |
 | Right INO | g_mlf_ver_R=0.0 |
 | Bilateral INO | g_mlf_ver_L=0.0, g_mlf_ver_R=0.0 |

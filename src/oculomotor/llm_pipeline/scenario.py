@@ -152,7 +152,7 @@ class VisualFlagsSegment(BaseModel):
                      Shorthand: sets BOTH eyes simultaneously.
     target_present_L / target_present_R = per-eye override (cover test).
                      None (default) = inherit from target_present.
-                     False = that eye is covered (eye patch) → vergence leaks toward phoria.
+                     False = that eye is covered (eye patch) → vergence leaks toward tonic_verg.
 
     Scene MOTION is specified via scene BodySegment rot_yaw_vel — NOT here.
 
@@ -277,15 +277,13 @@ class Patient(BaseModel):
     K_phasic_verg: float              = Field(default=1.0,
         description="Vergence direct feedthrough (dim'less). Healthy ~1. Controls fast vergence onset.")
     tau_verg:      float              = Field(default=6.0,
-        description="Vergence position leak TC (s). Healthy ~5–7 s [Semmlow 1986]. Short → fast phoria drift when fusion breaks.")
-    phoria: Annotated[list[float], Field(min_length=3, max_length=3)] = Field(
-        default=[0.0, 0.0, 0.0],
+        description="Vergence position leak TC (s). Healthy ~5–7 s [Semmlow 1986]. Short → fast dark-vergence drift when fusion breaks.")
+    tonic_verg:    float              = Field(default=3.67,
         description=(
-            "Resting vergence angle [H, V, torsion] (deg) when binocular fusion is absent. "
-            "phoria[0] > 0 = esophoria (over-convergence tendency); "
-            "phoria[0] < 0 = exophoria (divergence tendency). "
-            "Healthy = [0,0,0] (orthophoria). "
-            "Cover test reveals phoria: cover one eye, vergence leaks toward phoria."
+            "Tonic (brainstem) vergence baseline (deg). Resting dark-vergence position. "
+            "3.67° ≈ 1 m (IPD=64 mm); Riggs & Niehl 1960. "
+            "Increase for esophoric patients (over-convergent resting state); decrease for exophoric. "
+            "Note: phoria is a clinical *measurement* (cover-test outcome); tonic_verg is the model parameter."
         )
     )
 
@@ -411,12 +409,11 @@ class Patient(BaseModel):
             raise ValueError(f'{info.field_name} must be ≥ 0')
         return v
 
-    @field_validator('phoria')
+    @field_validator('tonic_verg')
     @classmethod
-    def _check_phoria(cls, v):
-        for i, p in enumerate(v):
-            if abs(p) > 30:
-                raise ValueError(f'phoria[{i}]={p} deg is extreme (>30 deg); typical range ±15 deg')
+    def _check_tonic_verg(cls, v):
+        if v < -10 or v > 30:
+            raise ValueError(f'tonic_verg={v} deg is extreme; typical range 0–10° (0=diverged, 3.67°=1m)')
         return v
 
 
@@ -511,7 +508,7 @@ class SimulationScenario(BaseModel):
         visual: [{duration_s: 3},                             ← both eyes open
                  {duration_s: 15, target_present_L: true, target_present_R: false},  ← cover R
                  {duration_s: 7}]                             ← uncover, re-fusion
-        patient: {phoria: [8, 0, 0]}                          ← 8° esophoria
+        patient: {tonic_verg: 8.0}                            ← elevated tonic drive = esophoric
         plot: {panels: ['eye_position', 'vergence']}
 
     Gaze-evoked nystagmus (lit room — requires BOTH leaky NI AND bad pursuit):

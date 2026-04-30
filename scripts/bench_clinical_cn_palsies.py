@@ -169,55 +169,53 @@ def _nine_position(show):
         print(f'    {cond_name}')
 
     # ── Plot ──────────────────────────────────────────────────────────────────
-    # 4×4 grid: each condition occupies one column of 2 stacked panels
-    # (top = L eye, bottom = R eye), laid out as 2 condition-rows of 4.
-    fig, axes = plt.subplots(4, 4, figsize=(16, 14))
+    fig, axes = plt.subplots(2, 4, figsize=(16, 8))
+    axes_flat  = axes.flatten()
 
     lim_h = H_DEG + 8
     lim_v = V_DEG + 7
-    names  = list(TARGETS_DEG.keys())
 
-    offsets = {'Center': (-2, 1.5), 'Right': (0.5, 1), 'Left': (-5, 1),
-               'Up': (-2, 1.5), 'Down': (-2, -2.5),
-               'Up-Right': (0.5, 1), 'Up-Left': (-6, 1),
-               'Down-Right': (0.5, -2.5), 'Down-Left': (-6, -2.5)}
-
-    for i, ((cond_name, _), results) in enumerate(zip(CONDITIONS_9POS, all_results)):
+    for i, (ax, (cond_name, _), results) in enumerate(
+            zip(axes_flat, CONDITIONS_9POS, all_results)):
+        names = list(TARGETS_DEG.keys())
         L = np.array([results[n][0] for n in names])  # (9, 2)
         R = np.array([results[n][1] for n in names])  # (9, 2)
 
-        row_l = (i // 4) * 2      # 0 for conditions 0-3, 2 for conditions 4-7
-        row_r = row_l + 1
-        col   = i % 4
-        ax_l  = axes[row_l, col]
-        ax_r  = axes[row_r, col]
+        # Connect L–R pairs with a thin line (shows diplopia gap)
+        for j in range(len(names)):
+            ax.plot([L[j, 0], R[j, 0]], [L[j, 1], R[j, 1]],
+                    color='gray', lw=0.8, alpha=0.35, zorder=1)
 
-        for ax, pts, color, marker, eye_label in [
-            (ax_l, L, 'royalblue', 'o', 'L eye'),
-            (ax_r, R, 'crimson',   's', 'R eye'),
-        ]:
-            ax.scatter(pts[:, 0], pts[:, 1], c=color, s=55, zorder=3, marker=marker)
-            ax.axhline(0, color='k', lw=0.4, alpha=0.25)
-            ax.axvline(0, color='k', lw=0.4, alpha=0.25)
-            ax.set_xlim(-lim_h, lim_h)
-            ax.set_ylim(-lim_v, lim_v)
-            ax.set_aspect('equal')
-            ax.tick_params(labelsize=6)
-            ax.grid(True, alpha=0.12)
-            ax.set_ylabel(f'{eye_label}\nPitch (deg)', fontsize=7)
-            if ax is ax_r:
-                ax.set_xlabel('Yaw (deg)', fontsize=7)
+        ax.scatter(L[:, 0], L[:, 1], c='royalblue', s=55, zorder=3,
+                   label='L eye', marker='o')
+        ax.scatter(R[:, 0], R[:, 1], c='crimson',   s=55, zorder=3,
+                   label='R eye', marker='s')
 
-        ax_l.set_title(cond_name, fontsize=8, fontweight='bold')
-
-        # Label target positions in the first condition's L-eye panel only
+        # Label target positions in first panel
         if i == 0:
-            for j, n in enumerate(names):
-                dx, dy = offsets.get(n, (1, 1))
-                ax_l.annotate(n, xy=L[j], xytext=(L[j, 0]+dx, L[j, 1]+dy),
-                              fontsize=5.5, color='navy', alpha=0.8)
+            offsets = {'Center': (-2, 1.5), 'Right': (0.5, 1), 'Left': (-5, 1),
+                       'Up': (-2, 1.5), 'Down': (-2, -2.5),
+                       'Up-Right': (0.5, 1), 'Up-Left': (-6, 1),
+                       'Down-Right': (0.5, -2.5), 'Down-Left': (-6, -2.5)}
+            for j, name in enumerate(names):
+                dx, dy = offsets.get(name, (1, 1))
+                ax.annotate(name, xy=L[j], xytext=(L[j, 0]+dx, L[j, 1]+dy),
+                            fontsize=5.5, color='navy', alpha=0.8)
 
-    fig.suptitle('9 Positions of Gaze  –  top row: L eye (blue)  ·  bottom row: R eye (red)',
+        ax.axhline(0, color='k', lw=0.4, alpha=0.25)
+        ax.axvline(0, color='k', lw=0.4, alpha=0.25)
+        ax.set_xlim(-lim_h, lim_h)
+        ax.set_ylim(-lim_v, lim_v)
+        ax.set_aspect('equal')
+        ax.set_title(cond_name, fontsize=8, fontweight='bold')
+        ax.set_xlabel('Yaw (deg)', fontsize=7)
+        ax.set_ylabel('Pitch (deg)', fontsize=7)
+        ax.tick_params(labelsize=6)
+        ax.grid(True, alpha=0.12)
+        if i == 0:
+            ax.legend(fontsize=7, loc='lower right', markerscale=0.9)
+
+    fig.suptitle('9 Positions of Gaze  –  blue circles = L eye,  red squares = R eye',
                  fontsize=10, fontweight='bold')
     plt.tight_layout()
 
@@ -258,60 +256,52 @@ def _ino_timeseries(show):
     traj_left  = {name: _sim_saccade(p, -H_DEG, 0.0, key=42)
                   for name, p, _ in cases}
 
-    fig, axes = plt.subplots(2, 2, figsize=(13, 8), sharex=True)
+    # 4 rows × 2 cols: rows = [L pos, L vel, R pos, R vel], cols = [rightward, leftward]
+    fig, axes = plt.subplots(4, 2, figsize=(13, 12), sharex=True)
     t = T_ARR
 
     for name, _, col in cases:
         eye_r = traj_right[name]
         eye_l = traj_left[name]
-
         vel_L_r = np.gradient(eye_r[:, 0], DT)
         vel_R_r = np.gradient(eye_r[:, 3], DT)
         vel_L_l = np.gradient(eye_l[:, 0], DT)
         vel_R_l = np.gradient(eye_l[:, 3], DT)
 
-        ls_L = '--'
-        ls_R = '-'
+        axes[0, 0].plot(t, eye_r[:, 0], color=col, lw=1.3, label=name)   # L pos, rightward
+        axes[1, 0].plot(t, vel_L_r,     color=col, lw=1.2)                # L vel, rightward
+        axes[2, 0].plot(t, eye_r[:, 3], color=col, lw=1.3)                # R pos, rightward
+        axes[3, 0].plot(t, vel_R_r,     color=col, lw=1.2)                # R vel, rightward
 
-        # Rightward saccade — position
-        axes[0, 0].plot(t, eye_r[:, 0], color=col, lw=1.3, ls=ls_L, label=f'{name} L')
-        axes[0, 0].plot(t, eye_r[:, 3], color=col, lw=1.3, ls=ls_R, label=f'{name} R')
-        # Rightward saccade — velocity
-        axes[1, 0].plot(t, vel_L_r, color=col, lw=1.2, ls=ls_L)
-        axes[1, 0].plot(t, vel_R_r, color=col, lw=1.2, ls=ls_R)
+        axes[0, 1].plot(t, eye_l[:, 0], color=col, lw=1.3)                # L pos, leftward
+        axes[1, 1].plot(t, vel_L_l,     color=col, lw=1.2)                # L vel, leftward
+        axes[2, 1].plot(t, eye_l[:, 3], color=col, lw=1.3)                # R pos, leftward
+        axes[3, 1].plot(t, vel_R_l,     color=col, lw=1.2)                # R vel, leftward
 
-        # Leftward saccade — position
-        axes[0, 1].plot(t, eye_l[:, 0], color=col, lw=1.3, ls=ls_L)
-        axes[0, 1].plot(t, eye_l[:, 3], color=col, lw=1.3, ls=ls_R)
-        # Leftward saccade — velocity
-        axes[1, 1].plot(t, vel_L_l, color=col, lw=1.2, ls=ls_L)
-        axes[1, 1].plot(t, vel_R_l, color=col, lw=1.2, ls=ls_R)
+    row_labels = ['L eye pos (deg)', 'L eye vel (deg/s)', 'R eye pos (deg)', 'R eye vel (deg/s)']
+    for row, lbl in enumerate(row_labels):
+        for col in range(2):
+            ax = axes[row, col]
+            ax.axhline(0, color='k', lw=0.4, alpha=0.3)
+            ax.grid(True, alpha=0.15)
+            ax.tick_params(labelsize=7)
+            ax.set_ylabel(lbl, fontsize=8)
+        axes[row, 0].spines['right'].set_visible(False)
+        axes[row, 1].spines['left'].set_visible(False)
 
-    for ax in axes.flat:
-        ax.axhline(0, color='k', lw=0.4, alpha=0.3)
-        ax.grid(True, alpha=0.15)
-        ax.tick_params(labelsize=7)
-        ax.set_xlabel('Time (s)', fontsize=8)
+    axes[3, 0].set_xlabel('Time (s)', fontsize=8)
+    axes[3, 1].set_xlabel('Time (s)', fontsize=8)
 
-    axes[0, 0].set_ylabel('Eye yaw (deg)', fontsize=8)
-    axes[1, 0].set_ylabel('Eye yaw vel (deg/s)', fontsize=8)
-    axes[0, 1].set_ylabel('Eye yaw (deg)', fontsize=8)
-    axes[1, 1].set_ylabel('Eye yaw vel (deg/s)', fontsize=8)
+    axes[0, 0].set_title(f'Rightward {H_DEG}° saccade', fontsize=9, fontweight='bold')
+    axes[0, 1].set_title(f'Leftward {H_DEG}° saccade',  fontsize=9, fontweight='bold')
 
-    axes[0, 0].set_title(f'Rightward {H_DEG}° saccade — position', fontsize=9)
-    axes[1, 0].set_title(f'Rightward {H_DEG}° saccade — velocity', fontsize=9)
-    axes[0, 1].set_title(f'Leftward {H_DEG}° saccade — position', fontsize=9)
-    axes[1, 1].set_title(f'Leftward {H_DEG}° saccade — velocity', fontsize=9)
+    # Horizontal separator between L and R eye rows
+    for col in range(2):
+        axes[1, col].spines['bottom'].set_linewidth(1.5)
+        axes[2, col].spines['top'].set_linewidth(1.5)
 
-    for ax in axes[:, 0]:
-        ax.annotate('dashed = L eye  /  solid = R eye',
-                    xy=(0.02, 0.04), xycoords='axes fraction',
-                    fontsize=6.5, color='gray')
-
-    axes[0, 0].legend(fontsize=7, ncol=2, loc='upper left')
-
-    fig.suptitle('INO Saccade Trajectories  (dashed = L eye, solid = R eye)',
-                 fontsize=10, fontweight='bold')
+    axes[0, 0].legend(fontsize=7, loc='upper left')
+    fig.suptitle('INO Saccade Trajectories', fontsize=10, fontweight='bold')
     plt.tight_layout()
 
     path, rp = utils.save_fig(fig, 'clin_cn_ino_timeseries', show=show)
@@ -376,36 +366,38 @@ def _graded_palsy(show):
     ino_eyes = [_sim_seq(with_brain(THETA, g_mlf_ver_L=float(g)))
                 for g in gains]
 
-    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+    # 2 rows (L eye / R eye) × 2 cols (CN VI / INO)
+    fig, axes = plt.subplots(2, 2, figsize=(14, 8), sharex=True)
     fig.suptitle(
-        f'Graded Palsy Recovery — Ipsilateral (+{H_DEG}°) then Contralateral (−{H_DEG}°) Saccade\n'
-        'Scene on · Target on  |  dashed = left eye · solid = right eye',
+        f'Graded Palsy Recovery — Ipsilateral (+{H_DEG}°) then Contralateral (−{H_DEG}°) Saccade',
         fontsize=10, fontweight='bold')
 
     for g, col, cn6, ino in zip(gains, colors, cn6_eyes, ino_eyes):
         lbl = f'g={g:.2f}'
-        axes[0].plot(t, cn6[:, 0], color=col, lw=1.0, ls='--')        # L eye (fellow)
-        axes[0].plot(t, cn6[:, 3], color=col, lw=1.6, ls='-',  label=lbl)  # R eye (paretic)
-        axes[1].plot(t, ino[:, 0], color=col, lw=1.6, ls='--', label=lbl)  # L eye (adducting, affected)
-        axes[1].plot(t, ino[:, 3], color=col, lw=1.0, ls='-')          # R eye (abducting)
+        axes[0, 0].plot(t, cn6[:, 0], color=col, lw=1.3, label=lbl)   # CN VI: L eye (fellow)
+        axes[1, 0].plot(t, cn6[:, 3], color=col, lw=1.3, label=lbl)   # CN VI: R eye (paretic)
+        axes[0, 1].plot(t, ino[:, 0], color=col, lw=1.3, label=lbl)   # INO:   L eye (adducting, affected)
+        axes[1, 1].plot(t, ino[:, 3], color=col, lw=1.3, label=lbl)   # INO:   R eye (abducting)
 
-    for ax in axes:
+    for ax in axes.flat:
         ax.plot(t, tgt_yaw, color='k', lw=0.6, ls=':', alpha=0.35, label='Target')
         ax.axvline(T_IPSI,   color='gray', lw=0.7, ls='--', alpha=0.4)
         ax.axvline(T_CONTRA, color='gray', lw=0.7, ls='--', alpha=0.4)
         ax.axhline(0, color='k', lw=0.3, alpha=0.25)
         ax.grid(True, alpha=0.15)
-        ax.set_xlabel('Time (s)', fontsize=9)
         ax.set_ylabel('Eye yaw (deg)', fontsize=9)
         ax.tick_params(labelsize=7)
 
-    axes[0].set_title(f'CN VI nerve palsy (R)\n'
-                      'solid = R paretic eye · dashed = L fellow', fontsize=9)
-    axes[0].legend(title='nerve gain', fontsize=7, loc='lower left', ncol=2)
+    axes[1, 0].set_xlabel('Time (s)', fontsize=9)
+    axes[1, 1].set_xlabel('Time (s)', fontsize=9)
 
-    axes[1].set_title(f'Left INO (g_mlf_ver_L)\n'
-                      'dashed = L adducting (affected) · solid = R abducting', fontsize=9)
-    axes[1].legend(title='MLF gain', fontsize=7, loc='lower right', ncol=2)
+    axes[0, 0].set_title('CN VI nerve palsy (R) — L eye (fellow)', fontsize=9, fontweight='bold')
+    axes[1, 0].set_title('CN VI nerve palsy (R) — R eye (paretic)', fontsize=9, fontweight='bold')
+    axes[0, 1].set_title('Left INO — L eye (adducting, affected)', fontsize=9, fontweight='bold')
+    axes[1, 1].set_title('Left INO — R eye (abducting)', fontsize=9, fontweight='bold')
+
+    axes[0, 0].legend(title='nerve gain', fontsize=7, loc='lower left', ncol=3)
+    axes[0, 1].legend(title='MLF gain',   fontsize=7, loc='lower left', ncol=3)
 
     plt.tight_layout()
     path, rp = utils.save_fig(fig, 'clin_cn_graded', show=show)

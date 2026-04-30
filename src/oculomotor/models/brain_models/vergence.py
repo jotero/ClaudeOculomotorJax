@@ -1,123 +1,144 @@
-"""Vergence SSM — single leaky integrator with dual-range nonlinear drive.
+"""Vergence SSM — slow fusional drive + Zee saccade pulse + L2 cyclovergence.
 
 Drives disconjugate eye movements to align both foveas on a binocular target.
 
-Architecture:
-    One integrator state x_verg holds the tonic vergence position memory.
-    The input is a windowed (zero-outside-range) combination of two gated
-    versions of e_disp, implementing dual-range gain:
+Architecture
+────────────
+Three parallel channels sharing the same OPN gate (z_act from the version SG):
 
-            e_fus  = disp_sat(e_disp, v_sat=disp_max_verg_fus)   ← cosine rolloff 1→2 deg
-            e_prox = disp_sat(e_disp, v_sat=disp_max_verg_prox) ← cosine rolloff 20→40 deg
-            e_pred = K_verg · e_fus + K_verg_prox · e_prox     ← deg/s drive
+    1. Slow fusional drive (existing)
+       Dual-range nonlinear disparity → leaky integrator x_verg.
+       Handles steady fixation, smooth vergence, and slow refusion after saccades.
 
-    Gain profile (deg/s per deg disparity):
-        |e_disp| < 1 deg:    K_verg + K_verg_prox  [high — fusional + proximal active]
-        1–2 deg rolloff:     K_verg decays smoothly (cosine), K_verg_prox still full
-        2 < |e_disp| < 20:   K_verg_prox           [lower — fusional gone, proximal full]
-        20–40 deg rolloff:   K_verg_prox decays smoothly to zero
-        |e_disp| > 40:       0                      [outside vergence range — no drive]
+    2. Zee saccade pulse (Zee et al. 1992)
+       When OPN pauses (z_act=1), the disparity error at that instant is latched
+       into e_held_verg and a fast burst drives x_copy_verg until the residual
+       e_held_verg − x_copy_verg is exhausted.  Same ballistic logic as the
+       version SG; OPN resumes at the end of both pulses simultaneously.
+       This makes vergence 2–3× faster during combined saccade+vergence movements.
 
-Dynamics:
-    dx_verg  = −(x_verg − phoria) / τ  +  e_pred
-    u_verg   = x_verg + K_phasic · e_fus          ← phasic feedthrough from fusional range only
+    3. L2 cyclovergence (extended Listing's law; Mok et al. 1992; Tweed 1997)
+       As horizontal vergence φ grows, each eye's Listing's plane tilts ±φ/2.
+       The resulting cyclovergence demand is:
+           T_cyc = listing_l2_frac · φ · (V − V₀) · π/360
+       Added as a torsional component of the vergence drive.  Off by default
+       (listing_l2_frac=0) until validated against binocular torsion data.
 
-Phasic term (K_phasic · e_fus):
-    Provides fast vergence onset for small disparities (within fusional range).
-    Saturates at ±K_phasic · e_sat_fus for large disparities — no phasic overshoot
-    on large depth steps where the integrator drives most of the response.
+State:  x_verg_full = [x_verg(3) | e_held_verg(3) | x_copy_verg(3)]   (9 states)
 
-Steady-state gain (approximate, within fusional range):
-    CL gain ≈ G / (1 + G)   where G ≈ (K_verg + K_verg_prox) · τ + K_phasic
-    With K_verg=4, K_verg_prox=3, τ=6, K_phasic=1:  G ≈ 43 → gain ~98 %
+    x_verg      — tonic vergence position memory (deg); positive = converged
+    e_held_verg — latched 3D vergence error at saccade onset; tracks e_disp
+                  when idle (τ=5 ms), frozen during saccade burst
+    x_copy_verg — vergence copy integrator; accumulates burst velocity;
+                  burst ends when x_copy_verg reaches e_held_verg
 
-State:
-    x_verg = [H_verg, V_verg, torsional_verg]  (3,)  deg
-    Positive H = converged (eyes rotated inward for near target).
+Input:  e_disp (3,)    binocular disparity = pos_delayed_L − pos_delayed_R (deg)
+        ac_a_drive     accommodative convergence scalar (deg)
+        z_act          OPN saccade gate scalar (0=idle, 1=saccade active)
+        eye_hv  (2,)   current gaze [H, V] deg from NI net (for L2)
 
-Parameters:
-    K_verg         — fusional integration gain (1/s).  Default 4.
-                     Combined gain in fusional range = K_verg + K_verg_prox = 7 /s →
-                     convergence TC ≈ 143 ms. [Rashbass & Westheimer 1961]
-    K_verg_prox    — proximal/full-range integration gain (1/s).  Default 3.
-                     Active alone outside fusional range: TC ≈ 330 ms;
-                     initial velocity ≈ 30°/s for 10° step. [Collewijn et al. 1988]
-    K_phasic_verg  — phasic feedthrough (dim'less); default 1.
-                     Applied to fusional clip only → fast onset for small steps.
-    tau_verg       — leak TC (s); default 6 s.  Tonic vergence hold; drifts to phoria
-                     when fusion is lost. [Semmlow et al. 1986: ~5–7 s]
-                     (Schor 1979 reports ~25 s for slow fusional *adaptation*, not
-                     the integrator TC itself.)
-    disp_max_verg_fus  — fusional disparity saturation (deg); default 1 deg.
-                         Panum's fusional area ~±0.5–1 deg horizontally. [Jones 1980]
-    disp_max_verg_prox — proximal disparity saturation (deg); default 20 deg.
-                         Full physiological vergence range ~0–25 deg (≈15 deg at 40 cm,
-                         IPD 6.3 cm). [Hung & Semmlow 1980]
-    phoria         — (3,) resting vergence (deg); tonic setpoint in absence of fusion.
-                     Orthophoria = [0,0,0]; esophoria > 0; exophoria < 0.
+Output: u_verg (3,)    vergence position command → split ±½ in brain_model
+
+Parameters (added to BrainParams):
+    g_burst_verg    — vergence saccade pulse gain (deg/s per deg residual); default 1.6
+    listing_l2_frac — L2 cyclovergence fraction; default 0 (disabled)
+    D_verg          — velocity damping coefficient; dx_verg /= (1+D); default 1.0 (ξ≈0.9)
 
 References:
-    Schor CM (1979) Vision Res 19:1359–1367          — dual-range vergence model
+    Zee DS et al. (1992) J Neurophysiol 68:1624–1641  — saccade-vergence interactions
+    Mok D et al. (1992) Invest Ophthalmol Vis Sci 33:2495–2507 — L2 / Listing's plane tilt
+    Tweed D (1997) J Neurophysiol 77:2467–2479  — L2 theory
+    Schor CM (1979) Vision Res 19:1359–1367  — dual-range vergence model
     Rashbass C, Westheimer G (1961) J Physiol 159:361–364  — vergence TC ~160 ms
-    Jones R (1980) Am J Optom Physiol Opt 57:636–645  — fusional range ~±1 deg
-    Hung GK, Semmlow JL (1980) IEEE Trans Biomed Eng 27:722–728  — vergence dynamics
-    Judge SJ, Miles FA (1985) Exp Brain Res 60:184–203  — proximal/tonic TC ~500 ms
-    Semmlow JL et al. (1986) Invest Ophthalmol Vis Sci 27:558–564  — tonic vergence TC ~5–7 s
 """
 
+import jax
 import jax.numpy as jnp
 
 from oculomotor.models.sensory_models.retina import velocity_saturation as _disp_sat
 
-N_STATES  = 3   # x_verg: [H_verg, V_verg, torsional_verg]  (deg)
-N_INPUTS  = 3   # e_disp = pos_delayed_L − pos_delayed_R (deg)
-N_OUTPUTS = 3   # u_verg: vergence position command (deg)
+# Half-angle constant (same as listing.py)
+HALF_ANGLE = jnp.pi / 360.0
+
+# e_held_verg tracks disparity with this TC when idle (fast latch, matching sg e_held)
+_TAU_HOLD_VERG  = 0.005   # s
+# x_copy_verg decays to 0 between saccades so the next burst starts from a clean baseline
+_TAU_COPY_RESET = 0.5     # s
+
+N_STATES  = 9   # [x_verg(3) | e_held_verg(3) | x_copy_verg(3)]
+N_INPUTS  = 3
+N_OUTPUTS = 3
+
+_IDX_VERG      = slice(0, 3)
+_IDX_HELD_VERG = slice(3, 6)
+_IDX_COPY_VERG = slice(6, 9)
 
 
-def step(x_verg, e_disp, ac_a_drive, brain_params):
-    """Single-integrator vergence controller with dual-range nonlinear drive.
+def step(x_verg_full, e_disp, ac_a_drive, z_act, eye_hv, brain_params):
+    """Vergence step: slow fusional + Zee saccade pulse + L2 cyclovergence.
 
     Args:
-        x_verg:       (3,)   vergence position memory (deg); positive = converged
-        e_disp:       (3,)   binocular disparity = pos_delayed_L − pos_delayed_R (deg)
-                             Gated by bino = tv_L × tv_R; zero when one eye is suppressed.
-        ac_a_drive:   scalar  accommodative convergence drive (deg) from accommodation.py.
-                             Active even when e_disp=0 (suppressed / monocular) — this
-                             is the primary re-fusion mechanism in intermittent exotropia.
-        brain_params: BrainParams  (reads K_verg, K_verg_prox, K_phasic_verg, tau_verg,
-                                         disp_max_verg_fus, disp_max_verg_prox, phoria)
+        x_verg_full:  (9,)   [x_verg(3) | e_held_verg(3) | x_copy_verg(3)]
+        e_disp:       (3,)   binocular disparity = pos_L − pos_R (deg)
+                             Gated by bino = tv_L × tv_R before call.
+        ac_a_drive:   scalar  accommodative convergence drive (deg)
+        z_act:        scalar  OPN gate (0=idle, 1=saccade active); from SG state
+        eye_hv:       (2,)   current gaze [H, V] deg (x_ni_net[:2]) for L2
+        brain_params: BrainParams
 
     Returns:
-        dx_verg: (3,)  dx_verg/dt  (deg/s)
-        u_verg:  (3,)  vergence position command (deg) → split ±½ in brain_model
+        dx_verg: (9,)  state derivative
+        u_verg:  (3,)  vergence position command (deg) → split ±½ to L/R in brain_model
     """
-    # ── AC/A + disparity: total vergence error ────────────────────────────────
-    # ac_a_drive acts on the horizontal axis only; broadcast to (3,) for uniform clipping.
-    # The dual-range nonlinearity then clips the combined signal appropriately.
-    e_total = e_disp + jnp.array([ac_a_drive, 0.0, 0.0])
+    x_verg      = x_verg_full[_IDX_VERG]
+    e_held_verg = x_verg_full[_IDX_HELD_VERG]
+    x_copy_verg = x_verg_full[_IDX_COPY_VERG]
 
-    # ── Dual-range cosine-rolloff nonlinearity ──────────────────────────────────
-    # Same shape as velocity_saturation in retina.py: gain=1 below v_sat, cosine
-    # rolloff to 0 at v_zero=2×v_sat, zero beyond.  This avoids the saturation
-    # plateau that clip() creates (which drives vergence at constant max force for
-    # arbitrarily large disparities).
-    #
-    # Gain profile (based on |e_total|):
-    #   |e_total| < 1 deg:       K_verg + K_verg_prox ≈ 6/s  → TC ~160 ms [Rashbass 1961]
-    #   1 < |e_total| < 2 deg:   K_verg × rolloff + K_verg_prox  (fusional rolling off)
-    #   2 < |e_total| < 20 deg:  K_verg_prox          ≈ 1/s  → TC ~1 s    [Judge 1985]
-    #   20 < |e_total| < 40 deg: K_verg_prox × rolloff (proximal rolling off)
-    #   |e_total| > 40 deg:      0                            → no drive
-    e_fus  = _disp_sat(e_total, v_sat=brain_params.disp_max_verg_fus)
-    e_prox = _disp_sat(e_total, v_sat=brain_params.disp_max_verg_prox)
+    z_idl = 1.0 - z_act   # 1=idle, 0=saccade
 
+    # ── L2 cyclovergence demand ───────────────────────────────────────────────
+    # Listing's plane tilts ±φ/2 per eye as horizontal vergence φ grows.
+    # Net cyclovergence (L − R torsion) = φ · (V − V₀) · π/360.
+    phi   = x_verg[0]   # horizontal vergence (deg) — use state to avoid algebraic loop
+    dV    = eye_hv[1] - brain_params.listing_primary[1]
+    T_cyc = brain_params.listing_l2_frac * phi * dV * HALF_ANGLE
+    # Drive torsional component of e_disp toward the L2-demanded cyclovergence
+    e_disp_aug = e_disp.at[2].add(T_cyc - x_verg[2])
+
+    # ── Slow fusional drive ───────────────────────────────────────────────────
+    e_total = e_disp_aug + jnp.array([ac_a_drive, 0.0, 0.0])
+    e_fus  = _disp_sat(e_total, v_sat=brain_params.panum_h)
+    # Proximal (coarse) drive: smooth per-axis saturation (cosine rolloff → 0 at 2× limit).
+    # H uses prox_sat; V/T use panum_v/t. _disp_sat on a scalar = abs-based gain; no hard clip.
+    # Symmetric: divergence motor failure is handled by the diplopia gate (brain_model), not here.
+    e_prox = jnp.array([
+        _disp_sat(e_total[0:1], v_sat=brain_params.prox_sat)[0],
+        _disp_sat(e_total[1:2], v_sat=brain_params.panum_v)[0],
+        _disp_sat(e_total[2:3], v_sat=brain_params.panum_t)[0],
+    ])
     e_pred = brain_params.K_verg * e_fus + brain_params.K_verg_prox * e_prox
 
-    # Leak toward phoria (resting vergence when fusion is absent) with TC = tau_verg.
-    dx_verg = -(1.0 / brain_params.tau_verg) * (x_verg - brain_params.phoria) + e_pred
+    tonic = jnp.array([brain_params.tonic_verg, 0.0, 0.0])   # V/T tonic ≈ 0
+    dx_verg_slow = ((-(1.0 / brain_params.tau_verg) * (x_verg - tonic)
+                    + e_pred) / (1.0 + brain_params.D_verg))
+    u_verg_slow  = x_verg + brain_params.K_phasic_verg * e_fus
 
-    # Phasic feedthrough from fusional range only: fast onset for small disparity steps;
-    # saturates at ±K_phasic_verg × disp_max_verg_fus for large depth changes.
-    u_verg  = x_verg + brain_params.K_phasic_verg * e_fus
+    # ── Zee saccade pulse ─────────────────────────────────────────────────────
+    # e_held_verg: tracks disparity when idle (τ=5ms), frozen during saccade
+    de_held_verg = (e_disp_aug - e_held_verg) / _TAU_HOLD_VERG * z_idl
 
+    # Ballistic burst: fires while residual remains, stops when copy reaches held
+    e_res_verg     = e_held_verg - x_copy_verg
+    e_res_verg_mag = jnp.linalg.norm(e_res_verg)
+    gate_res_verg  = jax.nn.sigmoid(
+        brain_params.k_sac * (e_res_verg_mag - brain_params.threshold_stop))
+
+    u_verg_burst = z_act * gate_res_verg * brain_params.g_burst_verg * e_res_verg
+    # Between saccades, x_copy decays to 0 so successive saccades each get a fresh baseline;
+    # without decay, conv→div saccades carry over the accumulated copy and mis-size the burst.
+    dx_copy_verg = u_verg_burst - z_idl * x_copy_verg / _TAU_COPY_RESET
+
+    # ── Combined output ───────────────────────────────────────────────────────
+    u_verg  = u_verg_slow + u_verg_burst
+    dx_verg = jnp.concatenate([dx_verg_slow, de_held_verg, dx_copy_verg])
     return dx_verg, u_verg

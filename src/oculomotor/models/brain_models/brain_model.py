@@ -73,6 +73,7 @@ Outputs of step():
 
 from typing import NamedTuple
 
+import jax
 import jax.numpy as jnp
 
 from oculomotor.models.sensory_models.retina import velocity_saturation
@@ -251,6 +252,9 @@ class BrainParams(NamedTuple):
     listing_primary:       jnp.ndarray = jnp.zeros(2)  # primary position [yaw₀, pitch₀] (deg)
                                                          # shifts the centre of Listing's plane
                                                          # 0 = straight ahead (healthy default)
+    listing_l2_frac:       float = 0.0    # L2 cyclovergence fraction (0=off, 0.5=physiological)
+                                          # Listing's plane tilts ±l2_frac·φ/2 per eye with vergence
+                                          # Disabled until validated with binocular torsion data
 
     # Smooth pursuit — leaky integrator + Smith predictor (Lisberger 1988)
     K_pursuit:             float = 4.0    # pursuit integration gain (1/s); rise TC ≈ 1/K_pursuit
@@ -266,12 +270,46 @@ class BrainParams(NamedTuple):
     K_verg:                float        = 4.0             # fusional integration gain (1/s); high gain for fine disparity
     K_verg_prox:           float        = 3.0             # proximal integration gain (1/s); lower gain for full range
     K_phasic_verg:         float        = 1.0             # phasic feedthrough (dim'less); applied to fusional clip only
-    tau_verg:              float        = 6.0             # vergence leak TC (s); leaks to phoria [Semmlow 1986: ~5–7 s]
-    disp_max_verg_fus:     float        = 2.0             # fusional disparity saturation (deg); Panum's ~±1 deg (Jones 1980)
-    disp_max_verg_prox:    float        = 20.0            # proximal disparity saturation (deg); full vergence range (Hung & Semmlow 1980)
+    tau_verg:              float        = 6.0             # vergence leak TC (s); leaks to tonic_verg [Semmlow 1986: ~5–7 s]
+    # ── Sensory limits (relative retinal disparity — what the visual system measures) ──────
+    #    Fusion limits (Panum's area): within these, the fine slow-vergence servo is active.
+    #    Disparity limit (prox_sat): the coarse drive saturates here; beyond it the rate
+    #    is capped but the system keeps driving toward fusion.
+    #    All in disparity space, not eye-position space.
+    panum_h:               float        = 2.0             # horizontal fusion limit (deg); Panum's area; fused/fusable boundary
+                                                          # Jones (1980): ~±1° (total 2°)
+    panum_v:               float        = 3.0             # vertical fusion limit ±(deg); ~2–3° clinical norm
+                                                          # (Saladin 1988 Optom Vis Sci)
+    panum_t:               float        = 5.0             # torsional fusion limit ±(deg); ~5–8° max
+                                                          # (van Rijn & van den Berg 1993 Vision Res; Kertesz 1983)
+    prox_sat:              float        = 20.0            # disparity limit: coarse (proximal) drive saturation (deg)
+                                                          # Hung & Semmlow 1980; max disparity input to coarse drive; rate-caps beyond
+    # ── Motor limits (absolute vergence angle — eye position space) ─────────────────────────
+    #    Diplopia gate closes when total vergence demand exceeds these.
+    #    Horizontal is asymmetric (large convergence range, small divergence range).
+    #    Vertical and torsional are symmetric.
+    npc:                   float        = 50.0            # near point of convergence (deg); convergence motor limit
+                                                          # 50° ≈ NPC 7 cm (IPD=64 mm); physiological range ~40–55° for young adults
+    div_max:               float        = 6.0             # maximum divergence (deg); divergence motor limit
+                                                          # ~6° exophoria for young adults; beyond this diplopia is irrecoverable
+    vert_max:              float        = 5.0             # maximum vertical vergence ±(deg); symmetric; ~3–5° clinical range
+                                                          # beyond this vertical divergence cannot be fused (pathological skew)
+    tors_max:              float        = 8.0             # maximum cyclovergence ±(deg); symmetric; ~5–8° max
+                                                          # (van Rijn & van den Berg 1993; Kertesz 1983)
     eye_dominant:          float        = 1.0             # 1.0 = right dominant, 0.0 = left dominant
-    phoria:                jnp.ndarray  = jnp.zeros(3)    # resting vergence (deg); tonic setpoint; 0=orthophoria
-                                                          # phoria[0]>0 esophoria, <0 exophoria
+    tonic_verg:            float        = 3.67            # tonic (brainstem) vergence baseline (deg); resting dark vergence
+                                                          # = 2·arctan(IPD/2 / 1 m); recomputed from IPD in default_params()
+                                                          # Riggs & Niehl 1960, Morgan 1944: dark vergence ≈ 1 m
+                                                          # NOTE: phoria is a *measurement* (cover test outcome), not a model param;
+                                                          # it emerges from the balance of tonic, AC/A, and fusional drives
+    g_burst_verg:          float        = 1.6             # vergence saccade pulse gain (deg/s per deg residual)
+                                                          # Zee (1992): vergence 2–3× faster during saccades (peak ~12 deg/s for 5° demand)
+                                                          # τ_burst = 1/g = 625 ms → covers ~11% of demand during 70 ms saccade
+                                                          # 0 = Zee mechanism disabled (isolated fusional vergence only)
+    D_verg:                float        = 1.0             # velocity damping coefficient (dim'less); divides dx_verg by (1+D)
+                                                          # D=0 → underdamped; D=1 → ξ≈0.9 (near-critical); D=2 → overdamped
+                                                          # Schor (1979): vergence has significant viscous damping to prevent overshoot
+
 
     # Accommodation — Schor dual-interaction model (Schor 1979; Schor & Ciuffreda 1983)
     # Cross-coupled to vergence via AC/A and CA/C ratios.
@@ -339,8 +377,8 @@ def make_x0(brain_params=None):
         # _IDX_NI_L/R/NULL all stay at 0
         # OPN: initialise to tonic firing rate (100); stays there between saccades.
         x0 = x0.at[_IDX_SG.start + 7].set(100.0)
-        # Vergence: initialise to phoria — tau_verg too slow to settle from zero.
-        x0 = x0.at[_IDX_VERG].set(jnp.asarray(brain_params.phoria, dtype=jnp.float32))
+        # Vergence: initialise x_verg to tonic_verg (H only); e_held/x_copy start at zero.
+        x0 = x0.at[_o_vg].set(jnp.float32(brain_params.tonic_verg))
         # Accommodation: initialise fast component at 1 D (1 m target), slow at 0.
         # Warmup will settle both to the correct steady state for the actual target depth.
         x0 = x0.at[_IDX_ACC].set(jnp.array([1.0, 0.0]))
@@ -359,13 +397,18 @@ class CyclopeanPercept(NamedTuple):
     target_disparity:      jnp.ndarray   # (3,)  vergence disparity (bino-gated)
 
 
-def _cyclopean_percept(sensory_out, brain_params) -> CyclopeanPercept:
+def _cyclopean_percept(sensory_out, brain_params, current_verg_h=0.0) -> CyclopeanPercept:
     """Combine per-eye retinal signals into cyclopean percepts.
 
     Each signal is weighted by per-eye visibility and divided by the number of
     visible eyes so monocular and binocular viewing produce the same amplitude.
-    When target disparity exceeds disp_max_verg_fus, the non-dominant eye is
-    suppressed and version signals come from the dominant eye only.
+    When total vergence demand exceeds npc, vergence is suppressed and
+    version signals come from the dominant eye only (diplopia).
+
+    Args:
+        current_verg_h: current horizontal vergence angle (deg) from the vergence
+                        integrator state x_verg[0]. Used to convert remaining
+                        disparity to an absolute total demand for the NPC gate.
     """
     sv_L, sv_R = sensory_out.scene_vis_L,  sensory_out.scene_vis_R
     tv_L, tv_R = sensory_out.target_vis_L, sensory_out.target_vis_R
@@ -380,7 +423,7 @@ def _cyclopean_percept(sensory_out, brain_params) -> CyclopeanPercept:
     # responds faster to ramp than step stimuli, and MT/MST carry disparity-velocity
     # signals (Bradley et al. 1995), but the motor contribution is hard to isolate and
     # position error alone fits most vergence dynamics. Add if ramp responses are too sluggish.
-    target_disparity = bino_raw * (sensory_out.pos_L - sensory_out.pos_R)
+    raw_disp = bino_raw * (sensory_out.pos_L - sensory_out.pos_R)
 
     # ── Scene — average both eyes by scene visibility (independent of target fusion) ─
     sv_norm       = jnp.maximum(sv_L + sv_R, 1e-6)
@@ -395,24 +438,26 @@ def _cyclopean_percept(sensory_out, brain_params) -> CyclopeanPercept:
     target_pos  = (tv_L * sensory_out.pos_L + tv_R * sensory_out.pos_R) / tv_norm
     target_slip = (tv_L * sensory_out.vel_L  + tv_R * sensory_out.vel_R)  / tv_norm
 
-    # ── Diplopia suppression — gates only (not direction) ─────────────────────
-    # Smooth gate: fuse=1 when disparity < disp_max_verg_fus (Panum's area), fuse→0 when diplopic.
-    # Monocular viewing (bino_raw=0) → disp_mag=0 → fuse=1 → no suppression.
-    # Suppression controls WHETHER to trigger (visibility), not WHERE to look (direction).
+    # ── Diplopia suppression — gates version visibility and vergence drive ─────
+    # Three-state binocular model (horizontal; vertical/torsional use vert_max / tors_max):
+    #   Fused    (|disp_H| < panum_h  ≈ 2°):  fine fusional drive; fuse=1
+    #   Fusable  (panum_h < |disp_H|, total in [−div_max, npc]): coarse proximal drive; fuse=1
+    #   Diplopic (total_H > npc  or  < −div_max): vergence suppressed, dominant eye; fuse=0
     #
-    # TODO: temporal suppression buildup — replace instantaneous fuse with a low-pass state x_supp:
-    #   dx_supp = ((1 - fuse) - x_supp) / tau_supp     tau_supp ~ 0.5 s
-    #   suppression = x_supp   (instead of 1 - fuse directly)
-    # Rationale: if vergence corrects the disparity within ~200–400 ms (Rashbass & Westheimer
-    # 1961 J Physiol), x_supp never builds and both eyes remain visible. If vergence fails
-    # (large strabismus, muscle palsy), suppression accumulates over tau_supp and the dominant
-    # eye takes over version — consistent with clinical strabismus (von Noorden & Campos 2002).
-    # The instantaneous model is adequate for short simulations; tau_supp matters mainly for
-    # strabismus modelling where sustained diplopia drives the fixation shift.
-    # Hysteresis in fusion (Fender & Julesz 1967 J Opt Soc Am) also implies a temporal process:
-    # re-fusion requires smaller disparity than fusion break, suggesting suppression is not
-    # reset instantly once it builds.
-    fuse   = 1.0 / (1.0 + jnp.exp(10.0 * (jnp.linalg.norm(target_disparity) - brain_params.disp_max_verg_fus)))
+    # Both gates use total_demand_h (absolute vergence), not d_h (remaining disparity):
+    # divergence gate must stay open during far-steps where d_h is large-negative but
+    # total vergence is still within the fusable range (positive).
+    # Monocular viewing (bino_raw=0) → raw_disp=0 → total_demand_h = current_verg_h (always ok).
+    d_h            = raw_disp[0]
+    total_demand_h = d_h + current_verg_h   # absolute horizontal vergence at the target
+    gate_conv = jax.nn.sigmoid(100.0 * (brain_params.npc      - total_demand_h))
+    gate_div  = jax.nn.sigmoid(100.0 * (total_demand_h       + brain_params.div_max))
+    gate_vert = jax.nn.sigmoid(100.0 * (brain_params.vert_max - jnp.abs(raw_disp[1])))
+    gate_tors = jax.nn.sigmoid(100.0 * (brain_params.tors_max - jnp.abs(raw_disp[2])))
+    fuse      = gate_conv * gate_div * gate_vert * gate_tors
+    # Gate the vergence drive: diplopic disparity → vergence suppressed (eyes stop at NPC).
+    # Version is NOT gated here (target_pos uses unsuppressed binocular average above).
+    target_disparity = fuse * raw_disp
     dom_L  = 1.0 - brain_params.eye_dominant
     dom_R  = brain_params.eye_dominant
     tv_L_s = fuse * tv_L + (1.0 - fuse) * tv_L * dom_L   # suppressed visibility
@@ -468,7 +513,9 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
     x_acc     = x_brain[_IDX_ACC]     # (2,): [x_fast, x_slow] diopters
 
     # ── Binocular combining — version (average) and vergence (difference) ────────
-    percept = _cyclopean_percept(sensory_out, brain_params)
+    # Pass x_verg[0] (horizontal vergence memory) so the NPC gate uses the absolute
+    # total demand (current vergence + remaining retinal error) rather than just the residual.
+    percept = _cyclopean_percept(sensory_out, brain_params, x_verg[0])
 
     # ── Two ECs, two corrections with separate clips and gates ───────────────
     # EC cascade inputs are background-shifted: vel_sat(u_motor - bg, v_max) + bg.
@@ -514,33 +561,20 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
     # TODO: re-enable cross-links once accommodation–vergence interaction is validated.
     dx_acc, _ = acc_mod.step(x_acc, sensory_out.acc_demand, 0.0, brain_params)   # 0.0: CA/C off
 
-    # ── Vergence: binocular disparity only (AC/A drive disconnected) ─────────
+    # ── Vergence: disparity + Zee saccade pulse + L2 cyclovergence ────────────
     # bino = tv_L * tv_R ≈ 1 when both eyes fuse, 0 when either covered.
-    # TODO: add saccade vergence interactions from zee's paper: transient vergence 
-    # response to saccades, even in darkness (Zee et al. 1987 J Neurophysiol).
-    # TODO: add L2: extended listings law, how vergence affects listings plane tilt and therefore saccade torsion. Extended horopter paper
-    dx_verg, u_verg = vg.step(x_verg, percept.target_disparity, 0.0, brain_params)   # 0.0: AC/A off
+    # z_act: 0=idle (OPN tonic), 1=saccade (OPN paused); normalised from z_opn ∈ [0,100].
+    z_act_verg = 1.0 - jnp.clip(x_sg[7], 0.0, 100.0) / 100.0
+    dx_verg, u_verg = vg.step(x_verg, percept.target_disparity, 0.0, z_act_verg, x_ni_net[:2], brain_params)
 
     # ── Final common pathway: nucleus encode → nerve activations ─────────────
     nerves = fcp.step(jnp.concatenate([motor_cmd_ni, u_verg]), brain_params)   # (12,) [L6|R6]
 
     # ── Efference copy: advance delay cascade with version motor command ──────
-    # Rotate (u_burst + u_pursuit) into eye frame before delaying, to match the
-    # frame of scene_vel / target_vel computed by retinal_signals (which applies
-    # R_gaze_T = R_eye.T @ R_head.T).
-    #
-    # Correct formula: motor_ec = R_gaze_T @ u_burst  →  scene_slip + motor_ec ≈ 0 ✓
-    #     R_gaze_T ≈ R_eye.T   (head stationary during saccades: R_head ≈ I)
-    #     R_eye = rotation_matrix(x_ni_net)    (x_ni_net proxies eye rotation vector)
-    #
-    # Note: do NOT permute x_ni_net before passing to rotation_matrix.  The
-    # previous code used _q2rv_ec([yaw, pitch, roll]) = [-pitch, yaw, roll],
-    # which created a pitch-axis rotation for a yaw gaze angle — wrong axis —
-    # introducing ~sin(gaze)·g_burst of spurious roll into the EC cascade.
-    R_gaze_T    = rotation_matrix(x_ni_net).T   # R_eye.T  (head → eye frame)
-    u_motor     = R_gaze_T @ (u_burst + u_pursuit)
-    u_motor_2d  = u_motor.at[2].set(0.0)   # pursuit EC carries no torsion (retina is 2D)
-    dx_ec     = ec.step(x_ec,     velocity_saturation(u_motor_2d, brain_params.v_max_pursuit, v_offset=percept.target_slip), brain_params)
+    # Rotate into eye frame (R_eye.T) to match the frame of retinal slip signals.
+    # Pursuit EC: zero torsion before delaying — the retina is a 2D surface and ther target is a point
+    u_motor     = rotation_matrix(x_ni_net + ocr).T @ (u_burst + u_pursuit) #(head → eye frame)
+    dx_ec     = ec.step(x_ec,     velocity_saturation(u_motor.at[2].set(0.0), brain_params.v_max_pursuit, v_offset=percept.target_slip), brain_params)
     dx_ec_okr = ec.step(x_ec_okr, velocity_saturation(u_motor,    brain_params.v_max_okr,     v_offset=percept.scene_slip),  brain_params)
 
     # ── Pack state derivative ─────────────────────────────────────────────────

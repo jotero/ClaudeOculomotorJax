@@ -95,8 +95,8 @@ class SimConfig(NamedTuple):
               (visual delay cascades, canal, NI) reach steady state before
               the plotted output begins.  The warmup window is stripped from
               all returned arrays — callers always see t starting at t_array[0].
-              Vergence is initialised analytically to phoria (its TC ~25 s is
-              far too slow to settle in a short warmup).
+              Vergence is initialised analytically to tonic_verg (its TC ~6 s is
+              too slow to settle in a short warmup).
               Set to 0.0 to disable.  Default: 3.0 s.
     """
     dt_solve: float = 0.001
@@ -111,9 +111,24 @@ class Params(NamedTuple):
     brain:   BrainParams   = BrainParams()
 
 
+def _tonic_verg_from_ipd(ipd: float, dist_m: float = 1.0) -> float:
+    """Tonic vergence angle for a given IPD and dark-vergence resting distance."""
+    import math
+    return 2.0 * math.degrees(math.atan(ipd / 2.0 / dist_m))
+
+
 def default_params() -> Params:
-    """Healthy primate default parameters."""
-    return Params()
+    """Healthy primate default parameters.
+
+    tonic_verg is computed from SensoryParams.ipd so it stays consistent
+    when IPD is changed via with_sensory(..., ipd=X) + default_params().
+    """
+    sp = SensoryParams()
+    return Params(
+        sensory=sp,
+        plant=PlantParams(),
+        brain=BrainParams(tonic_verg=_tonic_verg_from_ipd(sp.ipd)),
+    )
 
 
 def with_brain(params: Params, **kwargs) -> Params:
@@ -121,7 +136,12 @@ def with_brain(params: Params, **kwargs) -> Params:
 
 
 def with_sensory(params: Params, **kwargs) -> Params:
-    return params._replace(sensory=params.sensory._replace(**kwargs))
+    new = params._replace(sensory=params.sensory._replace(**kwargs))
+    if 'ipd' in kwargs:
+        # Keep tonic_verg consistent: rescale assuming same 1m dark-vergence distance.
+        new = new._replace(brain=new.brain._replace(
+            tonic_verg=_tonic_verg_from_ipd(kwargs['ipd'])))
+    return new
 
 
 def with_plant(params: Params, **kwargs) -> Params:
