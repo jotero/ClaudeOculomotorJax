@@ -28,7 +28,7 @@ from oculomotor.sim.kinematics import TargetTrajectory
 from oculomotor.llm_pipeline.scenario import SimulationScenario, SimulationComparison, Patient
 from oculomotor.sim.simulator import (
     PARAMS_DEFAULT, with_brain, with_sensory, simulate,
-    _IDX_VS, _IDX_VS_L, _IDX_VS_R, _IDX_NI, _IDX_SG, _IDX_EC, _IDX_VIS, _IDX_VIS_L, _IDX_VIS_R, _IDX_PURSUIT,
+    _IDX_VS, _IDX_VS_L, _IDX_VS_R, _IDX_NI, _IDX_SG, _IDX_VIS, _IDX_VIS_L, _IDX_PURSUIT,
     _IDX_VERG,
 )
 from oculomotor.models.brain_models import saccade_generator as sg_mod
@@ -193,8 +193,7 @@ def _extract_signals(states, params, t_np: np.ndarray) -> dict:
     x_sg      = np.array(states.brain[:, _IDX_SG])
     x_pursuit = np.array(states.brain[:, _IDX_PURSUIT])
     x_verg    = np.array(states.brain[:, _IDX_VERG])   # (T, 3) vergence integrator state
-    x_vis_L   = np.array(states.sensory[:, _IDX_VIS_L])
-    x_vis_R   = np.array(states.sensory[:, _IDX_VIS_R])
+    x_vis     = np.array(states.sensory[:, _IDX_VIS])  # (T, 720) cyclopean cascade
 
     # Eye velocity (version derivative — same as L eye vel when version ≈ L)
     w_eye = np.gradient(version, dt, axis=0)
@@ -203,23 +202,14 @@ def _extract_signals(states, params, t_np: np.ndarray) -> dict:
     w_est = x_vs_raw[:, :3] - x_vs_raw[:, 3:6]   # VS net  (T, 3)
     x_ni  = x_ni_raw[:, :3] - x_ni_raw[:, 3:6]   # NI net  (T, 3)
 
-    # Retinal signals — gate-weighted average consistent with sensory_model fix
-    gate_L = x_vis_L @ np.array(C_target_visible).T          # (T, 1)
-    gate_R = x_vis_R @ np.array(C_target_visible).T          # (T, 1)
-    gate_sum = gate_L + gate_R + 1e-6               # (T, 1)
-    pos_L  = x_vis_L @ np.array(C_pos).T            # (T, 3)
-    pos_R  = x_vis_R @ np.array(C_pos).T            # (T, 3)
-    e_pos_delayed = (gate_L * pos_L + gate_R * pos_R) / gate_sum  # (T, 3)
+    # Retinal signals — cyclopean (single cascade, pre-fused)
+    e_pos_delayed = x_vis @ np.array(C_pos).T   # (T, 3)
 
-    # Saccade burst (re-compute from SG state + weighted delayed retinal signals)
+    # Saccade burst (re-compute from SG state + cyclopean delayed retinal signals)
     def _burst_at(state):
-        x_vis_L_ = state.sensory[_IDX_VIS_L]
-        x_vis_R_ = state.sensory[_IDX_VIS_R]
-        gL = (C_target_visible @ x_vis_L_)[0]
-        gR = (C_target_visible @ x_vis_R_)[0]
-        norm = jnp.maximum(gL + gR, 1e-6)
-        e_pd = (gL * (C_pos @ x_vis_L_) + gR * (C_pos @ x_vis_R_)) / norm
-        gate = jnp.clip(gL + gR, 0.0, 1.0)
+        x_vis_ = state.sensory[_IDX_VIS]
+        e_pd   = C_pos @ x_vis_
+        gate   = jnp.clip((C_target_visible @ x_vis_)[0], 0.0, 1.0)
         x_ni_     = state.brain[_IDX_NI]
         x_ni_net  = x_ni_[:3] - x_ni_[3:6]   # bilateral → net (x_L − x_R), (3,)
         _, u  = sg_mod.step(state.brain[_IDX_SG], e_pd, gate, x_ni_net,

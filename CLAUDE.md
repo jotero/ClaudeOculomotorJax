@@ -322,7 +322,7 @@ Some modules have nonlinearities that wrap the linear ABCD core:
 
 - **Canal** (`canal.py`): `nonlinearity(x_c, gains)` applies smooth push-pull rectification to the `x2` (inertia state) to get afferent firing rates. The linear `A @ x + B @ u` drives the state derivative; only the output is nonlinear. Re-exported as `canal_nonlinearity` from `sensory_model.py`.
 - **Saccade generator**: gates (`gate_err`, `gate_res`, `gate_dir`) and adaptive reset TC layered on top of linear SSM core. Target selection (orbital clip + centering saccade) is handled internally using `x_ni` as a proxy for eye position and `target_in_vf` to detect out-of-field targets.
-- **Visual delay** (`retina.py`): fixed companion-form `A` (40-stage cascade) with module-level `C_slip` / `C_pos` / `C_vel` / `C_target_in_vf` readout matrices — kept at module level because external code reads them directly. `target_in_vf` is computed in `retinal_signals()` (retinal geometry, not a brain decision) and delayed by its own 40-stage scalar cascade so the SG can distinguish fixation from out-of-field.
+- **Visual delay** (`retina.py`): fixed companion-form `A` (40-stage cascade) with module-level `C_slip` / `C_pos` / `C_vel` / `C_target_in_vf` readout matrices — kept at module level because external code reads them directly. `target_in_vf` is computed in `world_to_retina()` (retinal geometry, not a brain decision) and delayed by its own 40-stage scalar cascade so the SG can distinguish fixation from out-of-field.
 
 ### Connector modules
 

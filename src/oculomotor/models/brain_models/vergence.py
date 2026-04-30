@@ -55,7 +55,7 @@ References:
 import jax
 import jax.numpy as jnp
 
-from oculomotor.models.sensory_models.retina import velocity_saturation as _disp_sat
+from oculomotor.models.sensory_models.cyclopean_vision import velocity_saturation as _disp_sat
 
 # Half-angle constant (same as listing.py)
 HALF_ANGLE = jnp.pi / 360.0

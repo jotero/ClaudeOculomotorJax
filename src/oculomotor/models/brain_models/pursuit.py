@@ -1,8 +1,8 @@
 """Smooth pursuit SSM — leaky integrator + direct feedthrough with Smith predictor.
 
 Drives smooth eye movements to track a moving target.  Receives the EC-corrected
-target velocity error (e_combined ≈ v_target) and outputs a pursuit velocity
-command that feeds into the neural integrator (NI).
+target slip (target_slip_ec ≈ v_target) and outputs a pursuit velocity command
+that feeds into the neural integrator (NI).
 
 Architecture:
   - Smith predictor (internal): removes the "already commanded" portion from the
@@ -12,22 +12,22 @@ Architecture:
   - Leak (1/tau_pursuit) prevents unbounded accumulation
 
 Smith predictor (closed-form, no circularity):
-    u_pu_now  = x_p + K_phasic · e_pred         (current motor output)
-    e_pred    = e_combined − u_pu_now            (Smith: error = reference − output)
-    →  e_pred = (e_combined − x_p) / (1 + K_phasic)   (solved explicitly)
+    u_pu_now      = x_p + K_phasic · e_pred              (current motor output)
+    e_pred        = target_slip_ec − u_pu_now             (Smith: error = reference − output)
+    →  e_pred = (target_slip_ec − x_p) / (1 + K_phasic)  (solved explicitly)
 
 Dynamics:
     dx_p/dt  = −x_p / τ_pursuit  +  K_pursuit · e_pred
     u_pursuit = x_p + K_phasic · e_pred
 
 where:
-    x_p       (3,)   pursuit velocity memory (deg/s)
-    e_combined (3,)  EC-corrected target velocity error, assembled in brain_model.py:
-                         target_slip pre-clipped at v_max_target_vel before visual cascade
-                         motor_ec pre-clipped at v_max_pursuit before pursuit EC cascade
-                         motor_ec further gated by target_motion_visible before call
-                     Ensures OKN (no foveal target) does not drive the pursuit integrator.
-    u_pursuit (3,)   pursuit velocity command → NI
+    x_p              (3,)  pursuit velocity memory (deg/s)
+    target_slip_ec   (3,)  EC-corrected target velocity error, assembled in brain_model.py:
+                               target_slip + motor_ec_pursuit * target_motion_visible
+                           target_slip pre-clipped at v_max_target_vel before visual cascade
+                           motor_ec pre-clipped at v_max_pursuit before pursuit EC cascade
+                           target_motion_visible gates out strobed/invisible targets
+    u_pursuit        (3,)  pursuit velocity command → NI
 
 Predictor effect:
     At onset:        e_pred = v_target / (1 + K_phasic)  (~45 % of raw error)
@@ -56,17 +56,15 @@ N_INPUTS  = 3   # e_vel_delayed after saccade EC subtraction
 N_OUTPUTS = 3   # u_pursuit: velocity command → NI and VS
 
 
-def step(x_pursuit, target_slip, motor_ec, eye_pos, brain_params):
+def step(x_pursuit, target_slip_ec, eye_pos, brain_params):
     """Single ODE step: Smith predictor → pursuit derivative + output command.
 
     Args:
-        x_pursuit:    (3,)   pursuit memory state (deg/s)
-        target_slip:  (3,)   delayed target velocity on retina (deg/s); pre-clipped at
-                             v_max_target_vel before visual cascade input
-        motor_ec:     (3,)   efference copy pre-clipped at v_max_pursuit before EC cascade;
-                             gated by target_motion_visible at call site
-        eye_pos:      (3,)   current eye position [H, V, T] deg (NI net, proxy for gaze)
-        brain_params: BrainParams  (reads K_pursuit, K_phasic_pursuit, tau_pursuit)
+        x_pursuit:      (3,)   pursuit memory state (deg/s)
+        target_slip_ec: (3,)   EC-corrected target slip = target_slip + motor_ec * target_motion_visible
+                               assembled in brain_model.py; pre-clipped before respective cascades
+        eye_pos:        (3,)   current eye position [H, V, T] deg (NI net, proxy for gaze)
+        brain_params:   BrainParams  (reads K_pursuit, K_phasic_pursuit, tau_pursuit)
 
     Returns:
         dx_pursuit: (3,)  dx_p/dt  (deg/s²)
@@ -74,11 +72,8 @@ def step(x_pursuit, target_slip, motor_ec, eye_pos, brain_params):
                           Listing's half-angle correction
     """
     K_ph = brain_params.K_phasic_pursuit
-    # Both target_slip and motor_ec are pre-clipped at v_max_pursuit before their
-    # respective delay cascades, so the combined signal is already bounded.
-    e_combined = target_slip + motor_ec
-    # Smith predictor: e_pred = (e_combined − x_pursuit) / (1 + K_phasic)
-    e_pred = (e_combined - x_pursuit) / (1.0 + K_ph)
+    # Smith predictor: e_pred = (target_slip_ec − x_pursuit) / (1 + K_phasic)
+    e_pred = (target_slip_ec - x_pursuit) / (1.0 + K_ph)
 
     A  = -(1.0 / brain_params.tau_pursuit) * jnp.eye(3)
     dx_pursuit = A @ x_pursuit + brain_params.K_pursuit * e_pred

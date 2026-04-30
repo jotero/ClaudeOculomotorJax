@@ -63,8 +63,8 @@ h1   { font-size: 22px; margin-bottom: 4px; }
   <main>
     <h1>OculomotorJax — Benchmark Report</h1>
     <p class="meta">
-      Generated: <strong>2026-04-29 16:24</strong> &nbsp;|&nbsp;
-      Version: <strong>b848f0e-dirty</strong> &nbsp;|&nbsp;
+      Generated: <strong>2026-04-30 08:12</strong> &nbsp;|&nbsp;
+      Version: <strong>99fce15-dirty</strong> &nbsp;|&nbsp;
       <a href="../BENCHMARKS.md">BENCHMARKS.md</a>
     </p>
 
@@ -266,42 +266,54 @@ h1   { font-size: 22px; margin-bottom: 4px; }
 
   <section class="section" id="vergence">
     <h2>5. Vergence</h2>
-    <p>Binocular vergence driven by disparity. Three-state model: Fused (within Panum's area, fine servo) → Fusable (within motor limits, proximal drive) → Diplopic (beyond NPC or div_max, dominant-eye version). Vergence saccade pulse (Zee 1992) adds a fast component during conjugate saccades. Fixation disparity measures residual vergence error in arcmin at different distances.</p>
+    <p>Binocular vergence eye movements driven by disparity. Symmetric convergence isolates vergence dynamics. Asymmetric vergence combines a version saccade with a depth change. Fixation disparity benchmark measures residual vergence error vs. target distance.</p>
     <div class="fig-grid">
-
+      
     <div class="fig-card">
-      <a href="figures/vergence_bidir.png" target="_blank"><img src="figures/vergence_bidir.png" alt="Bidirectional Vergence — Symmetric &amp; Asymmetric"></a>
-      <h3>Bidirectional Vergence — Symmetric &amp; Asymmetric</h3>
-      <p class="desc">Left column: symmetric convergence and divergence to midline targets (far↔near). Right column: asymmetric vergence — target jumps 10° right AND changes depth (both convergence and divergence). Tests that the version saccade and vergence components separate correctly, and that the Zee pulse does not overshoot.</p>
+      <a href="figures/vergence_bidir.png" target="_blank"><img src="figures/vergence_bidir.png" alt="Vergence: Symmetric + Asymmetric, Both Directions"></a>
+      <h3>Vergence: Symmetric + Asymmetric, Both Directions</h3>
+      <p class="desc">3 rows × 4 cols. Cols: symmetric conv, symmetric div, asymmetric right+conv, asymmetric left+div. Row 0: L/R eye yaw. Row 1: vergence (L−R). Row 2: version (L+R)/2.</p>
       <div class="expected">
         <strong>Expected behavior</strong>
-        Symmetric: Δvergence ≈ 11° (far→near, IPD=64 mm). Version ≈ 0. Asymmetric: version ≈ 10° saccade (50–70 ms); vergence change ≈ demand (400–600 ms TC). Vergence saccade pulse ~10–20% of demand in 70 ms.
+        Symmetric: L/R yaw diverge/converge equally, version ≈ 0. Asymmetric: both eyes saccade then vergence separates them. Rise TC ≈ 0.5–1 s. Version and vergence components are disconjugate.
       </div>
-      <p class="citation">&#128214; Mays (1984) J Neurophysiol; Zee et al. (1992) J Neurophysiol; Collewijn et al. (1988) J Physiol</p>
+      <p class="citation">&#128214; Mays (1984) J Neurophysiol; Collewijn et al. (1988) J Physiol; Zee et al. (1992) J Neurophysiol</p>
       <span class="badge behavior">behavior</span>
     </div>
 
     <div class="fig-card">
       <a href="figures/vergence_fixation_distance.png" target="_blank"><img src="figures/vergence_fixation_distance.png" alt="Fixation Disparity vs. Distance"></a>
       <h3>Fixation Disparity vs. Distance</h3>
-      <p class="desc">Steady-state vergence measured at eight distances (0.2–3 m). Left: vergence time-courses per distance. Right: fixation disparity (geometric − measured, arcmin) with ±6 arcmin normal band. Zero FD at 1 m (where tonic_verg = geometric demand for IPD=64 mm); exo FD at near, eso FD at far — a physiological Morgan curve.</p>
+      <p class="desc">Steady-state vergence residual error at eight target distances (0.2–3 m). Left: vergence time-courses (near = warm colours). Right: fixation disparity in arcmin — the residual after fusion settles. Positive = under-convergence (exo FD). Green band = normal ±6 arcmin.</p>
       <div class="expected">
         <strong>Expected behavior</strong>
-        FD ≈ 0 arcmin at 1 m. |FD| &lt; 6 arcmin across the physiological range (green band). Slight exo FD at near, slight eso FD at far. Vergence TC ~ 0.5–2 s depending on amplitude.
+        Fixation disparity <10 arcmin across the physiological range (Ogle 1964: 0–6 arcmin). Near targets may show slightly larger exo FD due to reduced fusional gain. Vergence TC ~0.5–2 s.
       </div>
-      <p class="citation">&#128214; Ogle, Martens &amp; Dyer (1967); Semmlow &amp; Hung (1983) Vision Research 23(3); Morgan (1944)</p>
+      <p class="citation">&#128214; Ogle, Martens & Dyer (1967); Semmlow & Hung (1983) Vision Research 23(3)</p>
       <span class="badge behavior">behavior</span>
     </div>
 
     <div class="fig-card">
-      <a href="figures/vergence_diplopia.png" target="_blank"><img src="figures/vergence_diplopia.png" alt="Diplopia Gate — Fusion vs. Diplopia"></a>
-      <h3>Diplopia Gate — Fusion vs. Diplopia</h3>
-      <p class="desc">Three columns showing fused, near-limit, and diplopic conditions. Horizontal NPC gate (50°) and divergence limit (−6°) tested. Vertical and torsional limits also shown. In diplopic conditions, vergence is suppressed and version is driven by the dominant eye only.</p>
+      <a href="figures/vergence_diplopia.png" target="_blank"><img src="figures/vergence_diplopia.png" alt="Diplopia: Fusion Gate and Vergence Limits"></a>
+      <h3>Diplopia: Fusion Gate and Vergence Limits</h3>
+      <p class="desc">3 rows × 2 cols. Col 0: fused (3→0.3 m midline). Col 1: diplopic (3→0.05 m midline). Both columns use default params (saccades on). Row 0: L/R eye yaw; fused shows geometric target lines (±geo/2), diplopic shows NPC motor-limit lines (±NPC/2) with off-scale annotation. Row 1: vergence (L−R) with geometric target and NPC limit. Row 2: version (L+R)/2 — auto-scaled; diplopic case shows version shift from monocular fixation saccade driven by dominant eye retinal error.</p>
       <div class="expected">
         <strong>Expected behavior</strong>
-        Fused: both eyes track target, vergence = geometric demand. Diplopic: vergence freezes at limit; dominant eye moves to target, non-dominant eye stays at limit. Version = dominant eye position, not cyclopean average.
+        Fused: L/R eye yaw converges to ±geo/2 dashed targets; vergence reaches geo target; version stays ≈ 0. Diplopic: monocular fixation saccade fires (dominant R eye drives both eyes); R eye lands on its geometric target (−geo/2); L eye deviates. Vergence limited well below geometric target.
       </div>
-      <p class="citation">&#128214; Ogle (1964); Rashbass &amp; Westheimer (1961) J Physiol</p>
+      <p class="citation">&#128214; Fender & Julesz (1967) J Opt Soc Am; Schor (1979) Vision Res; Shipley & Rawlings (1970) Vision Res</p>
+      <span class="badge behavior">behavior</span>
+    </div>
+
+    <div class="fig-card">
+      <a href="figures/vergence_asym_debug.png" target="_blank"><img src="figures/vergence_asym_debug.png" alt="Asymmetric Vergence Debug Cascade"></a>
+      <h3>Asymmetric Vergence Debug Cascade</h3>
+      <p class="desc">7 rows × 2 cols. Left: asym right+conv (2→0.5 m, +10°). Right: asym left+div (0.5→2 m, −10°). Rows: eye position, vergence (L−R), version (L+R)/2, vergence velocity, OPN gate z_act, internal states e_held/x_copy/x_verg [H], Zee burst [H].</p>
+      <div class="expected">
+        <strong>Expected behavior</strong>
+        OPN gate: pulses during version saccade; Zee burst fires during the same window and exhausts as x_copy reaches e_held. Vergence velocity: overshoot appears as negative region after peak. x_verg[H] settles at geometric vergence target.
+      </div>
+      <p class="citation">&#128214; Zee et al. (1992) J Neurophysiol; Collewijn et al. (1988) J Physiol</p>
       <span class="badge behavior">behavior</span>
     </div>
     </div>

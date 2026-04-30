@@ -40,7 +40,7 @@ by the appropriate presence flag.
 Frame note
 ──────────
 The motor command (u_burst + u_pursuit) is in head frame.  The retinal slip
-it must cancel (retina.retinal_signals) is in eye frame.  The mismatch is
+it must cancel (retina.world_to_retina) is in eye frame.  The mismatch is
 (R_eye.T − I) @ motor_ec, which is zero at centre gaze and grows with
 eccentricity.  In practice this matters only for saccades made while the head
 is moving and the eye is off-centre — a rare combination in standard paradigms.

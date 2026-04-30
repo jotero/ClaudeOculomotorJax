@@ -301,6 +301,7 @@ def _diplopia(show):
     geo_base = _verg_angle_deg(D_BASE)
 
     bp       = PARAMS_DEFAULT.brain
+    sp       = PARAMS_DEFAULT.sensory
 
     CL = utils.C['eye']
     CR = utils.C['target']
@@ -332,7 +333,7 @@ def _diplopia(show):
         # If targets are within 2× the eye excursion range, include them (fused case).
         # If farther (diplopic case, targets ≫ actual excursion), extend to NPC limit
         # and draw motor-limit dashed lines instead — with a text note for fusion targets.
-        npc_half    = bp.npc / 2
+        npc_half    = sp.npc / 2
         ylo         = min(eL.min(), eR.min()) - 1.0
         yhi         = max(eL.max(), eR.max()) + 1.0
         eye_range   = max(yhi, abs(ylo))
@@ -359,7 +360,7 @@ def _diplopia(show):
         ax.legend(fontsize=7.5)
 
         # Row 1: Vergence ─────────────────────────────────────────────────────
-        npc_limit = geo_base + bp.npc   # absolute NPC in vergence angle
+        npc_limit = geo_base + sp.npc   # absolute NPC in vergence angle
         ax = axes[1, col]
         ax.plot(t, verg_tr[d], color=CL, lw=1.5, label='Vergence L−R')
         ax.axhline(geo,       color='tomato', lw=1.0, ls='--',
