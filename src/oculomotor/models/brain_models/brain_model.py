@@ -430,14 +430,6 @@ def _cyclopean_percept(sensory_out, brain_params, current_verg_h=0.0) -> Cyclope
     scene_slip    = (sv_L * sensory_out.slip_L + sv_R * sensory_out.slip_R) / sv_norm
     scene_visible = jnp.clip(sv_L + sv_R, 0.0, 1.0)
 
-    # ── Version position and velocity — binocular average (unsuppressed) ────────
-    # Direction of version saccades/pursuit uses the cyclopean average regardless of
-    # diplopia: in a symmetric vergence step pos_L and pos_R point opposite directions
-    # and cancel to zero — suppressing one eye would create a spurious version error.
-    tv_norm     = jnp.maximum(tv_L + tv_R, 1e-6)
-    target_pos  = (tv_L * sensory_out.pos_L + tv_R * sensory_out.pos_R) / tv_norm
-    target_slip = (tv_L * sensory_out.vel_L  + tv_R * sensory_out.vel_R)  / tv_norm
-
     # ── Diplopia suppression — gates version visibility and vergence drive ─────
     # Three-state binocular model (horizontal; vertical/torsional use vert_max / tors_max):
     #   Fused    (|disp_H| < panum_h  ≈ 2°):  fine fusional drive; fuse=1
@@ -456,7 +448,6 @@ def _cyclopean_percept(sensory_out, brain_params, current_verg_h=0.0) -> Cyclope
     gate_tors = jax.nn.sigmoid(100.0 * (brain_params.tors_max - jnp.abs(raw_disp[2])))
     fuse      = gate_conv * gate_div * gate_vert * gate_tors
     # Gate the vergence drive: diplopic disparity → vergence suppressed (eyes stop at NPC).
-    # Version is NOT gated here (target_pos uses unsuppressed binocular average above).
     target_disparity = fuse * raw_disp
     dom_L  = 1.0 - brain_params.eye_dominant
     dom_R  = brain_params.eye_dominant
@@ -465,6 +456,20 @@ def _cyclopean_percept(sensory_out, brain_params, current_verg_h=0.0) -> Cyclope
 
     tv_norm_s      = jnp.maximum(tv_L_s + tv_R_s, 1e-6)
     target_visible = jnp.clip(tv_L_s + tv_R_s, 0.0, 1.0)
+
+    # ── Version position — dominant eye in diplopia, cyclopean in fusion ────────
+    # In fusion (fuse=1): tv_L_s=tv_L, tv_R_s=tv_R → binocular (cyclopean) average.
+    # In diplopia (fuse=0): non-dominant tv_L/R_s→0 → dominant eye drives saccades.
+    # Monocular fixation: dominant eye's retinal error becomes the SG target; both eyes
+    # move conjugately by that amount; non-dominant ends up at the wrong position (deviation).
+    # Non-dominant target_visible=0 suppresses corrective saccades/pursuit on that eye.
+    target_pos  = (tv_L_s * sensory_out.pos_L + tv_R_s * sensory_out.pos_R) / tv_norm_s
+
+    # ── Target motion (pursuit drive) — always binocular average ─────────────────
+    # Scene slip and target velocity remain binocular averages so the Zee vergence
+    # burst (disconjugate) does not contaminate OKR/pursuit through the EC.
+    tv_norm     = jnp.maximum(tv_L + tv_R, 1e-6)
+    target_slip = (tv_L * sensory_out.vel_L + tv_R * sensory_out.vel_R) / tv_norm
     strobe         = jnp.clip(
         (tv_L_s * sensory_out.strobe_delayed_L + tv_R_s * sensory_out.strobe_delayed_R) / tv_norm_s,
         0.0, 1.0)

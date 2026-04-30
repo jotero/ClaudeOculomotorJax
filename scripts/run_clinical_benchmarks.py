@@ -10,6 +10,7 @@ Individual sections can be re-run by running their own scripts:
     python -X utf8 scripts/bench_clinical_ni_vs.py
     python -X utf8 scripts/bench_clinical_cn_palsies.py
     python -X utf8 scripts/bench_clinical_saccades.py
+    python -X utf8 scripts/bench_clinical_vergence.py
 Then re-run run_clinical_benchmarks.py --html-only to rebuild the report.
 """
 
@@ -30,6 +31,7 @@ MODULES = [
     'bench_clinical_ni_vs',
     'bench_clinical_cn_palsies',
     'bench_clinical_saccades',
+    'bench_clinical_vergence',
 ]
 
 

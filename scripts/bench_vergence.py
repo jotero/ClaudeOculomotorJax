@@ -19,7 +19,7 @@ if '--show' not in sys.argv:
     matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
-from oculomotor.sim.simulator import PARAMS_DEFAULT, with_brain, simulate, _IDX_VERG
+from oculomotor.sim.simulator import PARAMS_DEFAULT, simulate, _IDX_VERG, _IDX_SG
 from oculomotor.sim import kinematics as km
 from oculomotor.analysis import ax_fmt
 
@@ -43,13 +43,12 @@ def _verg_angle_deg(depth_m):
 
 
 def _run_sym(t, d_start, d_end, T_STEP):
-    """Simulate symmetric vergence step (no saccades). Returns (eye_L, eye_R)."""
+    """Simulate symmetric vergence step. Returns (eye_L, eye_R)."""
     T  = len(t)
     p0 = np.array([0.0, 0.0, float(d_start)])
     p1 = np.array([0.0, 0.0, float(d_end)])
     pt = np.where((t >= T_STEP)[:, None], p1, p0)
-    params = with_brain(PARAMS_DEFAULT, g_burst=0.0)   # saccades off → isolate vergence
-    st = simulate(params, t,
+    st = simulate(PARAMS_DEFAULT, t,
                   target=km.build_target(t, lin_pos=pt),
                   scene_present_array=np.ones(T),
                   return_states=True)
@@ -128,10 +127,6 @@ def _vergence_bidir(show):
         ax.set_ylim(lo, hi)
         ax_fmt(ax, ylabel='Eye yaw (deg)' if col == 0 else '')
         ax.legend(fontsize=7.5)
-        if is_sym:
-            ax.text(0.97, 0.05, 'saccades off', transform=ax.transAxes,
-                    fontsize=7, ha='right', color='#777')
-
         # ── Row 1: vergence ───────────────────────────────────────────────────
         ax = axes[1, col]
         ax.plot(t, verg[col], color=CL, lw=1.5)
@@ -195,13 +190,11 @@ def _fixation_distance(show):
     meas_verg   = np.zeros(len(DISTANCES))
     tc_traces   = {}
 
-    params = with_brain(PARAMS_DEFAULT, g_burst=0.0)   # no saccades → isolate vergence
-
     for i, d in enumerate(DISTANCES):
         p_near = np.array([0.0, 0.0, float(d)])
         pt = np.where((t >= T_STEP)[:, None], p_near, p_far)
 
-        st = simulate(params, t,
+        st = simulate(PARAMS_DEFAULT, t,
                       target=km.build_target(t, lin_pos=pt),
                       scene_present_array=np.ones(T),
                       return_states=True)
@@ -270,61 +263,49 @@ def _fixation_distance(show):
 
 
 def _diplopia(show):
-    """Diplopic conditions — 3 rows × 3 cols.
+    """Diplopic conditions — 3 rows × 2 cols.
 
-    Col 0: Fused   (3 m → 0.3 m, midline, saccades off)
-    Col 1: Diplopic (3 m → 0.05 m, midline, saccades off)
-    Col 2: Analytical fusion gates (rows 0–1) + graded steady-state scatter (row 2)
+    Col 0: Fused   (3 m → 0.3 m, midline)
+    Col 1: Diplopic (3 m → 0.05 m, midline)
 
-    Row 0: L eye (blue) + R eye (red) yaw; dashed/annotated = per-eye geometric target
-           Fused:   targets at ±geo/2 ≈ ±6° — within plot range, shown as lines
-           Diplopic: targets at ±geo/2 ≈ ±33° — off-scale, annotated with text
-    Row 1: Vergence (L−R); dashed = geometric target; dotted = proximal limit
-    Row 2: Version (L+R)/2 ≈ 0 (midline target — sanity check); col 2: graded scatter
+    Row 0: L eye (blue) + R eye (red) yaw.
+           Fused: dashed target lines at ±geo/2; Diplopic: motor-limit lines ±NPC/2.
+    Row 1: Vergence (L−R); dashed = geometric target; dotted = NPC limit.
+    Row 2: Version (L+R)/2 ≈ 0 (midline target — sanity check).
     """
     T_STEP = 1.0
     TOTAL  = 6.0
     t      = np.arange(0.0, TOTAL, DT)
     T      = len(t)
 
-    DEPTHS     = [0.5, 0.3, 0.2, 0.15, 0.1, 0.07, 0.05]
-    D_FUSED    = 0.3     # within proximal range  → fused
-    D_DIPLOPIC = 0.05    # beyond proximal range  → diplopic
+    D_FUSED    = 0.3     # within fusable range  → fused
+    D_DIPLOPIC = 0.05    # beyond NPC            → diplopic
     D_BASE     = 3.0     # starting fixation distance
+    DEPTHS     = [D_FUSED, D_DIPLOPIC]
 
-    params = with_brain(PARAMS_DEFAULT, g_burst=0.0)   # saccades off → isolate vergence
     p_base = np.array([0.0, 0.0, float(D_BASE)])
 
     eL_tr, eR_tr = {}, {}
     for d in DEPTHS:
         pt = np.where((t >= T_STEP)[:, None],
                       np.array([0.0, 0.0, float(d)]), p_base)
-        st = simulate(params, t,
+        st = simulate(PARAMS_DEFAULT, t,
                       target=km.build_target(t, lin_pos=pt),
                       scene_present_array=np.ones(T), return_states=True)
         eL_tr[d] = np.array(st.plant[:, 0])
         eR_tr[d] = np.array(st.plant[:, 3])
 
-    verg_tr = {d: eL_tr[d] - eR_tr[d] for d in DEPTHS}
-    vers_tr = {d: (eL_tr[d] + eR_tr[d]) / 2 for d in DEPTHS}
-
+    verg_tr  = {d: eL_tr[d] - eR_tr[d] for d in DEPTHS}
+    vers_tr  = {d: (eL_tr[d] + eR_tr[d]) / 2 for d in DEPTHS}
     geo_d    = {d: _verg_angle_deg(d) for d in DEPTHS}
     geo_base = _verg_angle_deg(D_BASE)
-    ss_mask  = t >= 5.0
-    meas_v   = {d: float(verg_tr[d][ss_mask].mean()) for d in DEPTHS}
 
-    bp         = PARAMS_DEFAULT.brain
-    disp_fus   = bp.panum_h              # horizontal fusion limit (Panum's, ~2°)
-    disp_prox  = bp.prox_sat            # coarse drive saturation (~20°)
-    verg_max   = bp.npc                 # NPC / convergence motor limit (~50°)
-    disp_vert  = bp.panum_v
-    disp_tors  = bp.panum_t
-    dipl_abs   = geo_base + verg_max    # absolute diplopia threshold (geo_base + npc)
+    bp       = PARAMS_DEFAULT.brain
 
     CL = utils.C['eye']
     CR = utils.C['target']
 
-    fig, axes = plt.subplots(3, 3, figsize=(16, 12))
+    fig, axes = plt.subplots(3, 2, figsize=(11, 12))
     fig.suptitle('Diplopia: Fusion Gate and Fused vs. Diplopic Vergence',
                  fontsize=12, fontweight='bold')
 
@@ -347,145 +328,270 @@ def _diplopia(show):
         ax.plot(t, eR, color=CR, lw=1.4, ls='--', label='R eye')
         vline(ax)
         ax.set_title(ttl, fontsize=9, pad=4)
-        # Y-axis: auto-scale to actual eye movements + margin
-        ylo = min(eL.min(), eR.min()) - 1.0
-        yhi = max(eL.max(), eR.max()) + 1.0
-        ax.set_ylim(ylo, yhi)
-        # Show per-eye targets as lines if in range, else annotate
-        if ylo <= tL <= yhi:
+        # Y-axis: auto-scale; expand to include geometric targets or NPC motor limit.
+        # If targets are within 2× the eye excursion range, include them (fused case).
+        # If farther (diplopic case, targets ≫ actual excursion), extend to NPC limit
+        # and draw motor-limit dashed lines instead — with a text note for fusion targets.
+        npc_half    = bp.npc / 2
+        ylo         = min(eL.min(), eR.min()) - 1.0
+        yhi         = max(eL.max(), eR.max()) + 1.0
+        eye_range   = max(yhi, abs(ylo))
+        target_range = max(abs(tL), abs(tR))
+        if target_range <= 2.0 * eye_range:
+            ylo = min(ylo, tR - 1.0)
+            yhi = max(yhi, tL + 1.0)
+            ax.set_ylim(ylo, yhi)
             ax.axhline(tL, color=CL, lw=0.9, ls='-.', alpha=0.8, label=f'L target {tL:+.1f}°')
-        else:
-            ax.text(0.97, 0.97, f'L target {tL:+.1f}° (↑ off-scale)',
-                    transform=ax.transAxes, ha='right', va='top', fontsize=7, color=CL)
-        if ylo <= tR <= yhi:
             ax.axhline(tR, color=CR, lw=0.9, ls='-.', alpha=0.8, label=f'R target {tR:+.1f}°')
         else:
-            ax.text(0.97, 0.87, f'R target {tR:+.1f}° (↓ off-scale)',
-                    transform=ax.transAxes, ha='right', va='top', fontsize=7, color=CR)
-        if col == 0:
-            ax.text(0.03, 0.05, 'saccades off', transform=ax.transAxes,
-                    fontsize=7, color='#777')
+            # Fusion targets off-scale: extend to NPC motor limit, draw motor-limit lines
+            ylo = min(ylo, -npc_half - 2.0)
+            yhi = max(yhi, +npc_half + 2.0)
+            ax.set_ylim(ylo, yhi)
+            ax.axhline(+npc_half, color=CL, lw=0.9, ls='-.', alpha=0.7,
+                       label=f'L motor limit +{npc_half:.0f}°')
+            ax.axhline(-npc_half, color=CR, lw=0.9, ls='-.', alpha=0.7,
+                       label=f'R motor limit −{npc_half:.0f}°')
+            ax.text(0.97, 0.97,
+                    f'Fusion targets: L {tL:+.1f}°, R {tR:+.1f}° (off-scale)',
+                    transform=ax.transAxes, ha='right', va='top', fontsize=7, color='#555')
         ax_fmt(ax, ylabel='Eye yaw (deg)' if col == 0 else '')
         ax.legend(fontsize=7.5)
 
         # Row 1: Vergence ─────────────────────────────────────────────────────
+        npc_limit = geo_base + bp.npc   # absolute NPC in vergence angle
         ax = axes[1, col]
         ax.plot(t, verg_tr[d], color=CL, lw=1.5, label='Vergence L−R')
-        ax.axhline(geo,      color='tomato', lw=1.0, ls='--',
+        ax.axhline(geo,       color='tomato', lw=1.0, ls='--',
                    label=f'Geo target {geo:.1f}°')
-        ax.axhline(dipl_abs, color='#888',   lw=0.9, ls=':',
-                   label=f'NPC limit {dipl_abs:.1f}°')
+        ax.axhline(npc_limit, color='#888',   lw=0.9, ls=':',
+                   label=f'NPC limit {npc_limit:.1f}°')
         vline(ax)
         lo_v = geo_base - 1.0
-        hi_v = min(geo, dipl_abs) + 3.0
+        hi_v = min(geo, npc_limit) + 3.0
         ax.set_ylim(lo_v, hi_v)
         ax_fmt(ax, ylabel='Vergence L−R (deg)' if col == 0 else '')
         ax.legend(fontsize=7.5)
 
-        # Row 2: Version (sanity check — should be ≈ 0 for midline target) ───
+        # Row 2: Version — ≈0 for fused midline; large if monocular fixation saccade fires
         ax = axes[2, col]
-        ax.plot(t, vers_tr[d], color=utils.C['ni'], lw=1.4, label=f'{tag}')
+        ax.plot(t, vers_tr[d], color=utils.C['ni'], lw=1.4, label='Version (L+R)/2')
         ax.axhline(0, color='gray', lw=0.8, ls='--', alpha=0.6, label='Midline target')
         vline(ax)
-        ax.set_ylim(-2, 2)
+        v_hi = max(abs(vers_tr[d].max()), abs(vers_tr[d].min())) + 1.0
+        ax.set_ylim(-max(v_hi, 2.0), max(v_hi, 2.0))
         ax_fmt(ax, ylabel='Version (L+R)/2 (deg)' if col == 0 else '',
                xlabel='Time (s)')
         ax.legend(fontsize=7.5)
-
-    # ── Col 2: analytical gates + graded scatter ──────────────────────────────
-
-    # Row 0: Horizontal fusion gate — 3 zones
-    ax = axes[0, 2]
-    d_h_arr  = np.linspace(-disp_fus - 2, verg_max + 6, 800)
-    gate_c   = 1.0 / (1.0 + np.exp(-100.0 * (verg_max  - d_h_arr)))   # NPC / diplopia gate
-    gate_d_  = 1.0 / (1.0 + np.exp(-100.0 * (d_h_arr   + disp_fus)))  # divergence gate
-    ax.plot(d_h_arr, gate_c * gate_d_, color=utils.C['eye'], lw=2.0, label='fuse gate')
-    # shade three zones
-    ax.axvspan(-disp_fus - 2, -disp_fus,  alpha=0.10, color='tomato',   label='diplopic (div)')
-    ax.axvspan(-disp_fus,      disp_fus,   alpha=0.15, color='#2ca02c',  label='fused (Panum\'s)')
-    ax.axvspan( disp_fus,      verg_max,   alpha=0.10, color='#ff7f0e',  label='fusable')
-    ax.axvspan( verg_max,      verg_max+6, alpha=0.10, color='tomato',   label='_')
-    ax.axvline( verg_max,  color='tomato',    lw=1.0, ls='--', label=f'+{verg_max:.0f}° NPC')
-    ax.axvline(-disp_fus,  color='steelblue', lw=1.0, ls='--', label=f'−{disp_fus:.0f}° div')
-    ax.axvline( disp_fus,  color='#2ca02c',   lw=0.8, ls=':',  label=f'+{disp_fus:.0f}° Panum\'s')
-    ax.axhline(0.5, color='gray', lw=0.7, ls=':', alpha=0.6)
-    ax.set_xlabel('Horizontal disparity (deg)')
-    ax.set_ylabel('Fusion gate (0=diplopic, 1=fusable/fused)')
-    ax.set_ylim(-0.05, 1.1)
-    ax.legend(fontsize=7.5, loc='lower left')
-    ax.set_title('Fusion gate — 3 states', fontsize=9)
-    ax.grid(True, alpha=0.3)
-
-    # Row 1: Vertical + torsional fusion gates
-    ax = axes[1, 2]
-    d_abs    = np.linspace(0, max(disp_vert, disp_tors) + 3, 400)
-    gate_v   = 1.0 / (1.0 + np.exp(-100.0 * (disp_vert - d_abs)))
-    gate_tor = 1.0 / (1.0 + np.exp(-100.0 * (disp_tors - d_abs)))
-    ax.plot(d_abs, gate_v,   color=utils.C['ni'],     lw=2.0, label=f'Vert ±{disp_vert}°')
-    ax.plot(d_abs, gate_tor, color=utils.C['target'], lw=2.0, ls='--',
-            label=f'Tors ±{disp_tors}°')
-    ax.axhline(0.5, color='gray', lw=0.7, ls=':', alpha=0.6)
-    ax.set_xlabel('|Disparity| (deg)')
-    ax.set_ylabel('Fusion gate (0=diplopic, 1=fused)')
-    ax.set_ylim(-0.05, 1.1)
-    ax.legend(fontsize=8)
-    ax.set_title('Vertical & torsional fusion gates', fontsize=9)
-    ax.grid(True, alpha=0.3)
-
-    # Row 2: Graded steady-state scatter
-    ax = axes[2, 2]
-    geo_arr  = np.array([geo_d[d] for d in DEPTHS])
-    meas_arr = np.array([meas_v[d] for d in DEPTHS])
-    in_range = (geo_arr - geo_base) < verg_max   # green = fusable/fused; red = diplopic
-    geo_crv  = np.linspace(0, max(geo_arr) + 5, 200)
-    ax.plot(geo_crv, geo_crv, 'k-', lw=1.0, alpha=0.3, label='Ideal (1:1)')
-    ax.axvline(dipl_abs, color='tomato', lw=1.2, ls='--',
-               label=f'NPC limit {dipl_abs:.1f}°')
-    for i, d in enumerate(DEPTHS):
-        ax.scatter(geo_arr[i], meas_arr[i],
-                   color='#2ca02c' if in_range[i] else '#d62728',
-                   s=80, zorder=5)
-    from matplotlib.lines import Line2D
-    leg_h = [Line2D([0],[0], marker='o', color='w', markerfacecolor='#2ca02c', ms=8, label='Fused'),
-             Line2D([0],[0], marker='o', color='w', markerfacecolor='#d62728', ms=8, label='Diplopic')]
-    ax.legend(handles=leg_h + [ax.lines[0], ax.lines[1]], fontsize=8)
-    ax.set_xlabel('Geometric vergence demand (deg)')
-    ax.set_ylabel('Steady-state vergence (deg)')
-    ax.set_title('Graded convergence (green=fusable/fused, red=diplopic)', fontsize=8)
-    ax.grid(True, alpha=0.3)
 
     fig.tight_layout(rect=[0, 0, 1, 0.96])
     path, rp = utils.save_fig(fig, 'vergence_diplopia', show=show)
     return utils.fig_meta(
         path, rp,
         title='Diplopia: Fusion Gate and Vergence Limits',
-        description='3 rows × 3 cols. '
-                    'Cols 0–1: fused (0.3 m) vs. diplopic (0.05 m) midline step, saccades off. '
-                    'Row 0: L/R eye yaw with per-eye geometric target lines (or off-scale annotation). '
-                    'Row 1: vergence (L−R) with geometric target and proximal limit. '
-                    'Row 2: version ≈ 0 (sanity check); col 2: graded scatter. '
-                    'Col 2: horizontal, vertical/torsional fusion gates + graded scatter.',
-        expected='Fused: L eye reaches +geo/2, R eye reaches −geo/2; '
-                 'both eye trajectories meet the geometric target dashed lines. '
-                 'Diplopic: eyes converge to prox limit (≈22°); per-eye targets (±33°) are '
-                 'off-scale (annotated); version stays ≈ 0 for midline target. '
-                 'Graded scatter: green dots follow 1:1 line up to prox limit, '
-                 'red dots plateau below it.',
+        description='3 rows × 2 cols. '
+                    'Col 0: fused (3→0.3 m midline). '
+                    'Col 1: diplopic (3→0.05 m midline). Both columns use default params (saccades on). '
+                    'Row 0: L/R eye yaw; fused shows geometric target lines (±geo/2), '
+                    'diplopic shows NPC motor-limit lines (±NPC/2) with off-scale annotation. '
+                    'Row 1: vergence (L−R) with geometric target and NPC limit. '
+                    'Row 2: version (L+R)/2 — auto-scaled; diplopic case shows version shift '
+                    'from monocular fixation saccade driven by dominant eye retinal error.',
+        expected='Fused: L/R eye yaw converges to ±geo/2 dashed targets; vergence reaches geo target; '
+                 'version stays ≈ 0. '
+                 'Diplopic: monocular fixation saccade fires (dominant R eye drives both eyes); '
+                 'R eye lands on its geometric target (−geo/2); L eye deviates. '
+                 'Vergence limited well below geometric target.',
         citation='Fender & Julesz (1967) J Opt Soc Am; '
                  'Schor (1979) Vision Res; '
                  'Shipley & Rawlings (1970) Vision Res',
     )
 
 
+def _run_asym_full(t, d_start, d_end, ver_deg, T_STEP):
+    """Simulate asymmetric vergence + version, return full SimState."""
+    T     = len(t)
+    x_end = float(np.tan(np.radians(ver_deg)) * d_end)
+    p0    = np.array([0.0,   0.0, float(d_start)])
+    p1    = np.array([x_end, 0.0, float(d_end)])
+    pt    = np.where((t >= T_STEP)[:, None], p1, p0)
+    return simulate(PARAMS_DEFAULT, t,
+                    target=km.build_target(t, lin_pos=pt),
+                    scene_present_array=np.ones(T),
+                    return_states=True)
+
+
+def _asym_vergence_debug(show):
+    """Debug cascade for asymmetric vergence — 7 rows × 2 cols (conv + div).
+
+    Same stimulus as the asymmetric columns in vergence_bidir.
+    Shows eye positions, vergence, version, vergence velocity, OPN gate,
+    e_held / x_copy internal states, and the reconstructed Zee vergence burst.
+    """
+    T_STEP = 1.0
+    TOTAL  = 5.0
+    t      = np.arange(0.0, TOTAL, DT)
+
+    D_ASYM_START_C, D_ASYM_END_C = 2.0, 0.5
+    D_ASYM_START_D, D_ASYM_END_D = 0.5, 2.0
+    VER = 10.0
+
+    st_c = _run_asym_full(t, D_ASYM_START_C, D_ASYM_END_C,  VER, T_STEP)
+    st_d = _run_asym_full(t, D_ASYM_START_D, D_ASYM_END_D, -VER, T_STEP)
+    sts  = [st_c, st_d]
+
+    eL = [np.array(st.plant[:, 0]) for st in sts]
+    eR = [np.array(st.plant[:, 3]) for st in sts]
+
+    verg     = [eL[i] - eR[i]         for i in range(2)]
+    vers     = [(eL[i] + eR[i]) / 2   for i in range(2)]
+    verg_vel = [np.gradient(v, DT)    for v in verg]
+
+    # ── Internal vergence states: [x_verg(3) | e_held(3) | x_copy(3)] ──────
+    verg_st  = [np.array(st.brain[:, _IDX_VERG]) for st in sts]   # (T, 9)
+    sg_st    = [np.array(st.brain[:, _IDX_SG])   for st in sts]   # (T, 9)
+
+    x_verg_h  = [vs[:, 0] for vs in verg_st]   # tonic horizontal vergence memory
+    e_held_h  = [vs[:, 3] for vs in verg_st]   # latched horizontal error
+    x_copy_h  = [vs[:, 6] for vs in verg_st]   # copy integrator horizontal
+
+    # OPN gate: z_opn = x_sg[7] ∈ [0,100] (100=tonic); z_act = 1 − z_opn/100
+    z_opn = [ss[:, 7] for ss in sg_st]
+    z_act = [1.0 - np.clip(zop, 0.0, 100.0) / 100.0 for zop in z_opn]
+
+    # Reconstruct Zee vergence burst (horizontal): g_burst_verg * z_act * gate_res * e_res[H]
+    bp = PARAMS_DEFAULT.brain
+    burst_h = []
+    for i in range(2):
+        e_res_3d  = verg_st[i][:, 3:6] - verg_st[i][:, 6:9]
+        e_res_mag = np.linalg.norm(e_res_3d, axis=1)
+        gate_res  = 1.0 / (1.0 + np.exp(-bp.k_sac * (e_res_mag - bp.threshold_stop)))
+        burst_h.append(z_act[i] * gate_res * bp.g_burst_verg * e_res_3d[:, 0])
+
+    geo_c     = _verg_angle_deg(D_ASYM_END_C)
+    geo_d_    = _verg_angle_deg(D_ASYM_END_D)
+    geo_ic    = _verg_angle_deg(D_ASYM_START_C)
+    geo_id    = _verg_angle_deg(D_ASYM_START_D)
+    geo_tgt   = [geo_c,  geo_d_]
+    geo_init  = [geo_ic, geo_id]
+    ver_tgt   = [VER,    -VER]
+    titles    = ['Asym R+conv  (2 m → 0.5 m, +10°)', 'Asym L+div   (0.5 m → 2 m, −10°)']
+
+    NROWS = 7
+    fig, axes = plt.subplots(NROWS, 2, figsize=(12, 18), sharex=True)
+    fig.suptitle('Asymmetric Vergence — Debug Cascade', fontsize=12, fontweight='bold')
+
+    CL  = utils.C['eye']
+    CR  = utils.C['target']
+    CBR = '#8B4513'   # brown for vergence signals
+
+    def vl(ax): ax.axvline(T_STEP, color='gray', lw=0.8, ls=':')
+
+    for col in range(2):
+        axes[0, col].set_title(titles[col], fontsize=9)
+
+        # Row 0: per-eye position
+        ax = axes[0, col]
+        ax.plot(t, eL[col], color=CL, lw=1.3, label='L eye')
+        ax.plot(t, eR[col], color=CR, lw=1.3, ls='--', label='R eye')
+        vl(ax)
+        ax_fmt(ax, ylabel='Eye yaw (deg)' if col == 0 else '')
+        ax.legend(fontsize=7.5)
+
+        # Row 1: vergence (L-R)
+        ax = axes[1, col]
+        ax.plot(t, verg[col], color=CL, lw=1.5)
+        ax.axhline(geo_tgt[col],  color='tomato', lw=0.9, ls='--',
+                   label=f'Target {geo_tgt[col]:.1f}°')
+        ax.axhline(geo_init[col], color='gray',   lw=0.8, ls=':',
+                   label=f'Start  {geo_init[col]:.1f}°')
+        vl(ax)
+        lo = min(geo_tgt[col], geo_init[col]) - 1.0
+        hi = max(float(np.max(verg[col])), geo_tgt[col], geo_init[col]) + 2.0
+        ax.set_ylim(lo, hi)
+        ax_fmt(ax, ylabel='Vergence L−R (deg)' if col == 0 else '')
+        ax.legend(fontsize=7.5)
+
+        # Row 2: version (L+R)/2
+        ax = axes[2, col]
+        ax.plot(t, vers[col], color=utils.C['ni'], lw=1.4)
+        ax.axhline(ver_tgt[col], color='gray', lw=0.9, ls='--',
+                   label=f'Target {ver_tgt[col]:+.0f}°')
+        vl(ax)
+        lim = abs(ver_tgt[col]) + 3.0
+        ax.set_ylim(-lim, lim)
+        ax_fmt(ax, ylabel='Version (L+R)/2 (deg)' if col == 0 else '')
+        ax.legend(fontsize=7.5)
+
+        # Row 3: vergence velocity
+        ax = axes[3, col]
+        ax.plot(t, verg_vel[col], color=CBR, lw=1.3, label='Verg vel')
+        ax.axhline(0, color='gray', lw=0.8, ls='--')
+        vl(ax)
+        peak   = float(np.max(np.abs(verg_vel[col][t > T_STEP - 0.05])))
+        margin = max(peak * 0.15, 2.0)
+        ax.set_ylim(-peak - margin, peak + margin)
+        ax_fmt(ax, ylabel='d(Verg)/dt (deg/s)' if col == 0 else '')
+        ax.legend(fontsize=7.5)
+
+        # Row 4: OPN gate — 0=idle (OPN active), 1=saccade (OPN paused)
+        ax = axes[4, col]
+        ax.plot(t, z_act[col], color='#555555', lw=1.3, label='z_act (OPN gate)')
+        ax.axhline(0.5, color='gray', lw=0.7, ls=':', alpha=0.6)
+        vl(ax)
+        ax.set_ylim(-0.05, 1.1)
+        ax_fmt(ax, ylabel='z_act (0=idle, 1=sacc)' if col == 0 else '')
+        ax.legend(fontsize=7.5)
+
+        # Row 5: e_held_verg[H] + x_copy_verg[H] — shows burst integration progress
+        ax = axes[5, col]
+        ax.plot(t, e_held_h[col], color=CBR,       lw=1.3, label='e_held[H]')
+        ax.plot(t, x_copy_h[col], color=CBR,       lw=1.3, ls='--', label='x_copy[H]')
+        ax.plot(t, x_verg_h[col], color='#555555', lw=1.0, ls=':',  label='x_verg[H]')
+        ax.axhline(0, color='gray', lw=0.7, ls=':', alpha=0.5)
+        vl(ax)
+        ax_fmt(ax, ylabel='Verg state (deg)' if col == 0 else '')
+        ax.legend(fontsize=7.5)
+
+        # Row 6: reconstructed Zee vergence burst [H]
+        ax = axes[6, col]
+        ax.plot(t, burst_h[col], color=CBR, lw=1.3, label='Zee burst[H]')
+        ax.axhline(0, color='gray', lw=0.8, ls='--')
+        vl(ax)
+        peak_b = float(np.max(np.abs(burst_h[col])))
+        margin_b = max(peak_b * 0.15, 0.5)
+        ax.set_ylim(-peak_b - margin_b, peak_b + margin_b)
+        ax_fmt(ax, ylabel='Verg burst (deg/s)' if col == 0 else '', xlabel='Time (s)')
+        ax.legend(fontsize=7.5)
+
+    fig.tight_layout(rect=[0, 0, 1, 0.97])
+    path, rp = utils.save_fig(fig, 'vergence_asym_debug', show=show)
+    return utils.fig_meta(
+        path, rp,
+        title='Asymmetric Vergence Debug Cascade',
+        description='7 rows × 2 cols. '
+                    'Left: asym right+conv (2→0.5 m, +10°). Right: asym left+div (0.5→2 m, −10°). '
+                    'Rows: eye position, vergence (L−R), version (L+R)/2, vergence velocity, '
+                    'OPN gate z_act, internal states e_held/x_copy/x_verg [H], Zee burst [H].',
+        expected='OPN gate: pulses during version saccade; '
+                 'Zee burst fires during the same window and exhausts as x_copy reaches e_held. '
+                 'Vergence velocity: overshoot appears as negative region after peak. '
+                 'x_verg[H] settles at geometric vergence target.',
+        citation='Zee et al. (1992) J Neurophysiol; Collewijn et al. (1988) J Physiol',
+    )
+
+
 def run(show=False):
     print('\n=== Vergence ===')
     figs = []
-    print('  1/3  symmetric + asymmetric (both directions) …')
+    print('  1/4  symmetric + asymmetric (both directions) …')
     figs.append(_vergence_bidir(show))
-    print('  2/3  fixation disparity vs. distance …')
+    print('  2/4  fixation disparity vs. distance …')
     figs.append(_fixation_distance(show))
-    print('  3/3  diplopia: fusion gate and fused vs. diplopic …')
+    print('  3/4  diplopia: fusion gate and fused vs. diplopic …')
     figs.append(_diplopia(show))
+    print('  4/4  asymmetric vergence debug cascade …')
+    figs.append(_asym_vergence_debug(show))
     return figs
 
 

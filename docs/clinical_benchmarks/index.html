@@ -53,12 +53,13 @@ h1   { font-size: 22px; margin-bottom: 4px; }
     <a href="#clin_ni_vs">B. Gaze-Holding & Integrator Disorders</a>
     <a href="#clin_cn_palsies">C. Cranial Nerve Palsies, Motor Nuclear Lesions & INO</a>
     <a href="#clin_saccades">D. Saccadic Disorders</a>
+    <a href="#clin_vergence">E. Vergence — Cover Test & Phoria</a>
   </nav>
   <main>
     <h1>OculomotorJax — Clinical Benchmarks</h1>
     <p class="meta">
-      Generated: <strong>2026-04-29 06:44</strong> &nbsp;|&nbsp;
-      Version: <strong>018a31f-dirty</strong> &nbsp;|&nbsp;
+      Generated: <strong>2026-04-30 08:07</strong> &nbsp;|&nbsp;
+      Version: <strong>99fce15-dirty</strong> &nbsp;|&nbsp;
       <a href="../../docs/benchmarks/index.html">Normal Benchmarks</a>
     </p>
     <div class="banner">
@@ -234,6 +235,25 @@ h1   { font-size: 22px; margin-bottom: 4px; }
       </div>
       <p class="citation">&#128214; Zee DS & Robinson DA (1979) Ann Neurol 5:207-209 — flutter mechanism; Hepp K et al. (1989) Exp Brain Res 75:551-564 — OPN and saccadic control.</p>
       <span class="badge cascade">cascade</span>
+    </div>
+    </div>
+  </section>
+
+  <section class="section" id="clin_vergence">
+    <h2>E. Vergence — Cover Test & Phoria</h2>
+    <p>Clinical cover test: the left eye's target visibility is zeroed to simulate occlusion (target_present_L = 0). Binocular fusion is disrupted; vergence drifts toward the tonic resting vergence. The amplitude and direction of drift reveal phoria. Recovery on uncovering shows the fusional vergence response. Three conditions (exophoria, normal, esophoria) × two fixation distances.</p>
+    <div class="fig-grid">
+      
+    <div class="fig-card">
+      <a href="figures/cover_test_phoria.png" target="_blank"><img src="figures/cover_test_phoria.png" alt="Cover Test — Phoria Detection"></a>
+      <h3>Cover Test — Phoria Detection</h3>
+      <p class="desc">3 rows × 3 cols. L eye occluded during shaded period (target_present_L = 0). Cols: exophoria (tonic=0°), normal (tonic≈3.7°), esophoria (tonic=9°). Rows 0–1: vergence at far (3 m) and near (0.5 m); Row 2: per-eye yaw at near — covered L eye drifts, open R eye holds. Phoria angle = tonic_verg − geo_demand (positive=eso, negative=exo).</p>
+      <div class="expected">
+        <strong>Expected finding</strong>
+        Exophoria: vergence falls during cover (divergent drift) at both distances. Normal: mild eso drift at far (tonic > far demand); mild exo drift at near. Esophoria: vergence rises during cover (convergent drift). All cases: sharp recovery on uncover as fusion re-engages. Row 2: L eye drifts inward (eso) or outward (exo); R eye stationary.
+      </div>
+      <p class="citation">&#128214; Sheard C (1930) Am J Optom 7:564; Schor CM (1979) Vision Res 19:1359; Mitchell DE (1966) Invest Ophthalmol 5:566</p>
+      <span class="badge behavior">behavior</span>
     </div>
     </div>
   </section>
