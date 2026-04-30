@@ -29,7 +29,7 @@ from oculomotor.analysis import ax_fmt, extract_canal, vs_net, vs_null, ni_net, 
 
 SHOW  = '--show' in sys.argv
 DT    = 0.001
-THETA = with_sensory(PARAMS_DEFAULT, sigma_canal=0.0, sigma_pos=0.0, sigma_vel=0.0)
+THETA = with_brain(with_sensory(PARAMS_DEFAULT, sigma_canal=0.0, sigma_pos=0.0, sigma_vel=0.0), sigma_acc=0.0)
 
 
 def _simulate(theta, t_arr, head_vel=None, scene_vel=None, scene_present=None,

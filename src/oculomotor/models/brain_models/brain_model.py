@@ -212,7 +212,7 @@ class BrainParams(NamedTuple):
     g_opn_pause:           float = 500.0  # OPN inhibitory overshoot (fr units); IBN inhibition drives OPN
                                            # membrane potential to −g_opn_pause (below spike threshold).
                                            # Firing rate clips at 0; large value → OPN pauses in ~2 ms.
-    tau_acc:               float = 0.130  # accumulator rise TC (s); ~80 ms to threshold → ~200 ms RT with visual delay
+    tau_acc:               float = 0.180  # accumulator rise TC (s); ~120 ms to threshold → cascade fully settled before e_held freezes
     tau_drain:             float = 0.200  # accumulator drain TC (s)
     threshold_acc:         float = 0.5    # accumulator trigger threshold
     threshold_sac_qp:      float = 2.0    # error threshold to START accumulating for quick phases (target_visible≈0)
@@ -220,7 +220,7 @@ class BrainParams(NamedTuple):
     k_acc:                 float = 500.0  # accumulator→OPN sigmoid steepness; high value = near-hard threshold
                                            # OPN only starts dropping in the last ~0.2 ms before z_acc crosses
                                            # threshold_acc, so x_copy barely grows during the OPN transition
-    sigma_acc:             float = 0.0    # accumulator diffusion noise (1/√s); adds RT variability
+    sigma_acc:             float = 0.2    # accumulator diffusion noise (1/√s); adds RT variability
                                            # ~0.15–0.25 gives ±15–25 ms SD; 0 = deterministic
 
     # Saccade target selection — handled inside the saccade generator

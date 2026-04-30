@@ -63,7 +63,10 @@ OPN latch (z_opn) — the key to the ballistic design
     dz_opn/dt = (100−z_opn) · release_sac / τ_sac
               −       z_opn  · charge_sac  / τ_sac
 
-    charge_sac  = σ(k_acc · (z_acc − threshold_acc)):  accumulator crossed threshold
+    charge_sac  = σ(k_acc · (z_acc − threshold_acc · z_idl)):  Schmitt trigger
+        threshold_eff = threshold_acc · z_idl collapses to 0 once OPN starts dropping,
+        latching charge_sac high even if z_acc dips below threshold_acc mid-drop.
+        Without this hysteresis, noise would stall the OPN at intermediate levels.
     release_sac = σ(k_ref · (z_ref − threshold_sac_release)): refractory reached peak
 
     Sequence:
@@ -210,8 +213,11 @@ def step(x_sg, pos_delayed, target_visible, x_ni, ocr, w_est, brain_params, nois
     orbital_limit = brain_params.orbital_limit
     alpha_reset   = brain_params.alpha_reset
 
-    # In-field saccade: aim for raw retinal error; clip to orbital range at current position.
-    # No velocity prediction here — voluntary saccades go where the retina says.
+    # In-field saccade: aim for raw retinal error, clipped to the oculomotor range.
+    # If the target is reachable, clip has no effect and e_target = pos_delayed.
+    # If the target is beyond the orbital limit from the current eye position (x_ni),
+    # the eye parks at the boundary — the residual error will fire a new saccade
+    # after the refractory period once the eye has reached the limit.
     e_target = jnp.clip(pos_delayed, -orbital_limit - x_ni, orbital_limit - x_ni)
 
     # ── Quick-phase generator (out-of-field / no target) ──────────────────────
@@ -359,8 +365,13 @@ def step(x_sg, pos_delayed, target_visible, x_ni, ocr, w_est, brain_params, nois
 
     tau_sac               = brain_params.tau_sac
     threshold_sac_release = brain_params.threshold_sac_release
-    charge_sac  = jax.nn.sigmoid(k_acc * (z_acc - threshold_acc))           # fires when accumulated
-    release_sac = jax.nn.sigmoid(k_ref * (z_ref - threshold_sac_release))  # fires when refractory
+    # Schmitt trigger hysteresis: once the OPN starts dropping (z_idl→0), the effective
+    # threshold collapses to 0, latching charge_sac high even if z_acc dips below threshold_acc.
+    # Without this, noise-driven z_acc transients below threshold mid-drop would partially
+    # ungate the OPN, stalling it at an intermediate level.
+    threshold_eff = threshold_acc * z_idl                                             # 0 when burst active
+    charge_sac  = jax.nn.sigmoid(k_acc * (z_acc - threshold_eff))                   # Schmitt trigger
+    release_sac = jax.nn.sigmoid(k_ref * (z_ref - threshold_sac_release))           # fires when refractory
     # IBN inhibitory overshoot: drive z_opn toward −g_opn_pause when charge fires.
     # State can go negative (hyperpolarised); firing rate is clipped at 0 above (z_opn_fr).
     g_opn_pause = brain_params.g_opn_pause

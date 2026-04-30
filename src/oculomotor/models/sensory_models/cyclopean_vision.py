@@ -18,7 +18,7 @@ import jax
 import jax.numpy as jnp
 
 from oculomotor.models.sensory_models.retina import (
-    delay_cascade_step, ypr_to_xyz,
+    delay_cascade_step, ypr_to_xyz, xyz_to_ypr,
     _N_PER_SIG,
     _OFF_SCENE_LINEAR, _OFF_TARGET_POS, _OFF_TARGET_VEL, _OFF_TARGET_DISP,
     _OFF_SCENE_VIS, _OFF_TARGET_VIS, _OFF_STROBED, _OFF_TARGET_FUSABLE,
@@ -95,10 +95,11 @@ def binocular_saccade_policy(target_pos_L, target_vis_L, target_pos_R, target_vi
         sensory_params: SensoryParams — reads npc, div_max, vert_max, tors_max, eye_dominant
 
     Returns:
-        w_L:             scalar left-eye blend weight ∈ [0, 1]
-        w_R:             scalar right-eye blend weight ∈ [0, 1]
+        w_L:             scalar left-eye blend weight, normalised (w_L + w_R = 1 or both 0)
+        w_R:             scalar right-eye blend weight, normalised
         target_disparity:(3,) diplopia-gated vergence disparity (deg)
         target_fusable:  scalar fusion gate ∈ [0, 1] — pass to binocular_pursuit_policy
+        target_visible:  scalar cyclopean target visibility ∈ [0, 1] (pre-normalisation sum)
     """
     bino_raw = target_vis_L * target_vis_R
     raw_disp = bino_raw * (target_pos_L - target_pos_R)
@@ -115,7 +116,9 @@ def binocular_saccade_policy(target_pos_L, target_vis_L, target_pos_R, target_vi
     w_L = target_vis_L * (target_fusable + (1.0 - target_fusable) * dom_L)
     w_R = target_vis_R * (target_fusable + (1.0 - target_fusable) * dom_R)
 
-    return w_L, w_R, target_fusable * raw_disp, target_fusable
+    target_visible = jnp.clip(w_L + w_R, 0.0, 1.0)
+    norm = jnp.maximum(w_L + w_R, 1e-6)
+    return w_L / norm, w_R / norm, target_fusable * raw_disp, target_fusable, target_visible
 
 
 def binocular_pursuit_policy(target_motion_vis_L, target_motion_vis_R, target_fusable, sensory_params):
@@ -132,26 +135,37 @@ def binocular_pursuit_policy(target_motion_vis_L, target_motion_vis_R, target_fu
         sensory_params:      SensoryParams — reads eye_dominant
 
     Returns:
-        w_m_L: scalar left-eye motion blend weight ∈ [0, 1]
-        w_m_R: scalar right-eye motion blend weight ∈ [0, 1]
+        w_m_L:                scalar left-eye motion blend weight, normalised
+        w_m_R:                scalar right-eye motion blend weight, normalised
+        target_motion_visible:scalar cyclopean motion visibility ∈ [0, 1] (pre-normalisation sum)
     """
     dom_L = 1.0 - sensory_params.eye_dominant
     dom_R = sensory_params.eye_dominant
     w_m_L = target_motion_vis_L * (target_fusable + (1.0 - target_fusable) * dom_L)
     w_m_R = target_motion_vis_R * (target_fusable + (1.0 - target_fusable) * dom_R)
-    return w_m_L, w_m_R
+
+    target_motion_visible = jnp.clip(w_m_L + w_m_R, 0.0, 1.0)
+    norm = jnp.maximum(w_m_L + w_m_R, 1e-6)
+    return w_m_L / norm, w_m_R / norm, target_motion_visible
 
 
-def binocular_okr_policy(scene_vis_L, scene_vis_R):
+def binocular_okr_policy(scene_angular_vel_L, scene_linear_vel_L,
+                         scene_angular_vel_R, scene_linear_vel_R,
+                         scene_vis_L, scene_vis_R):
     """Visibility-weighted optic flow average → per-eye scene blend weights + cyclopean gate.
 
     OKR is driven by the background scene, not a foveated target.  There is no NPC gate
     and no eye dominance — both eyes contribute equally whenever the scene is present.
     Cyclopean scene visibility follows a probabilistic OR: scene_visible = 1 − (1−L)(1−R).
 
+    Scene velocities are accepted for future use (e.g. interocular velocity difference
+    as a cue to scene depth or motion parallax) but not yet processed here.
+
     Args:
-        scene_vis_L: scalar scene presence gate = scene_present ∈ [0,1] — left eye
-        scene_vis_R: scalar scene presence gate ∈ [0,1] — right eye
+        scene_angular_vel_L/R: (3,) rotational optic flow per eye (deg/s)
+        scene_linear_vel_L/R:  (3,) translational optic flow per eye (m/s, eye frame)
+        scene_vis_L:           scalar scene presence gate = scene_present ∈ [0,1] — left eye
+        scene_vis_R:           scalar scene presence gate ∈ [0,1] — right eye
 
     Returns:
         w_L:          scalar left-eye scene weight (= scene_vis_L)
@@ -159,7 +173,8 @@ def binocular_okr_policy(scene_vis_L, scene_vis_R):
         scene_visible:scalar cyclopean scene gate ∈ [0,1]
     """
     scene_visible = 1.0 - (1.0 - scene_vis_L) * (1.0 - scene_vis_R)
-    return scene_vis_L, scene_vis_R, scene_visible
+    norm = jnp.maximum(scene_vis_L + scene_vis_R, 1e-6)
+    return scene_vis_L / norm, scene_vis_R / norm, scene_visible
 
 
 def step(x_vis,
@@ -169,7 +184,7 @@ def step(x_vis,
          ec_vel, ec_pos, ec_verg):
     """Fuse per-eye retinal signals, apply EC correction, then advance the cyclopean cascade.
 
-    EC subtraction happens pre-delay: u_version (the version motor command rotated into eye
+    EC subtraction happens pre-delay: ec_vel_eye (the version motor command rotated into eye
     frame) is added to the instantaneous retinal slip before the cascade.  This is
     mathematically equivalent to the old post-delay approach (delay is linear) but saves
     the two 120-state EC delay cascades entirely.
@@ -198,38 +213,42 @@ def step(x_vis,
     Returns:
         dx_vis: (720,)  cascade state derivative
     """
-    # Rotate version velocity efference head→eye frame for EC correction.
-    u_version = rotation_matrix(ypr_to_xyz(ec_pos)).T @ ec_vel
+    # Rotate version velocity efference from head frame to eye frame.
+    # ec_vel is in YPR space; angular velocity must be converted to XYZ before
+    # applying the rotation matrix (which operates in XYZ), then converted back.
+    # Skipping ypr_to_xyz / xyz_to_ypr introduces a spurious roll component that
+    # grows with gaze angle (same class of bug as the VVOR frame fix in retina.py).
+    R_eye_ec   = rotation_matrix(ypr_to_xyz(ec_pos))
+    ec_vel_eye = xyz_to_ypr(R_eye_ec.T @ ypr_to_xyz(ec_vel))
 
     # ── Scene (OKR) ───────────────────────────────────────────────────────────
-    w_s_L, w_s_R, scene_visible = binocular_okr_policy(scene_vis_L, scene_vis_R)
-    sv_norm           = jnp.maximum(w_s_L + w_s_R, 1e-6)
-    scene_angular_cyc = (w_s_L * scene_angular_vel_L + w_s_R * scene_angular_vel_R) / sv_norm
-    scene_linear_cyc  = (w_s_L * scene_linear_vel_L  + w_s_R * scene_linear_vel_R)  / sv_norm
+    w_s_L, w_s_R, scene_visible = binocular_okr_policy(
+        scene_angular_vel_L, scene_linear_vel_L,
+        scene_angular_vel_R, scene_linear_vel_R,
+        scene_vis_L, scene_vis_R)
+    scene_angular_cyc = w_s_L * scene_angular_vel_L + w_s_R * scene_angular_vel_R
+    scene_linear_cyc  = w_s_L * scene_linear_vel_L  + w_s_R * scene_linear_vel_R
 
     # EC correction pre-delay: add motor command to instantaneous slip before cascade.
     # delay(slip + u_motor) = delay(slip) + delay(u_motor) — same as old post-delay formulation.
-    scene_angular_vel = velocity_saturation((scene_angular_cyc + u_version) * scene_visible, sensory_params.v_max_scene_vel)
+    scene_angular_vel = velocity_saturation((scene_angular_cyc + ec_vel_eye) * scene_visible, sensory_params.v_max_scene_vel)
     scene_linear_vel  = scene_linear_cyc * scene_visible
 
+
     # ── Target position / disparity (saccade) ─────────────────────────────────
-    w_L, w_R, target_disparity, target_fusable = binocular_saccade_policy(
+    w_L, w_R, target_disparity, target_fusable, target_visible = binocular_saccade_policy(
         target_pos_L, target_vis_L, target_pos_R, target_vis_R, ec_verg[0], sensory_params)
 
-    target_visible = jnp.clip(w_L + w_R, 0.0, 1.0)
-    w_norm         = jnp.maximum(w_L + w_R, 1e-6)
-    target_pos     = (w_L * target_pos_L + w_R * target_pos_R) / w_norm
+    target_pos = w_L * target_pos_L + w_R * target_pos_R
 
     # ── Target velocity (pursuit) ──────────────────────────────────────────────
-    w_m_L, w_m_R = binocular_pursuit_policy(
+    w_m_L, w_m_R, target_motion_visible = binocular_pursuit_policy(
         target_motion_vis_L, target_motion_vis_R, target_fusable, sensory_params)
 
-    target_motion_visible = jnp.clip(w_m_L + w_m_R, 0.0, 1.0)
-    u_version_notors      = u_version.at[2].set(0.0)   # torsion zeroed — retina is 2D
-    w_m_norm              = jnp.maximum(w_m_L + w_m_R, 1e-6)
-    target_vel_cyc        = (w_m_L * target_vel_L + w_m_R * target_vel_R) / w_m_norm
+    ec_vel_eye_notors = ec_vel_eye.at[2].set(0.0)   # torsion zeroed — retina is 2D
+    target_vel_cyc    = w_m_L * target_vel_L + w_m_R * target_vel_R
     target_slip = velocity_saturation(
-        target_vel_cyc + u_version_notors * target_motion_visible,
+        target_vel_cyc + ec_vel_eye_notors * target_motion_visible,
         sensory_params.v_max_target_vel)
 
     # ── Advance cascade ───────────────────────────────────────────────────────

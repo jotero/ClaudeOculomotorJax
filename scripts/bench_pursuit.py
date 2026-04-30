@@ -27,7 +27,8 @@ from oculomotor.analysis import ax_fmt, extract_burst, extract_sg, ni_net
 
 SHOW  = '--show' in sys.argv
 DT    = 0.001
-THETA = with_sensory(PARAMS_DEFAULT, sigma_canal=0.5, sigma_pos=0.2, sigma_vel=0.2)
+THETA = PARAMS_DEFAULT
+THETA_NOISELESS = with_brain(with_sensory(THETA, sigma_canal=0.0, sigma_pos=0.0, sigma_vel=0.0), sigma_acc=0.0)
 
 
 def _ramp(t_np, vel, t_jump=0.2):
@@ -220,7 +221,7 @@ def _cascade(show):
     vt3 = np.zeros((T, 3))
     vt3[:, 0] = np.where((t_np >= t_jump) & (t_np < t_stop), float(vel), 0.0).astype(np.float32)
 
-    st  = _run(THETA, t_np, jnp.array(pt3), jnp.array(vt3), key=30)
+    st  = _run(THETA_NOISELESS, t_np, jnp.array(pt3), jnp.array(vt3), key=30)
     sg  = extract_sg(st, THETA)
     eye = (np.array(st.plant[:, 0]) + np.array(st.plant[:, 3])) / 2.0
     ev  = np.gradient(eye, DT)

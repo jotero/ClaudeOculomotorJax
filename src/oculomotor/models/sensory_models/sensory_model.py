@@ -88,11 +88,11 @@ class SensoryParams(NamedTuple):
     k_visual_field:     float       = 1.0    # sigmoid steepness for visual field gate (1/deg)
 
     # Sensory noise (std in output units; 0 = noiseless)
-    sigma_canal:        float       = 0.0    # canal afferent noise (deg/s equiv.); ~1–3 deg/s realistic
+    sigma_canal:        float       = 0.5    # canal afferent noise (deg/s equiv.); ~1–3 deg/s realistic
     sigma_slip:         float       = 0.0    # retinal slip noise (deg/s); drives VS/OKR
-    sigma_pos:          float       = 0.0    # retinal position noise (deg);  drives SG → microsaccades
+    sigma_pos:          float       = 0.2    # retinal position noise (deg);  drives SG → microsaccades
     tau_pos_drift:      float       = 0.3    # OU drift TC (s); sets how slowly pos error wanders
-    sigma_vel:          float       = 0.0    # target velocity noise (deg/s); drives pursuit
+    sigma_vel:          float       = 0.2    # target velocity noise (deg/s); drives pursuit
 
     # Binocular geometry
     ipd:                float       = 0.064  # inter-pupillary distance (m); ~64 mm adult

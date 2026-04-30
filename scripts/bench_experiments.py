@@ -20,7 +20,7 @@ if '--show' not in sys.argv:
 import matplotlib.pyplot as plt
 
 from oculomotor.sim.simulator import (
-    PARAMS_DEFAULT, SimConfig, simulate,
+    PARAMS_DEFAULT, SimConfig, simulate, with_brain, with_sensory,
     _IDX_PURSUIT,
 )
 from oculomotor.sim.kinematics import build_target
@@ -28,7 +28,7 @@ from oculomotor.analysis import extract_burst
 
 SHOW  = '--show' in sys.argv
 DT    = 0.001
-THETA = PARAMS_DEFAULT   # noiseless — deterministic
+THETA = with_brain(with_sensory(PARAMS_DEFAULT, sigma_canal=0.0, sigma_pos=0.0, sigma_vel=0.0), sigma_acc=0.0)  # noiseless — deterministic
 
 
 # ── Monocular occlusion ────────────────────────────────────────────────────────

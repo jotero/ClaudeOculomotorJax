@@ -25,8 +25,8 @@ from oculomotor.analysis import ax_fmt, extract_burst, extract_sg, ni_net, vs_ne
 from oculomotor.models.sensory_models.sensory_model import C_vel as C_vel_sm, C_slip as C_slip_sm
 
 DT    = 0.001
-THETA = with_sensory(PARAMS_DEFAULT, sigma_canal=0.5, sigma_pos=0.2, sigma_vel=0.2)
-THETA = with_brain(THETA, g_burst=700.0)
+THETA = with_brain(PARAMS_DEFAULT, g_burst=700.0)
+THETA_NOISELESS = with_brain(with_sensory(THETA, sigma_canal=0.0, sigma_pos=0.0, sigma_vel=0.0), sigma_acc=0.0)
 SHOW  = '--show' in sys.argv
 
 
@@ -79,11 +79,11 @@ def _pt3(t_np, amp_h_deg, amp_v_deg=0.0, t_jump=0.1):
     return jnp.array(pt3)
 
 
-def _run(t_np, pt3, key=0, max_s=None):
+def _run(t_np, pt3, key=0, max_s=None, params=None):
     t  = jnp.array(t_np)
     T  = len(t)
     ms = max_s or int((t_np[-1] - t_np[0]) / DT) + 300
-    return simulate(THETA, t,
+    return simulate(params or THETA, t,
                     target=km.build_target(t_np, lin_pos=np.array(pt3)),
                     scene_present_array=jnp.ones(T),
                     max_steps=ms, return_states=True,
@@ -295,8 +295,12 @@ def _refractoriness(show):
 
 # ── Figure 4: signal cascade ──────────────────────────────────────────────────
 
-def _cascade(show):
-    amplitudes = [1.0, 5.0, 20.0]
+def _cascade(show, noisy=False):
+    params     = THETA if noisy else THETA_NOISELESS
+    fname      = 'saccade_cascade_noisy' if noisy else 'saccade_cascade'
+    noise_tag  = ' (with noise)' if noisy else ' (noiseless)'
+
+    amplitudes = [1.0, 5.0, 20.0, 40.0]
     T_end, t_jump = 0.9, 0.1
     t_np = np.arange(0.0, T_end, DT)
     T    = len(t_np)
@@ -304,7 +308,7 @@ def _cascade(show):
     n_rows, n_cols = 8, len(amplitudes)
     fig, axes = plt.subplots(n_rows, n_cols,
                              figsize=(4.5 * n_cols, 2.2 * n_rows), sharex=True)
-    fig.suptitle('Saccade Signal Cascade  ·  '
+    fig.suptitle('Saccade Signal Cascade' + noise_tag + '  ·  '
                  'cascade → accumulate → latch/freeze → burst → copy → refractory',
                  fontsize=11)
 
@@ -317,8 +321,8 @@ def _cascade(show):
 
     for ci, amp in enumerate(amplitudes):
         pt3 = _pt3(t_np, amp, t_jump=t_jump)
-        st  = _run(t_np, pt3, key=ci, max_s=int(T_end/DT)+200)
-        sg  = extract_sg(st, THETA)
+        st  = _run(t_np, pt3, key=ci, max_s=int(T_end/DT)+200, params=params)
+        sg  = extract_sg(st, params)
         eye = (np.array(st.plant[:, 0]) + np.array(st.plant[:, 3])) / 2.0
         vel = np.gradient(eye, DT)
         tgt = np.degrees(np.arctan2(np.array(pt3[:,0]), np.array(pt3[:,2])))
@@ -348,9 +352,9 @@ def _cascade(show):
         axes[3, ci].plot(t_np, sg['z_acc'], color='#e08214', lw=1.5, label='z_acc')
         axes[3, ci].plot(t_np, sg['z_opn'] / 100, color='#1b7837', lw=1.5, label='OPN (norm)')
         axes[3, ci].plot(t_np, sg['z_ref'], color=utils.C['refractory'], lw=1.2, ls='--', label='z_ref')
-        axes[3, ci].axhline(THETA.brain.threshold_acc,         color='#e08214',             lw=0.8, ls=':')
-        axes[3, ci].axhline(THETA.brain.threshold_sac_release, color=utils.C['refractory'], lw=0.8, ls=':')
-        axes[3, ci].axhline(THETA.brain.threshold_ref,         color='#c2a5cf',             lw=0.8, ls=':')
+        axes[3, ci].axhline(params.brain.threshold_acc,         color='#e08214',             lw=0.8, ls=':')
+        axes[3, ci].axhline(params.brain.threshold_sac_release, color=utils.C['refractory'], lw=0.8, ls=':')
+        axes[3, ci].axhline(params.brain.threshold_ref,         color='#c2a5cf',             lw=0.8, ls=':')
         axes[3, ci].set_ylim(-0.05, 1.15)
         if ci == 0: axes[3, ci].legend(fontsize=7)
 
@@ -373,15 +377,15 @@ def _cascade(show):
         if ci == 0: axes[5, ci].legend(fontsize=7)
 
         # Row 6: saturated — EC correction is pre-delay so cascade outputs already include it
-        tgt_ec_sat   = _vel_sat_np(vel_del,  THETA.sensory.v_max_target_vel)
-        scene_ec_sat = _vel_sat_np(slip_del, THETA.sensory.v_max_scene_vel)
+        tgt_ec_sat   = _vel_sat_np(vel_del,  params.sensory.v_max_target_vel)
+        scene_ec_sat = _vel_sat_np(slip_del, params.sensory.v_max_scene_vel)
         axes[6, ci].plot(t_np, tgt_ec_sat[:, 0],   color='#7b2d8b', lw=1.2, label='tgt (sat)')
         axes[6, ci].plot(t_np, scene_ec_sat[:, 0],  color='#1a7a4a', lw=1.2, label='scene (sat)')
         ax_fmt(axes[6, ci])
         if ci == 0: axes[6, ci].legend(fontsize=7)
 
         # Row 7: pursuit output u_pursuit + VS net (OKR-driven since no head movement)
-        K_ph = float(THETA.brain.K_phasic_pursuit)
+        K_ph = float(params.brain.K_phasic_pursuit)
         e_pred     = (tgt_ec_sat - x_purs) / (1.0 + K_ph)
         u_purs_arr = x_purs + K_ph * e_pred
         vs_out     = vs_net(st)                                  # (T, 3) VS net x_L−x_R
@@ -392,10 +396,10 @@ def _cascade(show):
         if ci == 0: axes[7, ci].legend(fontsize=7)
 
     fig.tight_layout()
-    path, rp = utils.save_fig(fig, 'saccade_cascade', show=show)
+    path, rp = utils.save_fig(fig, fname, show=show)
     return utils.fig_meta(path, rp,
-        title='Saccade Signal Cascade (Internal)',
-        description='Row-by-row signal flow for 1°, 5°, 20° saccades: position, visual cascade + hold, '
+        title='Saccade Signal Cascade' + noise_tag,
+        description='Row-by-row signal flow for 1°, 5°, 20°, 40° saccades: position, visual cascade + hold, '
                     'accumulator/latch, residual error, burst, eye velocity, refractory state.',
         expected='e_held freezes at saccade onset; burst proportional to e_res; '
                  'z_ref locks out next saccade for ~150 ms.',
@@ -415,14 +419,16 @@ SECTION = dict(
 def run(show=False):
     print('\n=== Saccades ===')
     figs = []
-    print('  1/4  main sequence …')
+    print('  1/5  main sequence …')
     figs.append(_main_sequence(show))
-    print('  2/4  oblique saccades …')
+    print('  2/5  oblique saccades …')
     figs.append(_oblique(show))
-    print('  3/4  double-step refractoriness …')
+    print('  3/5  double-step refractoriness …')
     figs.append(_refractoriness(show))
-    print('  4/4  signal cascade …')
-    figs.append(_cascade(show))
+    print('  4/5  signal cascade (noiseless) …')
+    figs.append(_cascade(show, noisy=False))
+    print('  5/5  signal cascade (noisy) …')
+    figs.append(_cascade(show, noisy=True))
     return figs
 
 
