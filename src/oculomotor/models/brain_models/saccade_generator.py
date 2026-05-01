@@ -252,12 +252,11 @@ def step(x_sg, pos_delayed, target_visible, x_ni, ocr, w_est, p, noise_acc=0.0):
     dz_trig = (charge_sac - z_trig * (1.0 + p.g_ibn_trig * ibn_norm)) / p.tau_trig
 
     # z_acc: charging GATED by normalized_opn (1=tonic, 0=paused during burst).
-    #   Before threshold: z_trig=0 → OPN=100 → normalized_opn=1 → gate open → charges freely.
-    #   After threshold: z_trig rises → OPN drops → normalized_opn→0 → gate closes → no charging.
-    #   Drain by IBN only: exactly 0 between saccades (no equilibrium), proportional during burst.
-    #   Refractory: z_acc doesn't recharge until OPN recovers (z_trig decays via IBN drain).
+    #   Drain by g_acc_drain * ibn_norm only: exactly 0 between saccades (IBN silent), only
+    #   active during burst. g_acc_drain boosts drain for small saccades (weak IBN); within
+    #   Heun bound: g_acc_drain · dt / tau_burst_drain < 2 → g_acc_drain < 4 at current params.
     dz_acc = (gate_err * normalized_opn / p.tau_acc
-              - ibn_norm * (z_acc - p.acc_burst_floor) / p.tau_burst_drain
+              - p.g_acc_drain * ibn_norm * (z_acc - p.acc_burst_floor) / p.tau_burst_drain
               + noise_acc)
 
     # ── OPN latch dynamics ────────────────────────────────────────────────────

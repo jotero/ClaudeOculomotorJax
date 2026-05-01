@@ -242,6 +242,9 @@ class BrainParams(NamedTuple):
                                            # Heun stability: (1+g_ibn_trig)·dt/tau_trig < 2 → tau_trig > 1.5ms. Current 2ms ✓.
     g_ibn_trig:            float = 2.0    # IBN→z_trig drain gain (dimensionless, ibn_norm∈[0,1]).
                                            # z_trig TC during burst: tau_trig/(1+g_ibn_trig) ≈ 0.7ms → fast drain by IBN.
+    g_acc_drain:           float = 3.0    # IBN drain multiplier for z_acc (dimensionless).
+                                           # Boosts drain for small saccades (weak IBN) without breaking triggering.
+                                           # Heun bound: g_acc_drain · dt / tau_burst_drain < 2 → max ≈ 4 at current params.
 
     # Saccade target selection — handled inside the saccade generator
     orbital_limit:         float = 50.0   # oculomotor range half-width (deg); clip e_cmd to ±limit
