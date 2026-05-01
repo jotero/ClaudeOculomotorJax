@@ -93,7 +93,7 @@ from oculomotor.models.brain_models.final_common_pathway import G_NUCLEUS_DEFAUL
 # ── State layout ───────────────────────────────────────────────────────────────
 
 N_STATES = vs.N_STATES + ni.N_STATES + sg.N_STATES + ge.N_STATES + he.N_STATES + pu.N_STATES + vg.N_STATES + acc_mod.N_STATES
-#        = 9 + 9 + 9 + 9 + 3 + 3 + 9 + 2 = 53
+#        = 9 + 9 + 20 + 9 + 3 + 3 + 9 + 2 = 64
 # EC delay cascades removed — EC subtraction happens pre-delay in cyclopean_vision.step().
 
 # ── Index constants — relative to x_brain ─────────────────────────────────────
@@ -102,10 +102,10 @@ N_STATES = vs.N_STATES + ni.N_STATES + sg.N_STATES + ge.N_STATES + he.N_STATES +
 _o_vs = 0
 _o_ni = _o_vs + vs.N_STATES    #  9
 _o_sg = _o_ni + ni.N_STATES    # 18
-_o_gv = _o_sg + sg.N_STATES    # 27
-_o_hd = _o_gv + ge.N_STATES    # 36  (ge.N_STATES=9: g_est+a_lin+rf)
-_o_pu = _o_hd + he.N_STATES    # 39
-_o_vg = _o_pu + pu.N_STATES    # 42
+_o_gv = _o_sg + sg.N_STATES    # 38
+_o_hd = _o_gv + ge.N_STATES    # 47  (ge.N_STATES=9: g_est+a_lin+rf)
+_o_pu = _o_hd + he.N_STATES    # 50
+_o_vg = _o_pu + pu.N_STATES    # 53
 
 # Velocity storage (9 states: L pop + R pop + null)
 _IDX_VS      = slice(_o_vs,     _o_vs + 9)   # (9,)
@@ -120,11 +120,11 @@ _IDX_NI_R    = slice(_o_ni + 3, _o_ni + 6)   # (3,) right NPH pop
 _IDX_NI_NULL = slice(_o_ni + 6, _o_ni + 9)   # (3,) null adaptation
 
 # Remaining subsystems
-_IDX_SG      = slice(_o_sg, _o_sg + sg.N_STATES)        # (9,)  [18:27]
-_IDX_GRAV    = slice(_o_gv, _o_gv + ge.N_STATES)        # (9,)  [27:36]
-_IDX_HEAD    = slice(_o_hd, _o_hd + he.N_STATES)        # (3,)  [36:39]
-_IDX_PURSUIT = slice(_o_pu, _o_pu + pu.N_STATES)        # (3,)  [39:42]
-_IDX_VERG    = slice(_o_vg, _o_vg + vg.N_STATES)        # (3,)  [42:45]
+_IDX_SG      = slice(_o_sg, _o_sg + sg.N_STATES)        # (20,) [18:38]
+_IDX_GRAV    = slice(_o_gv, _o_gv + ge.N_STATES)        # (9,)  [38:47]
+_IDX_HEAD    = slice(_o_hd, _o_hd + he.N_STATES)        # (3,)  [47:50]
+_IDX_PURSUIT = slice(_o_pu, _o_pu + pu.N_STATES)        # (3,)  [50:53]
+_IDX_VERG    = slice(_o_vg, _o_vg + vg.N_STATES)        # (3,)  [53:56]
 _o_acc       = _o_vg + vg.N_STATES                      # 45
 _IDX_ACC     = slice(_o_acc, _o_acc + acc_mod.N_STATES)  # (2,)  [45:47]
 
@@ -201,20 +201,30 @@ class BrainParams(NamedTuple):
     k_sac:                 float = 200.0  # trigger sigmoid steepness (1/deg)
     threshold_sac:         float = 0.5    # retinal error trigger threshold (deg)
     threshold_stop:        float = 0.1    # burst-stop threshold (deg)
-    threshold_sac_release: float = 0.4    # OPN latch release threshold
     tau_reset_fast:        float = 0.05   # inter-saccade x_copy reset TC (s)
-    tau_ref:               float = 0.15   # refractory (OPN) decay TC (s); ~150 ms ISI
-    tau_ref_charge:        float = 0.001  # OPN charge TC (s)
-    k_ref:                 float = 50.0   # bistable OPN gate steepness (1/z_ref)
-    threshold_ref:         float = 0.1    # OPN threshold
     tau_hold:              float = 0.005  # sample-and-hold tracking TC (s)
     tau_sac:               float = 0.001  # saccade latch TC (s)
+    k_tonic_opn:           float = 0.5    # OPN tonic recovery gain; recovery TC = tau_sac/k_tonic = 2 ms
+                                           # always active: keeps z_opn at 100 unless IBN overcomes it.
+                                           # Suppression condition: g_ibn_opn > k_tonic*100 (200>50).
+    tau_bn:                float = 0.005  # EBN/IBN state TC (s); BN states track error drive with ~5 ms lag.
+                                           # Shared across EBN and IBN populations (identical dynamics, different outputs).
+    g_opn_bn:              float = 4.0    # OPN→BN multiplicative suppression (dim'less).
+                                           # Heun stability: (1+g_opn_bn)*dt/tau_bn < 2 → g_opn_bn < 9 with dt=1ms, tau_bn=5ms.
+                                           # Effective TC = tau_bn/(1+g_opn_bn) = 1ms → BN clamped to tonic eq in ~5ms.
+    g_opn_bn_hold:         float = 2.0    # OPN→BN additive offset (deg equivalent); keeps BN slightly negative.
+                                           # Tonic BN_eq = −g_opn_bn_hold/(1+g_opn_bn) = −0.4. Fires in 0.4ms at trigger.
+    g_ci:                  float = 100.0  # contralateral IBN inhibition gain (dim'less).
+                                           # Element-wise: L yaw IBN → R yaw BN, etc. Normalised by g_burst.
     g_opn_pause:           float = 500.0  # OPN inhibitory overshoot (fr units); IBN inhibition drives OPN
                                            # membrane potential to −g_opn_pause (below spike threshold).
                                            # Firing rate clips at 0; large value → OPN pauses in ~2 ms.
     tau_acc:               float = 0.180  # accumulator rise TC (s); ~120 ms to threshold → cascade fully settled before e_held freezes
-    tau_drain:             float = 0.200  # accumulator drain TC (s)
-    threshold_acc:         float = 0.5    # accumulator trigger threshold
+    tau_burst_drain:       float = 0.005  # accumulator burst drain TC (s); drives z_acc → acc_burst_floor while OPN paused
+    acc_burst_floor:       float = -0.5   # accumulator target level during burst; negative = must re-climb after saccade
+                                           # ISI ≈ (threshold_acc − acc_burst_floor) * tau_acc = 1.5 * 0.18 = 270 ms
+                                           # No idle drain needed — every saccade resets the accumulator
+    threshold_acc:         float = 1.0    # accumulator trigger threshold (natural unit: triggers at 1)
     threshold_sac_qp:      float = 2.0    # error threshold to START accumulating for quick phases (target_visible≈0)
                                            # Higher → requires larger drift error before accumulation begins → fewer spurious resets
     k_acc:                 float = 500.0  # accumulator→OPN sigmoid steepness; high value = near-hard threshold
@@ -222,6 +232,9 @@ class BrainParams(NamedTuple):
                                            # threshold_acc, so x_copy barely grows during the OPN transition
     sigma_acc:             float = 0.2    # accumulator diffusion noise (1/√s); adds RT variability
                                            # ~0.15–0.25 gives ±15–25 ms SD; 0 = deterministic
+    g_ibn_opn:             float = 200.0  # IBN→OPN inhibition gain (OPN units/s / tau_sac).
+                                           # IBN total = |act_ibn_R| + |act_ibn_L| (scalar, deg/s units).
+                                           # Schmitt trigger: burst→IBN keeps OPN suppressed; burst ends→IBN→0→OPN recovers.
 
     # Saccade target selection — handled inside the saccade generator
     orbital_limit:         float = 50.0   # oculomotor range half-width (deg); clip e_cmd to ±limit
@@ -357,7 +370,7 @@ def make_x0(brain_params=None):
         # NI: b_ni populations (b_ni=0 default → stays zero)
         # _IDX_NI_L/R/NULL all stay at 0
         # OPN: initialise to tonic firing rate (100); stays there between saccades.
-        x0 = x0.at[_IDX_SG.start + 7].set(100.0)
+        x0 = x0.at[_IDX_SG.start + 3].set(100.0)
         # Vergence: initialise x_verg to tonic_verg (H only); e_held/x_copy start at zero.
         x0 = x0.at[_o_vg].set(jnp.float32(brain_params.tonic_verg))
         # Accommodation: initialise fast component at 1 D (1 m target), slow at 0.
@@ -433,7 +446,7 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
     # ── Vergence: disparity + Zee saccade pulse + L2 cyclovergence ────────────
     # bino = tv_L * tv_R ≈ 1 when both eyes fuse, 0 when either covered.
     # z_act: 0=idle (OPN tonic), 1=saccade (OPN paused); normalised from z_opn ∈ [0,100].
-    z_act_verg = 1.0 - jnp.clip(x_sg[7], 0.0, 100.0) / 100.0
+    z_act_verg = 1.0 - jnp.clip(x_sg[3], 0.0, 100.0) / 100.0
     dx_verg, u_verg = vg.step(x_verg, sensory_out.target_disparity, 0.0, z_act_verg, x_ni_net[:2], brain_params)
 
     # ── Final common pathway: nucleus encode → nerve activations ─────────────

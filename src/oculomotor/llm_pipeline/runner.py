@@ -219,10 +219,9 @@ def _extract_signals(states, params, t_np: np.ndarray) -> dict:
 
     # SG sub-states
     x_copy = x_sg[:, :3]
-    z_ref  = x_sg[:, 3]
-    e_held = x_sg[:, 4:7]
-    z_opn  = x_sg[:, 7]
-    z_acc  = x_sg[:, 8]
+    e_held = x_sg[:, 3:6]
+    z_opn  = x_sg[:, 6]
+    z_acc  = x_sg[:, 7]
 
     return dict(
         eye_pos        = version,          # conjugate version — used by most panels
@@ -236,7 +235,6 @@ def _extract_signals(states, params, t_np: np.ndarray) -> dict:
         x_pursuit      = x_pursuit,
         e_pos_delayed  = e_pos_delayed,
         u_burst        = u_burst,
-        z_ref          = z_ref,
         z_opn          = z_opn,
         z_acc          = z_acc,
         e_held         = e_held,
@@ -396,8 +394,8 @@ def _draw_panel(ax, panel_name: str, t: np.ndarray, sig: dict,
         ax.legend(fontsize=6, loc='upper right')
 
     elif panel_name == 'refractory':
-        ax.plot(t, sig['z_ref'], color=_C['ref'], lw=1.2, label='OPN refractory state')
-        ax.axhline(scenario.patient.g_burst * 0.0 + 0.5, color='k', lw=0.6, ls='--', alpha=0.4)
+        ax.plot(t, sig['z_acc'], color=_C['ref'], lw=1.2, label='Accumulator (refractory proxy)')
+        ax.axhline(0.5, color='k', lw=0.6, ls='--', alpha=0.4)
         ax.legend(fontsize=6, loc='upper right')
 
     elif panel_name == 'vergence':
@@ -691,7 +689,7 @@ def _build_comparison_figure(
                 ax.plot(t, sig['x_pursuit'][:, 0], color=color, ls=ls, lw=1.5, label=label)
 
             elif panel == 'refractory':
-                ax.plot(t, sig['z_ref'], color=color, ls=ls, lw=1.5, label=label)
+                ax.plot(t, sig['z_acc'], color=color, ls=ls, lw=1.5, label=label)
 
             elif panel == 'vergence':
                 ax.plot(t, sig['vergence'][:, 0], color=color, ls=ls, lw=1.5, label=label)

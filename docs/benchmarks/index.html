@@ -63,8 +63,8 @@ h1   { font-size: 22px; margin-bottom: 4px; }
   <main>
     <h1>OculomotorJax — Benchmark Report</h1>
     <p class="meta">
-      Generated: <strong>2026-04-30 08:12</strong> &nbsp;|&nbsp;
-      Version: <strong>99fce15-dirty</strong> &nbsp;|&nbsp;
+      Generated: <strong>2026-04-30 20:38</strong> &nbsp;|&nbsp;
+      Version: <strong>e5e59e0-dirty</strong> &nbsp;|&nbsp;
       <a href="../BENCHMARKS.md">BENCHMARKS.md</a>
     </p>
 
@@ -110,12 +110,24 @@ h1   { font-size: 22px; margin-bottom: 4px; }
     </div>
 
     <div class="fig-card">
-      <a href="figures/saccade_cascade.png" target="_blank"><img src="figures/saccade_cascade.png" alt="Saccade Signal Cascade (Internal)"></a>
-      <h3>Saccade Signal Cascade (Internal)</h3>
-      <p class="desc">Row-by-row signal flow for 1°, 5°, 20° saccades: position, visual cascade + hold, accumulator/latch, residual error, burst, eye velocity, refractory state.</p>
+      <a href="figures/saccade_cascade.png" target="_blank"><img src="figures/saccade_cascade.png" alt="Saccade Signal Cascade (noiseless)"></a>
+      <h3>Saccade Signal Cascade (noiseless)</h3>
+      <p class="desc">Row-by-row signal flow for 1°, 5°, 20°, 40° saccades: position, visual cascade + hold, accumulator/latch, residual error, burst, eye velocity, refractory state.</p>
       <div class="expected">
         <strong>Expected behavior</strong>
-        e_held freezes at saccade onset; burst proportional to e_res; z_ref locks out next saccade for ~150 ms.
+        e_held freezes at saccade onset; burst proportional to e_res; accumulator floor locks out next saccade for ~270 ms.
+      </div>
+      <p class="citation">&#128214; Robinson (1975) J Neurophysiol; Scudder et al. (2002)</p>
+      <span class="badge cascade">cascade</span>
+    </div>
+
+    <div class="fig-card">
+      <a href="figures/saccade_cascade_noisy.png" target="_blank"><img src="figures/saccade_cascade_noisy.png" alt="Saccade Signal Cascade (with noise)"></a>
+      <h3>Saccade Signal Cascade (with noise)</h3>
+      <p class="desc">Row-by-row signal flow for 1°, 5°, 20°, 40° saccades: position, visual cascade + hold, accumulator/latch, residual error, burst, eye velocity, refractory state.</p>
+      <div class="expected">
+        <strong>Expected behavior</strong>
+        e_held freezes at saccade onset; burst proportional to e_res; accumulator floor locks out next saccade for ~270 ms.
       </div>
       <p class="citation">&#128214; Robinson (1975) J Neurophysiol; Scudder et al. (2002)</p>
       <span class="badge cascade">cascade</span>
@@ -177,7 +189,7 @@ h1   { font-size: 22px; margin-bottom: 4px; }
       <p class="desc">30.0° tilt — VS, NI torsion cascade + SPV for scene+target / target only / scene only / dark.</p>
       <div class="expected">
         <strong>Expected behavior</strong>
-        Torsion stabilises at ≈-4.95°. SPV row: -VS (dashed) and -canal FT (dotted) should bracket the measured SPV. Yaw/pitch near 0 (pure roll tilt).
+        Torsion stabilises at ≈-4.91°. SPV row: -VS (dashed) and -canal FT (dotted) should bracket the measured SPV. Yaw/pitch near 0 (pure roll tilt).
       </div>
       <p class="citation">&#128214; Debug diagnostic</p>
       <span class="badge cascade">cascade</span>

@@ -286,9 +286,9 @@ def _cascade(show):
     axes[5].set_ylabel('Burst (deg/s)'); axes[5].set_title('Saccade Burst (Catch-up Saccades)')
     axes[5].legend(fontsize=8)
 
-    axes[6].plot(t_np, sg['z_ref'], color=utils.C['refractory'], lw=1.5, label='z_ref (refractory)')
-    axes[6].set_ylim(-0.05, 1.15)
-    axes[6].set_ylabel('z_ref'); axes[6].set_title('Refractory State')
+    axes[6].plot(t_np, sg['z_acc'], color=utils.C['refractory'], lw=1.5, label='z_acc (accumulator)')
+    axes[6].axhline(0.5, color='k', lw=0.6, ls='--', alpha=0.4)
+    axes[6].set_ylabel('z_acc'); axes[6].set_title('Accumulator (refractory proxy)')
     axes[6].set_xlabel('Time (s)', fontsize=9)
     axes[6].legend(fontsize=8)
 

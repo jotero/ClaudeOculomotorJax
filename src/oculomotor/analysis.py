@@ -23,7 +23,7 @@ extract_burst(states, theta)
     Recompute u_burst (T, 3) via vmap over the saccade generator.
 
 extract_sg(states, theta)
-    Full SG signal extraction: x_copy, z_ref, e_held, z_sac, z_acc,
+    Full SG signal extraction: x_copy, e_held, z_opn, z_acc,
     e_res, e_pd, u_burst, x_ni.
 
 extract_z_opn(states)
@@ -156,12 +156,9 @@ def extract_sg(states, theta):
 
     Returns:
         dict with keys:
-            x_copy  (T, 3)  internal eye-displacement copy
-            z_ref   (T,)    refractory / OPN state
-            e_held  (T, 3)  sample-and-hold of position error at saccade onset
+            e_held  (T, 3)  error estimator = residual error (e_res = e_held)
             z_opn   (T,)    OPN state (100=tonic, 0=paused during saccade)
             z_acc   (T,)    accumulator state
-            e_res   (T, 3)  residual error = e_held − x_copy  (drives burst)
             e_pd    (T, 3)  delayed position error from visual cascade
             u_burst (T, 3)  recomputed saccade burst command
             x_ni    (T, 3)  neural integrator state (eye-position proxy)
@@ -170,20 +167,23 @@ def extract_sg(states, theta):
     x_vis = np.array(states.sensory[:, _IDX_VIS])
     x_ni  = np.array(states.brain[:, _IDX_NI])
 
-    x_copy = x_sg[:, :3]
-    z_ref  = x_sg[:, 3]
-    e_held = x_sg[:, 4:7]
-    z_opn  = x_sg[:, 7]
-    z_acc  = x_sg[:, 8]
-    e_res  = e_held - x_copy
+    e_held  = x_sg[:, 0:3]
+    z_opn   = x_sg[:, 3]
+    z_acc   = x_sg[:, 4]
+    x_ebn_R = x_sg[:, 5:8]
+    x_ebn_L = x_sg[:, 8:11]
+    x_ibn_R = x_sg[:, 11:14]
+    x_ibn_L = x_sg[:, 14:17]
     e_pd   = x_vis @ np.array(C_pos).T   # (T, 3) cyclopean delayed position error
 
     u_burst = extract_burst(states, theta)
 
     return dict(
-        x_copy=x_copy, z_ref=z_ref, e_held=e_held,
-        z_opn=z_opn,   z_acc=z_acc,  e_res=e_res,
-        e_pd=e_pd,     u_burst=u_burst, x_ni=x_ni,
+        e_held=e_held,
+        z_opn=z_opn,     z_acc=z_acc,
+        x_ebn_R=x_ebn_R, x_ebn_L=x_ebn_L,
+        x_ibn_R=x_ibn_R, x_ibn_L=x_ibn_L,
+        e_pd=e_pd,       u_burst=u_burst, x_ni=x_ni,
     )
 
 
@@ -196,7 +196,7 @@ def extract_z_opn(states):
     Returns:
         (T,) z_opn array
     """
-    return np.array(states.brain[:, _IDX_SG])[:, 7]
+    return np.array(states.brain[:, _IDX_SG])[:, 3]
 
 
 def extract_spv_states(states, t, margin_s=0.05):

@@ -209,11 +209,11 @@ def _flutter_swj(show):
     T_fix    = len(t_fix)
 
     # Ocular flutter: OPN threshold reduced → SG fires without external target error
-    THETA_FLT = with_brain(THETA, threshold_sac=0.02, threshold_sac_release=0.02)
+    THETA_FLT = with_brain(THETA, threshold_sac=0.02)
 
     # SWJ: slightly relaxed threshold + retinal position drift noise
     THETA_SWJ = with_sensory(
-        with_brain(PARAMS_DEFAULT, threshold_sac=0.15, threshold_sac_release=0.12),
+        with_brain(PARAMS_DEFAULT, threshold_sac=0.15),
         sigma_canal=0.0, sigma_slip=0.0, sigma_vel=0.0,
         sigma_pos=0.3, tau_pos_drift=0.25,   # OU drift triggers sparse saccades
     )

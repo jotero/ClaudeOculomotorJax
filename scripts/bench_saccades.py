@@ -342,19 +342,15 @@ def _cascade(show, noisy=False):
         ax_fmt(axes[1, ci])
         if ci == 0: axes[1, ci].legend(fontsize=7)
 
-        # Row 2: residual error + copy integrator
-        axes[2, ci].plot(t_np, sg['e_res'][:,0],  color=utils.C['target'], lw=1.5, label='e_res')
-        axes[2, ci].plot(t_np, sg['x_copy'][:,0], color=utils.C['vs'],     lw=1.2, ls='--', label='x_copy')
+        # Row 2: e_held = residual error (e_res = e_held — no separate x_copy)
+        axes[2, ci].plot(t_np, sg['e_held'][:,0], color=utils.C['target'], lw=1.5, label='e_held=e_res')
         ax_fmt(axes[2, ci])
         if ci == 0: axes[2, ci].legend(fontsize=7)
 
         # Row 3: accumulator / latch + refractory (all 0–1 scale, same axis)
         axes[3, ci].plot(t_np, sg['z_acc'], color='#e08214', lw=1.5, label='z_acc')
         axes[3, ci].plot(t_np, sg['z_opn'] / 100, color='#1b7837', lw=1.5, label='OPN (norm)')
-        axes[3, ci].plot(t_np, sg['z_ref'], color=utils.C['refractory'], lw=1.2, ls='--', label='z_ref')
-        axes[3, ci].axhline(params.brain.threshold_acc,         color='#e08214',             lw=0.8, ls=':')
-        axes[3, ci].axhline(params.brain.threshold_sac_release, color=utils.C['refractory'], lw=0.8, ls=':')
-        axes[3, ci].axhline(params.brain.threshold_ref,         color='#c2a5cf',             lw=0.8, ls=':')
+        axes[3, ci].axhline(params.brain.threshold_acc, color='#e08214', lw=0.8, ls=':')
         axes[3, ci].set_ylim(-0.05, 1.15)
         if ci == 0: axes[3, ci].legend(fontsize=7)
 
@@ -402,7 +398,7 @@ def _cascade(show, noisy=False):
         description='Row-by-row signal flow for 1°, 5°, 20°, 40° saccades: position, visual cascade + hold, '
                     'accumulator/latch, residual error, burst, eye velocity, refractory state.',
         expected='e_held freezes at saccade onset; burst proportional to e_res; '
-                 'z_ref locks out next saccade for ~150 ms.',
+                 'accumulator floor locks out next saccade for ~270 ms.',
         citation='Robinson (1975) J Neurophysiol; Scudder et al. (2002)',
         fig_type='cascade')
 

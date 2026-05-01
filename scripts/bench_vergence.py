@@ -456,8 +456,8 @@ def _asym_vergence_debug(show):
     e_held_h  = [vs[:, 3] for vs in verg_st]   # latched horizontal error
     x_copy_h  = [vs[:, 6] for vs in verg_st]   # copy integrator horizontal
 
-    # OPN gate: z_opn = x_sg[7] ∈ [0,100] (100=tonic); z_act = 1 − z_opn/100
-    z_opn = [ss[:, 7] for ss in sg_st]
+    # OPN gate: z_opn = x_sg[3] ∈ [0,100] (100=tonic); z_act = 1 − z_opn/100
+    z_opn = [ss[:, 3] for ss in sg_st]
     z_act = [1.0 - np.clip(zop, 0.0, 100.0) / 100.0 for zop in z_opn]
 
     # Reconstruct Zee vergence burst (horizontal): g_burst_verg * z_act * gate_res * e_res[H]
