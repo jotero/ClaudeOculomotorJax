@@ -47,8 +47,8 @@ Internal flow:
     GE  →  g_est (gravity estimate, cross-product dynamics)
     Vergence → u_verg → split ±½ to L/R motor commands
 
-State vector  x_brain = [x_vs (9) | x_ni (9) | x_sg (9) | x_ec (120) | x_grav (3) | x_pursuit (3) | x_verg (3)]
-N_STATES = 156
+State vector  x_brain = [x_vs (9) | x_ni (9) | x_sg (18) | x_grav (9) | x_head (3) | x_pursuit (3) | x_verg (9) | x_acc (2)]
+N_STATES = computed dynamically (vs.N_STATES + ni.N_STATES + sg.N_STATES + ...)
 
 Index constants (relative to x_brain):
     _IDX_VS       — velocity storage states   (9,)  = left(3) + right(3) + null(3)
@@ -59,11 +59,11 @@ Index constants (relative to x_brain):
     _IDX_NI_L     — left  NPH population      (3,)
     _IDX_NI_R     — right NPH population      (3,)
     _IDX_NI_NULL  — NI null adaptation state  (3,)
-    _IDX_SG       — saccade generator states  (9,)
-    _IDX_EC       — efference copy states     (120,)
-    _IDX_GRAV     — gravity estimator states  (3,)
+    _IDX_SG       — saccade generator states  (18,) = e_held(3)+z_opn(1)+z_acc(1)+z_trig(1)+x_ebn_R(3)+x_ebn_L(3)+x_ibn_R(3)+x_ibn_L(3)
+    _IDX_GRAV     — gravity estimator states  (9,)
+    _IDX_HEAD     — heading estimator states  (3,)
     _IDX_PURSUIT  — pursuit velocity memory   (3,)
-    _IDX_VERG     — vergence position memory  (3,)
+    _IDX_VERG     — vergence position memory  (9,)
 
 Outputs of step():
     dx_brain     (156,)  state derivative

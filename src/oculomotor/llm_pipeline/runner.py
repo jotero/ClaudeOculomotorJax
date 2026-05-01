@@ -217,11 +217,11 @@ def _extract_signals(states, params, t_np: np.ndarray) -> dict:
         return u
     u_burst = np.array(jax.vmap(_burst_at)(states))  # (T, 3)
 
-    # SG sub-states
-    x_copy = x_sg[:, :3]
-    e_held = x_sg[:, 3:6]
-    z_opn  = x_sg[:, 6]
-    z_acc  = x_sg[:, 7]
+    # SG sub-states — layout: [e_held(3)|z_opn(1)|z_acc(1)|z_trig(1)|x_ebn_R(3)|x_ebn_L(3)|x_ibn_R(3)|x_ibn_L(3)]
+    e_held = x_sg[:, 0:3]
+    z_opn  = x_sg[:, 3]
+    z_acc  = x_sg[:, 4]
+    z_trig = x_sg[:, 5]
 
     return dict(
         eye_pos        = version,          # conjugate version — used by most panels
@@ -237,8 +237,8 @@ def _extract_signals(states, params, t_np: np.ndarray) -> dict:
         u_burst        = u_burst,
         z_opn          = z_opn,
         z_acc          = z_acc,
+        z_trig         = z_trig,
         e_held         = e_held,
-        x_copy         = x_copy,
     )
 
 
@@ -283,7 +283,7 @@ _PANEL_LABELS = {
     'neural_integrator': 'Neural integrator (deg)',
     'saccade_burst':     'Saccade burst (deg/s)',
     'pursuit_drive':     'Pursuit integrator (deg/s)',
-    'refractory':        'OPN / refractory state',
+    'refractory':        'Accumulator / trigger IBN',
     'vergence':          'Vergence angle (deg)',
     # stimulus panels
     'target_position':   'Target position (deg)',
@@ -394,8 +394,10 @@ def _draw_panel(ax, panel_name: str, t: np.ndarray, sig: dict,
         ax.legend(fontsize=6, loc='upper right')
 
     elif panel_name == 'refractory':
-        ax.plot(t, sig['z_acc'], color=_C['ref'], lw=1.2, label='Accumulator (refractory proxy)')
-        ax.axhline(0.5, color='k', lw=0.6, ls='--', alpha=0.4)
+        ax.plot(t, sig['z_acc'],  color=_C['ref'],   lw=1.2, label='z_acc (accumulator)')
+        ax.plot(t, sig['z_trig'], color='#d62728',   lw=0.9, ls='--', label='z_trig (trigger IBN)')
+        ax.axhline(1.0, color='k', lw=0.6, ls='--', alpha=0.4, label='threshold')
+        ax.axhline(0.0, color='k', lw=0.4, alpha=0.2)
         ax.legend(fontsize=6, loc='upper right')
 
     elif panel_name == 'vergence':
