@@ -21,7 +21,7 @@ from oculomotor.models.sensory_models.retina import (
     delay_cascade_step, ypr_to_xyz, xyz_to_ypr,
     _N_PER_SIG,
     _OFF_SCENE_LINEAR, _OFF_TARGET_POS, _OFF_TARGET_VEL, _OFF_TARGET_DISP,
-    _OFF_SCENE_VIS, _OFF_TARGET_VIS, _OFF_STROBED, _OFF_TARGET_FUSABLE,
+    _OFF_SCENE_VIS, _OFF_TARGET_VIS, _OFF_STROBED, _OFF_TARGET_FUSABLE, _OFF_DEFOCUS,
 )
 from oculomotor.models.plant_models.readout import rotation_matrix
 
@@ -72,39 +72,50 @@ def velocity_saturation(v, v_sat, v_zero=None, v_offset=None):
 
 # ── Binocular policies ───────────────────────────────────────────────────────────
 
-def binocular_saccade_policy(target_pos_L, target_vis_L, target_pos_R, target_vis_R,
-                              verg_h, sensory_params):
-    """NPC gate + eye-dominance weighting for position/disparity signals.
+def binocular_fusion_policy(target_pos_L, target_vel_L, target_vis_L,
+                             target_pos_R, target_vel_R, target_vis_R,
+                             ec_pos, ec_verg, sensory_params):
+    """NPC gate + eye-dominance weighting → single pair of blend weights.
 
-    Determines whether the two retinal images can be fused given the current vergence
-    demand and motor limits.  In diplopia the dominant eye drives position; in fusion
-    both eyes contribute proportionally to their visibility.
+    A single (w_L, w_R) pair is used uniformly for target position, velocity,
+    and accommodation demand.  In diplopia the dominant eye drives all signals;
+    in fusion both eyes contribute proportionally to their visibility.
 
     Three-state binocular model (horizontal):
         Fused    (demand within motor range): both eyes weighted by visibility
         Diplopic (demand exceeds npc or −div_max): dominant eye only
 
-    Vertical / torsional gates suppress fusion when those disparities are also large.
+    Vertical / torsional gates suppress fusion when those disparities are large.
+
+    ec_pos and ec_verg give the full 6-D oculomotor state (version + vergence).
+    target_vel_L/R and ec_pos are accepted for future use (interocular velocity
+    difference, gaze-angle-dependent fusion limits, Listing's law) but not yet
+    used for weight computation.
 
     Args:
         target_pos_L:   (3,) target direction [yaw,pitch,0] (deg) — left eye
+        target_vel_L:   (3,) target retinal velocity [yaw,pitch,0] (deg/s) — left eye
         target_vis_L:   scalar target gate = target_present × target_in_vf ∈ [0,1]
         target_pos_R:   (3,) target direction [yaw,pitch,0] (deg) — right eye
+        target_vel_R:   (3,) target retinal velocity [yaw,pitch,0] (deg/s) — right eye
         target_vis_R:   scalar target gate ∈ [0,1]
-        verg_h:         scalar current vergence angle (deg, H) — from ec_verg[0]
+        ec_pos:         (3,) version eye position [yaw,pitch,roll] (deg) — for future gaze-modulated fusion
+        ec_verg:        (3,) vergence [H,V,T] (deg); [0] used for NPC gate
         sensory_params: SensoryParams — reads npc, div_max, vert_max, tors_max, eye_dominant
 
     Returns:
         w_L:             scalar left-eye blend weight, normalised (w_L + w_R = 1 or both 0)
         w_R:             scalar right-eye blend weight, normalised
         target_disparity:(3,) diplopia-gated vergence disparity (deg)
-        target_fusable:  scalar fusion gate ∈ [0, 1] — pass to binocular_pursuit_policy
-        target_visible:  scalar cyclopean target visibility ∈ [0, 1] (pre-normalisation sum)
+        target_fusable:  scalar fusion gate ∈ [0, 1]
+        target_visible:  scalar cyclopean target visibility ∈ [0, 1]
     """
+    _ = target_vel_L, target_vel_R, ec_pos   # reserved for future extensions
+
     bino_raw = target_vis_L * target_vis_R
     raw_disp = bino_raw * (target_pos_L - target_pos_R)
 
-    total_demand_h = raw_disp[0] + verg_h
+    total_demand_h = raw_disp[0] + ec_verg[0]
     gate_conv = jax.nn.sigmoid(100.0 * (sensory_params.npc      - total_demand_h))
     gate_div  = jax.nn.sigmoid(100.0 * (total_demand_h          + sensory_params.div_max))
     gate_vert = jax.nn.sigmoid(100.0 * (sensory_params.vert_max - jnp.abs(raw_disp[1])))
@@ -119,34 +130,6 @@ def binocular_saccade_policy(target_pos_L, target_vis_L, target_pos_R, target_vi
     target_visible = jnp.clip(w_L + w_R, 0.0, 1.0)
     norm = jnp.maximum(w_L + w_R, 1e-6)
     return w_L / norm, w_R / norm, target_fusable * raw_disp, target_fusable, target_visible
-
-
-def binocular_pursuit_policy(target_motion_vis_L, target_motion_vis_R, target_fusable, sensory_params):
-    """Apply fusion gate to strobe-gated motion visibility → per-eye velocity blend weights.
-
-    Pursuit does not re-evaluate the NPC gate — fusion state is inherited from
-    binocular_saccade_policy.  In diplopia the dominant eye drives velocity tracking;
-    in fusion both eyes contribute proportionally to their (strobe-gated) motion visibility.
-
-    Args:
-        target_motion_vis_L: scalar motion gate = target_vis × (1−strobe) ∈ [0,1] — left
-        target_motion_vis_R: scalar motion gate ∈ [0,1] — right
-        target_fusable:      scalar fusion gate from binocular_saccade_policy ∈ [0,1]
-        sensory_params:      SensoryParams — reads eye_dominant
-
-    Returns:
-        w_m_L:                scalar left-eye motion blend weight, normalised
-        w_m_R:                scalar right-eye motion blend weight, normalised
-        target_motion_visible:scalar cyclopean motion visibility ∈ [0, 1] (pre-normalisation sum)
-    """
-    dom_L = 1.0 - sensory_params.eye_dominant
-    dom_R = sensory_params.eye_dominant
-    w_m_L = target_motion_vis_L * (target_fusable + (1.0 - target_fusable) * dom_L)
-    w_m_R = target_motion_vis_R * (target_fusable + (1.0 - target_fusable) * dom_R)
-
-    target_motion_visible = jnp.clip(w_m_L + w_m_R, 0.0, 1.0)
-    norm = jnp.maximum(w_m_L + w_m_R, 1e-6)
-    return w_m_L / norm, w_m_R / norm, target_motion_visible
 
 
 def binocular_okr_policy(scene_angular_vel_L, scene_linear_vel_L,
@@ -181,7 +164,8 @@ def step(x_vis,
          scene_angular_vel_L, scene_linear_vel_L, target_pos_L, target_vel_L, scene_vis_L, target_vis_L, target_motion_vis_L,
          scene_angular_vel_R, scene_linear_vel_R, target_pos_R, target_vel_R, scene_vis_R, target_vis_R, target_motion_vis_R,
          sensory_params,
-         ec_vel, ec_pos, ec_verg):
+         ec_vel, ec_pos, ec_verg,
+         defocus_L=0.0, defocus_R=0.0):
     """Fuse per-eye retinal signals, apply EC correction, then advance the cyclopean cascade.
 
     EC subtraction happens pre-delay: ec_vel_eye (the version motor command rotated into eye
@@ -194,8 +178,12 @@ def step(x_vis,
         target_vis_L/R       = target_present × in_vf   (from retina)
         target_motion_vis_L/R = target_vis × (1−strobe)  (from sensory_model)
 
+    defocus_L/R = (acc_demand + refractive_error − x_acc_plant) per eye (diopters).
+    Positive = near target closer than current focus (need more accommodation).
+    Gated by defocus_visible = OR(scene_vis, target_vis) — broader than target_visible alone.
+
     Args:
-        x_vis:                  (720,)  cyclopean cascade state
+        x_vis:                  (800,)  cyclopean cascade state
         scene_angular_vel_L/R:   (3,)  rotational optic flow per eye (deg/s)
         scene_linear_vel_L/R:    (3,)  translational optic flow per eye (m/s, eye frame)
         target_pos_L/R:          (3,)  target direction [yaw,pitch,0] (deg)
@@ -209,9 +197,10 @@ def step(x_vis,
                                  rotated head→eye frame internally via rotation_matrix(ypr_to_xyz(ec_pos))
         ec_pos:                  (3,) eye position efference [yaw,pitch,roll] (deg) = x_ni_net + ocr
         ec_verg:                 (3,) vergence efference [H,V,T] (deg); [0] used for NPC gate
+        defocus_L/R:             scalar per-eye defocus (D) = acc_demand + RE − x_plant
 
     Returns:
-        dx_vis: (720,)  cascade state derivative
+        dx_vis: (800,)  cascade state derivative (defocus delayed signal read via C_defocus)
     """
     # Rotate version velocity efference from head frame to eye frame.
     # ec_vel is in YPR space; angular velocity must be converted to XYZ before
@@ -235,24 +224,37 @@ def step(x_vis,
     scene_linear_vel  = scene_linear_cyc * scene_visible
 
 
-    # ── Target position / disparity (saccade) ─────────────────────────────────
-    w_L, w_R, target_disparity, target_fusable, target_visible = binocular_saccade_policy(
-        target_pos_L, target_vis_L, target_pos_R, target_vis_R, ec_verg[0], sensory_params)
+    # ── Target: fusion policy → single weights for pos / vel / defocus ───────────
+    w_L, w_R, target_disparity, target_fusable, target_visible = binocular_fusion_policy(
+        target_pos_L, target_vel_L, target_vis_L,
+        target_pos_R, target_vel_R, target_vis_R,
+        ec_pos, ec_verg, sensory_params)
+
+    # Disparity suppressed when one eye strongly dominates (large |w_L - w_R|):
+    # vergence drive is meaningful only when both eyes see the target.
+    target_disparity = target_disparity * (1.0 - jnp.abs(w_L - w_R))
 
     target_pos = w_L * target_pos_L + w_R * target_pos_R
 
-    # ── Target velocity (pursuit) ──────────────────────────────────────────────
-    w_m_L, w_m_R, target_motion_visible = binocular_pursuit_policy(
-        target_motion_vis_L, target_motion_vis_R, target_fusable, sensory_params)
+    # Defocus gate: broader than target_visible alone — the lens responds whenever
+    # EITHER the scene OR the target is visible in EITHER eye.  This prevents
+    # accommodation from relaxing to infinity during brief occlusions of the target
+    # (e.g. during blinks) when the background is still visible.
+    defocus_visible = 1.0 - (1.0 - scene_visible) * (1.0 - target_visible)
+    defocus_cyc = (w_L * defocus_L + w_R * defocus_R) * defocus_visible
 
+    # ── Target velocity (pursuit) ──────────────────────────────────────────────
+    # Strobe gate: target_motion_vis = target_vis × (1−strobe), already zero when strobed.
+    # Apply same w_L/w_R weights; strobe zeroes the motion-visible blend.
+    target_motion_visible = w_L * target_motion_vis_L + w_R * target_motion_vis_R
     ec_vel_eye_notors = ec_vel_eye.at[2].set(0.0)   # torsion zeroed — retina is 2D
-    target_vel_cyc    = w_m_L * target_vel_L + w_m_R * target_vel_R
+    target_vel_cyc    = w_L * target_vel_L + w_R * target_vel_R
     target_slip = velocity_saturation(
-        target_vel_cyc + ec_vel_eye_notors * target_motion_visible,
+        (target_vel_cyc + ec_vel_eye_notors) * target_motion_visible,
         sensory_params.v_max_target_vel)
 
     # ── Advance cascade ───────────────────────────────────────────────────────
-    tau_vis         = sensory_params.tau_vis
+    tau_vis          = sensory_params.tau_vis
     x_scene_angular  = x_vis[                       :  _N_PER_SIG          ]
     x_scene_linear   = x_vis[_OFF_SCENE_LINEAR      : _OFF_TARGET_POS      ]
     x_target_pos     = x_vis[_OFF_TARGET_POS        : _OFF_TARGET_VEL      ]
@@ -261,16 +263,18 @@ def step(x_vis,
     x_scene_vis      = x_vis[_OFF_SCENE_VIS         : _OFF_TARGET_VIS      ]
     x_target_vis     = x_vis[_OFF_TARGET_VIS        : _OFF_STROBED         ]
     x_target_motion  = x_vis[_OFF_STROBED           : _OFF_TARGET_FUSABLE  ]
-    x_target_fusable = x_vis[_OFF_TARGET_FUSABLE    :                      ]
+    x_target_fusable = x_vis[_OFF_TARGET_FUSABLE    : _OFF_DEFOCUS         ]
+    x_defocus        = x_vis[_OFF_DEFOCUS           :                      ]
 
     return jnp.concatenate([
-        delay_cascade_step(x_scene_angular,   scene_angular_vel,    tau_vis),
-        delay_cascade_step(x_scene_linear,    scene_linear_vel,     tau_vis),
-        delay_cascade_step(x_target_pos,      target_pos,           tau_vis),
-        delay_cascade_step(x_target_vel,      target_slip,          tau_vis),
-        delay_cascade_step(x_target_disp,     target_disparity,     tau_vis),
-        delay_cascade_step(x_scene_vis,       scene_visible,        tau_vis),
-        delay_cascade_step(x_target_vis,      target_visible,       tau_vis),
+        delay_cascade_step(x_scene_angular,   scene_angular_vel,     tau_vis),
+        delay_cascade_step(x_scene_linear,    scene_linear_vel,      tau_vis),
+        delay_cascade_step(x_target_pos,      target_pos,            tau_vis),
+        delay_cascade_step(x_target_vel,      target_slip,           tau_vis),
+        delay_cascade_step(x_target_disp,     target_disparity,      tau_vis),
+        delay_cascade_step(x_scene_vis,       scene_visible,         tau_vis),
+        delay_cascade_step(x_target_vis,      target_visible,        tau_vis),
         delay_cascade_step(x_target_motion,   target_motion_visible, tau_vis),
-        delay_cascade_step(x_target_fusable,  target_fusable,       tau_vis),
+        delay_cascade_step(x_target_fusable,  target_fusable,        tau_vis),
+        delay_cascade_step(x_defocus,         defocus_cyc,           tau_vis),
     ])

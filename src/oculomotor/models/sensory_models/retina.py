@@ -52,12 +52,13 @@ N_STAGES      = 40    # cascade depth (stages per signal)
 _N_SIG        = 5     # number of 3-D signals: scene_angular_vel, scene_linear_vel, target_pos, target_vel, target_disparity
 _N_PER_SIG    = N_STAGES * 3     # 120  states per 3-D signal
 _N_SCALAR     = N_STAGES         # 40   states per scalar signal
-N_STATES      = _N_SIG * _N_PER_SIG + 4 * _N_SCALAR  # 5*120 + 4*40 = 760
+N_STATES      = _N_SIG * _N_PER_SIG + 5 * _N_SCALAR  # 5*120 + 5*40 = 800
 
 # ── State offsets ───────────────────────────────────────────────────────────────
 # State layout: [scene_angular_vel(120) | scene_linear_vel(120) | target_pos(120)
 #                | target_vel(120) | target_disparity(120)
-#                | scene_visible(40) | target_visible(40) | target_motion_visible(40) | target_fusable(40)]
+#                | scene_visible(40) | target_visible(40) | target_motion_visible(40)
+#                | target_fusable(40) | defocus(40)]
 
 _OFF_SCENE_LINEAR    = _N_PER_SIG                            # 120
 _OFF_TARGET_POS      = 2 * _N_PER_SIG                        # 240
@@ -67,6 +68,7 @@ _OFF_SCENE_VIS       = 5 * _N_PER_SIG                        # 600
 _OFF_TARGET_VIS      = _OFF_SCENE_VIS    + _N_SCALAR          # 640
 _OFF_STROBED         = _OFF_TARGET_VIS   + _N_SCALAR          # 680
 _OFF_TARGET_FUSABLE  = _OFF_STROBED      + _N_SCALAR          # 720
+_OFF_DEFOCUS         = _OFF_TARGET_FUSABLE + _N_SCALAR        # 760
 
 # ── Readout matrices ────────────────────────────────────────────────────────────
 # Exported so sensory_model / efference_copy can read cascade outputs directly.
@@ -80,6 +82,7 @@ C_scene_visible    = jnp.zeros((1, N_STATES)).at[0, _OFF_SCENE_VIS     + _N_SCAL
 C_target_visible   = jnp.zeros((1, N_STATES)).at[0, _OFF_TARGET_VIS    + _N_SCALAR - 1].set(1.0)
 C_target_motion_visible = jnp.zeros((1, N_STATES)).at[0, _OFF_STROBED   + _N_SCALAR - 1].set(1.0)
 C_target_fusable   = jnp.zeros((1, N_STATES)).at[0, _OFF_TARGET_FUSABLE + _N_SCALAR - 1].set(1.0)
+C_defocus          = jnp.zeros((1, N_STATES)).at[0, _OFF_DEFOCUS        + _N_SCALAR - 1].set(1.0)
 
 
 # ── Coordinate helpers ──────────────────────────────────────────────────────────

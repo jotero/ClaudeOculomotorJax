@@ -9,6 +9,37 @@ import numpy as np
 import jax.numpy as jnp
 
 
+def build_cover_flags(
+    total_T: int,
+    cover_L: bool = False,
+    cover_R: bool = False,
+    dt: float = 0.001,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Return per-eye visibility arrays for a cover-test configuration.
+
+    A cover zeroes both scene_present and target_present for the covered eye
+    for the entire trial.  Pass the returned arrays as scene_present_L/R_array
+    and target_present_L/R_array to simulate().
+
+    Args:
+        total_T:  number of time steps
+        cover_L:  True → left eye covered (dark + no target)
+        cover_R:  True → right eye covered (dark + no target)
+        dt:       unused; kept for API symmetry with other flag builders
+
+    Returns:
+        scene_present_L, scene_present_R, target_present_L, target_present_R
+        — each (total_T,) float32 in {0, 1}
+    """
+    ones  = np.ones(total_T,  dtype=np.float32)
+    zeros = np.zeros(total_T, dtype=np.float32)
+    sp_L = zeros if cover_L else ones
+    sp_R = zeros if cover_R else ones
+    tp_L = zeros if cover_L else ones
+    tp_R = zeros if cover_R else ones
+    return sp_L, sp_R, tp_L, tp_R
+
+
 def build_visual_flags(
     segments,   # list[VisualFlagsSegment]
     total_T: int,

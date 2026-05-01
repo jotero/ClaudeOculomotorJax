@@ -76,15 +76,15 @@ from typing import NamedTuple
 import jax
 import jax.numpy as jnp
 
-from oculomotor.models.brain_models import velocity_storage    as vs
-from oculomotor.models.brain_models import neural_integrator   as ni
-from oculomotor.models.brain_models import saccade_generator   as sg
-from oculomotor.models.brain_models import gravity_estimator   as ge
-from oculomotor.models.brain_models import heading_estimator   as he
-from oculomotor.models.brain_models import pursuit             as pu
-from oculomotor.models.brain_models import vergence            as vg
-from oculomotor.models.brain_models import accommodation           as acc_mod
-from oculomotor.models.brain_models import final_common_pathway    as fcp
+from oculomotor.models.brain_models  import velocity_storage    as vs
+from oculomotor.models.brain_models  import neural_integrator   as ni
+from oculomotor.models.brain_models  import saccade_generator   as sg
+from oculomotor.models.brain_models  import gravity_estimator   as ge
+from oculomotor.models.brain_models  import heading_estimator   as he
+from oculomotor.models.brain_models  import pursuit             as pu
+from oculomotor.models.brain_models  import vergence            as vg
+from oculomotor.models.brain_models  import accommodation       as acc_mod
+from oculomotor.models.brain_models  import final_common_pathway as fcp
 
 from oculomotor.models.sensory_models.sensory_model import SensoryOutput
 from oculomotor.models.brain_models.final_common_pathway import G_NUCLEUS_DEFAULT, G_NERVE_DEFAULT
@@ -93,8 +93,9 @@ from oculomotor.models.brain_models.final_common_pathway import G_NUCLEUS_DEFAUL
 # ── State layout ───────────────────────────────────────────────────────────────
 
 N_STATES = vs.N_STATES + ni.N_STATES + sg.N_STATES + ge.N_STATES + he.N_STATES + pu.N_STATES + vg.N_STATES + acc_mod.N_STATES
-#        = 9 + 9 + 20 + 9 + 3 + 3 + 9 + 2 = 64
+#        = 9 + 9 + 18 + 9 + 3 + 3 + 9 + 2 = 62
 # EC delay cascades removed — EC subtraction happens pre-delay in cyclopean_vision.step().
+# acc_plant state lives in SimState.acc_plant (ODE layer owns it, not brain).
 
 # ── Index constants — relative to x_brain ─────────────────────────────────────
 # Computed from module N_STATES to stay in sync automatically.
@@ -124,9 +125,10 @@ _IDX_SG      = slice(_o_sg, _o_sg + sg.N_STATES)        # (20,) [18:38]
 _IDX_GRAV    = slice(_o_gv, _o_gv + ge.N_STATES)        # (9,)  [38:47]
 _IDX_HEAD    = slice(_o_hd, _o_hd + he.N_STATES)        # (3,)  [47:50]
 _IDX_PURSUIT = slice(_o_pu, _o_pu + pu.N_STATES)        # (3,)  [50:53]
-_IDX_VERG    = slice(_o_vg, _o_vg + vg.N_STATES)        # (3,)  [53:56]
-_o_acc       = _o_vg + vg.N_STATES                      # 45
-_IDX_ACC     = slice(_o_acc, _o_acc + acc_mod.N_STATES)  # (2,)  [45:47]
+_IDX_VERG       = slice(_o_vg, _o_vg + vg.N_STATES)              # (9,)  [53:62]
+_o_acc          = _o_vg + vg.N_STATES                           # 62
+_IDX_ACC        = slice(_o_acc, _o_acc + acc_mod.N_STATES)       # (2,)  [62:64]
+# acc_plant (1 state) is in SimState.acc_plant — not part of x_brain.
 
 
 # ── Brain parameters ────────────────────────────────────────────────────────────
@@ -318,12 +320,21 @@ class BrainParams(NamedTuple):
                                                           # Schor (1979): vergence has significant viscous damping to prevent overshoot
 
 
-    # Accommodation — Schor dual-interaction model (Schor 1979; Schor & Ciuffreda 1983)
-    # Cross-coupled to vergence via AC/A and CA/C ratios.
-    tau_acc_fast:          float = 0.3    # fast (phasic) lens TC (s) [Hung & Semmlow 1980]
+    # Accommodation — Schor dual-interaction model + plant dynamics
+    # Read, Kaspiris-Rousellis et al. (2022) J Vision 22(9):4; Schor (1979)
+    # Neural controller: dual integrators (fast + slow) → plant (lens/ciliary muscle)
+    tonic_acc:             float = 1.0    # dark-focus resting level (D); ~1 D ≈ 1 m for young adults
+                                          # x_fast and x_slow represent DEVIATIONS from this baseline.
+                                          # Calibrate to match: tonic_acc ≈ IPD / (2·tan(tonic_verg·π/360))
+    tau_acc_plant:         float = 0.156  # lens / ciliary muscle TC (s) [Schor & Bharadwaj 2006]
+                                          # First-order biomechanical: P(s) = 1/(1 + τ_plant·s)
+    tau_acc_fast:          float = 2.5    # fast neural integrator TC (s) [Read & Schor 2022]
+                                          # Stability requires τ_fast ≥ 2·G_fast·τ_plant ≈ 2.5 s
     tau_acc_slow:          float = 30.0   # slow tonic adaptation TC (s) [Schor 1979]
-    K_acc_fast:            float = 1.5    # fast blur-to-accommodation gain (1/s)
-    K_acc_slow:            float = 0.3    # slow integration gain (1/s)
+    K_acc_fast:            float = 3.2    # fast blur gain (1/s) = G_fast / tau_fast = 8 / 2.5
+                                          # Closed-loop G_fast = K_acc_fast * tau_acc_fast = 8 [Read & Schor 2022]
+                                          # Stability: ζ = (1/tau_fast + 1/tau_plant) / (2*sqrt(K_fast/tau_plant)) ≈ 0.75
+    K_acc_slow:            float = 0.17   # slow integration gain (1/s) = G_slow / tau_slow = 5 / 30
     AC_A:                  float = 5.0    # AC/A ratio (prism diopters / diopter); typical 4–6
                                           # At 40 cm (2.5 D): AC/A drive ≈ 5×0.573×2.5 ≈ 7.2°
                                           # At   6 m (0.17 D): drive ≈ 0.5° — explains why
@@ -331,6 +342,10 @@ class BrainParams(NamedTuple):
     CA_C:                  float = 0.4    # CA/C ratio (diopters / prism diopter); typical 0.3–0.5
                                           # Drives accommodation when vergence is disparity-driven;
                                           # reduces defocus during vergence eye movements.
+    refractive_error:      float = 0.0   # patient refractive error (diopters); >0 hyperopia, <0 myopia
+                                          # Added to 1/z before defocus = 1/z + RE − x_plant.
+                                          # Hyperope needs more accommodation at every distance;
+                                          # myope needs less (natural far point = 1/|RE| m for myopia).
 
     # Motor nucleus and nerve gains — two-stage encode (see muscle_geometry.py)
     # Stage 1 — g_nucleus (12,): per-nucleus gain [0,1]. Zero = nucleus lesion.
@@ -386,9 +401,10 @@ def make_x0(brain_params=None):
         x0 = x0.at[_IDX_SG.start + 3].set(100.0)
         # Vergence: initialise x_verg to tonic_verg (H only); e_held/x_copy start at zero.
         x0 = x0.at[_o_vg].set(jnp.float32(brain_params.tonic_verg))
-        # Accommodation: initialise fast component at 1 D (1 m target), slow at 0.
-        # Warmup will settle both to the correct steady state for the actual target depth.
-        x0 = x0.at[_IDX_ACC].set(jnp.array([1.0, 0.0]))
+        # Accommodation neural: x_fast=0, x_slow=0 (deviations from tonic baseline).
+        # Neural command at rest = 0+0+tonic_acc → plant settles at tonic_acc.
+        # acc_plant initial state lives in SimState.acc_plant (set in simulate()).
+        x0 = x0.at[_IDX_ACC].set(jnp.array([0.0, 0.0]))
     return x0
 
 
@@ -398,23 +414,30 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
     """Single ODE step for the brain subsystem.
 
     Args:
-        x_brain:     (287,)        brain state [x_vs (9) | x_ni (9) | x_sg | x_ec | x_grav | x_pursuit | x_verg]
-        sensory_out: SensoryOutput bundled canal afferents + cyclopean delayed signals
-                       .canal            (6,)    canal afferent rates
-                       .otolith          (3,)    specific force in head frame (m/s²)
-                       .scene_slip       (3,)    delayed cyclopean scene angular velocity
-                       .scene_linear_vel (3,)    delayed cyclopean scene linear velocity
-                       .target_pos       (3,)    delayed cyclopean target position
-                       .target_slip      (3,)    delayed cyclopean target velocity
-                       .target_disparity (3,)    delayed cyclopean vergence disparity
-                       .scene_visible    scalar  delay(scene_present)
-                       .target_visible   scalar  delay(target_present × target_in_vf)
-                       .target_motion_visible  scalar  delay(target_visible × (1−strobe))
+        x_brain:      (62,)   brain state [x_vs (9) | x_ni (9) | x_sg | x_grav | x_head | x_pursuit | x_verg | x_acc]
+        sensory_out:  SensoryOutput bundled canal afferents + cyclopean delayed signals
+                        .canal            (6,)    canal afferent rates
+                        .otolith          (3,)    specific force in head frame (m/s²)
+                        .scene_slip       (3,)    delayed cyclopean scene angular velocity
+                        .scene_linear_vel (3,)    delayed cyclopean scene linear velocity
+                        .target_pos       (3,)    delayed cyclopean target position
+                        .target_slip      (3,)    delayed cyclopean target velocity
+                        .target_disparity (3,)    delayed cyclopean vergence disparity
+                        .scene_visible    scalar  delay(scene_present)
+                        .target_visible   scalar  delay(target_present × target_in_vf)
+                        .target_motion_visible scalar delay(target_visible × (1−strobe))
+                        .defocus          scalar  delayed defocus (D) = delay(1/z+RE−x_plant)
         brain_params: BrainParams   model parameters
+        noise_acc:    scalar  accumulator diffusion noise sample (pre-scaled)
 
     Returns:
-        dx_brain: (287,)  dx_brain/dt
-        nerves:   (12,)   per-muscle nerve activations [L6 | R6] → plant (split in simulator)
+        dx_brain:    (62,)   dx_brain/dt
+        nerves:      (12,)   per-muscle nerve activations [L6 | R6] → plant
+        ec_vel:      (3,)    version velocity efference for cyclopean_vision EC correction
+        ec_pos:      (3,)    eye position efference
+        ec_verg:     (3,)    vergence efference
+        u_neural_acc: scalar  neural accommodation command → ODE drives acc_plant
+        A_cac:       scalar  CA/C feedforward (D) → ODE adds to u_neural_acc for acc_plant
     """
     x_vs      = x_brain[_IDX_VS]      # (9,): bilateral VS + null
     x_ni      = x_brain[_IDX_NI]      # (9,): bilateral NI + null
@@ -425,7 +448,7 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
     x_pursuit = x_brain[_IDX_PURSUIT]
     rf_state  = x_grav[ge._IDX_RF]   # (3,) rotational feedback: 1-step delayed, owned by GE
     x_verg    = x_brain[_IDX_VERG]
-    x_acc     = x_brain[_IDX_ACC]     # (2,): [x_fast, x_slow] diopters
+    x_acc     = x_brain[_IDX_ACC]     # (2,): [x_fast, x_slow] neural (D)
 
     # ── Velocity storage + gravity estimator + OCR ───────────────────────────
     # sensory_out.scene_slip is already EC-corrected (pre-delay EC in cyclopean_vision).
@@ -452,15 +475,31 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
     # to the output but not integrated into the NI state (avoids 25 s TC attenuation).
     dx_ni, motor_cmd_ni = ni.step(x_ni, -w_est + u_burst + u_pursuit, brain_params, u_tonic=ocr)
 
-    # ── Accommodation: blur-driven lens adjustment (AC/A and CA/C cross-links disabled) ──
-    # TODO: re-enable cross-links once accommodation–vergence interaction is validated.
-    dx_acc, _ = acc_mod.step(x_acc, sensory_out.acc_demand, 0.0, brain_params)   # 0.0: CA/C off
-
-    # ── Vergence: disparity + Zee saccade pulse + L2 cyclovergence ────────────
-    # bino = tv_L * tv_R ≈ 1 when both eyes fuse, 0 when either covered.
-    # z_act: 0=idle (OPN tonic), 1=saccade (OPN paused); normalised from z_opn ∈ [0,100].
+    # ── Vergence + Accommodation (Schor dual-interaction model) ─────────────────
+    # Accommodation and vergence are tightly cross-coupled (AC/A and CA/C).
+    # They share this block so the data-flow is explicit:
+    #
+    #   defocus → acc controller → u_neural_acc  ─(AC/A)→  aca_drive (deg)
+    #                                             ─(+A_cac via ODE)→ acc plant
+    #   disparity + aca_drive → vergence controller → u_verg (deg)
+    #
+    # Accommodation:
+    #   - defocus = delayed(1/z + refractive_error − x_plant), gated by defocus_visible.
+    #   - CA/C (A_cac) bypasses the blur controller; returned for ODE to add to u_plant.
+    #   - u_neural_acc is the efference copy of the lens command (brain has no lens sensor).
+    #     At steady state u_neural_acc ≈ x_acc_plant; using it avoids peeking at SimState.
+    # AC/A:
+    #   - Converts u_neural_acc [D, above dark focus] → convergence drive [deg].
+    #   - Units: AC/A [pd/D] × 0.5729 [deg/pd] × (u_neural_acc − tonic_acc) [D] = deg.
+    #     Note: pd (prism diopters) ≠ D (optical diopters); _DEG_PER_PD bridges them.
+    # Vergence:
+    #   - z_act: 0=idle (OPN tonic), 1=saccade (OPN paused); from z_opn ∈ [0,100].
+    x_verg_yaw = x_verg[0]
+    dx_acc, u_neural_acc, A_cac = acc_mod.step(
+        x_acc, sensory_out.defocus, x_verg_yaw, brain_params)
+    aca_drive  = acc_mod.ac_a_drive(u_neural_acc, brain_params)   # (deg)
     z_act_verg = 1.0 - jnp.clip(x_sg[3], 0.0, 100.0) / 100.0
-    dx_verg, u_verg = vg.step(x_verg, sensory_out.target_disparity, 0.0, z_act_verg, x_ni_net[:2], brain_params)
+    dx_verg, u_verg = vg.step(x_verg, sensory_out.target_disparity, aca_drive, z_act_verg, x_ni_net[:2], brain_params)
 
     # ── Final common pathway: nucleus encode → nerve activations ─────────────
     nerves = fcp.step(jnp.concatenate([motor_cmd_ni, u_verg]), brain_params)   # (12,) [L6|R6]
@@ -474,4 +513,4 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
     # ── Pack state derivative ─────────────────────────────────────────────────
     dx_brain = jnp.concatenate([dx_vs, dx_ni, dx_sg, dx_grav, dx_head, dx_pursuit, dx_verg, dx_acc])
 
-    return dx_brain, nerves, ec_vel, ec_pos, ec_verg
+    return dx_brain, nerves, ec_vel, ec_pos, ec_verg, u_neural_acc, A_cac

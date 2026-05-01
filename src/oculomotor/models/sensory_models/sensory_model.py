@@ -127,17 +127,18 @@ FLOOR             = _canal.FLOOR           # 80.0
 _SOFTNESS         = _canal._SOFTNESS       # 0.5  nonlinearity sharpness
 canal_nonlinearity = _canal.nonlinearity   # renamed in canal.py
 
-# Visual delay — readout matrices for the single 720-state cyclopean cascade
+# Visual delay — readout matrices for the single 800-state cyclopean cascade
 N_STAGES           = _retina.N_STAGES             # 40
 _N_PER_SIG         = _retina._N_PER_SIG           # 120
-C_slip             = _retina.C_slip               # (3, 720)  delayed scene angular velocity
-C_scene_linear_vel = _retina.C_scene_linear_vel   # (3, 720)  delayed scene linear velocity (m/s, eye xyz)
-C_pos              = _retina.C_pos                # (3, 720)  delayed target position (raw)
-C_vel              = _retina.C_vel                # (3, 720)  delayed target velocity (raw)
-C_target_disp      = _retina.C_target_disp        # (3, 720)  delayed target disparity (deg)
-C_scene_visible    = _retina.C_scene_visible      # (1, 720)  delayed scene_present
-C_target_visible   = _retina.C_target_visible     # (1, 720)  delayed target_present × target_in_vf
-C_target_motion_visible = _retina.C_target_motion_visible  # (1, 720)  delayed pursuit gate
+C_slip             = _retina.C_slip               # (3, 800)  delayed scene angular velocity
+C_scene_linear_vel = _retina.C_scene_linear_vel   # (3, 800)  delayed scene linear velocity (m/s, eye xyz)
+C_pos              = _retina.C_pos                # (3, 800)  delayed target position (raw)
+C_vel              = _retina.C_vel                # (3, 800)  delayed target velocity (raw)
+C_target_disp      = _retina.C_target_disp        # (3, 800)  delayed target disparity (deg)
+C_scene_visible    = _retina.C_scene_visible      # (1, 800)  delayed scene_present
+C_target_visible   = _retina.C_target_visible     # (1, 800)  delayed target_present × target_in_vf
+C_target_motion_visible = _retina.C_target_motion_visible  # (1, 800)  delayed pursuit gate
+C_defocus          = _retina.C_defocus            # (1, 800)  delayed defocus (D)
 delay_cascade_step = _retina.delay_cascade_step
 delay_cascade_read = _retina.delay_cascade_read
 
@@ -145,8 +146,8 @@ delay_cascade_read = _retina.delay_cascade_read
 
 _N_CANAL_STATES  = _canal.N_STATES          # 12
 _N_OTO_STATES    = _otolith.N_STATES        #  6
-_N_VIS_STATES    = _retina.N_STATES         # 720  single cyclopean cascade
-N_STATES         = _N_CANAL_STATES + _N_OTO_STATES + _N_VIS_STATES  # 12+6+720 = 738
+_N_VIS_STATES    = _retina.N_STATES         # 800  single cyclopean cascade (incl. defocus)
+N_STATES         = _N_CANAL_STATES + _N_OTO_STATES + _N_VIS_STATES  # 12+6+800 = 818
 
 # Index constants — relative to x_sensory
 _IDX_C     = slice(0,
@@ -178,7 +179,9 @@ class SensoryOutput(NamedTuple):
         scene_visible:    scalar delayed cyclopean scene presence gate
         target_visible:   scalar delayed cyclopean target presence gate
         target_motion_visible: scalar delayed pursuit gate = delay(target_visible × (1−strobe))
-        acc_demand:       float  accommodation demand (1/m)
+        defocus:          float  delayed cyclopean defocus (D) = delay(acc_demand + RE − x_plant)
+                                 Positive = near target closer than current accommodation.
+                                 Gated by defocus_visible = OR(scene_vis, target_vis).
     """
     canal:           jnp.ndarray   # (6,)
     otolith:         jnp.ndarray   # (3,)
@@ -190,23 +193,24 @@ class SensoryOutput(NamedTuple):
     scene_visible:   jnp.ndarray   # scalar
     target_visible:  jnp.ndarray   # scalar
     target_motion_visible: jnp.ndarray  # scalar
-    acc_demand:      float = 0.0
+    defocus:         float = 0.0   # delayed cyclopean defocus (diopters)
 
 
-def read_outputs(x_sensory, sensory_params, q_head, a_head, p_target):
+def read_outputs(x_sensory, sensory_params, q_head, a_head):
     """Read all sensory outputs from the current state (pure state readout).
 
     Returns cyclopean delayed cascade readouts — all binocularly fused.
+    acc_demand_L/R are 0.0 here; the ODE layer passes them to sensory_model.step()
+    which computes the fusion-weighted acc_demand_cyc via cyclopean_vision.step().
 
     Args:
         x_sensory:      (738,)  sensory state
         sensory_params: SensoryParams
         q_head:         (3,)    head rotation vector [yaw,pitch,roll] (deg) — for GIA
         a_head:         (3,)    head linear acceleration (m/s², world frame) — for GIA
-        p_target:       (3,)    target 3-D position [x,y,z] (m, world frame) — for acc_demand
 
     Returns:
-        SensoryOutput with cyclopean delayed signals and acc_demand.
+        SensoryOutput with cyclopean delayed signals.
     """
     x_c   = x_sensory[_IDX_C]
     x_vis = x_sensory[_IDX_VIS]
@@ -222,10 +226,6 @@ def read_outputs(x_sensory, sensory_params, q_head, a_head, p_target):
     R     = _rotation_matrix(q_xyz)
     f_gia = R.T @ _otolith.G_WORLD + R.T @ a_head   # GIA in head frame (m/s²)
 
-    # Accommodation demand: 1/distance (diopters); +1e-9 avoids div-by-zero at far targets.
-    target_dist = jnp.sqrt(jnp.dot(p_target, p_target) + 1e-9)
-    acc_demand  = 1.0 / target_dist
-
     return SensoryOutput(
         canal            = canal_out,
         otolith          = f_gia,
@@ -237,57 +237,45 @@ def read_outputs(x_sensory, sensory_params, q_head, a_head, p_target):
         scene_visible    = (_retina.C_scene_visible    @ x_vis)[0],
         target_visible   = (_retina.C_target_visible   @ x_vis)[0],
         target_motion_visible = (_retina.C_target_motion_visible @ x_vis)[0],
-        acc_demand       = acc_demand,
+        defocus          = (_retina.C_defocus          @ x_vis)[0],
     )
 
 
 # ── Combined step ───────────────────────────────────────────────────────────────
 
 def step(x_sensory,
+         # ── Head kinematics ───────────────────────────────────────────────────
          q_head, w_head, x_head, a_head,
+         # ── Eye kinematics (prism-shifted by ODE before this call) ────────────
          q_eye_L, w_eye_L, q_eye_R, w_eye_R,
-         q_scene, w_scene, x_scene, v_scene,
-         dp_dt, p_target,
+         # ── Scene stimulus (per eye) ──────────────────────────────────────────
+         q_scene_L, w_scene_L, x_scene_L, v_scene_L,
+         q_scene_R, w_scene_R, x_scene_R, v_scene_R,
+         # ── Target stimulus (per eye) ─────────────────────────────────────────
+         p_target_L, dp_dt_L,
+         p_target_R, dp_dt_R,
+         # ── Defocus (per eye; = acc_demand + refractive_error − x_acc_plant) ──
+         defocus_L, defocus_R,
+         # ── Visibility flags ──────────────────────────────────────────────────
          scene_present_L, scene_present_R,
          target_present_L, target_present_R, target_strobed,
-         sensory_params,
-         ec_vel, ec_pos, ec_verg):
+         # ── Efference copy (from brain) ───────────────────────────────────────
+         ec_vel, ec_pos, ec_verg,
+         # ── Parameters ───────────────────────────────────────────────────────
+         sensory_params):
     """Single ODE step for the sensory subsystem (canal + otolith + visual delay).
 
     Projects each eye's retina via world_to_retina, fuses per-eye signals into a
-    cyclopean representation via pre_delay_fusion, then advances the canal, otolith,
-    and single cyclopean visual delay cascade.
+    cyclopean representation via binocular_fusion_policy, then advances the canal,
+    otolith, and single cyclopean visual delay cascade.
+
+    All per-eye scene/target inputs are pre-transformed by the ODE layer before
+    this call — optical interventions (prisms, stereo displays) are invisible here.
 
     World frame is LEFT-HANDED: x=right, y=up, z=forward  (x × y = −z).
 
-    Args:
-        x_sensory:        (738,)  sensory state [x_c(12)|x_oto(6)|x_vis(720)]
-        q_head:           (3,)    head rotation vector [yaw,pitch,roll] (deg)
-        w_head:           (3,)    head angular velocity [yaw,pitch,roll] (deg/s)
-        x_head:           (3,)    head linear position  [x,y,z] (m, world frame)
-        a_head:           (3,)    head linear acceleration [x,y,z] (m/s², world frame)
-        q_eye_L:          (3,)    left  eye rotation vector (deg, head frame)
-        w_eye_L:          (3,)    left  eye angular velocity (deg/s, head frame)
-        q_eye_R:          (3,)    right eye rotation vector (deg, head frame)
-        w_eye_R:          (3,)    right eye angular velocity (deg/s, head frame)
-        q_scene:          (3,)    scene rotation vector (deg, world frame)
-        w_scene:          (3,)    scene angular velocity (deg/s, world frame) → OKR drive
-        x_scene:          (3,)    scene linear position (m, world frame)
-        v_scene:          (3,)    scene linear velocity (m/s, world frame)
-        dp_dt:            (3,)    target Cartesian velocity [x,y,z] (m/s, world frame)
-        p_target:         (3,)    target 3-D position [x,y,z] (m, world frame)
-        scene_present_L:  scalar  0=L eye dark, 1=L eye lit
-        scene_present_R:  scalar  0=R eye dark, 1=R eye lit
-        target_present_L: scalar  0=L eye covered, 1=L eye sees target
-        target_present_R: scalar  0=R eye covered, 1=R eye sees target
-        target_strobed:   scalar  1=stroboscopic — zeros target_vel before delay cascade
-        sensory_params:   SensoryParams
-        ec_vel:           (3,)    version velocity efference [yaw,pitch,roll] (deg/s) = u_burst + u_pursuit
-        ec_pos:           (3,)    eye position efference [yaw,pitch,roll] (deg) = x_ni_net + ocr
-        ec_verg:          (3,)    vergence efference [H,V,T] (deg) = x_verg
-
     Returns:
-        dx_sensory: (738,)  dx_sensory/dt
+        dx_sensory: (818,)  dx_sensory/dt
     """
     x_c   = x_sensory[_IDX_C]
     x_oto = x_sensory[_IDX_OTO]
@@ -300,18 +288,20 @@ def step(x_sensory,
     dx_c,   _ = _canal.step(x_c,   w_head, sensory_params)
     dx_oto, _ = _otolith.step(x_oto, jnp.concatenate([a_head, q_head]), sensory_params)
 
-    # World → retina projection (one call per eye; geometry + visibility live in retina.py)
+    # World → retina projection (one call per eye; geometry + visibility live in retina.py).
+    # All per-eye inputs (scene, target, eye pose) are pre-transformed by the ODE layer —
+    # prisms, stereo displays, and covers are invisible to this function.
     target_pos_L, scene_angular_vel_L, scene_linear_vel_L, target_vel_L, scene_vis_L, target_vis_L = \
         _retina.world_to_retina(
-            p_target, eye_off_L, q_head, w_head, x_head,
-            q_eye_L, w_eye_L, w_scene, v_scene, dp_dt,
+            p_target_L, eye_off_L, q_head, w_head, x_head,
+            q_eye_L, w_eye_L, w_scene_L, v_scene_L, dp_dt_L,
             scene_present_L, target_present_L,
             sensory_params.visual_field_limit, sensory_params.k_visual_field)
 
     target_pos_R, scene_angular_vel_R, scene_linear_vel_R, target_vel_R, scene_vis_R, target_vis_R = \
         _retina.world_to_retina(
-            p_target, eye_off_R, q_head, w_head, x_head,
-            q_eye_R, w_eye_R, w_scene, v_scene, dp_dt,
+            p_target_R, eye_off_R, q_head, w_head, x_head,
+            q_eye_R, w_eye_R, w_scene_R, v_scene_R, dp_dt_R,
             scene_present_R, target_present_R,
             sensory_params.visual_field_limit, sensory_params.k_visual_field)
 
@@ -324,6 +314,7 @@ def step(x_sensory,
         x_vis,
         scene_angular_vel_L, scene_linear_vel_L, target_pos_L, target_vel_L, scene_vis_L, target_vis_L, target_motion_vis_L,
         scene_angular_vel_R, scene_linear_vel_R, target_pos_R, target_vel_R, scene_vis_R, target_vis_R, target_motion_vis_R,
-        sensory_params, ec_vel, ec_pos, ec_verg)
+        sensory_params, ec_vel, ec_pos, ec_verg,
+        defocus_L, defocus_R)
 
     return jnp.concatenate([dx_c, dx_oto, dx_vis])
