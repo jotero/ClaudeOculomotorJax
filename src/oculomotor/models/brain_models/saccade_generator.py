@@ -18,14 +18,14 @@ State:  x_sg = [e_held(3) | z_opn(1) | z_acc(1) |
 
     e_held  — error estimator: tracks e_cur between saccades; integrates −u_burst during burst.
                Replaces the old x_copy+e_held pair: e_held IS the residual error (e_res = e_held).
-               Between saccades: de_held/dt = z_idl²·(e_cur−e_held)/τ_reset_fast (fast tracking).
+               Between saccades: de_held/dt = act_opn²·(e_cur−e_held)/τ_reset_fast (fast tracking).
                During burst:     de_held/dt = −u_burst   (decrements as burst fires → e_held→0).
                No overshoot: e_held monotonically approaches 0, so no corrective opposite burst.
     z_opn   — OPN membrane potential: 100=tonic (burst blocked), near-0 or negative=paused (burst active)
     z_acc   — rise-to-bound accumulator: integrates gate_err; drains to floor during burst.
                Natural refractory: (threshold_acc − acc_burst_floor) · τ_acc ≈ 270 ms.
-    x_ebn_R — right EBN membrane potentials (3,): driven by relu(+e_held) when z_act>0; held negative by OPN
-    x_ebn_L — left  EBN membrane potentials (3,): driven by relu(−e_held) when z_act>0; held negative by OPN
+    x_ebn_R — right EBN membrane potentials (3,): driven by relu(+e_held) when act_opn<1; held negative by OPN
+    x_ebn_L — left  EBN membrane potentials (3,): driven by relu(−e_held) when act_opn<1; held negative by OPN
     x_ibn_R — right IBN membrane potentials (3,): same drive as x_ebn_R; held negative by OPN
     x_ibn_L — left  IBN membrane potentials (3,): same drive as x_ebn_L; held negative by OPN
 
@@ -38,12 +38,12 @@ Burst neuron populations
 States are membrane potentials; activations are the burst nonlinearity applied
 to those states (burst_velocity).
 
-    src_R = z_act · relu(+e_res)   — drives right BNs during rightward e_res
-    src_L = z_act · relu(−e_res)   — drives left  BNs during leftward  e_res
+    src_R = (1−act_opn) · relu(+e_res)   — drives right BNs during rightward e_res
+    src_L = (1−act_opn) · relu(−e_res)   — drives left  BNs during leftward  e_res
 
-z_act gating (the Schmitt-trigger mechanism):
-    Between saccades: z_act=0 → src=0 → x_bn→0 → ibn_total=0 → OPN stable at 100.
-    At trigger: charge_sac→1 → z_opn drops → z_act rises → x_bn rises → burst fires.
+act_opn gating (the Schmitt-trigger mechanism):
+    Between saccades: act_opn=1 → src=0 → x_bn→0 → ibn_total=0 → OPN stable at 100.
+    At trigger: charge_sac→1 → z_opn drops → act_opn falls → x_bn rises → burst fires.
     Saccade ends: e_res→0 → src→0 → x_bn decays → IBN→0 → OPN recovers.
 
 BN dynamics (no explicit contralateral inhibition — directional selectivity comes
@@ -64,8 +64,8 @@ OPN latch (z_opn) — the key to the ballistic design
     Sequence:
         1. Target appears → gate_err→1 → z_acc accumulates (τ_acc)
         2. z_acc > threshold_acc → charge_sac→1 → z_opn drops (OPN pauses)
-        3. z_act rises → src_R = relu(e_res) → x_ebn/x_ibn rise → burst fires
-        4. IBN keeps z_opn suppressed; z_act≈1 sustains accumulator drain
+        3. act_opn falls → src_R = relu(e_res) → x_ebn/x_ibn rise → burst fires
+        4. IBN keeps z_opn suppressed; act_opn≈0 sustains burst
         5. x_copy integrates toward e_held → e_res→0 → src→0 → x_bn decays → burst ends
         6. x_ibn→0 → ibn_total→0 → k_tonic restores z_opn→100 in ~2 ms
         7. z_acc re-climbs from floor to threshold → ~270 ms refractory
@@ -123,13 +123,17 @@ N_OUTPUTS = 3   # u_burst (3,)
 def burst_velocity(e, p):
     """Main-sequence nonlinearity: maps input vector to burst velocity.
 
+    Rectifies first (negative membrane potential = OPN-inhibited = silent),
+    then applies the exponential main-sequence magnitude with the original direction.
+
     Args:
-        e: (3,)  input vector (EBN/IBN state, or residual error)
+        e: (3,)  input vector (EBN/IBN membrane potential)
         p: BrainParams
 
     Returns:
-        (3,)  burst velocity (deg/s), same direction as e
+        (3,)  burst velocity (deg/s), zero for negative states
     """
+    e = jax.nn.relu(e)
     mag = jnp.linalg.norm(e)
     return p.g_burst * (1.0 - jnp.exp(-mag / p.e_sat_sac)) * e / (mag + 1e-6)
 
@@ -176,8 +180,6 @@ def step(x_sg, pos_delayed, target_visible, x_ni, ocr, w_est, p, noise_acc=0.0):
 
     # OPN firing rate (clipped — membrane can go negative but firing rate cannot)
     z_opn_fr = jnp.clip(z_opn, 0.0, 100.0)
-    z_act = (100.0 - z_opn_fr) / 100.0   # 0=OPN tonic (burst blocked), 1=OPN paused
-    z_idl = z_opn_fr / 100.0             # 0=during saccade, 1=idle (OPN tonic)
 
     # ── Target selection ──────────────────────────────────────────────────────
     # In-field: clip to oculomotor range; Quick-phase: predictive centripetal reset.
@@ -186,8 +188,10 @@ def step(x_sg, pos_delayed, target_visible, x_ni, ocr, w_est, p, noise_acc=0.0):
     tau_refractory = (p.threshold_acc - p.acc_burst_floor) * p.tau_acc
     x_ni_pred = x_ni - p.k_center_vel * tau_refractory * w_est
     e_center  = -p.alpha_reset * x_ni_pred
-
-    e_cur     = target_visible * e_target + (1.0 - target_visible) * e_center
+    
+    refixation = target_visible;
+    quick_phase = 1.0 - refixation;
+    e_cur     =  refixation * e_target + quick_phase * e_center
     e_cur_mag = jnp.linalg.norm(e_cur)
     # e_held IS the residual error (e_res = e_held); no separate x_copy state.
 
@@ -196,21 +200,17 @@ def step(x_sg, pos_delayed, target_visible, x_ni, ocr, w_est, p, noise_acc=0.0):
                          + (1.0 - target_visible) * p.threshold_sac_qp)
     gate_err = jax.nn.sigmoid(p.k_sac * (e_cur_mag - threshold_sac_eff))
 
-    # ── Burst neuron activations (rectified: negative states = OPN-inhibited = silent) ──
-    act_ebn_R = burst_velocity(jax.nn.relu(x_ebn_R), p)
-    act_ebn_L = burst_velocity(jax.nn.relu(x_ebn_L), p)
-    act_ibn_R = burst_velocity(jax.nn.relu(x_ibn_R), p)
-    act_ibn_L = burst_velocity(jax.nn.relu(x_ibn_L), p)
+    # ── Activations ───────────────────────────────────────────────────────────────
+    act_opn   = z_opn_fr / 100.0    # 0=paused (burst active), 1=tonic (burst blocked)
+    act_ebn_R = burst_velocity(x_ebn_R, p)
+    act_ebn_L = burst_velocity(x_ebn_L, p)
+    act_ibn_R = burst_velocity(x_ibn_R, p)
+    act_ibn_L = burst_velocity(x_ibn_L, p)
 
     # ── Burst output ──────────────────────────────────────────────────────────
     u_burst = act_ebn_R - act_ebn_L
 
     # ── Burst neuron dynamics ─────────────────────────────────────────────────
-    # Sources gated by z_act: between saccades z_act=0 → src=0 → BN silent.
-    # OPN inhibition (opn_inh) holds BN slightly below 0 during recovery to suppress
-    # any residual activity, but z_act gating is still required to prevent spontaneous bursts.
-    src_R = z_act * jax.nn.relu( e_held)
-    src_L = z_act * jax.nn.relu(-e_held)
 
     # Three-gain inhibitory network (all within tau_bn):
     #   g_opn_bn:      OPN→BN multiplicative — clamping TC=tau_bn/(1+g_opn_bn). Must satisfy Heun stability:
@@ -221,23 +221,29 @@ def step(x_sg, pos_delayed, target_visible, x_ni, ocr, w_est, p, noise_acc=0.0):
     #   g_ibn_opn:     IBN→OPN Schmitt-trigger latch.
     inh_from_L = p.g_ci * act_ibn_L / p.g_burst   # (3,) L IBN → R BNs, one-to-one per axis
     inh_from_R = p.g_ci * act_ibn_R / p.g_burst   # (3,) R IBN → L BNs, one-to-one per axis
-    opn_gain   = 1.0 + p.g_opn_bn * z_idl         # multiplicative: TC = tau_bn/(1+g_opn_bn) when tonic
-    opn_inh    = p.g_opn_bn_hold * z_idl           # additive offset: 0 during saccade
+    opn_gain   = 1.0 + p.g_opn_bn * act_opn        # multiplicative: TC = tau_bn/(1+g_opn_bn) when tonic
+    opn_inh    = p.g_opn_bn_hold * act_opn          # additive offset: 0 during saccade
 
-    dx_ebn_R = (src_R - inh_from_L - opn_inh - x_ebn_R * opn_gain) / p.tau_bn
-    dx_ebn_L = (src_L - inh_from_R - opn_inh - x_ebn_L * opn_gain) / p.tau_bn
-    dx_ibn_R = (src_R - inh_from_L - opn_inh - x_ibn_R * opn_gain) / p.tau_bn
-    dx_ibn_L = (src_L - inh_from_R - opn_inh - x_ibn_L * opn_gain) / p.tau_bn
+    dx_ebn_R = (jax.nn.relu( e_held) - inh_from_L - opn_inh - x_ebn_R * opn_gain) / p.tau_bn
+    dx_ebn_L = (jax.nn.relu(-e_held) - inh_from_R - opn_inh - x_ebn_L * opn_gain) / p.tau_bn
+    dx_ibn_R = (jax.nn.relu( e_held) - inh_from_L - opn_inh - x_ibn_R * opn_gain) / p.tau_bn
+    dx_ibn_L = (jax.nn.relu(-e_held) - inh_from_R - opn_inh - x_ibn_L * opn_gain) / p.tau_bn
 
     # ── Error estimator ───────────────────────────────────────────────────────
     # During burst:    u_burst > 0  → de_held = −u_burst (e_held decrements to 0)
     # Between saccades: BNs held negative by OPN → u_burst = 0 → de_held tracks e_cur
     # No separate x_copy → no overshoot: e_held can only decrement while BNs are positive.
-    de_held = -u_burst + z_idl**2 * (e_cur - e_held) / p.tau_reset_fast
+    de_held = -u_burst + act_opn**2 * (e_cur - e_held) / p.tau_reset_fast
 
     # ── Rise-to-bound accumulator (z_acc) ────────────────────────────────────
+    # OPN pause (1−act_opn) provides reliable drain for all amplitudes: even a 1° saccade
+    # gets full drain when OPN commits. IBN adds amplitude-proportional contribution.
+    # No equilibrium: OPN drops essentially in one step (tau_sac=1ms), IBN latches OPN
+    # before z_acc can recharge → z_acc drains to floor before oscillation can develop.
+    # ISI ≈ (threshold − floor)·tau_acc once floor is reached.
+    ibn_drain = jnp.sum(act_ibn_R + act_ibn_L) / p.g_burst
     dz_acc = (gate_err / p.tau_acc
-              - z_act * (z_acc - p.acc_burst_floor) / p.tau_burst_drain
+              - ((1.0 - act_opn) + ibn_drain) * (z_acc - p.acc_burst_floor) / p.tau_burst_drain
               + noise_acc)
 
     # ── OPN latch dynamics ────────────────────────────────────────────────────

@@ -201,7 +201,7 @@ class BrainParams(NamedTuple):
     k_sac:                 float = 200.0  # trigger sigmoid steepness (1/deg)
     threshold_sac:         float = 0.5    # retinal error trigger threshold (deg)
     threshold_stop:        float = 0.1    # burst-stop threshold (deg)
-    tau_reset_fast:        float = 0.05   # inter-saccade x_copy reset TC (s)
+    tau_reset_fast:        float = 0.005  # inter-saccade e_held tracking TC (s); e_held tracks e_cur in ~25ms
     tau_hold:              float = 0.005  # sample-and-hold tracking TC (s)
     tau_sac:               float = 0.001  # saccade latch TC (s)
     k_tonic_opn:           float = 0.5    # OPN tonic recovery gain; recovery TC = tau_sac/k_tonic = 2 ms
