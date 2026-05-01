@@ -257,6 +257,7 @@ def step(x_sg, pos_delayed, target_visible, x_ni, ocr, w_est, p, noise_acc=0.0):
     #   Heun bound: g_acc_drain · dt / tau_burst_drain < 2 → g_acc_drain < 4 at current params.
     dz_acc = (gate_err * normalized_opn / p.tau_acc
               - p.g_acc_drain * ibn_norm * (z_acc - p.acc_burst_floor) / p.tau_burst_drain
+              - z_acc / p.tau_acc_leak
               + noise_acc)
 
     # ── OPN latch dynamics ────────────────────────────────────────────────────

@@ -41,7 +41,7 @@ G_OCR  = 10.0 / 9.81   # OCR gain (deg/(m/s²)): ~10° at 90° tilt (Howard & Te
 
 
 SECTION = dict(
-    id='gravity', title='4. Gravity Estimator',
+    id='gravity', title='3. Gravity Estimator',
     description='Canal-otolith interaction: OCR, OVAR, VOR tilt suppression, '
                 'OCR vs tilt angle, somatogravic OCR frequency dependence. '
                 f'Parameters: tau_grav={TAU_GRAV}, K_gd={K_GD}, g_ocr={G_OCR} (Laurens & Angelaki 2011).',

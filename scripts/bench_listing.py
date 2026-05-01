@@ -38,7 +38,7 @@ G0   = 9.81
 G_OCR = 10.0 / G0   # same calibration as bench_gravity
 
 SECTION = dict(
-    id='listing', title="5. Listing's Law",
+    id='listing', title="7. Listing's Law",
     description="Torsional constraint T = OCR − H·V·π/360: saccade plane scatter "
                 "and OCR-driven correction saccade.",
 )

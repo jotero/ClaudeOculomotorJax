@@ -245,6 +245,9 @@ class BrainParams(NamedTuple):
     g_acc_drain:           float = 3.0    # IBN drain multiplier for z_acc (dimensionless).
                                            # Boosts drain for small saccades (weak IBN) without breaking triggering.
                                            # Heun bound: g_acc_drain · dt / tau_burst_drain < 2 → max ≈ 4 at current params.
+    tau_acc_leak:          float = 5.0    # accumulator passive leak TC (s); pulls z_acc → 0 between saccades.
+                                           # ~5% effect on 270 ms refractory. Keep ≥ 5 s: shorter values starve
+                                           # small saccades (0.5°, gate_err=0.5) during OPN suppression phase.
 
     # Saccade target selection — handled inside the saccade generator
     orbital_limit:         float = 50.0   # oculomotor range half-width (deg); clip e_cmd to ±limit

@@ -609,21 +609,21 @@ tr.hidden { display: none; }
 
   <section class="section" id="sg">
     <h2>Saccade Generator &nbsp;<small style="font-size:12px;font-weight:400;color:#888">BrainParams</small></h2>
-    <p class="desc">Robinson (1975) local-feedback burst model. Sample-and-hold (e_held) makes saccades ballistic; OPN refractory enforces inter-saccadic interval; rise-to-bound accumulator provides noise robustness and settling time before latch.</p>
+    <p class="desc">Robinson (1975) local-feedback burst model with bilateral EBN/IBN populations. Signal flow: retinal error (e_held, pre-loaded by SC) → rise-to-bound accumulator (z_acc) → trigger IBN (z_trig) → OPN pause → EBN/IBN burst → motor command + x_copy decrement. ISI set by accumulator floor: ISI ≈ (threshold_acc − acc_burst_floor) × τ_acc ≈ 270 ms.</p>
     <table>
       <thead><tr>
         <th style="width:160px">Parameter</th><th style="width:90px">Default</th><th style="width:60px">Units</th>
         <th>Description</th><th style="width:170px">Anatomical locus</th><th style="width:210px">Pathology</th>
       </tr></thead>
       <tbody>
-        <tr class="sub-head"><td colspan="6">Burst dynamics</td></tr>
+        <tr class="sub-head"><td colspan="6">Burst ceiling &amp; main sequence</td></tr>
         <tr>
           <td class="param-name">g_burst</td>
           <td><span class="default">700.0</span></td>
           <td class="units">deg/s</td>
-          <td class="desc-cell">Burst ceiling. Peak velocity saturates at g_burst·(1−e^{−A/e_sat_sac}). Reduces peak velocity for large amplitudes (main sequence).
+          <td class="desc-cell">EBN/IBN burst ceiling (deg/s). Peak eye velocity saturates at g_burst·(1−e^{−A/e_sat_sac}).
             <div class="ref">Bahill, Clark &amp; Stark (1975) Math Biosci 26:303</div></td>
-          <td class="anatomy-cell">Excitatory burst neurons: PPRF (horizontal); riMLF (vertical/torsional)</td>
+          <td class="anatomy-cell">Excitatory burst neurons (EBN): PPRF (horizontal); riMLF (vertical/torsional)</td>
           <td><div class="pathologies">
             <span class="tag tag-saccade">Slow saccades (CPEO, SCA): ↓</span>
             <span class="tag tag-cereb">Cerebellar hypometria: ↓</span>
@@ -633,149 +633,115 @@ tr.hidden { display: none; }
           <td class="param-name">e_sat_sac</td>
           <td><span class="default">7.0</span></td>
           <td class="units">deg</td>
-          <td class="desc-cell">Main-sequence amplitude saturation constant. Controls the slope of the peak-velocity vs amplitude curve. Larger → steeper velocity scaling at small amplitudes.</td>
+          <td class="desc-cell">Main-sequence amplitude saturation constant. Controls slope of peak-velocity vs. amplitude curve.</td>
           <td class="anatomy-cell">SC motor map → PPRF amplitude encoding</td>
           <td></td>
         </tr>
-        <tr class="sub-head"><td colspan="6">Trigger gates</td></tr>
+        <tr class="sub-head"><td colspan="6">EBN / IBN population dynamics</td></tr>
         <tr>
-          <td class="param-name">threshold_sac</td>
-          <td><span class="default">0.5</span></td>
-          <td class="units">deg</td>
-          <td class="desc-cell">Retinal error trigger threshold. gate_err = σ(k_sac·(|e| − threshold_sac)). Below this, no saccade is initiated.</td>
-          <td class="anatomy-cell">Rostral SC fixation zone; basal ganglia gating (SNr → SC)</td>
-          <td><div class="pathologies">
-            <span class="tag tag-saccade">Hypometric saccades: ↑</span>
-            <span class="tag tag-saccade">Oscillations / SWJ: ↓</span>
-          </div></td>
-        </tr>
-        <tr>
-          <td class="param-name">threshold_stop</td>
-          <td><span class="default">0.1</span></td>
-          <td class="units">deg</td>
-          <td class="desc-cell">Burst-stop threshold. Burst ends when |e_held − x_copy| &lt; threshold_stop (residual gone).</td>
-          <td class="anatomy-cell">PPRF local feedback; cerebellar vermis (lobule VII) stop signal</td>
-          <td></td>
-        </tr>
-        <tr>
-          <td class="param-name">k_sac</td>
-          <td><span class="default">200.0</span></td>
-          <td class="units">1/deg</td>
-          <td class="desc-cell">Sigmoid steepness for trigger and stop gates. Large value → effectively a step function.</td>
-          <td class="anatomy-cell"></td>
-          <td></td>
-        </tr>
-        <tr>
-          <td class="param-name">threshold_sac_qp</td>
-          <td><span class="default">2.0</span></td>
-          <td class="units">deg</td>
-          <td class="desc-cell">Error threshold to START accumulating for quick phases (target_visible ≈ 0). Blended with threshold_sac: gate_err uses this higher value when the target is out of field. Requires larger slow-phase drift before a centripetal reset fires — prevents spurious quick phases during small-amplitude slow phases.</td>
-          <td class="anatomy-cell">Rostral SC; BG gate (SNr disinhibition); quick-phase trigger</td>
-          <td><div class="pathologies"><span class="tag tag-saccade">↓ → more frequent quick phases</span></div></td>
-        </tr>
-        <tr class="sub-head"><td colspan="6">OPN refractory</td></tr>
-        <tr>
-          <td class="param-name">g_opn_pause</td>
-          <td><span class="default">500.0</span></td>
-          <td class="units">fr units</td>
-          <td class="desc-cell">OPN inhibitory overshoot amplitude. IBN inhibition drives z_opn membrane potential to −g_opn_pause below spike threshold; firing rate clips at 0. Large value (500) → OPN pauses in ~2 ms after z_acc crosses threshold, so x_copy barely grows before z_act reaches 1. Mimics the near-instantaneous OPN pause seen in primate recordings.
-            <div class="ref">Yoshida et al. (1999); Scudder et al. (2002)</div></td>
-          <td class="anatomy-cell">Omnipause neurons (OPN); nucleus raphe interpositus (RIP)</td>
-          <td><div class="pathologies">
-            <span class="tag tag-saccade">↓ → slower OPN pause → reduced peak velocity (hypometric main sequence)</span>
-          </div></td>
-        </tr>
-        <tr>
-          <td class="param-name">tau_ref</td>
-          <td><span class="default">0.15</span></td>
+          <td class="param-name">tau_bn</td>
+          <td><span class="default">0.003</span></td>
           <td class="units">s</td>
-          <td class="desc-cell">OPN refractory decay TC. Inter-saccadic interval ≈ τ_ref · ln(z_ref_peak / threshold_ref) ≈ 175 ms. Governs the minimum ISI.</td>
-          <td class="anatomy-cell">OPN recharge dynamics; RIP</td>
-          <td><div class="pathologies">
-            <span class="tag tag-saccade">Opsoclonus / flutter: ↓ (~30 ms)</span>
-            <span class="tag tag-saccade">Square-wave jerks: ↓</span>
-          </div></td>
-        </tr>
-        <tr>
-          <td class="param-name">tau_ref_charge</td>
-          <td><span class="default">0.001</span></td>
-          <td class="units">s</td>
-          <td class="desc-cell">OPN charge TC. Time to latch z_ref at peak (~1 ms). Should be much faster than tau_ref.</td>
-          <td class="anatomy-cell">IBN → OPN inhibitory synapse (fast)</td>
+          <td class="desc-cell">EBN/IBN membrane TC. States track the error drive (e_held) with lag. Heun stability: (1 + g_opn_bn·100)·dt/tau_bn &lt; 2 → must keep tau_bn &gt; 2.5 ms at dt=1 ms.</td>
+          <td class="anatomy-cell">PPRF (horizontal EBN/IBN); riMLF (vertical/torsional)</td>
           <td></td>
         </tr>
         <tr>
-          <td class="param-name">threshold_sac_release</td>
+          <td class="param-name">g_opn_bn</td>
+          <td><span class="default">0.04</span></td>
+          <td class="units">1/fr</td>
+          <td class="desc-cell">OPN→BN multiplicative suppression gain. Shortens BN TC to tau_bn/(1+g_opn_bn·act_opn) ≈ 0.6 ms when OPN=100 (fixation); effectively clamps BNs at rest. During burst (act_opn=0): TC = tau_bn = 3 ms. Heun limit: g_opn_bn &lt; 0.09.</td>
+          <td class="anatomy-cell">OPN collaterals → EBN/IBN</td>
+          <td></td>
+        </tr>
+        <tr>
+          <td class="param-name">g_opn_bn_hold</td>
           <td><span class="default">0.4</span></td>
-          <td class="units">—</td>
-          <td class="desc-cell">z_ref threshold to release OPN latch (z_opn → 100). Must be above threshold_ref to ensure proper sequencing.</td>
-          <td class="anatomy-cell">OPN release circuit; SC → OPN disinhibition</td>
+          <td class="units">1/fr</td>
+          <td class="desc-cell">OPN→BN additive inhibitory offset. At tonic OPN (=100): adds 40° of inhibition, keeping BN equilibrium at (e_held−40)/5 ≈ −8° → IBN silent for errors up to ~40°. Zero during burst (act_opn=0), freeing BNs to fire.</td>
+          <td class="anatomy-cell">OPN → PPRF IBN inhibitory synapses</td>
           <td></td>
         </tr>
         <tr>
-          <td class="param-name">k_ref</td>
-          <td><span class="default">50.0</span></td>
+          <td class="param-name">g_ibn_bn</td>
+          <td><span class="default">0.143</span></td>
           <td class="units">—</td>
-          <td class="desc-cell">Bistable OPN gate steepness. Large → hard switch at z_ref = threshold_ref.</td>
-          <td class="anatomy-cell"></td>
+          <td class="units">IBN→BN contralateral inhibition gain (= g_ci/g_burst = 100/700). Element-wise per axis: L IBN → R EBN/IBN and vice versa. Provides directional selectivity without separate direction circuits.</td>
+          <td class="anatomy-cell">IBN → contralateral PPRF/riMLF</td>
           <td></td>
         </tr>
-        <tr>
-          <td class="param-name">threshold_ref</td>
-          <td><span class="default">0.1</span></td>
-          <td class="units">—</td>
-          <td class="desc-cell">OPN gate threshold. Below this, refractory is over and accumulator can charge again.</td>
-          <td class="anatomy-cell">OPN firing threshold</td>
-          <td></td>
-        </tr>
-        <tr class="sub-head"><td colspan="6">Sample-and-hold &amp; accumulator</td></tr>
-        <tr>
-          <td class="param-name">tau_hold</td>
-          <td><span class="default">0.005</span></td>
-          <td class="units">s</td>
-          <td class="desc-cell">Sample-and-hold tracking TC. e_held tracks current target between saccades; frozen during burst (z_idl² ≈ 0 when OPN off).</td>
-          <td class="anatomy-cell">SC fixation neurons → SG hold register</td>
-          <td></td>
-        </tr>
+        <tr class="sub-head"><td colspan="6">OPN — omnipause neurons</td></tr>
         <tr>
           <td class="param-name">tau_sac</td>
           <td><span class="default">0.001</span></td>
           <td class="units">s</td>
-          <td class="desc-cell">Saccade OPN latch TC. Governs how fast z_opn drops to 0 (burst on) and returns to 100 (burst off).</td>
-          <td class="anatomy-cell">PPRF/riMLF circuit dynamics</td>
+          <td class="desc-cell">OPN membrane TC. Governs how fast z_opn drops to 0 (burst on) and recovers to 100 (burst off). Recovery TC = tau_sac / k_tonic_opn ≈ 2 ms.</td>
+          <td class="anatomy-cell">Omnipause neurons (OPN); nucleus raphe interpositus (RIP)</td>
           <td></td>
         </tr>
         <tr>
-          <td class="param-name">tau_acc</td>
-          <td><span class="default">0.130</span></td>
-          <td class="units">s</td>
-          <td class="desc-cell">Accumulator rise TC. Noise-robust: brief retinal error spikes (&lt; τ_acc) cannot cross threshold. Controls saccade reaction time (RT ≈ τ_vis + τ_acc + OPN latch ≈ 200 ms).</td>
-          <td class="anatomy-cell">SC buildup neurons; caudate nucleus (BG gate)</td>
+          <td class="param-name">k_tonic_opn</td>
+          <td><span class="default">0.5</span></td>
+          <td class="units">—</td>
+          <td class="desc-cell">OPN tonic recovery gain. Always active; pulls z_opn → 100 with TC = tau_sac/k_tonic = 2 ms. Latch condition: IBN inhibition must exceed tonic recovery, i.e. g_ibn_opn·IBN_total &gt; k_tonic·100 = 50.</td>
+          <td class="anatomy-cell">OPN intrinsic depolarization; collicular excitation</td>
+          <td></td>
+        </tr>
+        <tr>
+          <td class="param-name">g_opn_pause</td>
+          <td><span class="default">500.0</span></td>
+          <td class="units">fr</td>
+          <td class="desc-cell">z_trig-driven OPN inhibitory overshoot. z_trig drives z_opn membrane below spike threshold by up to g_opn_pause units; act_opn = relu(z_opn) clips at 0. Large value → OPN pauses in ~2 ms after z_acc crosses threshold.
+            <div class="ref">Yoshida et al. (1999); Scudder et al. (2002)</div></td>
+          <td class="anatomy-cell">Trigger IBN → OPN (pre-burst suppression)</td>
           <td><div class="pathologies">
-            <span class="tag tag-saccade">Reduced → shorter latency, less noise robustness</span>
+            <span class="tag tag-saccade">↓ → slower OPN pause → hypometric main sequence</span>
           </div></td>
         </tr>
         <tr>
-          <td class="param-name">tau_drain</td>
-          <td><span class="default">0.200</span></td>
+          <td class="param-name">g_ibn_opn</td>
+          <td><span class="default">200.0</span></td>
+          <td class="units">fr/s</td>
+          <td class="desc-cell">IBN→OPN Schmitt-trigger latch gain. Once IBN fires, g_ibn_opn·IBN_total &gt;&gt; k_tonic·z_opn → OPN stays suppressed throughout the burst. At burst end: e_held→0 → IBN→0 → OPN recovers. Suppression condition (g_ibn_opn=200 &gt; 50=k_tonic·100): always satisfied once burst latches.</td>
+          <td class="anatomy-cell">IBN → OPN (Schmitt-trigger latch)</td>
+          <td><div class="pathologies">
+            <span class="tag tag-saccade">↓ → OPN breakthrough → truncated burst (hypometria)</span>
+            <span class="tag tag-saccade">↓↓ → flutter / oscillations</span>
+          </div></td>
+        </tr>
+        <tr class="sub-head"><td colspan="6">Trigger IBN (z_trig) — pre-burst OPN suppression</td></tr>
+        <tr>
+          <td class="param-name">tau_trig</td>
+          <td><span class="default">0.002</span></td>
           <td class="units">s</td>
-          <td class="desc-cell">Accumulator drain TC. When gate is off (target gone or refractory), z_acc decays toward 0. tau_drain &gt; tau_acc ensures equilibrium z_acc &gt; threshold for sustained targets.</td>
-          <td class="anatomy-cell">Rostral SC suppression; fixation neuron inhibition</td>
+          <td class="desc-cell">Trigger IBN rise TC. z_trig charges from charge_sac (relu of z_acc − threshold_acc) and is drained by IBN. Provides smooth, delayed OPN suppression onset — decouples accumulator crossing from instantaneous OPN drop. Heun stability: (1+g_ibn_trig)·dt/tau_trig &lt; 2 → must keep tau_trig &gt; 1.5 ms.</td>
+          <td class="anatomy-cell">Trigger IBN population (long-lead burst neuron analog)</td>
           <td></td>
         </tr>
         <tr>
-          <td class="param-name">sigma_acc</td>
-          <td><span class="default">0.0</span></td>
-          <td class="units">1/√s</td>
-          <td class="desc-cell">Accumulator diffusion noise SD. Adds trial-to-trial RT variability. At 0: all saccades to the same target have identical latency. Realistic ~0.5–1 gives ±20 ms jitter.</td>
-          <td class="anatomy-cell">SC / FEF decision noise</td>
-          <td><div class="pathologies"><span class="tag tag-noise">RT variability</span></div></td>
+          <td class="param-name">g_ibn_trig</td>
+          <td><span class="default">2.0</span></td>
+          <td class="units">—</td>
+          <td class="desc-cell">IBN→z_trig drain gain (ibn_norm ∈ [0,1]). Once the main IBN burst fires, it rapidly drains z_trig — TC during burst ≈ tau_trig/(1+g_ibn_trig) ≈ 0.7 ms. This releases OPN when the burst ends, preventing re-trigger.</td>
+          <td class="anatomy-cell">IBN → trigger IBN (feedback inhibition)</td>
+          <td></td>
+        </tr>
+        <tr class="sub-head"><td colspan="6">Rise-to-bound accumulator (z_acc)</td></tr>
+        <tr>
+          <td class="param-name">tau_acc</td>
+          <td><span class="default">0.180</span></td>
+          <td class="units">s</td>
+          <td class="desc-cell">Accumulator rise TC. Noise-robust: brief retinal error spikes (&lt;τ_acc) cannot reach threshold. ISI ≈ (threshold_acc − acc_burst_floor)·τ_acc = 1.5·180 ms = 270 ms. Controls saccade latency after target appears.</td>
+          <td class="anatomy-cell">SC buildup neurons; caudate nucleus (BG gate)</td>
+          <td><div class="pathologies">
+            <span class="tag tag-saccade">↓ → shorter latency, less noise robustness</span>
+          </div></td>
         </tr>
         <tr>
           <td class="param-name">threshold_acc</td>
-          <td><span class="default">0.5</span></td>
+          <td><span class="default">1.0</span></td>
           <td class="units">—</td>
-          <td class="desc-cell">Accumulator trigger threshold. Saccade fires when z_acc &gt; threshold_acc (after ~τ_acc of sustained error).</td>
+          <td class="units">Accumulator trigger threshold. charge_sac = relu(k_acc·(z_acc − threshold_acc)) → zero below threshold (no pre-trigger OPN leak), ramps to 1 within 2 ms above it.</td>
           <td class="anatomy-cell">SC buildup → OPN disinhibition threshold</td>
           <td></td>
         </tr>
@@ -783,16 +749,94 @@ tr.hidden { display: none; }
           <td class="param-name">k_acc</td>
           <td><span class="default">500.0</span></td>
           <td class="units">—</td>
-          <td class="desc-cell">Accumulator→OPN sigmoid steepness. Near-hard threshold: OPN only starts declining in the last ~0.2 ms before z_acc crosses threshold_acc, so x_copy barely grows during the OPN transition. Required for correct main sequence peak velocities.</td>
-          <td class="anatomy-cell"></td>
+          <td class="desc-cell">Accumulator→z_trig relu gain. Sets how sharply charge_sac ramps above threshold_acc. With k_acc=500 and z_acc 0.002 above threshold, charge_sac already reaches 1 — effectively a hard threshold at dt=1 ms resolution.</td>
+          <td class="anatomy-cell">SC buildup → trigger IBN projection</td>
           <td></td>
         </tr>
         <tr>
-          <td class="param-name">tau_reset_fast</td>
-          <td><span class="default">0.05</span></td>
+          <td class="param-name">acc_burst_floor</td>
+          <td><span class="default">−0.5</span></td>
+          <td class="units">—</td>
+          <td class="desc-cell">Accumulator target level during burst. IBN drains z_acc toward this floor (negative) while OPN is suppressed. Must re-climb the full distance (threshold_acc − acc_burst_floor = 1.5) to the next threshold crossing, setting the minimum ISI.</td>
+          <td class="anatomy-cell">IBN → SC buildup neuron inhibition</td>
+          <td><div class="pathologies">
+            <span class="tag tag-saccade">↑ toward 0 → shorter ISI → double-saccade risk in pursuit</span>
+          </div></td>
+        </tr>
+        <tr>
+          <td class="param-name">tau_burst_drain</td>
+          <td><span class="default">0.002</span></td>
           <td class="units">s</td>
-          <td class="desc-cell">Copy-integrator reset TC. Between saccades x_copy resets to 0; during burst with overshoot, x_copy springs toward e_held.</td>
-          <td class="anatomy-cell">PPRF local feedback reset; cerebellum vermal reset signal</td>
+          <td class="desc-cell">Accumulator drain TC during burst. Drives z_acc → acc_burst_floor with this TC while ibn_norm &gt; 0. Fast (2 ms) so that z_acc reaches the floor well before the burst ends for all amplitudes. Heun bound: g_acc_drain·dt/tau_burst_drain &lt; 2.</td>
+          <td class="anatomy-cell">IBN → SC buildup inhibitory synapse (fast)</td>
+          <td></td>
+        </tr>
+        <tr>
+          <td class="param-name">g_acc_drain</td>
+          <td><span class="default">3.0</span></td>
+          <td class="units">—</td>
+          <td class="desc-cell">IBN drain multiplier for z_acc. Boosts drain for small saccades (weak IBN, ibn_norm ≈ 0.024 for 1°) without breaking triggering for large saccades. Within Heun bound: g_acc_drain·dt/tau_burst_drain = 1.5 &lt; 2.</td>
+          <td class="anatomy-cell">IBN → SC buildup inhibitory gain</td>
+          <td></td>
+        </tr>
+        <tr>
+          <td class="param-name">tau_acc_leak</td>
+          <td><span class="default">5.0</span></td>
+          <td class="units">s</td>
+          <td class="desc-cell">Accumulator passive leak TC. Prevents subthreshold drift accumulation between saccades. Effect on ISI: ~5% at 5 s (negligible). Keep ≥ 5 s: faster values starve small saccades (0.5°, gate_err=0.5) during OPN suppression phase.</td>
+          <td class="anatomy-cell">SC buildup neuron passive membrane leak</td>
+          <td></td>
+        </tr>
+        <tr>
+          <td class="param-name">sigma_acc</td>
+          <td><span class="default">0.2</span></td>
+          <td class="units">1/√s</td>
+          <td class="desc-cell">Accumulator diffusion noise SD. Adds trial-to-trial RT variability (±15–25 ms SD at 0.2). Set to 0 for deterministic (noiseless) simulations.</td>
+          <td class="anatomy-cell">SC / FEF decision noise</td>
+          <td><div class="pathologies"><span class="tag tag-noise">RT variability</span></div></td>
+        </tr>
+        <tr class="sub-head"><td colspan="6">Trigger gates &amp; sample-and-hold</td></tr>
+        <tr>
+          <td class="param-name">threshold_sac</td>
+          <td><span class="default">0.5</span></td>
+          <td class="units">deg</td>
+          <td class="desc-cell">Retinal error trigger threshold. gate_err = σ(k_sac·(|e| − threshold_sac)) gates the accumulator. Below this, z_acc does not charge (no saccade initiated).</td>
+          <td class="anatomy-cell">Rostral SC fixation zone; basal ganglia gating (SNr → SC)</td>
+          <td><div class="pathologies">
+            <span class="tag tag-saccade">↑ → hypometric / absent small saccades</span>
+            <span class="tag tag-saccade">↓ → oscillations / SWJ</span>
+          </div></td>
+        </tr>
+        <tr>
+          <td class="param-name">threshold_sac_qp</td>
+          <td><span class="default">2.0</span></td>
+          <td class="units">deg</td>
+          <td class="desc-cell">Error threshold for quick-phase accumulation (target_visible ≈ 0). Higher value suppresses spurious centripetal resets during small-amplitude slow phases.</td>
+          <td class="anatomy-cell">Rostral SC; BG gate (SNr disinhibition); quick-phase trigger</td>
+          <td><div class="pathologies"><span class="tag tag-saccade">↓ → more frequent quick phases</span></div></td>
+        </tr>
+        <tr>
+          <td class="param-name">threshold_stop</td>
+          <td><span class="default">0.1</span></td>
+          <td class="units">deg</td>
+          <td class="desc-cell">Burst-stop threshold. Burst ends when |e_held − x_copy| &lt; threshold_stop (residual error gone).</td>
+          <td class="anatomy-cell">PPRF local feedback; cerebellar vermis (lobule VII) stop signal</td>
+          <td></td>
+        </tr>
+        <tr>
+          <td class="param-name">k_sac</td>
+          <td><span class="default">200.0</span></td>
+          <td class="units">1/deg</td>
+          <td class="desc-cell">Sigmoid steepness for gate_err (trigger) and burst-stop gates. Large value → effectively a step function.</td>
+          <td class="anatomy-cell">SC buildup / fixation neuron threshold sharpness</td>
+          <td></td>
+        </tr>
+        <tr>
+          <td class="param-name">tau_hold</td>
+          <td><span class="default">0.020</span></td>
+          <td class="units">s</td>
+          <td class="desc-cell">Sample-and-hold tracking TC. e_held tracks current target between saccades (normalized_opn = 1); tracking frozen during burst (normalized_opn → 0). 180 ms accumulation / 20 ms TC = 9 TCs → 99.99% capture before latch.</td>
+          <td class="anatomy-cell">SC fixation neurons → SG hold register</td>
           <td></td>
         </tr>
       </tbody>

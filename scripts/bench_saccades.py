@@ -416,15 +416,13 @@ SECTION = dict(
 def run(show=False):
     print('\n=== Saccades ===')
     figs = []
-    print('  1/5  main sequence …')
+    print('  1/4  main sequence …')
     figs.append(_main_sequence(show))
-    print('  2/5  oblique saccades …')
+    print('  2/4  oblique saccades …')
     figs.append(_oblique(show))
-    print('  3/5  double-step refractoriness …')
+    print('  3/4  double-step refractoriness …')
     figs.append(_refractoriness(show))
-    print('  4/5  signal cascade (noiseless) …')
-    figs.append(_cascade(show, noisy=False))
-    print('  5/5  signal cascade (noisy) …')
+    print('  4/4  signal cascade (noisy) …')
     figs.append(_cascade(show, noisy=True))
     return figs
 
