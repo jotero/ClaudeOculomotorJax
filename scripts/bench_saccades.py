@@ -347,9 +347,10 @@ def _cascade(show, noisy=False):
         ax_fmt(axes[2, ci])
         if ci == 0: axes[2, ci].legend(fontsize=7)
 
-        # Row 3: accumulator / latch + refractory (all 0–1 scale, same axis)
-        axes[3, ci].plot(t_np, sg['z_acc'], color='#e08214', lw=1.5, label='z_acc')
-        axes[3, ci].plot(t_np, sg['z_opn'] / 100, color='#1b7837', lw=1.5, label='OPN (norm)')
+        # Row 3: accumulator / trigger / latch + refractory (all 0–1 scale, same axis)
+        axes[3, ci].plot(t_np, sg['z_acc'],         color='#e08214', lw=1.5, label='z_acc')
+        axes[3, ci].plot(t_np, sg['z_trig'],         color='#c51b8a', lw=1.5, label='z_trig (trigger IBN)')
+        axes[3, ci].plot(t_np, sg['z_opn'] / 100,   color='#1b7837', lw=1.5, label='OPN (norm)')
         axes[3, ci].axhline(params.brain.threshold_acc, color='#e08214', lw=0.8, ls=':')
         axes[3, ci].set_ylim(-0.05, 1.15)
         if ci == 0: axes[3, ci].legend(fontsize=7)

@@ -170,17 +170,18 @@ def extract_sg(states, theta):
     e_held  = x_sg[:, 0:3]
     z_opn   = x_sg[:, 3]
     z_acc   = x_sg[:, 4]
-    x_ebn_R = x_sg[:, 5:8]
-    x_ebn_L = x_sg[:, 8:11]
-    x_ibn_R = x_sg[:, 11:14]
-    x_ibn_L = x_sg[:, 14:17]
+    z_trig  = x_sg[:, 5]
+    x_ebn_R = x_sg[:, 6:9]
+    x_ebn_L = x_sg[:, 9:12]
+    x_ibn_R = x_sg[:, 12:15]
+    x_ibn_L = x_sg[:, 15:18]
     e_pd   = x_vis @ np.array(C_pos).T   # (T, 3) cyclopean delayed position error
 
     u_burst = extract_burst(states, theta)
 
     return dict(
         e_held=e_held,
-        z_opn=z_opn,     z_acc=z_acc,
+        z_opn=z_opn,     z_acc=z_acc,   z_trig=z_trig,
         x_ebn_R=x_ebn_R, x_ebn_L=x_ebn_L,
         x_ibn_R=x_ibn_R, x_ibn_L=x_ibn_L,
         e_pd=e_pd,       u_burst=u_burst, x_ni=x_ni,

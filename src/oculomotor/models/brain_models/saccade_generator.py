@@ -13,18 +13,19 @@ latches the retinal error at trigger onset and is frozen during the burst.
 The Robinson residual (e_held − x_copy) drives the burst and decreases
 monotonically to zero at burst end, regardless of target velocity.
 
-State:  x_sg = [e_held(3) | z_opn(1) | z_acc(1) |
-                 x_ebn_R(3) | x_ebn_L(3) | x_ibn_R(3) | x_ibn_L(3)]  (17 states)
+State:  x_sg = [e_held(3) | z_opn(1) | z_acc(1) | z_trig(1) |
+                 x_ebn_R(3) | x_ebn_L(3) | x_ibn_R(3) | x_ibn_L(3)]  (18 states)
 
     e_held  — Robinson's resettable integrator: latches e_cur at trigger onset; integrates −u_burst during burst.
-               Sample-and-hold: de_held = charge_sac·(e_cur−e_held)/τ_latch − u_burst.
-               At trigger (charge_sac→1, τ_latch=3ms): e_held snaps to e_cur in ~3ms.
-               During burst (z_acc drains → charge_sac→0): tracking off → e_held decrements by −u_burst only.
-               Between saccades (charge_sac=0): frozen — stale visual delay cannot corrupt e_held.
+               Sample-and-hold: between saccades tracks e_cur via τ_hold; frozen when OPN paused.
                No overshoot: e_held monotonically decrements to 0, burst ends naturally.
     z_opn   — OPN membrane potential: 100=tonic (burst blocked), near-0 or negative=paused (burst active)
-    z_acc   — rise-to-bound accumulator: integrates gate_err; drains to floor during burst.
+    z_acc   — rise-to-bound accumulator: integrates gate_err; drains when OPN is suppressed.
                Natural refractory: (threshold_acc − acc_burst_floor) · τ_acc ≈ 270 ms.
+    z_trig  — intermediate trigger state: rises from charge_sac with TC τ_trig; drained by IBN.
+               Provides smooth onset for OPN suppression, decoupled from z_acc drain.
+               Sequence: z_acc > threshold → charge_sac → z_trig rises → OPN drops → IBN fires
+               → IBN latches OPN + drains z_trig; OPN suppression drains z_acc.
     x_ebn_R — right EBN membrane potentials (3,): driven by relu(+e_held) when act_opn<1; held negative by OPN
     x_ebn_L — left  EBN membrane potentials (3,): driven by relu(−e_held) when act_opn<1; held negative by OPN
     x_ibn_R — right IBN membrane potentials (3,): same drive as x_ebn_R; held negative by OPN
@@ -57,10 +58,12 @@ Burst output (no explicit gating — natural termination via BN state decay):
     u_burst = act_ebn_R − act_ebn_L
     act_ebn = burst_velocity(x_ebn, p)
 
-OPN inhibition (Schmitt trigger via IBN):
+OPN inhibition (z_trig + IBN Schmitt trigger):
     ibn_total = Σ(act_ibn_R + act_ibn_L)
-    dz_opn = (k_tonic·(100−z_opn) − (z_opn+g_opn_pause)·charge_sac − g_ibn_opn·ibn_total) / τ_sac
-    Accumulator is the sole initial trigger (charge_sac→1); IBN then latches OPN paused via g_ibn_opn.
+    dz_opn = (k_tonic·(100−z_opn) − (z_opn+g_opn_pause)·z_trig − g_ibn_opn·ibn_total) / τ_sac
+    z_trig provides smooth delayed onset (τ_trig); IBN latches OPN paused via g_ibn_opn.
+    Accumulator drain (dz_acc) uses ibn_norm — zero between saccades, active only when burst runs.
+    This prevents the sub-threshold equilibrium that sigmoid-tailed drain formulas create.
 
 ──────────────────────────────────────────────────────────────────────────────
 OPN latch (z_opn) — the key to the ballistic design
@@ -117,7 +120,7 @@ import jax
 
 from oculomotor.models.brain_models import listing
 
-N_STATES  = 17  # e_held(3) + z_opn(1) + z_acc(1) + x_ebn_R(3) + x_ebn_L(3) + x_ibn_R(3) + x_ibn_L(3)
+N_STATES  = 18  # e_held(3) + z_opn(1) + z_acc(1) + z_trig(1) + x_ebn_R(3) + x_ebn_L(3) + x_ibn_R(3) + x_ibn_L(3)
 N_INPUTS  = 9   # pos_delayed(3) + target_visible(1) + x_ni(3)
 N_OUTPUTS = 3   # u_burst (3,)
 
@@ -177,10 +180,11 @@ def step(x_sg, pos_delayed, target_visible, x_ni, ocr, w_est, p, noise_acc=0.0):
     e_held  = x_sg[0:3]    # (3,) error estimator = residual error (e_res = e_held)
     z_opn   = x_sg[3]      # scalar OPN: 100=tonic (blocked), ≈0 or negative=paused (active)
     z_acc   = x_sg[4]      # scalar rise-to-bound accumulator
-    x_ebn_R = x_sg[5:8]    # (3,) right EBN membrane potentials
-    x_ebn_L = x_sg[8:11]   # (3,) left  EBN membrane potentials
-    x_ibn_R = x_sg[11:14]  # (3,) right IBN membrane potentials
-    x_ibn_L = x_sg[14:17]  # (3,) left  IBN membrane potentials
+    z_trig  = x_sg[5]      # scalar intermediate trigger: charges from acc, drained by IBN
+    x_ebn_R = x_sg[6:9]    # (3,) right EBN membrane potentials
+    x_ebn_L = x_sg[9:12]   # (3,) left  EBN membrane potentials
+    x_ibn_R = x_sg[12:15]  # (3,) right IBN membrane potentials
+    x_ibn_L = x_sg[15:18]  # (3,) left  IBN membrane potentials
 
     # ── Target selection ──────────────────────────────────────────────────────
     # In-field: clip to oculomotor range; Quick-phase: predictive centripetal reset.
@@ -210,10 +214,9 @@ def step(x_sg, pos_delayed, target_visible, x_ni, ocr, w_est, p, noise_acc=0.0):
     u_burst = act_ebn_R - act_ebn_L
 
     # ── Burst neuron dynamics ─────────────────────────────────────────────────
-
     # Three-gain inhibitory network (all within tau_bn):
     #   g_opn_bn:      OPN→BN multiplicative — clamping TC=tau_bn/(1+g_opn_bn·act_opn). Must satisfy Heun stability:
-    #                  (1+g_opn_bn·100)·dt/tau_bn < 2 → g_opn_bn < 0.09 with dt=1ms, tau_bn=5ms.
+    #                  (1+g_opn_bn·100)·dt/tau_bn < 2 → g_opn_bn < 0.09 with dt=1ms, tau_bn=3ms.
     #   g_opn_bn_hold: OPN→BN additive offset — keeps BN at (e_held−g_opn_bn_hold·100)/(1+g_opn_bn·100) < 0 between saccades.
     #   Combined equilibrium: x_eq = (e_held − 40)/(1+4) = −8 at fixation → IBN firmly off.
     #   g_ibn_bn:      IBN→BN contralateral, element-wise (axis-matched); g_ci/g_burst absorbed.
@@ -229,36 +232,43 @@ def step(x_sg, pos_delayed, target_visible, x_ni, ocr, w_est, p, noise_acc=0.0):
     dx_ibn_L = (jax.nn.relu(-e_held) - inh_from_R - opn_inh - x_ibn_L * opn_gain) / p.tau_bn
 
     # ── Resettable integrator (Robinson 1975) ────────────────────────────────
-    # Sample-and-hold: charge_sac gates the latch; frozen between saccades.
-    # At trigger (charge_sac→1, tau_latch=3ms): e_held snaps to e_cur.
-    # During burst (z_acc drains → charge_sac→0): tracking off; u_burst decrements e_held.
-    # Between saccades: charge_sac=0 → frozen; stale pos_delayed cannot corrupt e_held.
-    charge_sac = jax.nn.sigmoid(p.k_acc * (z_acc - p.threshold_acc))
-    de_held = -u_burst + charge_sac * (e_cur - e_held) / p.tau_latch
+    # Continuous pre-loading: e_held tracks pos_delayed (=e_cur) between saccades.
+    # By the time z_acc reaches threshold (~270 ms accumulation), e_held ≈ e_cur.
+    # OPN pause (normalized_opn→0) freezes tracking during burst; u_burst decrements e_held.
+    normalized_opn = act_opn / 100.0   # 0 = paused, 1 = tonic
+    de_held = -u_burst + normalized_opn**2 * (e_cur - e_held) / p.tau_hold
 
-    # ── Rise-to-bound accumulator (z_acc) ────────────────────────────────────
-    # IBN provides amplitude-proportional drain during burst. With g_opn_bn_hold≥orbital_limit,
-    # IBN is zero between saccades (x_bn<0 → relu→0) so accumulator rises freely.
-    # During burst (OPN paused): BNs drive up → IBN fires → drain >> gate_err → floor reached.
-    # Drain ratio: ibn_drain ≥ 0.13 for 1° saccade → drain 39/s >> gate_err 5.6/s ✓
-    # ISI ≈ (threshold − floor)·tau_acc once floor is reached.
-    ibn_drain = jnp.sum(act_ibn_R + act_ibn_L) / p.g_burst
-    dz_acc = (gate_err / p.tau_acc
-              - ibn_drain * (z_acc - p.acc_burst_floor) / p.tau_burst_drain
+    # ── Trigger state + accumulator ───────────────────────────────────────────
+    # charge_sac: relu (not sigmoid) → exactly 0 below threshold, no pre-threshold tail.
+    #   This is essential: any pre-threshold z_trig suppresses OPN → opn_paused > 0 → drain
+    #   with tau_burst_drain=2ms creates 500x amplified drain that always overwhelms charging.
+    # z_trig: smooth delayed OPN suppression signal (trigger IBN population).
+    #   Charges from charge_sac (only when z_acc > threshold_acc, no sigmoid bleed).
+    #   Drained by IBN: burst suppresses trigger → OPN recovers when burst ends.
+    #   Heun stability: (1+g_ibn_trig)·dt/tau_trig < 2 → tau_trig > 1.5ms. Current 2ms ✓.
+    charge_sac   = jnp.clip(p.k_acc * (z_acc - p.threshold_acc), 0.0, 1.0)
+    ibn_total    = jnp.sum(act_ibn_R) + jnp.sum(act_ibn_L)
+    ibn_norm     = jnp.clip(ibn_total / (2.0 * p.g_burst), 0.0, 1.0)
+    dz_trig = (charge_sac - z_trig * (1.0 + p.g_ibn_trig * ibn_norm)) / p.tau_trig
+
+    # z_acc: charging GATED by normalized_opn (1=tonic, 0=paused during burst).
+    #   Before threshold: z_trig=0 → OPN=100 → normalized_opn=1 → gate open → charges freely.
+    #   After threshold: z_trig rises → OPN drops → normalized_opn→0 → gate closes → no charging.
+    #   Drain by IBN only: exactly 0 between saccades (no equilibrium), proportional during burst.
+    #   Refractory: z_acc doesn't recharge until OPN recovers (z_trig decays via IBN drain).
+    dz_acc = (gate_err * normalized_opn / p.tau_acc
+              - ibn_norm * (z_acc - p.acc_burst_floor) / p.tau_burst_drain
               + noise_acc)
 
     # ── OPN latch dynamics ────────────────────────────────────────────────────
-    # IBN→OPN naturally zero between saccades: with g_opn_bn_hold·100 > ~orbital_limit, BN equilibrium
-    # is negative (x_bn<0) → relu→0 → ibn_total=0 → no direct OPN suppression.
-    # During burst: act_opn drops → opn_inh drops → x_bn rises → IBN fires → latches OPN.
-    # At burst end: e_held→0 → src→0 → x_bn driven negative by recovering OPN → IBN decays.
-    # charge_sac already computed above (shared with de_held latch).
-    ibn_total = jnp.sum(act_ibn_R) + jnp.sum(act_ibn_L)
+    # z_trig suppresses OPN initially (smooth onset via tau_trig, replaces raw charge_sac).
+    # IBN latches OPN suppressed throughout burst (Schmitt trigger).
+    # At burst end: e_held→0 → IBN→0 → z_trig drained by IBN → both release OPN.
     dz_opn = (p.k_tonic_opn * (100.0 - z_opn)
-              - (z_opn + p.g_opn_pause) * charge_sac
+              - (z_opn + p.g_opn_pause) * z_trig
               - p.g_ibn_opn * ibn_total) / p.tau_sac
 
     dx_sg = jnp.concatenate([de_held,
-                              jnp.array([dz_opn, dz_acc]),
+                              jnp.array([dz_opn, dz_acc, dz_trig]),
                               dx_ebn_R, dx_ebn_L, dx_ibn_R, dx_ibn_L])
     return dx_sg, u_burst

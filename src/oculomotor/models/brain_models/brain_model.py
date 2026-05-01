@@ -201,20 +201,19 @@ class BrainParams(NamedTuple):
     k_sac:                 float = 200.0  # trigger sigmoid steepness (1/deg)
     threshold_sac:         float = 0.5    # retinal error trigger threshold (deg)
     threshold_stop:        float = 0.1    # burst-stop threshold (deg)
-    tau_latch:             float = 0.003  # sample-and-hold TC (s); e_held snaps to e_cur in ~3ms when
-                                           # charge_sac≈1 (accumulator at threshold); frozen between saccades.
-                                           # Must be << refractory period (~270ms); charge_sac drops as z_acc
-                                           # drains so the latch naturally opens only at trigger onset.
-    tau_hold:              float = 0.005  # sample-and-hold tracking TC (s)
+    tau_latch:             float = 0.003  # unused; kept for backward compat
+    tau_hold:              float = 0.020  # e_held tracking TC (s) between saccades.
+                                           # 180ms accumulation / 20ms TC = 9 TCs → 99.99% capture.
+                                           # Burst (normalized_opn=0) freezes tracking during saccade.
     tau_sac:               float = 0.001  # saccade latch TC (s)
     k_tonic_opn:           float = 0.5    # OPN tonic recovery gain; recovery TC = tau_sac/k_tonic = 2 ms
                                            # always active: keeps z_opn at 100 unless IBN overcomes it.
                                            # Suppression condition: g_ibn_opn > k_tonic*100 (200>50).
-    tau_bn:                float = 0.005  # EBN/IBN state TC (s); BN states track error drive with ~5 ms lag.
-                                           # Shared across EBN and IBN populations (identical dynamics, different outputs).
+    tau_bn:                float = 0.003  # EBN/IBN state TC (s); BN states track error drive with lag.
+                                           # Heun stability limit: (1+g_opn_bn·100)·dt/tau_bn < 2
+                                           #   → tau_bn > (1+4)*0.001/2 = 0.0025 s. Current 3 ms is safely above.
     g_opn_bn:              float = 0.04   # OPN→BN multiplicative suppression (per unit, act_opn∈[0,100]).
                                            # Heun stability: (1+g_opn_bn·100)·dt/tau_bn < 2 → g_opn_bn < 0.09.
-                                           # Effective TC = tau_bn/(1+g_opn_bn·100) = 1ms → BN clamped in ~5ms.
     g_opn_bn_hold:         float = 0.4    # OPN→BN additive offset (per unit, act_opn∈[0,100]).
                                            # At tonic (act_opn=100): opn_inh=40°. Tonic BN_eq = (e_held−40)/5 ≈ −8°.
                                            # Keeps BNs negative for fixation errors up to ~40° → IBN=0 between saccades.
@@ -224,7 +223,7 @@ class BrainParams(NamedTuple):
                                            # membrane potential to −g_opn_pause (below spike threshold).
                                            # Firing rate clips at 0; large value → OPN pauses in ~2 ms.
     tau_acc:               float = 0.180  # accumulator rise TC (s); ~120 ms to threshold → cascade fully settled before e_held freezes
-    tau_burst_drain:       float = 0.005  # accumulator burst drain TC (s); drives z_acc → acc_burst_floor while OPN paused
+    tau_burst_drain:       float = 0.002  # accumulator burst drain TC (s); drives z_acc → acc_burst_floor while OPN paused
     acc_burst_floor:       float = -0.5   # accumulator target level during burst; negative = must re-climb after saccade
                                            # ISI ≈ (threshold_acc − acc_burst_floor) * tau_acc = 1.5 * 0.18 = 270 ms
                                            # No idle drain needed — every saccade resets the accumulator
@@ -239,6 +238,10 @@ class BrainParams(NamedTuple):
     g_ibn_opn:             float = 200.0  # IBN→OPN inhibition gain (OPN units/s / tau_sac).
                                            # IBN total = |act_ibn_R| + |act_ibn_L| (scalar, deg/s units).
                                            # Schmitt trigger: burst→IBN keeps OPN suppressed; burst ends→IBN→0→OPN recovers.
+    tau_trig:              float = 0.002  # z_trig rise TC (s); smooth onset for OPN suppression.
+                                           # Heun stability: (1+g_ibn_trig)·dt/tau_trig < 2 → tau_trig > 1.5ms. Current 2ms ✓.
+    g_ibn_trig:            float = 2.0    # IBN→z_trig drain gain (dimensionless, ibn_norm∈[0,1]).
+                                           # z_trig TC during burst: tau_trig/(1+g_ibn_trig) ≈ 0.7ms → fast drain by IBN.
 
     # Saccade target selection — handled inside the saccade generator
     orbital_limit:         float = 50.0   # oculomotor range half-width (deg); clip e_cmd to ±limit

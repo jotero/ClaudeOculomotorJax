@@ -45,7 +45,8 @@
       "PowerShell($f = \"C:\\\\Users\\\\jom\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\d--OneDrive-UC-Berkeley-OMlab---JOM-Code-ClaudeOculomotorJax\\\\0295bc5f-d6ba-42a2-a9f5-0c82cfe14298\\\\tasks\\\\blw25w85j.output\"; \\(Get-Item $f\\).Length; Get-Content $f)",
       "PowerShell(\\(Get-Item \"d:\\\\OneDrive\\\\UC Berkeley\\\\OMlab - JOM\\\\Code\\\\ClaudeOculomotorJax\\\\docs\\\\benchmarks\\\\index.html\"\\).LastWriteTime)",
       "Read(//d/OneDrive/UC Berkeley/OMlab - JOM/Code/ClaudeOculomotorJax/docs/benchmarks/figures/**)",
-      "PowerShell(& \"d:\\\\OneDrive\\\\UC Berkeley\\\\OMlab - JOM\\\\Code\\\\ClaudeOculomotorJax\\\\.venv\\\\Scripts\\\\python.exe\" -X utf8 \"d:\\\\OneDrive\\\\UC Berkeley\\\\OMlab - JOM\\\\Code\\\\ClaudeOculomotorJax\\\\scripts\\\\bench_saccades.py\" 2>&1)"
+      "PowerShell(& \"d:\\\\OneDrive\\\\UC Berkeley\\\\OMlab - JOM\\\\Code\\\\ClaudeOculomotorJax\\\\.venv\\\\Scripts\\\\python.exe\" -X utf8 \"d:\\\\OneDrive\\\\UC Berkeley\\\\OMlab - JOM\\\\Code\\\\ClaudeOculomotorJax\\\\scripts\\\\bench_saccades.py\" 2>&1)",
+      "PowerShell(& \"d:\\\\OneDrive\\\\UC Berkeley\\\\OMlab - JOM\\\\Code\\\\ClaudeOculomotorJax\\\\.venv\\\\Scripts\\\\python.exe\" -X utf8 scripts/bench_saccades.py 2>&1)"
     ],
     "additionalDirectories": [
       "d:\\OneDrive\\UC Berkeley\\OMlab - JOM\\Code\\ClaudeOculomotorJax\\outputs"
