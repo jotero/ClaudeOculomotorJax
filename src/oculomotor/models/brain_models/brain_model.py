@@ -201,7 +201,10 @@ class BrainParams(NamedTuple):
     k_sac:                 float = 200.0  # trigger sigmoid steepness (1/deg)
     threshold_sac:         float = 0.5    # retinal error trigger threshold (deg)
     threshold_stop:        float = 0.1    # burst-stop threshold (deg)
-    tau_reset_fast:        float = 0.005  # inter-saccade e_held tracking TC (s); e_held tracks e_cur in ~25ms
+    tau_latch:             float = 0.003  # sample-and-hold TC (s); e_held snaps to e_cur in ~3ms when
+                                           # charge_sac≈1 (accumulator at threshold); frozen between saccades.
+                                           # Must be << refractory period (~270ms); charge_sac drops as z_acc
+                                           # drains so the latch naturally opens only at trigger onset.
     tau_hold:              float = 0.005  # sample-and-hold tracking TC (s)
     tau_sac:               float = 0.001  # saccade latch TC (s)
     k_tonic_opn:           float = 0.5    # OPN tonic recovery gain; recovery TC = tau_sac/k_tonic = 2 ms
@@ -209,13 +212,14 @@ class BrainParams(NamedTuple):
                                            # Suppression condition: g_ibn_opn > k_tonic*100 (200>50).
     tau_bn:                float = 0.005  # EBN/IBN state TC (s); BN states track error drive with ~5 ms lag.
                                            # Shared across EBN and IBN populations (identical dynamics, different outputs).
-    g_opn_bn:              float = 4.0    # OPN→BN multiplicative suppression (dim'less).
-                                           # Heun stability: (1+g_opn_bn)*dt/tau_bn < 2 → g_opn_bn < 9 with dt=1ms, tau_bn=5ms.
-                                           # Effective TC = tau_bn/(1+g_opn_bn) = 1ms → BN clamped to tonic eq in ~5ms.
-    g_opn_bn_hold:         float = 2.0    # OPN→BN additive offset (deg equivalent); keeps BN slightly negative.
-                                           # Tonic BN_eq = −g_opn_bn_hold/(1+g_opn_bn) = −0.4. Fires in 0.4ms at trigger.
-    g_ci:                  float = 100.0  # contralateral IBN inhibition gain (dim'less).
-                                           # Element-wise: L yaw IBN → R yaw BN, etc. Normalised by g_burst.
+    g_opn_bn:              float = 0.04   # OPN→BN multiplicative suppression (per unit, act_opn∈[0,100]).
+                                           # Heun stability: (1+g_opn_bn·100)·dt/tau_bn < 2 → g_opn_bn < 0.09.
+                                           # Effective TC = tau_bn/(1+g_opn_bn·100) = 1ms → BN clamped in ~5ms.
+    g_opn_bn_hold:         float = 0.4    # OPN→BN additive offset (per unit, act_opn∈[0,100]).
+                                           # At tonic (act_opn=100): opn_inh=40°. Tonic BN_eq = (e_held−40)/5 ≈ −8°.
+                                           # Keeps BNs negative for fixation errors up to ~40° → IBN=0 between saccades.
+    g_ibn_bn:              float = 0.143  # IBN→BN contralateral inhibition gain (= g_ci/g_burst = 100/700).
+                                           # Element-wise: L yaw IBN → R yaw BN, etc. Absorbs g_burst normalisation.
     g_opn_pause:           float = 500.0  # OPN inhibitory overshoot (fr units); IBN inhibition drives OPN
                                            # membrane potential to −g_opn_pause (below spike threshold).
                                            # Firing rate clips at 0; large value → OPN pauses in ~2 ms.
