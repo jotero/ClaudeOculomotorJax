@@ -38,7 +38,7 @@ t = np.arange(0.0, 8.0, 0.001)
 T = len(t)
 pt = np.tile([0.0, 0.0, DEMAND_M], (T, 1))
 
-p = with_brain(PARAMS_DEFAULT, CA_C=0.0, AC_A=0.0)
+p = with_brain(PARAMS_DEFAULT, CA_C=0.0, AC_A=0.0, g_burst_verg=0.0)
 
 cfg = SimConfig(warmup_s=3.0)
 

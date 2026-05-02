@@ -1099,51 +1099,60 @@ tr.hidden { display: none; }
             <span class="tag tag-vergence">CN4 palsy: cyclovergence</span>
           </div></td>
         </tr>
-        <tr class="sub-head"><td colspan="6">Drive gains, damping &amp; tonic baseline</td></tr>
+        <tr class="sub-head"><td colspan="6">Schor (1986) dual integrator + Robinson direct phasic path</td></tr>
         <tr>
-          <td class="param-name">K_verg</td>
+          <td class="param-name">K_phasic_verg</td>
           <td><span class="default">4.0</span></td>
           <td class="units">1/s</td>
-          <td class="desc-cell">Fusional vergence integration gain (within Panum's area). High gain for fine disparity correction.
-            <div class="ref">Rashbass &amp; Westheimer (1961) J Physiol 159:361</div></td>
-          <td class="anatomy-cell">Midbrain near response; supraoculomotor area (SOA); SC</td>
+          <td class="desc-cell">Direct phasic gain (no state). Provides plant-canceling pulse for fast onset (~150–200 ms response).
+            <div class="ref">Rashbass &amp; Westheimer (1961) J Physiol 159:339</div></td>
+          <td class="anatomy-cell">FEF; MT/MST binocular disparity pathway → midbrain near response</td>
+          <td></td>
+        </tr>
+        <tr>
+          <td class="param-name">K_verg_fast</td>
+          <td><span class="default">1.6</span></td>
+          <td class="units">1/s</td>
+          <td class="desc-cell">Fast integrator gain. Static gain G_fast = K_verg_fast · τ_verg_fast = 8 (matches Read &amp; Schor 2022 fast loop).
+            <div class="ref">Schor (1979) Vis Res 19:1359; Hung &amp; Semmlow (1980) IEEE TBME 27:722</div></td>
+          <td class="anatomy-cell">Midbrain near response; supraoculomotor area (SOA)</td>
           <td><div class="pathologies">
             <span class="tag tag-vergence">Convergence insufficiency: ↓</span>
           </div></td>
         </tr>
         <tr>
-          <td class="param-name">K_verg_prox</td>
-          <td><span class="default">3.0</span></td>
-          <td class="units">1/s</td>
-          <td class="desc-cell">Proximal vergence integration gain (full range, beyond Panum's area). Lower gain for coarse range control.</td>
-          <td class="anatomy-cell">SOA; proximal vergence centers (midbrain)</td>
-          <td></td>
-        </tr>
-        <tr>
-          <td class="param-name">K_phasic_verg</td>
-          <td><span class="default">1.0</span></td>
-          <td class="units">—</td>
-          <td class="desc-cell">Phasic feedthrough (applied only to fusional signal). Fast vergence onset on disparity step.</td>
-          <td class="anatomy-cell">FEF; MT/MST binocular disparity pathway</td>
-          <td></td>
-        </tr>
-        <tr>
-          <td class="param-name">tau_verg</td>
-          <td><span class="default">6.0</span></td>
+          <td class="param-name">tau_verg_fast</td>
+          <td><span class="default">5.0</span></td>
           <td class="units">s</td>
-          <td class="desc-cell">Vergence leak TC. Leaks toward tonic_verg. ~5–7 s (Semmlow 1986).</td>
+          <td class="desc-cell">Fast integrator TC. Sub-second to ~5 s tracking (Schor / Hung &amp; Semmlow).</td>
+          <td class="anatomy-cell">SOA; midbrain near response neurons</td>
+          <td></td>
+        </tr>
+        <tr>
+          <td class="param-name">K_verg_slow</td>
+          <td><span class="default">0.1</span></td>
+          <td class="units">1/s</td>
+          <td class="desc-cell">Slow tonic-adapter gain. Static gain G_slow = K_verg_slow · τ_verg_slow = 6.</td>
+          <td class="anatomy-cell">NPH vergence neurons; cerebellar vermis</td>
+          <td></td>
+        </tr>
+        <tr>
+          <td class="param-name">tau_verg_slow</td>
+          <td><span class="default">60.0</span></td>
+          <td class="units">s</td>
+          <td class="desc-cell">Slow tonic adapter TC. Minutes-scale dark-vergence drift.
+            <div class="ref">Schor (1979); Schor (1992) J Opt Soc Am</div></td>
           <td class="anatomy-cell">NPH; cerebellar vermis vergence integrator</td>
           <td><div class="pathologies">
             <span class="tag tag-vergence">Exophoria at distance: phoria drift</span>
           </div></td>
         </tr>
         <tr>
-          <td class="param-name">D_verg</td>
-          <td><span class="default">1.0</span></td>
-          <td class="units">—</td>
-          <td class="desc-cell">Velocity damping coefficient (dimensionless). dx_verg is divided by (1+D). D=0 → underdamped (oscillations); D=1 → near-critical (ξ≈0.9); D=2 → overdamped (slow).
-            <div class="ref">Schor (1979): vergence has significant viscous damping to prevent overshoot</div></td>
-          <td class="anatomy-cell">Cerebellar vermis; SOA inhibitory interneurons</td>
+          <td class="param-name">tau_vp</td>
+          <td><span class="default">0.15</span></td>
+          <td class="units">s</td>
+          <td class="desc-cell">Vergence plant TC for direct-path scaling (= τ_p of extraocular muscles).</td>
+          <td class="anatomy-cell">Extraocular muscle dynamics</td>
           <td></td>
         </tr>
         <tr>
@@ -1158,16 +1167,49 @@ tr.hidden { display: none; }
             <span class="tag tag-vergence">Esophoria at near: ↓ tonic_verg</span>
           </div></td>
         </tr>
+        <tr class="sub-head"><td colspan="6">Zee (1992) saccadic vergence burst (SVBN) — asymmetric saturating gain</td></tr>
         <tr>
-          <td class="param-name">g_burst_verg</td>
-          <td><span class="default">1.6</span></td>
-          <td class="units">deg/s·deg⁻¹</td>
-          <td class="desc-cell">Vergence saccade pulse gain (Zee mechanism). During conjugate saccades, a fast pulse is added proportional to residual vergence demand. τ_burst = 1/g ≈ 625 ms → covers ~11% of demand during a 70 ms saccade. 0 = Zee mechanism disabled.
-            <div class="ref">Zee et al. (1992) J Neurophysiol: peak vergence 2–3× faster during saccades</div></td>
-          <td class="anatomy-cell">SC → vergence burst pathway; midbrain near response (during saccades)</td>
+          <td class="param-name">g_svbn_conv</td>
+          <td><span class="default">60.0</span></td>
+          <td class="units">deg/s</td>
+          <td class="desc-cell">SVBN convergence asymptotic burst velocity. Saturating gain y = g·(1−exp(−|disp|/X)). For 10° disp: 60·(1−e<sup>−10/3</sup>) ≈ 58 deg/s, matching Zee 1992 Table 1 (41–58 deg/s for 10°).
+            <div class="ref">Zee et al. (1992) J Neurophysiol 68:1624–1641</div></td>
+          <td class="anatomy-cell">Saccade-related vergence burst neurons (SVBN), midbrain near response; SC during saccades</td>
           <td><div class="pathologies">
             <span class="tag tag-vergence">Convergence palsy: ↓</span>
           </div></td>
+        </tr>
+        <tr>
+          <td class="param-name">X_svbn_conv</td>
+          <td><span class="default">3.0</span></td>
+          <td class="units">deg</td>
+          <td class="desc-cell">Convergence saturating scale (in saturating exponential).</td>
+          <td class="anatomy-cell">SVBN nonlinearity</td>
+          <td></td>
+        </tr>
+        <tr>
+          <td class="param-name">g_svbn_div</td>
+          <td><span class="default">14.0</span></td>
+          <td class="units">deg/s</td>
+          <td class="desc-cell">SVBN divergence asymptotic burst velocity. Much weaker than convergence (Zee 1992: 9.5–13 deg/s for 2.5°). Asymmetry reflects the asymmetric anatomy of conv vs div burst neurons.</td>
+          <td class="anatomy-cell">SVBN divergence subgroup</td>
+          <td></td>
+        </tr>
+        <tr>
+          <td class="param-name">X_svbn_div</td>
+          <td><span class="default">1.0</span></td>
+          <td class="units">deg</td>
+          <td class="desc-cell">Divergence saturating scale.</td>
+          <td class="anatomy-cell">SVBN nonlinearity</td>
+          <td></td>
+        </tr>
+        <tr>
+          <td class="param-name">g_burst_verg</td>
+          <td><span class="default">0.0</span></td>
+          <td class="units">—</td>
+          <td class="desc-cell">Legacy burst gain — kept for backwards-compatibility with old benches; SVBN params replace this. Default 0 means inactive.</td>
+          <td class="anatomy-cell">—</td>
+          <td></td>
         </tr>
         <tr>
           <td class="param-name">eye_dominant</td>
@@ -1195,12 +1237,31 @@ tr.hidden { display: none; }
       </tr></thead>
       <tbody>
         <tr>
-          <td class="param-name">tau_acc_fast</td>
-          <td><span class="default">0.3</span></td>
+          <td class="param-name">tonic_acc</td>
+          <td><span class="default">1.0</span></td>
+          <td class="units">D</td>
+          <td class="desc-cell">Dark-focus resting level. Plant settles here when defocus = 0 and A_cac = 0. ~1 D ≈ 1 m for young adults.</td>
+          <td class="anatomy-cell">Tonic accommodation baseline (EW)</td>
+          <td></td>
+        </tr>
+        <tr>
+          <td class="param-name">tau_acc_plant</td>
+          <td><span class="default">0.156</span></td>
           <td class="units">s</td>
-          <td class="desc-cell">Fast (phasic) lens TC. ~300 ms step response.
-            <div class="ref">Hung &amp; Semmlow (1980)</div></td>
-          <td class="anatomy-cell">Ciliary muscle; CN3 accommodation subnucleus (EW)</td>
+          <td class="desc-cell">Lens / ciliary muscle TC.
+            <div class="ref">Schor &amp; Bharadwaj (2006) J Neurophysiol</div></td>
+          <td class="anatomy-cell">Ciliary muscle, lens, suspensory zonules</td>
+          <td><div class="pathologies">
+            <span class="tag tag-vergence">Presbyopia: ↑ (lens stiffens)</span>
+          </div></td>
+        </tr>
+        <tr>
+          <td class="param-name">tau_acc_fast</td>
+          <td><span class="default">2.5</span></td>
+          <td class="units">s</td>
+          <td class="desc-cell">Fast neural integrator TC. Stability: τ_fast ≥ 2·G_fast·τ_plant ≈ 2.5 s.
+            <div class="ref">Read &amp; Schor (2022) J Vision 22(9):4</div></td>
+          <td class="anatomy-cell">CN3 accommodation subnucleus (EW); pretectal area</td>
           <td></td>
         </tr>
         <tr>
@@ -1209,22 +1270,24 @@ tr.hidden { display: none; }
           <td class="units">s</td>
           <td class="desc-cell">Slow tonic accommodation adaptation TC.
             <div class="ref">Schor (1979)</div></td>
-          <td class="anatomy-cell">Edinger-Westphal (EW) nucleus; pretectal accommodation area</td>
+          <td class="anatomy-cell">Edinger-Westphal nucleus; pretectal accommodation area</td>
           <td></td>
         </tr>
         <tr>
           <td class="param-name">K_acc_fast</td>
-          <td><span class="default">1.5</span></td>
+          <td><span class="default">3.2</span></td>
           <td class="units">1/s</td>
-          <td class="desc-cell">Fast blur-to-accommodation gain.</td>
+          <td class="desc-cell">Fast blur gain. Closed-loop G_fast = K_acc_fast · τ_acc_fast = 8 (Read &amp; Schor 2022).</td>
           <td class="anatomy-cell">EW nucleus; pretectal area → ciliary ganglion</td>
-          <td></td>
+          <td><div class="pathologies">
+            <span class="tag tag-vergence">Accommodative insufficiency: ↓</span>
+          </div></td>
         </tr>
         <tr>
           <td class="param-name">K_acc_slow</td>
-          <td><span class="default">0.3</span></td>
+          <td><span class="default">0.17</span></td>
           <td class="units">1/s</td>
-          <td class="desc-cell">Slow integration gain.</td>
+          <td class="desc-cell">Slow integration gain. G_slow = K_acc_slow · τ_acc_slow = 5.</td>
           <td class="anatomy-cell">Tonic accommodation integrator (pontine/pretectal)</td>
           <td></td>
         </tr>
@@ -1232,19 +1295,96 @@ tr.hidden { display: none; }
           <td class="param-name">AC_A</td>
           <td><span class="default">5.0</span></td>
           <td class="units">pd/D</td>
-          <td class="desc-cell">Accommodative convergence / accommodation ratio. At 40 cm (2.5 D): AC/A drives ~7.2° convergence. Explains why IXT decompensates preferentially at distance (low accommodation demand).</td>
+          <td class="desc-cell">Accommodative convergence / accommodation ratio. At 40 cm (2.5 D, with tonic_acc=1 D): AC/A drives ~4.3° vergence above tonic. Drive bypasses vergence integrators (added directly to u_verg) to avoid open-loop runaway in cover test.</td>
           <td class="anatomy-cell">EW–vergence cross-link; cerebellum AC/A calibration</td>
           <td><div class="pathologies">
-            <span class="tag tag-vergence">High AC/A: esotropia at near</span>
+            <span class="tag tag-vergence">High AC/A: esotropia at near (accomm. ET)</span>
             <span class="tag tag-vergence">Low AC/A: exotropia</span>
           </div></td>
         </tr>
         <tr>
           <td class="param-name">CA_C</td>
-          <td><span class="default">0.4</span></td>
+          <td><span class="default">0.08</span></td>
           <td class="units">D/pd</td>
-          <td class="desc-cell">Convergence accommodation / convergence ratio. Drives accommodation when vergence is disparity-driven; reduces defocus during vergence eye movements.</td>
+          <td class="desc-cell">Convergence accommodation / convergence ratio. Schor &amp; Kotulak (1986) report 0.5 D/MA; with 1 MA ≈ 6.4 pd at IPD 64 mm, this converts to ≈ 0.08 D/pd. Loop product AC_A·CA_C ≈ 0.4 D/D < 1 keeps the cross-loop stable.
+            <div class="ref">Schor &amp; Kotulak (1986); Schor (1992) J Opt Soc Am</div></td>
           <td class="anatomy-cell">Vergence–accommodation cross-link (pontine/pretectal)</td>
+          <td></td>
+        </tr>
+        <tr>
+          <td class="param-name">refractive_error</td>
+          <td><span class="default">0.0</span></td>
+          <td class="units">D</td>
+          <td class="desc-cell">Patient refractive error. >0 hyperopia (needs more accomm at every distance); <0 myopia (natural far point at 1/|RE| m).</td>
+          <td class="anatomy-cell">Optical anatomy (axial length / corneal curvature)</td>
+          <td><div class="pathologies">
+            <span class="tag tag-vergence">Hyperopia → accommodative ET (high effort)</span>
+            <span class="tag tag-vergence">Myopia → reduced accomm demand</span>
+          </div></td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- ─── BRAIN — TRANSLATIONAL VOR ────────────────────────────────────── -->
+
+  <section class="section" id="tvor">
+    <h2>Translational VOR (T-VOR) &nbsp;<small style="font-size:12px;font-weight:400;color:#888">BrainParams</small></h2>
+    <p class="desc">Vest+visual fusion of head linear velocity, scaled by vergence-derived 1/distance. Output added to NI input alongside canal-VOR. Paige &amp; Tomko (1991), Angelaki et al., Laurens &amp; Angelaki (2017).</p>
+    <table>
+      <thead><tr>
+        <th style="width:160px">Parameter</th><th style="width:90px">Default</th><th style="width:60px">Units</th>
+        <th>Description</th><th style="width:170px">Anatomical locus</th><th style="width:210px">Note</th>
+      </tr></thead>
+      <tbody>
+        <tr>
+          <td class="param-name">tau_tvor_vel</td>
+          <td><span class="default">3.0</span></td>
+          <td class="units">s</td>
+          <td class="desc-cell">Leaky linear-velocity TC. Otolith specific force (gravity-removed) is integrated with this leak to estimate head linear velocity. Leak prevents drift from otolith bias / gravity-estimate error.</td>
+          <td class="anatomy-cell">Vestibular nuclei (translational); cerebellar nodulus/uvula</td>
+          <td></td>
+        </tr>
+        <tr>
+          <td class="param-name">w_tvor_vest</td>
+          <td><span class="default">0.7</span></td>
+          <td class="units">—</td>
+          <td class="desc-cell">Weight on vestibular velocity estimate in Kalman-like fusion. w_vest + w_vis ≈ 1 for unbiased estimate. Vestibular tends to dominate at higher frequencies.</td>
+          <td class="anatomy-cell">Vestibular nuclei convergence with MST translational flow</td>
+          <td></td>
+        </tr>
+        <tr>
+          <td class="param-name">w_tvor_vis</td>
+          <td><span class="default">0.3</span></td>
+          <td class="units">—</td>
+          <td class="desc-cell">Weight on visual translational flow. Lower than vestibular at typical movement frequencies; could be raised for low-frequency fixation tasks.</td>
+          <td class="anatomy-cell">MST translational flow neurons; pontine nuclei</td>
+          <td></td>
+        </tr>
+        <tr>
+          <td class="param-name">g_tvor</td>
+          <td><span class="default">1.0</span></td>
+          <td class="units">—</td>
+          <td class="desc-cell">Overall T-VOR output gain. 1.0 = full geometric compensation. Real T-VOR gain ≈ 0.7–0.95 depending on viewing conditions.</td>
+          <td class="anatomy-cell">Cerebellar T-VOR calibration (flocculus)</td>
+          <td><div class="pathologies">
+            <span class="tag tag-vergence">Cerebellar lesion: ↓</span>
+          </div></td>
+        </tr>
+        <tr>
+          <td class="param-name">d_tvor_min</td>
+          <td><span class="default">0.05</span></td>
+          <td class="units">m</td>
+          <td class="desc-cell">Minimum distance estimate for 1/D scaling. Avoids singularity at extreme convergence (e.g., when target is at the nose).</td>
+          <td class="anatomy-cell">—</td>
+          <td></td>
+        </tr>
+        <tr>
+          <td class="param-name">ipd_brain</td>
+          <td><span class="default">0.064</span></td>
+          <td class="units">m</td>
+          <td class="desc-cell">Interpupillary distance used for vergence→distance conversion. Mirror of SensoryParams.ipd. Distance D = IPD / (2·tan(verg/2)).</td>
+          <td class="anatomy-cell">Anatomical orbital geometry</td>
           <td></td>
         </tr>
       </tbody>

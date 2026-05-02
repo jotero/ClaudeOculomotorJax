@@ -9,9 +9,14 @@ State:  x_grav = [ĝ (3,) | â (3,) | rf (3,)]                                 (
 
 Dynamics:
 
-    dĝ/dt  = −(π/180) · (ω̂ × ĝ)  +  (1/τ_grav) · (f − ĝ)
-    dâ/dt  =                           K_lin      · (f − ĝ)
+    dĝ/dt  = −(π/180) · (ω̂ × ĝ)  +  (1/τ_grav) · (f − ĝ − â)
+    dâ/dt  =                           K_lin      · (f − ĝ − â)
     drf/dt =  (rf_new − rf) / τ_rf_state
+
+Both ĝ and â compete for the same residual r = f − ĝ − â.  Once â captures the
+linear-acceleration component of the GIA residual, r → 0 and ĝ stops drifting —
+this is the key separation that prevents a brief sway/heave from being misread
+as a sustained tilt.  At rest r = 0 → â → 0, ĝ → f as before.
 
 where:
     ĝ        (3,)   gravity estimate in head frame (m/s²)
@@ -108,24 +113,27 @@ def step(x_grav, u, brain_params):
         g_est:   (3,)  current gravity estimate ĝ (= x_grav[:3], passed through)
     """
     g_est    = x_grav[_IDX_G]    # gravity estimate,  world frame (m/s²)
+    a_lin    = x_grav[_IDX_A]    # linear acceleration estimate, world frame (m/s²)
     rf_state = x_grav[_IDX_RF]   # current rf state — VS reads this from ODE state
     w_est    = u[:3]              # VS net angular velocity, [yaw, pitch, roll] (deg/s)
     gia      = u[3:]              # otolith GIA, world frame [x=right, y=up, z=fwd] (m/s²)
 
-    # Estimated linear acceleration: GIA minus gravity estimate.
-    # g_est tracks full GIA with TC = tau_grav (DC gain = 1, full somatogravic effect).
-    # a_lin accumulates a_est for LVOR: a_trans = gia − g_est − a_lin (zero at rest).
-    a_est = gia - g_est
+    # Residual after both estimates are subtracted: r = gia − g_est − a_lin.
+    # Both g_est and a_lin compete for r — once a_lin captures the residual, the
+    # K_grav term shuts off and g_est stops being pulled toward transient accel.
+    # This prevents a brief translation from being misread as a sustained tilt and
+    # breaks the closed-loop drift that previously coupled eye motion back into g_est.
+    a_est = gia - g_est - a_lin
 
     # Transport: rotate gravity estimate with VS angular velocity (VN → uvula/nodulus pathway)
     # ypr_to_xyz converts [yaw,pitch,roll] → xyz rotation-axis vector for cross product
     w_rad_xyz = jnp.radians(ypr_to_xyz(w_est))
     transport = -jnp.cross(w_rad_xyz, g_est)
 
-    # Gravity correction: pull toward GIA with TC = tau_grav
+    # Gravity correction: pull toward residual (gia − g_est − a_lin) with TC = tau_grav
     dg = transport + (1.0 / brain_params.tau_grav) * a_est
 
-    # Linear acceleration: tracks a_est for LVOR / a_trans
+    # Linear acceleration: tracks the same residual; competes with g_est for it
     da = brain_params.K_lin * a_est
 
     # Rotational feedback for VS — Laurens & Angelaki (2011): GIA × G_down / G0²

@@ -30,6 +30,9 @@ MODULES = [
     'bench_gravity',
     'bench_pursuit',
     'bench_vergence',
+    'bench_accommodation',
+    'bench_clinical',
+    'bench_tvor',
     'bench_fixation',
     'bench_listing',
 ]

@@ -26,12 +26,12 @@ One efference copy cascade (120 states), two uses with different gates:
         → at steady state: e_vel_pred → 0  (integrator at rest, u_pursuit ≈ v_target)
         u_pursuit = x_pursuit + K_phasic · e_vel_pred
 
-Vergence:
+Vergence (Schor 1986 dual integrator + Robinson direct phasic path):
     e_disp = pos_L − pos_R   (binocular disparity, deg)
-    PI controller (no efference copy / no Smith predictor — may be added later):
-        e_pred = (e_disp − x_verg) / (1 + K_phasic_verg)
-    dx_verg = −x_verg/τ_verg + K_verg · e_pred
-    u_verg  = x_verg + K_phasic_verg · e_pred
+    u_phasic = K_phasic_verg · e_disp                     (deg/s, no state)
+    dx_fast  = −x_fast / τ_verg_fast + K_verg_fast · e_disp
+    dx_slow  = −x_slow / τ_verg_slow + K_verg_slow · e_disp
+    u_verg   = tonic_verg + x_fast + x_slow + τ_vp · u_phasic
     motor_cmd_L = motor_cmd_version + ½ · u_verg   (L eye converges rightward)
     motor_cmd_R = motor_cmd_version − ½ · u_verg   (R eye converges leftward)
 
@@ -83,6 +83,7 @@ from oculomotor.models.brain_models  import gravity_estimator   as ge
 from oculomotor.models.brain_models  import heading_estimator   as he
 from oculomotor.models.brain_models  import pursuit             as pu
 from oculomotor.models.brain_models  import vergence            as vg
+from oculomotor.models.brain_models  import t_vor               as tv
 from oculomotor.models.brain_models  import accommodation       as acc_mod
 from oculomotor.models.brain_models  import final_common_pathway as fcp
 
@@ -92,8 +93,8 @@ from oculomotor.models.brain_models.final_common_pathway import G_NUCLEUS_DEFAUL
 
 # ── State layout ───────────────────────────────────────────────────────────────
 
-N_STATES = vs.N_STATES + ni.N_STATES + sg.N_STATES + ge.N_STATES + he.N_STATES + pu.N_STATES + vg.N_STATES + acc_mod.N_STATES
-#        = 9 + 9 + 18 + 9 + 3 + 3 + 9 + 2 = 62
+N_STATES = vs.N_STATES + ni.N_STATES + sg.N_STATES + ge.N_STATES + he.N_STATES + pu.N_STATES + vg.N_STATES + tv.N_STATES + acc_mod.N_STATES
+#        = 9 + 9 + 18 + 9 + 3 + 3 + 9 + 6 + 2 = 68
 # EC delay cascades removed — EC subtraction happens pre-delay in cyclopean_vision.step().
 # acc_plant state lives in SimState.acc_plant (ODE layer owns it, not brain).
 
@@ -126,8 +127,10 @@ _IDX_GRAV    = slice(_o_gv, _o_gv + ge.N_STATES)        # (9,)  [38:47]
 _IDX_HEAD    = slice(_o_hd, _o_hd + he.N_STATES)        # (3,)  [47:50]
 _IDX_PURSUIT = slice(_o_pu, _o_pu + pu.N_STATES)        # (3,)  [50:53]
 _IDX_VERG       = slice(_o_vg, _o_vg + vg.N_STATES)              # (9,)  [53:62]
-_o_acc          = _o_vg + vg.N_STATES                           # 62
-_IDX_ACC        = slice(_o_acc, _o_acc + acc_mod.N_STATES)       # (2,)  [62:64]
+_o_tv           = _o_vg + vg.N_STATES                            # 62
+_IDX_TVOR       = slice(_o_tv, _o_tv + tv.N_STATES)              # (6,)  [62:68]
+_o_acc          = _o_tv + tv.N_STATES                            # 68
+_IDX_ACC        = slice(_o_acc, _o_acc + acc_mod.N_STATES)       # (2,)  [68:70]
 # acc_plant (1 state) is in SimState.acc_plant — not part of x_brain.
 
 
@@ -261,14 +264,25 @@ class BrainParams(NamedTuple):
     # Otolith / gravity estimation — Laurens & Angelaki (2011, 2017)
     tau_grav:              float = 5.0    # gravity estimate TC (s); somatogravic bandwidth = 1/(2π·tau_grav) ≈ 0.032 Hz
                                           # sets how fast g_est tracks GIA changes (OCR rise time, OVAR following)
-    K_lin:                 float = 0.1    # linear acceleration adaptation gain (1/s); 0 disables â state
-                                          # smaller → more somatogravic effect; larger → faster a_lin adaptation
+    K_lin:                 float = 1.0    # linear acceleration adaptation gain (1/s); 0 disables â state.
+                                          # â and ĝ now compete for the same GIA residual (gia − ĝ − â);
+                                          # K_lin > 1/τ_grav (=0.2) lets â grab transient acceleration so ĝ
+                                          # doesn't drift during pure translation (T-VOR).  Sustained DC accel
+                                          # (somatogravic illusion) still leaks into ĝ as â saturates.
     K_gd:                  float = 0.0    # gravity dumping gain (1/s); 0 = disabled
     g_ocr:                 float = 0.0    # OCR amplitude (deg); healthy ~10°; 0 = disabled until verified
 
     # Heading estimator — linear velocity in head-fixed frame
-    tau_head:              float = 2.0    # linear velocity integration TC (s); corner freq ≈ 0.08 Hz
-                                          # leaky integral of a_est = GIA − g_est; prevents drift
+    tau_head:              float = 10.0   # linear velocity integration TC (s); long enough that
+                                          # v_lin holds during sustained translation in dark (otoliths
+                                          # only sense acceleration; v_lin must be integrated).  The
+                                          # closed-loop instability that long τ used to cause is now
+                                          # broken upstream: gravity transport uses canal-only rotation
+                                          # (not VS net), so eye motion can no longer drift g_est.
+    K_he_vis:              float = 5.0    # visual-velocity pull gain into v_lin (1/s); fuses scene
+                                          # translational flow with vestibular integration.  In dark
+                                          # (scene_lin_vel=0) the pull is toward zero, suppressing
+                                          # drift during pure rotation (OVAR, tilt suppression).
 
     # Listing's law — torsional constraint (Listing 1854; Tweed et al. 1998)
     listing_primary:       jnp.ndarray = jnp.zeros(2)  # primary position [yaw₀, pitch₀] (deg)
@@ -287,37 +301,57 @@ class BrainParams(NamedTuple):
                                            # Lisberger & Westbrook 1985 J Neurosci). MT tuned 10–64 deg/s
                                            # (Newsome et al. 1988 J Neurosci); 40 deg/s is conservative.
 
-    # Vergence — single leaky integrator with dual-range nonlinear drive (Schor 1979)
-    # Rashbass & Westheimer 1961; Jones 1980; Hung & Semmlow 1980; Judge & Miles 1985
-    K_verg:                float        = 4.0             # fusional integration gain (1/s); high gain for fine disparity
-    K_verg_prox:           float        = 3.0             # proximal integration gain (1/s); lower gain for full range
-    K_phasic_verg:         float        = 1.0             # phasic feedthrough (dim'less); applied to fusional clip only
-    tau_verg:              float        = 6.0             # vergence leak TC (s); leaks to tonic_verg [Semmlow 1986: ~5–7 s]
-    # ── Sensory limits (relative retinal disparity — what the visual system measures) ──────
-    #    Fusion limits (Panum's area): within these, the fine slow-vergence servo is active.
-    #    Disparity limit (prox_sat): the coarse drive saturates here; beyond it the rate
-    #    is capped but the system keeps driving toward fusion.
-    #    All in disparity space, not eye-position space.
-    panum_h:               float        = 2.0             # horizontal fusion limit (deg); Panum's area; fused/fusable boundary
-                                                          # Jones (1980): ~±1° (total 2°)
-    panum_v:               float        = 3.0             # vertical fusion limit ±(deg); ~2–3° clinical norm
-                                                          # (Saladin 1988 Optom Vis Sci)
-    panum_t:               float        = 5.0             # torsional fusion limit ±(deg); ~5–8° max
-                                                          # (van Rijn & van den Berg 1993 Vision Res; Kertesz 1983)
-    prox_sat:              float        = 20.0            # disparity limit: coarse (proximal) drive saturation (deg)
-                                                          # Hung & Semmlow 1980; max disparity input to coarse drive; rate-caps beyond
+    # Vergence — Schor (1986) dual integrator + Robinson (1975) direct phasic path
+    # Structure: disparity → fast int + slow int + direct path (τ_vp·K_phasic) → plant
+    # Step 1 of rebuild — Zee saccade burst (Step 2) parameters added later.
+    # References: Schor & Kotulak 1986; Read & Schor 2022; Rashbass & Westheimer 1961
+    # Direct phasic path provides the ~150–200 ms fast onset (Rashbass & Westheimer 1961
+    # J Physiol 159:339; achieved via plant-cancellation, not via integrator dynamics).
+    K_phasic_verg:         float        = 4.0             # direct phasic gain (1/s)
+    # Fast integrator TC from Schor (1979) Vision Res 19:1359 and Hung & Semmlow (1980)
+    # IEEE TBME 27:722 — vergence "fast" controller TC ≈ 5 s. Static gain G_fast ≈ 8
+    # matches Read & Schor (2022) J Vision 22(9):4 Table 1 (analogous to accommodation).
+    K_verg_fast:           float        = 1.6             # fast integrator gain (1/s); G_fast = 1.6·5 = 8
+    tau_verg_fast:         float        = 5.0             # fast integrator TC (s) [Schor 1979; Hung & Semmlow 1980]
+    # Slow tonic adapter TC from Schor (1979, 1992) — minutes-scale dark-vergence drift.
+    # G_slow ≈ 6 boosts DC gain so steady-state fixation disparity stays small.
+    K_verg_slow:           float        = 0.1             # slow integrator gain (1/s); G_slow = 0.1·60 = 6
+    tau_verg_slow:         float        = 60.0            # slow tonic adapter TC (s) [Schor 1979]
+    tau_vp:                float        = 0.15            # vergence plant TC for phasic feedthrough (s) = τ_p (same muscles)
     tonic_verg:            float        = 3.67            # tonic (brainstem) vergence baseline (deg); resting dark vergence
                                                           # = 2·arctan(IPD/2 / 1 m); recomputed from IPD in default_params()
                                                           # Riggs & Niehl 1960, Morgan 1944: dark vergence ≈ 1 m
                                                           # NOTE: phoria is a *measurement* (cover test outcome), not a model param;
                                                           # it emerges from the balance of tonic, AC/A, and fusional drives
-    g_burst_verg:          float        = 1.6             # vergence saccade pulse gain (deg/s per deg residual)
-                                                          # Zee (1992): vergence 2–3× faster during saccades (peak ~12 deg/s for 5° demand)
-                                                          # τ_burst = 1/g = 625 ms → covers ~11% of demand during 70 ms saccade
-                                                          # 0 = Zee mechanism disabled (isolated fusional vergence only)
-    D_verg:                float        = 1.0             # velocity damping coefficient (dim'less); divides dx_verg by (1+D)
-                                                          # D=0 → underdamped; D=1 → ξ≈0.9 (near-critical); D=2 → overdamped
-                                                          # Schor (1979): vergence has significant viscous damping to prevent overshoot
+    # Zee (1992) SVBN saccadic vergence burst — asymmetric saturating gain
+    # y = sign(disp) · g · (1 − exp(−|disp|/X))     (deg/s); fires while OPN pauses (z_act≈1)
+    # Convergence much stronger than divergence (Zee Table 1: ~50°/s vs ~12°/s peaks).
+    # Set g_svbn_conv = g_svbn_div = 0 to disable the burst (slow vergence only).
+    # Zee (1992) Table 1: pure conv peak velocity 41–58 °/s for 10° amplitude;
+    # pure div 9.5–13 °/s for 2.5°. Saturating exponential y = g·(1 − exp(−|disp|/X))
+    # tuned so y(10°, conv) ≈ 60·(1−e^{-10/3}) ≈ 58 °/s and y(2.5°, div) ≈ 14·(1−e^{-2.5/1}) ≈ 13 °/s.
+    g_svbn_conv:           float        = 60.0            # convergence asymptotic burst velocity (deg/s)
+    X_svbn_conv:           float        = 3.0             # convergence saturating scale (deg)
+    g_svbn_div:            float        = 14.0            # divergence  asymptotic burst velocity (deg/s)
+    X_svbn_div:            float        = 1.0             # divergence  saturating scale (deg)
+    g_burst_verg:          float        = 0.0             # legacy: kept for bench compatibility; set 0 (SVBN replaces)
+
+    # Translational VOR — Paige & Tomko (1991), Angelaki et al., Laurens & Angelaki (2017)
+    # Reuses heading_estimator's v_lin (gravity-corrected linear velocity, τ_head ≈ 2 s)
+    # as the vestibular estimate; fuses with visual translational scene flow via constant
+    # Kalman-like weights; divides by vergence-derived 1/distance for compensatory eye
+    # velocity. Output added to NI input alongside −w_est (canal-VOR). A soft tanh
+    # saturation caps each output axis at ω_max_tvor — ample headroom for any real
+    # T-VOR response, prevents runaway from gravity-mismatch artifacts.
+    # Vest+visual fusion of head linear velocity is now done in heading_estimator
+    # (K_he_vis); T-VOR consumes the combined v_lin directly.
+    g_tvor:                float        = 1.0             # T-VOR version output gain (cross product); ~unity per Paige & Tomko 1991
+    g_tvor_verg:           float        = 1.0             # T-VOR vergence-rate gain (dot product · IPD/D²); surge → vergence drive
+    tau_tvor_pos:          float        = 30.0            # T-VOR direct-path position leak TC (s); long enough to hold during motion,
+                                                          # short enough to bleed off between movements
+    ipd_brain:             float        = 0.064           # interpupillary distance (m) used for vergence→distance calculation;
+                                                          # mirror of SensoryParams.ipd — kept here so brain_model.step can convert
+                                                          # vergence angle to distance for T-VOR without threading sensory_params through
 
 
     # Accommodation — Schor dual-interaction model + plant dynamics
@@ -339,7 +373,11 @@ class BrainParams(NamedTuple):
                                           # At 40 cm (2.5 D): AC/A drive ≈ 5×0.573×2.5 ≈ 7.2°
                                           # At   6 m (0.17 D): drive ≈ 0.5° — explains why
                                           # IXT decompensates preferentially at distance.
-    CA_C:                  float = 0.4    # CA/C ratio (diopters / prism diopter); typical 0.3–0.5
+    CA_C:                  float = 0.08   # CA/C ratio (diopters / prism diopter). Schor & Kotulak (1986)
+                                          # report ≈ 0.5 D/MA (meter-angle); 1 MA ≈ 6.4 pd at IPD 64 mm
+                                          # so 0.5 D/MA ≈ 0.08 D/pd. Loop product AC_A·CA_C ≈ 0.4 D/D < 1
+                                          # keeps the AC/A·CA/C cross-loop stable (was 0.4 D/pd → loop gain 2,
+                                          # driving runaway oscillation; see Schor 1992 J Opt Soc Am).
                                           # Drives accommodation when vergence is disparity-driven;
                                           # reduces defocus during vergence eye movements.
     refractive_error:      float = 0.0   # patient refractive error (diopters); >0 hyperopia, <0 myopia
@@ -399,8 +437,9 @@ def make_x0(brain_params=None):
         # _IDX_NI_L/R/NULL all stay at 0
         # OPN: initialise to tonic firing rate (100); stays there between saccades.
         x0 = x0.at[_IDX_SG.start + 3].set(100.0)
-        # Vergence: initialise x_verg to tonic_verg (H only); e_held/x_copy start at zero.
-        x0 = x0.at[_o_vg].set(jnp.float32(brain_params.tonic_verg))
+        # Vergence: x_fast and x_slow are deviations from tonic_verg → both zero at rest.
+        # tonic_verg is added in vg.step's u_verg output, so the system holds at tonic
+        # vergence with zero integrator state.  Reserved slot [6:9] also zero (Step 1).
         # Accommodation neural: x_fast=0, x_slow=0 (deviations from tonic baseline).
         # Neural command at rest = 0+0+tonic_acc → plant settles at tonic_acc.
         # acc_plant initial state lives in SimState.acc_plant (set in simulate()).
@@ -448,6 +487,7 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
     x_pursuit = x_brain[_IDX_PURSUIT]
     rf_state  = x_grav[ge._IDX_RF]   # (3,) rotational feedback: 1-step delayed, owned by GE
     x_verg    = x_brain[_IDX_VERG]
+    x_tvor    = x_brain[_IDX_TVOR]    # (6,): [linear_vel(3) | trans_vs(3)]
     x_acc     = x_brain[_IDX_ACC]     # (2,): [x_fast, x_slow] neural (D)
 
     # ── Velocity storage + gravity estimator + OCR ───────────────────────────
@@ -458,11 +498,15 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
     # This breaks the algebraic loop: VS needs rf (from GE), GE needs w_est (from VS).
     dx_vs, w_est   = vs.step(x_vs, jnp.concatenate([sensory_out.canal, sensory_out.scene_slip, rf_state]), brain_params)
     dx_grav, g_est = ge.step(x_grav, jnp.concatenate([w_est, sensory_out.otolith]), brain_params)
-    dx_head, v_lin = he.step(x_head, jnp.concatenate([g_est, sensory_out.otolith]), brain_params)
     # OCR: world frame [x=right, y=up, z=fwd]. Right-ear-down → g_est[0] < 0 → -g_est[0] > 0.
     # Positive motor roll = left-ear-down (left-hand rule); negative = right-ear-down (same as head tilt).
     # Partial compensatory: eyes roll right-ear-down when head is right-ear-down (−g_est[0] < 0 → roll < 0).
     ocr            = jnp.array([0.0, 0.0, -brain_params.g_ocr * g_est[0]])
+    dx_head, v_lin = he.step(x_head,
+                              jnp.concatenate([g_est, sensory_out.otolith,
+                                               sensory_out.scene_linear_vel,
+                                               jnp.array([sensory_out.scene_visible])]),
+                              brain_params)
 
     # ── Pursuit: sensory_out.target_slip already EC-corrected (pre-delay) ────
     dx_pursuit, u_pursuit = pu.step(x_pursuit, sensory_out.target_slip, x_ni_net, brain_params)
@@ -470,10 +514,25 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
     # ── Saccade generator (target selection + Listing's corrections handled internally) ──
     dx_sg, u_burst = sg.step(x_sg, sensory_out.target_pos, sensory_out.target_visible, x_ni_net, ocr[2], w_est, brain_params, noise_acc)
 
+    # ── Translational VOR (T-VOR): vestibular + visual fusion, distance-scaled ───
+    # Uses heading_estimator's v_lin (already gravity-corrected, τ_head ≈ 2 s) as the
+    # vestibular linear-velocity estimate.
+    # Distance proxy: the absolute vergence command from the slow integrator.
+    # x_verg layout is [x_fast(3) | x_slow(3) | x_copy(3)]; x_fast and x_slow are
+    # *deviations* from tonic_verg (per the Read & Schor 2022 dual-integrator design),
+    # so absolute vergence = tonic_verg + x_slow at SS.  At rest (no target),
+    # x_slow = 0 → vergence = tonic_verg ≈ 3.67° ≈ 1 m default distance.
+    current_vergence_yaw = brain_params.tonic_verg + x_verg[3]
+    dx_tvor, pos_tvor, verg_rate_tvor = tv.step(
+        x_tvor, v_lin, current_vergence_yaw, x_ni_net,
+        brain_params.ipd_brain, brain_params)
+
     # ── Neural integrator: VOR + saccades + pursuit → version motor command ───
     # OCR is a tonic position offset (gravity-driven); passed as u_tonic so it is added
     # to the output but not integrated into the NI state (avoids 25 s TC attenuation).
-    dx_ni, motor_cmd_ni = ni.step(x_ni, -w_est + u_burst + u_pursuit, brain_params, u_tonic=ocr)
+    # T-VOR's pos_tvor is also a position offset added downstream (after NI), bypassing
+    # NI's slow leak and saccade-burst disruption — see t_vor.py docstring.
+    dx_ni, motor_cmd_ni = ni.step(x_ni, -w_est + u_burst + u_pursuit, brain_params, u_tonic=ocr + pos_tvor)
 
     # ── Vergence + Accommodation (Schor dual-interaction model) ─────────────────
     # Accommodation and vergence are tightly cross-coupled (AC/A and CA/C).
@@ -499,18 +558,24 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
         x_acc, sensory_out.defocus, x_verg_yaw, brain_params)
     aca_drive  = acc_mod.ac_a_drive(u_neural_acc, brain_params)   # (deg)
     z_act_verg = 1.0 - jnp.clip(x_sg[3], 0.0, 100.0) / 100.0
-    dx_verg, u_verg = vg.step(x_verg, sensory_out.target_disparity, aca_drive, z_act_verg, x_ni_net[:2], brain_params)
+    dx_verg, u_verg = vg.step(x_verg, sensory_out.target_disparity, aca_drive, verg_rate_tvor,
+                              z_act_verg, x_ni_net[:2], brain_params)
 
     # ── Final common pathway: nucleus encode → nerve activations ─────────────
     nerves = fcp.step(jnp.concatenate([motor_cmd_ni, u_verg]), brain_params)   # (12,) [L6|R6]
 
     # ── Efference copy signals for pre-delay EC in cyclopean_vision ──────────
     # Rotation to eye frame is done inside cyclopean_vision.step().
-    ec_vel  = u_burst + u_pursuit   # version velocity efference (head frame, [yaw,pitch,roll] deg/s)
+    # T-VOR contribution (ω_tvor, the cross-product output) is the eye velocity
+    # commanded by the T-VOR direct pathway via pos_tvor.  Without it in ec_vel,
+    # the OKR/pursuit loops would see the resulting retinal slip as "the world is
+    # moving" and drive the eye in the opposite direction, fighting T-VOR.
+    omega_tvor_ec = dx_tvor + x_tvor / brain_params.tau_tvor_pos   # = ω_tvor (deg/s)
+    ec_vel  = u_burst + u_pursuit + omega_tvor_ec   # version velocity efference (head frame, [yaw,pitch,roll] deg/s)
     ec_pos  = x_ni_net + ocr        # eye position efference     (head frame, [yaw,pitch,roll] deg)
     ec_verg = x_verg                # vergence efference         ([H,V,T] deg)
 
     # ── Pack state derivative ─────────────────────────────────────────────────
-    dx_brain = jnp.concatenate([dx_vs, dx_ni, dx_sg, dx_grav, dx_head, dx_pursuit, dx_verg, dx_acc])
+    dx_brain = jnp.concatenate([dx_vs, dx_ni, dx_sg, dx_grav, dx_head, dx_pursuit, dx_verg, dx_tvor, dx_acc])
 
     return dx_brain, nerves, ec_vel, ec_pos, ec_verg, u_neural_acc, A_cac

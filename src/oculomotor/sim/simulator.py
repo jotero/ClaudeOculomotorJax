@@ -116,9 +116,9 @@ def _apply_prism(q_eye_ypr, prism_ypr):
     Returns:
         q_eff_ypr: (3,) effective eye rotation to pass to world_to_retina
     """
-    deg2rad = jnp.pi / 180.0
-    R_eye   = _rotation_matrix(ypr_to_xyz(q_eye_ypr * deg2rad))
-    R_prism = _rotation_matrix(ypr_to_xyz(prism_ypr  * deg2rad))
+    # rotation_matrix expects DEGREES (it converts to rad internally) — no deg2rad here
+    R_eye   = _rotation_matrix(ypr_to_xyz(q_eye_ypr))
+    R_prism = _rotation_matrix(ypr_to_xyz(prism_ypr))
     R_eff   = R_prism.T @ R_eye          # R_prism^{-1} @ R_eye  (prism in head frame)
 
     # Rotation vector from matrix — stable via angle-axis formula.
@@ -304,7 +304,7 @@ def ODE_ocular_motor(t, state, args):
         SimState of derivatives (dsensory, dbrain, dplant)
     """
     (theta,
-     head_q_interp, head_w_interp, head_x_interp, head_a_interp,
+     head_q_interp, head_w_interp, head_x_interp, head_v_interp, head_a_interp,
      scene_q_L_interp, scene_w_L_interp, scene_x_L_interp, scene_v_L_interp,
      scene_q_R_interp, scene_w_R_interp, scene_x_R_interp, scene_v_R_interp,
      target_p_L_interp, target_dv_L_interp,
@@ -322,6 +322,7 @@ def ODE_ocular_motor(t, state, args):
     q_head  = head_q_interp.evaluate(t)       # (3,) [yaw,pitch,roll] deg
     w_head  = head_w_interp.evaluate(t)       # (3,) angular velocity deg/s
     x_head  = head_x_interp.evaluate(t)       # (3,) linear position m
+    v_head  = head_v_interp.evaluate(t)       # (3,) linear velocity m/s
     a_head  = head_a_interp.evaluate(t)       # (3,) linear acceleration m/s²
 
     # Per-eye scene (identical in monocular mode; diverge in stereo or OKN-monocular)
@@ -389,7 +390,7 @@ def ODE_ocular_motor(t, state, args):
     # ── Sensory: ODE step — must follow plant ────────────────────────────────
     dx_sensory = sensory_model.step(
         state.sensory,
-        q_head, w_head, x_head, a_head,
+        q_head, w_head, x_head, v_head, a_head,
         q_eye_L_eff, w_eye_L, q_eye_R_eff, w_eye_R,
         q_scene_L, w_scene_L, x_scene_L, v_scene_L,
         q_scene_R, w_scene_R, x_scene_R, v_scene_R,
@@ -623,7 +624,7 @@ def simulate(
         return diffrax.LinearInterpolation(ts=t_full, ys=ys)
 
     head_q_interp   = _interp(head_q);  head_w_interp = _interp(head_w)
-    head_x_interp   = _interp(head_x)
+    head_x_interp   = _interp(head_x);  head_v_interp = _interp(head_v)
     head_a_interp   = _interp(head_a)
     scene_q_L_interp  = _interp(scene_q_L); scene_w_L_interp = _interp(scene_w_L)
     scene_x_L_interp  = _interp(scene_x_L); scene_v_L_interp = _interp(scene_v_L)
@@ -663,7 +664,7 @@ def simulate(
 
     ode_args = (
         params,
-        head_q_interp, head_w_interp, head_x_interp, head_a_interp,
+        head_q_interp, head_w_interp, head_x_interp, head_v_interp, head_a_interp,
         scene_q_L_interp, scene_w_L_interp, scene_x_L_interp, scene_v_L_interp,
         scene_q_R_interp, scene_w_R_interp, scene_x_R_interp, scene_v_R_interp,
         target_p_L_interp, target_dv_L_interp,

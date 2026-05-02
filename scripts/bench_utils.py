@@ -28,6 +28,10 @@ EXPT_DIR      = os.path.join(_DOCS, 'experiments')
 EXPT_FIGS_DIR = os.path.join(EXPT_DIR, 'figures')
 EXPT_HTML_PATH = os.path.join(EXPT_DIR, 'index.html')
 
+CLIN_DIR      = os.path.join(_DOCS, 'clinical_benchmarks')
+CLIN_FIGS_DIR = os.path.join(CLIN_DIR, 'figures')
+CLIN_HTML_PATH = os.path.join(CLIN_DIR, 'index.html')
+
 
 def save_fig(fig, name, show=False, dpi=150, figs_dir=None, base_dir=None):
     """Save figure to {figs_dir}/{name}.png with watermark; return (path, rel).
@@ -55,8 +59,12 @@ def save_fig(fig, name, show=False, dpi=150, figs_dir=None, base_dir=None):
     path = os.path.join(figs_dir, f'{name}.png')
     fig.savefig(path, dpi=dpi, bbox_inches='tight')
     if show:
-        plt.show()
-    plt.close(fig)
+        # Non-blocking show so multiple figures accumulate; the bench script's
+        # __main__ should call plt.show() (blocking) at the very end to keep
+        # the windows open until the user closes them.
+        plt.show(block=False)
+    else:
+        plt.close(fig)
     rp = os.path.relpath(path, base_dir).replace('\\', '/')
     print(f'  [{name}] saved → {os.path.basename(path)}')
     return path, rp

@@ -19,13 +19,16 @@ if '--show' not in sys.argv:
     matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
-from oculomotor.sim.simulator import PARAMS_DEFAULT, simulate, _IDX_VERG, _IDX_SG
+from oculomotor.sim.simulator import PARAMS_DEFAULT, simulate, with_brain, _IDX_VERG, _IDX_SG
 from oculomotor.sim import kinematics as km
 from oculomotor.analysis import ax_fmt
 
 SHOW = '--show' in sys.argv
 DT   = 0.001
 IPD  = 0.064   # m, default inter-pupillary distance
+
+# Disable AC/A, CA/C cross-coupling and Zee saccade vergence to isolate pure vergence loop
+PARAMS_VERG = with_brain(PARAMS_DEFAULT, AC_A=0.0, CA_C=0.0, g_burst_verg=0.0)
 
 
 SECTION = dict(
@@ -48,7 +51,7 @@ def _run_sym(t, d_start, d_end, T_STEP):
     p0 = np.array([0.0, 0.0, float(d_start)])
     p1 = np.array([0.0, 0.0, float(d_end)])
     pt = np.where((t >= T_STEP)[:, None], p1, p0)
-    st = simulate(PARAMS_DEFAULT, t,
+    st = simulate(PARAMS_VERG, t,
                   target=km.build_target(t, lin_pos=pt),
                   scene_present_array=np.ones(T),
                   return_states=True)
@@ -62,7 +65,7 @@ def _run_asym(t, d_start, d_end, ver_deg, T_STEP):
     p0     = np.array([0.0,   0.0, float(d_start)])
     p1     = np.array([x_end, 0.0, float(d_end)])
     pt     = np.where((t >= T_STEP)[:, None], p1, p0)
-    st = simulate(PARAMS_DEFAULT, t,
+    st = simulate(PARAMS_VERG, t,
                   target=km.build_target(t, lin_pos=pt),
                   scene_present_array=np.ones(T),
                   return_states=True)
@@ -194,7 +197,7 @@ def _fixation_distance(show):
         p_near = np.array([0.0, 0.0, float(d)])
         pt = np.where((t >= T_STEP)[:, None], p_near, p_far)
 
-        st = simulate(PARAMS_DEFAULT, t,
+        st = simulate(PARAMS_VERG, t,
                       target=km.build_target(t, lin_pos=pt),
                       scene_present_array=np.ones(T),
                       return_states=True)
@@ -289,7 +292,7 @@ def _diplopia(show):
     for d in DEPTHS:
         pt = np.where((t >= T_STEP)[:, None],
                       np.array([0.0, 0.0, float(d)]), p_base)
-        st = simulate(PARAMS_DEFAULT, t,
+        st = simulate(PARAMS_VERG, t,
                       target=km.build_target(t, lin_pos=pt),
                       scene_present_array=np.ones(T), return_states=True)
         eL_tr[d] = np.array(st.plant[:, 0])
@@ -300,8 +303,8 @@ def _diplopia(show):
     geo_d    = {d: _verg_angle_deg(d) for d in DEPTHS}
     geo_base = _verg_angle_deg(D_BASE)
 
-    bp       = PARAMS_DEFAULT.brain
-    sp       = PARAMS_DEFAULT.sensory
+    bp       = PARAMS_VERG.brain
+    sp       = PARAMS_VERG.sensory
 
     CL = utils.C['eye']
     CR = utils.C['target']
@@ -416,7 +419,7 @@ def _run_asym_full(t, d_start, d_end, ver_deg, T_STEP):
     p0    = np.array([0.0,   0.0, float(d_start)])
     p1    = np.array([x_end, 0.0, float(d_end)])
     pt    = np.where((t >= T_STEP)[:, None], p1, p0)
-    return simulate(PARAMS_DEFAULT, t,
+    return simulate(PARAMS_VERG, t,
                     target=km.build_target(t, lin_pos=pt),
                     scene_present_array=np.ones(T),
                     return_states=True)
@@ -452,22 +455,30 @@ def _asym_vergence_debug(show):
     verg_st  = [np.array(st.brain[:, _IDX_VERG]) for st in sts]   # (T, 9)
     sg_st    = [np.array(st.brain[:, _IDX_SG])   for st in sts]   # (T, 9)
 
-    x_verg_h  = [vs[:, 0] for vs in verg_st]   # tonic horizontal vergence memory
-    e_held_h  = [vs[:, 3] for vs in verg_st]   # latched horizontal error
-    x_copy_h  = [vs[:, 6] for vs in verg_st]   # copy integrator horizontal
+    # New layout: [x_fast(3) | x_slow(3) | x_copy(3)]
+    x_fast_h = [vs[:, 0] for vs in verg_st]   # fast integrator horizontal
+    x_slow_h = [vs[:, 3] for vs in verg_st]   # slow integrator horizontal
+    x_copy_h = [vs[:, 6] for vs in verg_st]   # SVBN integrated burst (observability)
 
     # OPN gate: z_opn = x_sg[3] ∈ [0,100] (100=tonic); z_act = 1 − z_opn/100
     z_opn = [ss[:, 3] for ss in sg_st]
     z_act = [1.0 - np.clip(zop, 0.0, 100.0) / 100.0 for zop in z_opn]
 
-    # Reconstruct Zee vergence burst (horizontal): g_burst_verg * z_act * gate_res * e_res[H]
-    bp = PARAMS_DEFAULT.brain
+    # Reconstruct Zee SVBN burst (horizontal): asymmetric saturating gain on disparity
+    bp = PARAMS_VERG.brain
+    # Approximate disp from geometric (eye-position-derived) — full reconstruction would need cascade output
     burst_h = []
     for i in range(2):
-        e_res_3d  = verg_st[i][:, 3:6] - verg_st[i][:, 6:9]
-        e_res_mag = np.linalg.norm(e_res_3d, axis=1)
-        gate_res  = 1.0 / (1.0 + np.exp(-bp.k_sac * (e_res_mag - bp.threshold_stop)))
-        burst_h.append(z_act[i] * gate_res * bp.g_burst_verg * e_res_3d[:, 0])
+        # Use slow + fast deviation as a proxy for "current vergence offset from tonic"
+        # SVBN drive scales with delayed disparity — approximate via x_fast trajectory
+        x_fast_i = verg_st[i][:, 0]
+        # Estimate disp_h from the fact that x_fast feedback equilibrates around K_fast·tau_fast·disp
+        # (rough; just for visualization)
+        disp_est = x_fast_i / max(bp.K_verg_fast * bp.tau_verg_fast, 1e-6)
+        is_conv = (disp_est > 0).astype(float)
+        g_eff   = is_conv * bp.g_svbn_conv + (1 - is_conv) * bp.g_svbn_div
+        X_eff   = is_conv * bp.X_svbn_conv + (1 - is_conv) * bp.X_svbn_div
+        burst_h.append(z_act[i] * np.sign(disp_est) * g_eff * (1 - np.exp(-np.abs(disp_est) / X_eff)))
 
     geo_c     = _verg_angle_deg(D_ASYM_END_C)
     geo_d_    = _verg_angle_deg(D_ASYM_END_D)
@@ -544,11 +555,11 @@ def _asym_vergence_debug(show):
         ax_fmt(ax, ylabel='z_act (0=idle, 1=sacc)' if col == 0 else '')
         ax.legend(fontsize=7.5)
 
-        # Row 5: e_held_verg[H] + x_copy_verg[H] — shows burst integration progress
+        # Row 5: x_fast / x_slow / x_copy[H] — shows integrator + burst contributions
         ax = axes[5, col]
-        ax.plot(t, e_held_h[col], color=CBR,       lw=1.3, label='e_held[H]')
-        ax.plot(t, x_copy_h[col], color=CBR,       lw=1.3, ls='--', label='x_copy[H]')
-        ax.plot(t, x_verg_h[col], color='#555555', lw=1.0, ls=':',  label='x_verg[H]')
+        ax.plot(t, x_fast_h[col], color=CBR,       lw=1.3, label='x_fast[H]')
+        ax.plot(t, x_slow_h[col], color=CBR,       lw=1.3, ls='--', label='x_slow[H]')
+        ax.plot(t, x_copy_h[col], color='#555555', lw=1.0, ls=':',  label='x_copy[H] (SVBN)')
         ax.axhline(0, color='gray', lw=0.7, ls=':', alpha=0.5)
         vl(ax)
         ax_fmt(ax, ylabel='Verg state (deg)' if col == 0 else '')
@@ -582,17 +593,106 @@ def _asym_vergence_debug(show):
     )
 
 
+def _depth_for_vergence(verg_deg):
+    """Distance (m) that produces a given symmetric vergence angle (deg) at default IPD."""
+    half = np.radians(verg_deg) / 2.0
+    return IPD / 2.0 / np.tan(half)
+
+
+def _main_sequence(show):
+    """Vergence main sequence: peak velocity vs. amplitude, symmetric and asymmetric.
+
+    Symmetric (no version saccade): tests slow disparity vergence speed.
+    Asymmetric (with concurrent version saccade): tests Zee SVBN facilitation.
+    Convergence and divergence amplitudes both probed; conv expected stronger.
+    """
+    AMPS_DEG = np.array([2.0, 4.0, 6.0, 8.0, 10.0, 12.0, 16.0])
+    T_STEP   = 0.5
+    TOTAL    = 4.0
+    t        = np.arange(0.0, TOTAL, DT)
+    T        = len(t)
+    VER_ASYM = 10.0   # version saccade amplitude (deg) for asymmetric
+
+    def _peak_verg_vel(eL, eR):
+        verg     = eL - eR
+        verg_vel = np.gradient(verg, DT)
+        # Find peak after the step, look in [T_STEP, T_STEP + 1.5s]
+        idx = (t >= T_STEP) & (t <= T_STEP + 1.5)
+        return float(np.max(np.abs(verg_vel[idx])))
+
+    sym_conv_peaks = []
+    sym_div_peaks  = []
+    asym_conv_peaks = []
+    asym_div_peaks  = []
+
+    for amp in AMPS_DEG:
+        # Symmetric convergence: tonic to demanded amp
+        d_start = _depth_for_vergence(2.0)
+        d_end   = _depth_for_vergence(amp)
+        eL_sc, eR_sc = _run_sym(t, d_start, d_end, T_STEP)
+        sym_conv_peaks.append(_peak_verg_vel(eL_sc, eR_sc))
+
+        # Symmetric divergence
+        eL_sd, eR_sd = _run_sym(t, d_end, d_start, T_STEP)
+        sym_div_peaks.append(_peak_verg_vel(eL_sd, eR_sd))
+
+        # Asymmetric convergence: same depth change + 10° version
+        eL_ac, eR_ac = _run_asym(t, d_start, d_end, VER_ASYM, T_STEP)
+        asym_conv_peaks.append(_peak_verg_vel(eL_ac, eR_ac))
+
+        # Asymmetric divergence
+        eL_ad, eR_ad = _run_asym(t, d_end, d_start, -VER_ASYM, T_STEP)
+        asym_div_peaks.append(_peak_verg_vel(eL_ad, eR_ad))
+
+    fig, axes = plt.subplots(1, 2, figsize=(13, 5.5))
+    fig.suptitle('Vergence Main Sequence — peak vergence velocity vs. amplitude',
+                 fontsize=12, fontweight='bold')
+
+    ax = axes[0]
+    ax.plot(AMPS_DEG, sym_conv_peaks,  'o-', color=utils.C['eye'],   lw=1.5, ms=8, label='Convergence')
+    ax.plot(AMPS_DEG, sym_div_peaks,   's--', color=utils.C['target'], lw=1.5, ms=8, label='Divergence')
+    ax_fmt(ax, ylabel='Peak vergence velocity (deg/s)', xlabel='Vergence amplitude (deg)')
+    ax.set_title('Symmetric (no version saccade) — slow vergence', fontsize=9)
+    ax.legend(fontsize=9)
+    ax.grid(True, alpha=0.3)
+
+    ax = axes[1]
+    ax.plot(AMPS_DEG, asym_conv_peaks, 'o-', color=utils.C['eye'],   lw=1.5, ms=8, label='Convergence (with version)')
+    ax.plot(AMPS_DEG, asym_div_peaks,  's--', color=utils.C['target'], lw=1.5, ms=8, label='Divergence (with version)')
+    ax_fmt(ax, ylabel='Peak vergence velocity (deg/s)', xlabel='Vergence amplitude (deg)')
+    ax.set_title(f'Asymmetric (concurrent {VER_ASYM:+.0f}° version) — Zee SVBN burst', fontsize=9)
+    ax.legend(fontsize=9)
+    ax.grid(True, alpha=0.3)
+
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
+    path, rp = utils.save_fig(fig, 'vergence_main_sequence', show=show)
+    return utils.fig_meta(
+        path, rp,
+        title='Vergence Main Sequence (peak velocity vs. amplitude)',
+        description='Peak vergence velocity for amplitudes 2–16°, both directions, '
+                    'with and without a concurrent version saccade. '
+                    'Left: symmetric (slow vergence only). Right: asymmetric (Zee SVBN burst active).',
+        expected='Symmetric: peak velocity grows roughly linearly with amplitude. '
+                 'Asymmetric: peak velocity 2–3× higher than symmetric (Zee facilitation). '
+                 'Convergence > divergence at every amplitude (asymmetric saturating gain).',
+        citation='Zee et al. (1992) J Neurophysiol; Rashbass & Westheimer (1961) J Physiol; '
+                 'Collewijn et al. (1988) J Physiol',
+    )
+
+
 def run(show=False):
     print('\n=== Vergence ===')
     figs = []
-    print('  1/4  symmetric + asymmetric (both directions) …')
+    print('  1/5  symmetric + asymmetric (both directions) …')
     figs.append(_vergence_bidir(show))
-    print('  2/4  fixation disparity vs. distance …')
+    print('  2/5  fixation disparity vs. distance …')
     figs.append(_fixation_distance(show))
-    print('  3/4  diplopia: fusion gate and fused vs. diplopic …')
+    print('  3/5  diplopia: fusion gate and fused vs. diplopic …')
     figs.append(_diplopia(show))
-    print('  4/4  asymmetric vergence debug cascade …')
+    print('  4/5  asymmetric vergence debug cascade …')
     figs.append(_asym_vergence_debug(show))
+    print('  5/5  main sequence (sym + asym) …')
+    figs.append(_main_sequence(show))
     return figs
 
 

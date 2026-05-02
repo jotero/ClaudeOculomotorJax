@@ -113,15 +113,20 @@ def xyz_to_ypr(v):
 
 # ── Geometry ────────────────────────────────────────────────────────────────────
 
-def world_to_retina(p_target, eye_offset_head, q_head, w_head, x_head,
+def world_to_retina(p_target, eye_offset_head, q_head, w_head, x_head, v_head,
                     q_eye, w_eye, w_scene, v_scene, dp_dt,
                     scene_present, target_present, vf_limit, k_vf):
     """Compute instantaneous retinal signals and per-eye visibility gates.
 
     Angular outputs (scene_angular_vel, target_vel) are in EYE coordinates
-    [yaw, pitch, roll] (deg/s).  scene_linear_vel is in eye-frame xyz [right,
-    up, forward] (m/s) — no ypr reordering since it is a translational, not
-    rotational, quantity.  target_pos is [yaw, pitch, 0] (deg).
+    [yaw, pitch, roll] (deg/s).  scene_linear_vel is in HEAD-frame xyz [right,
+    up, forward] (m/s), with per-eye parallax (each eye is offset from the head
+    centre, so head rotation moves the two eyes at different velocities — they
+    therefore see different translational optic flow even when v_head is shared).
+    Computing head-frame at retina (using actual q_eye implicitly via R_eye in
+    R_gaze) is mathematically equivalent to delaying an eye-frame signal and
+    derotating later by a delay-matched ec_pos, but is simpler to implement.
+    target_pos is [yaw, pitch, 0] (deg).
 
     All head and eye geometry is handled here — sensory_model only passes
     anatomical offsets (eye_offset_head) and does not touch rotation matrices.
@@ -137,6 +142,7 @@ def world_to_retina(p_target, eye_offset_head, q_head, w_head, x_head,
     q_head:          head rotation vector [yaw,pitch,roll]  (deg, world frame)
     w_head:          head angular velocity [yaw,pitch,roll]  (deg/s, world frame)
     x_head:          head linear position  [x,y,z]           (m, world frame)
+    v_head:          head linear velocity  [x,y,z]           (m/s, world frame)
     q_eye:           eye rotation vector relative to head (deg, head frame)
     w_eye:           eye angular velocity relative to head (deg/s, head frame)
     w_scene:         scene angular velocity [yaw,pitch,roll] (deg/s, world frame)
@@ -164,15 +170,18 @@ def world_to_retina(p_target, eye_offset_head, q_head, w_head, x_head,
 
     Retinal velocities in eye frame:
         w_eye_world     = w_head + R_head @ w_eye             total eye angular velocity, world frame
+        v_eye_world     = v_head + ω_head × (R_head @ eye_offset_head)
+                          per-eye linear velocity in world frame; second term is the
+                          parallax velocity from head rotation moving an eccentric eye.
         scene_angular_vel = R_gaze.T @ (w_scene − w_eye_world)  rotational optic flow, [yaw,pitch,roll] deg/s
-        scene_linear_vel  = R_gaze.T @ v_scene                  translational optic flow, [x,y,z] m/s
+        scene_linear_vel  = R_head.T @ (v_scene − v_eye_world)  translational optic flow, [x,y,z] m/s, HEAD frame, per-eye
         target_vel        = R_gaze.T @ (v_target − w_eye_world) target velocity on retina, [yaw,pitch,roll] deg/s
 
     Returns
     -------
         target_pos:       (3,)   target direction [yaw, pitch, 0] (deg)
         scene_angular_vel:(3,)   rotational optic flow [yaw,pitch,roll] (deg/s)
-        scene_linear_vel: (3,)   translational optic flow [x,y,z] (m/s, eye frame)
+        scene_linear_vel: (3,)   translational optic flow [x,y,z] (m/s, head frame, per-eye)
         target_vel:       (3,)   target velocity on retina [yaw,pitch,roll] (deg/s)
         scene_vis:        scalar scene presence gate = scene_present ∈ [0,1]
         target_vis:       scalar combined target gate = target_present × target_in_vf ∈ [0,1]
@@ -205,7 +214,13 @@ def world_to_retina(p_target, eye_offset_head, q_head, w_head, x_head,
     w_eye_world = w_head_xyz + R_head @ w_eye_xyz
 
     scene_angular_vel = xyz_to_ypr(R_gaze_T @ (w_scene_xyz - w_eye_world))  # [yaw,pitch,roll] deg/s
-    scene_linear_vel  = R_gaze_T @ v_scene                                   # [x,y,z] m/s, eye frame
+    # Per-eye linear velocity in world frame: v_head + ω_head × eye_offset_world.
+    # The cross-product term is the parallax velocity — for a head rotating about its
+    # own centre, an eccentric eye traces a small arc, and that motion contributes to
+    # the optic flow at that eye even when the head is not translating.
+    omega_head_rad = jnp.radians(w_head_xyz)
+    v_eye_world    = v_head + jnp.cross(omega_head_rad, R_head @ eye_offset_head)
+    scene_linear_vel  = R_head.T @ (v_scene - v_eye_world)                   # [x,y,z] m/s, HEAD frame, per-eye
     target_vel        = xyz_to_ypr(R_gaze_T @ (vt_xyz - w_eye_world))        # [yaw,pitch,roll] deg/s
     target_vel        = target_vel.at[2].set(0.0)   # retina is 2D: target translates H/V only
 

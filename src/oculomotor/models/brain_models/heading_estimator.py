@@ -1,83 +1,74 @@
 """Heading estimator SSM — linear velocity of the head in head-fixed frame.
 
-Integrates the otolith-derived linear acceleration (a_est = GIA − ĝ, from the
-gravity estimator) to track the head's linear velocity in the head-fixed frame.
-Angular heading velocity is already available from velocity storage (w_est) and
-needs no additional state here.
+Kalman-like fusion of two velocity estimates:
+  - VESTIBULAR: leaky integral of a_est = (GIA − g_est) gives velocity from otolith.
+  - VISUAL:    translational scene flow (already in head frame, with per-eye parallax
+               folded in by the retina) gives velocity directly: v_visual = −scene_lin_vel.
+
+The visual signal pulls v_lin toward the visually-derived velocity; in dark
+(scene_lin_vel = 0) it pulls v_lin → 0, suppressing the slow drift that an
+isolated vestibular integrator can build up from gravity-mismatch transients
+during pure rotations.
 
 State:  x_head = [v_lin (3,)]                                               (3,)
-    v_lin  linear velocity estimate, head-fixed frame (m/s)
 
 Dynamics:
-    dv_lin/dt = a_est − v_lin / τ_head
-
-where:
-    a_est   (3,)  estimated linear acceleration from gravity estimator = GIA − g_est
-    τ_head        leaky integrator TC (s); prevents drift from accumulating
-
-This is an approximation to the true integral ∫ a_est dt:
-    - A perfect integrator reconstructs velocity exactly but accumulates unbounded drift.
-    - The leak term provides a DC restoring force: v_lin → 0 when a_est = 0.
-    - τ_head trades off low-frequency velocity tracking against drift rejection.
-
-Frequency response (v_lin / a_est):
-    Below 1/(2π·τ_head): gain → τ_head² · ω  (strongly attenuated — drift-rejected)
-    Above 1/(2π·τ_head): gain ≈ τ_head / jω   (integrator — correct reconstruction)
-    τ_head = 2 s → corner frequency ≈ 0.08 Hz; covers behavioural range (0.1–5 Hz).
-
-At rest (a_est = 0): v_lin → 0.
-Sustained lateral acceleration A: v_lin → A · τ_head (m/s) at steady state.
-
-Axis convention — head-fixed frame (LEFT-HANDED: x=right, y=up, z=forward):
-    v_lin[0]: rightward velocity  (m/s)
-    v_lin[1]: upward velocity     (m/s)
-    v_lin[2]: forward velocity    (m/s)
-
-Planned extensions:
-    - Convert v_lin to world frame (requires orientation tracking or quaternion
-      state) for path integration / spatial navigation.
-    - Combine with angular velocity w_est to drive LVOR for near targets:
-        LVOR compensation = v_lin × vergence_angle / target_distance
-    - Add a second slower leak (τ_head_slow >> τ_head) for self-motion perception
-      at DC (sustained translation feels like a tilt via somatogravic illusion;
-      v_lin complements g_est to disentangle tilt vs. translation).
+    dv_lin/dt = a_est − v_lin / τ_head + K_he_vis · (v_visual − v_lin)
 
 Parameters (in BrainParams):
-    tau_head (s)  linear velocity integration TC. Default 2 s.
+    tau_head (s)    leaky integrator TC. Default 2 s.
+    K_he_vis (1/s)  visual-velocity pull gain. 0 = vestibular only (legacy).
+                    ~0.5–1.0 gives the visual estimate moderate authority.
+
+Axis convention — head-fixed frame (LEFT-HANDED: x=right, y=up, z=forward):
+    v_lin[0]: rightward velocity (m/s)
+    v_lin[1]: upward velocity    (m/s)
+    v_lin[2]: forward velocity   (m/s)
 """
 
 import jax.numpy as jnp
 
+
 N_STATES  = 3   # [v_lin (3,)]
-N_INPUTS  = 6   # [g_est (3,) | gia (3,)]  from gravity estimator
+N_INPUTS  = 10  # [g_est (3,) | gia (3,) | scene_lin_vel (3,) | scene_visible (1,)]
 N_OUTPUTS = 3   # [v_lin (3,)]
 
-X0 = jnp.zeros(3)   # zero velocity at rest
+X0 = jnp.zeros(3)
 
 
 def step(x_head, u, brain_params):
-    """Single ODE step: leaky linear-velocity integrator.
+    """Single ODE step: vestibular integration + visual velocity fusion.
 
     Args:
-        x_head:       (3,)  [v_lin (3,)]  current linear velocity estimate (m/s)
-        u:            (6,)  [g_est (3,) | gia (3,)]  from gravity estimator
-                            g_est: gravity estimate, head frame (m/s²); upright rest: [0, +9.81, 0]
-                            gia:   gravitoinertial acceleration from otolith, head frame (m/s²)
-        brain_params: BrainParams  (reads tau_head)
+        x_head:       (3,)  v_lin estimate (m/s, head frame)
+        u:            (10,) [g_est (3,) | gia (3,) | scene_lin_vel (3,) | scene_visible (1,)]
+                            g_est:         gravity estimate (m/s², head frame)
+                            gia:           gravitoinertial accel (m/s², head frame)
+                            scene_lin_vel: cyclopean translational scene flow (m/s, head frame)
+                            scene_visible: scalar in [0,1] — visual fusion gate
+        brain_params: BrainParams  (reads tau_head, K_he_vis)
 
     Returns:
         dx_head: (3,)  dv_lin/dt  (m/s²)
-        v_lin:   (3,)  current linear velocity estimate (m/s), passed through
+        v_lin:   (3,)  v_lin (m/s), passed through
     """
-    v_lin = x_head   # (3,) current linear velocity, head frame (m/s)
-    g_est = u[:3]    # (3,) gravity estimate from GE (m/s²)
-    gia   = u[3:]    # (3,) gravitoinertial acceleration from otolith (m/s²)
+    v_lin         = x_head
+    g_est         = u[:3]
+    gia           = u[3:6]
+    scene_lin_vel = u[6:9]
+    scene_visible = u[9]
 
-    # Linear acceleration = GIA minus gravity estimate.
-    # At rest: gia ≈ g_est → a_est ≈ 0. During translation: a_est ≠ 0.
+    # Vestibular: linear acceleration after gravity removal.
     a_est = gia - g_est
 
-    # Leaky integration: accumulate linear acceleration; leak prevents drift.
-    dx = a_est - v_lin / brain_params.tau_head
+    # Visual: scene flow is opposite to head motion in the head frame.  Gated by
+    # scene visibility — in dark (scene_visible = 0) the visual pull turns off
+    # entirely so v_lin is governed by vestibular integration with the long τ_head
+    # leak only (so DARK T-VOR can build up during sustained translation).
+    v_visual = -scene_lin_vel
+    K_vis    = brain_params.K_he_vis * scene_visible
+
+    # Leaky integration of vestibular accel + (gated) visual velocity pull.
+    dx = a_est - v_lin / brain_params.tau_head + K_vis * (v_visual - v_lin)
 
     return dx, v_lin

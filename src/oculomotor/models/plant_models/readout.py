@@ -74,6 +74,25 @@ def rotation_matrix(q_deg):
     return jnp.eye(3) + sinc * skew + cosc * (skew @ skew)
 
 
+def gaze_unit_vector(eye_pos_ypr):
+    """Unit gaze direction in head frame (xyz) from eye [yaw, pitch, roll] in deg.
+
+    Uses Rodrigues rotation via the project's standard ypr_to_xyz axis convention:
+    starts from forward = [0, 0, 1] in eye frame and rotates into head frame using
+    R_eye = rotation_matrix(ypr_to_xyz(eye_pos_ypr)).
+
+    Args:
+        eye_pos_ypr: (3,) eye orientation [yaw, pitch, roll] (deg, head frame)
+
+    Returns:
+        g_hat: (3,) unit vector in head-frame xyz pointing toward gaze direction
+    """
+    # Inline ypr→xyz axis-vector reordering to avoid a circular import with retina.
+    q_xyz = jnp.array([-eye_pos_ypr[1], eye_pos_ypr[0], eye_pos_ypr[2]])
+    R_eye = rotation_matrix(q_xyz)              # head ← eye
+    return R_eye @ jnp.array([0.0, 0.0, 1.0])   # forward in eye frame → head frame
+
+
 # ── Fick angles ────────────────────────────────────────────────────────────────
 
 def fick_angles(q_deg):

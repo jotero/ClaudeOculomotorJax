@@ -421,7 +421,11 @@ def _somatogravic_frequency(show):
     N_CYCLES = 6
     SETTLE_S = 5.0 * TAU_GRAV
 
-    params = with_brain(PARAMS_DEFAULT, g_ocr=G_OCR, g_burst=0.0)
+    # Note: saccades left ON. Disabling them (g_burst=0) caused NaN at long durations
+    # (≥120 s) due to a numerical interaction between un-corrected eye drift and the
+    # saccade generator's accumulator state.  Quick phases now appear as small
+    # transients on top of the OCR slow-phase response.
+    params = with_brain(PARAMS_DEFAULT, g_ocr=G_OCR)
 
     cmap   = plt.get_cmap('coolwarm')
     colors = [cmap(i / (len(FREQS_HZ) - 1)) for i in range(len(FREQS_HZ))]
@@ -502,20 +506,35 @@ def _somatogravic_frequency(show):
         ax_acc.grid(True, alpha=0.15)
 
         # Middle row: g_est[0] (right/interaural, m/s²) and eye torsion (right, deg) on twin axes.
-        # LP theory is only shown in the Bode plot below — not here, to avoid axis confusion.
         ax_ge = axes_gest[j]
-        ax_ge.plot(t_show, d['g_est_0'][i_ss:], color=col, lw=1.5)
+        g_data = d['g_est_0'][i_ss:]
+        eye_data = d['eye_roll'][i_ss:]
+        g_amp   = max(float(np.max(np.abs(g_data))),   1e-3)
+        eye_amp = max(float(np.max(np.abs(eye_data))), 1e-3)
+
+        ax_ge.plot(t_show, g_data, color=col, lw=1.8)
         ax_ge.axhline(0, color='k', lw=0.4)
         ax_ge.set_ylabel('g_est[0] (m/s²)', fontsize=7, color=col)
         ax_ge.tick_params(axis='y', labelcolor=col, labelsize=7)
         ax_ge.grid(True, alpha=0.15)
-        if j == 1: ax_ge.set_title('g_est[0] interaural/right (left axis, m/s²)  |  '
-                                    'eye torsion (right axis, deg)', fontsize=8)
+        ax_ge.set_ylim(-1.3 * g_amp, 1.3 * g_amp)
+        # Annotate peak amplitude on each panel for clarity
+        ax_ge.text(0.02, 0.96, f'g_est peak ≈ {g_amp:.3f} m/s²',
+                   transform=ax_ge.transAxes, fontsize=7, va='top', color=col,
+                   bbox=dict(facecolor='white', edgecolor='none', alpha=0.7))
+        if j == 1:
+            ax_ge.set_title('g_est[0] interaural/right (left axis, m/s²)  |  '
+                            'eye torsion (right axis, deg)', fontsize=8)
 
         ax_eye2 = ax_ge.twinx()
-        ax_eye2.plot(t_show, d['eye_roll'][i_ss:], color='darkorange', lw=1.2, ls='-.')
+        ax_eye2.plot(t_show, eye_data, color='darkorange', lw=1.4, ls='-.')
         ax_eye2.set_ylabel('Eye torsion (deg)', fontsize=7, color='darkorange')
         ax_eye2.tick_params(axis='y', labelcolor='darkorange', labelsize=7)
+        ax_eye2.set_ylim(-1.3 * eye_amp, 1.3 * eye_amp)
+        ax_eye2.text(0.98, 0.96, f'torsion peak ≈ {eye_amp:.3f}°',
+                     transform=ax_eye2.transAxes, fontsize=7, va='top', ha='right',
+                     color='darkorange',
+                     bbox=dict(facecolor='white', edgecolor='none', alpha=0.7))
 
     ax_bode.loglog(f_theory, amp_theory, color='gray', lw=2.0, ls='--',
                    label=f'LP theory: fc={fc:.3f} Hz  (TC=tau_grav={TAU_GRAV:.1f} s)')

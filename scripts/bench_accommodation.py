@@ -79,6 +79,193 @@ def _stim_ax(ax, t, stim, ylabel, step_t=None, color='steelblue', ylim=None):
     ax.spines['right'].set_visible(False)
 
 
+# ── Panel 0a: Isolated accommodation step response (AC/A = CA/C = 0) ───────────
+# Tests Step 3 of the vergence/accommodation rebuild: accommodation loop alone,
+# without any vergence cross-coupling.
+
+PARAMS_ACC_ONLY = with_brain(PARAMS_DEFAULT, AC_A=0.0, CA_C=0.0)
+
+
+def _isolated_step(show):
+    """Defocus step from far (6 m, 0.17 D) to near (0.4 m, 2.5 D) and back.
+
+    AC/A and CA/C disabled — accommodation loop in isolation.
+    """
+    T_STEP_NEAR = 1.0
+    T_STEP_FAR  = 4.0
+    TOTAL       = 7.0
+    t = np.arange(0.0, TOTAL, DT)
+    T = len(t)
+
+    p_far  = np.array([0.0, 0.0, 6.0])
+    p_near = np.array([0.0, 0.0, 0.4])
+    pt = np.tile(p_far, (T, 1))
+    pt[(t >= T_STEP_NEAR) & (t < T_STEP_FAR)] = p_near
+
+    st = simulate(PARAMS_ACC_ONLY, t,
+                  target=km.build_target(t, lin_pos=pt),
+                  scene_present_array=np.ones(T),
+                  return_states=True, key=KEY)
+
+    acc    = np.array(st.acc_plant[:, 0])
+    demand = 1.0 / np.linalg.norm(pt, axis=1)
+
+    fig, axes = plt.subplots(2, 1, figsize=(10, 6.5), sharex=True)
+    fig.suptitle('Isolated accommodation: far → near → far step (AC/A = CA/C = 0)',
+                 fontsize=11, fontweight='bold')
+
+    ax = axes[0]
+    ax.plot(t, demand, 'k--', lw=1.0, alpha=0.7, label='Demand (1/z)')
+    ax.plot(t, acc,    color=utils.C['eye'], lw=1.5, label='Accommodation')
+    ax.axvline(T_STEP_NEAR, color='gray', lw=0.8, ls=':')
+    ax.axvline(T_STEP_FAR,  color='gray', lw=0.8, ls=':')
+    ax.set_ylim(-0.3, 3.0)
+    ax_fmt(ax, ylabel='Diopters (D)')
+    ax.legend(fontsize=9)
+    ax.set_title(f'Far (6 m, 0.17 D) → Near (0.4 m, 2.5 D) at t={T_STEP_NEAR}; back at t={T_STEP_FAR}',
+                 fontsize=9)
+
+    ax = axes[1]
+    err = demand - acc
+    ax.plot(t, err, color=utils.C['target'], lw=1.3, label='Defocus error (demand − acc)')
+    ax.axhline(0, color='gray', lw=0.8, ls='--')
+    ax.axvline(T_STEP_NEAR, color='gray', lw=0.8, ls=':')
+    ax.axvline(T_STEP_FAR,  color='gray', lw=0.8, ls=':')
+    ax_fmt(ax, ylabel='Defocus error (D)', xlabel='Time (s)')
+    ax.legend(fontsize=9)
+
+    fig.tight_layout(rect=[0, 0, 1, 0.96])
+    path, rp = utils.save_fig(fig, 'accommodation_isolated_step', show=show)
+    return utils.fig_meta(path, rp,
+        title='Isolated accommodation step response (no AC/A, no CA/C)',
+        description='Defocus step 0.17 D → 2.5 D → 0.17 D with cross-coupling disabled. '
+                    'Top: demand vs. accommodation. Bottom: defocus error.',
+        expected='Latency ~300 ms; rise to ~85% of demand within ~1 s; small SS '
+                 'residual error ~10–15% of demand. Symmetric far→near and near→far.',
+        citation='Read, Kaspiris-Rousellis et al. (2022) J Vision 22(9):4',
+    )
+
+
+def _isolated_amplitudes(show):
+    """Step responses to multiple amplitudes (0.5–4 D) with cross-coupling disabled."""
+    AMPS_D = [0.5, 1.0, 2.0, 3.0, 4.0]
+    T_STEP = 0.5
+    T_TOTAL = 5.0
+    t = np.arange(0.0, T_TOTAL, DT)
+    T = len(t)
+
+    cmap = plt.cm.viridis
+    norm = plt.Normalize(vmin=min(AMPS_D), vmax=max(AMPS_D))
+
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+    fig.suptitle('Isolated accommodation: amplitude scaling (AC/A = CA/C = 0)',
+                 fontsize=11, fontweight='bold')
+
+    ss_acc = []
+    for amp in AMPS_D:
+        d_near = 1.0 / amp
+        p_far  = np.array([0.0, 0.0, 6.0])
+        p_near = np.array([0.0, 0.0, d_near])
+        pt = np.where((t >= T_STEP)[:, None], p_near, p_far)
+        st = simulate(PARAMS_ACC_ONLY, t,
+                      target=km.build_target(t, lin_pos=pt),
+                      scene_present_array=np.ones(T),
+                      return_states=True, key=KEY)
+        acc = np.array(st.acc_plant[:, 0])
+        color = cmap(norm(amp))
+        axes[0].plot(t, acc, color=color, lw=1.4,
+                     label=f'{amp:.1f} D ({d_near*100:.1f} cm)')
+        axes[0].axhline(amp, color=color, lw=0.7, ls=':', alpha=0.5)
+        ss_acc.append(float(acc[t > 4.0].mean()))
+
+    axes[0].axvline(T_STEP, color='gray', lw=0.8, ls=':')
+    ax_fmt(axes[0], ylabel='Accommodation (D)', xlabel='Time (s)')
+    axes[0].legend(fontsize=8, loc='lower right')
+    axes[0].set_title('Time-courses (dotted = demand)', fontsize=9)
+
+    axes[1].plot([0, max(AMPS_D)], [0, max(AMPS_D)], 'k--', lw=0.8, alpha=0.5,
+                 label='Unity (perfect tracking)')
+    axes[1].plot(AMPS_D, ss_acc, 'o-', color=utils.C['eye'], lw=1.5, ms=8,
+                 label='Model SS accommodation')
+    for amp, ss in zip(AMPS_D, ss_acc):
+        gain = ss / amp if amp > 0 else 1.0
+        axes[1].annotate(f'g={gain:.2f}', xy=(amp, ss), xytext=(5, -10),
+                         textcoords='offset points', fontsize=8, color='#555')
+    axes[1].set_xlabel('Demand (D)')
+    axes[1].set_ylabel('SS accommodation (D)')
+    axes[1].set_title('Amplitude scaling (gain = SS / demand)', fontsize=9)
+    axes[1].legend(fontsize=8)
+    axes[1].grid(True, alpha=0.3)
+    axes[1].set_xlim(0, max(AMPS_D) + 0.3)
+    axes[1].set_ylim(0, max(AMPS_D) + 0.3)
+
+    fig.tight_layout(rect=[0, 0, 1, 0.96])
+    path, rp = utils.save_fig(fig, 'accommodation_isolated_amplitudes', show=show)
+    return utils.fig_meta(path, rp,
+        title='Isolated accommodation amplitude scaling',
+        description='Step responses at 0.5, 1, 2, 3, 4 D demand with cross-coupling '
+                    'disabled. Left: time-courses. Right: SS gain vs demand.',
+        expected='Linear scaling across amplitudes; gain ~0.85–0.90 of demand at '
+                 'all amplitudes. No saturation below 4 D. Rise TC ~1 s.',
+        citation='Hung & Semmlow (1980); Read & Schor (2022)',
+    )
+
+
+def _isolated_dark_focus(show):
+    """Sustained near work then darkness — drift back to tonic_acc."""
+    T_NEAR_ON  = 0.5
+    T_NEAR_OFF = 10.5
+    T_TOTAL    = 50.0
+    t = np.arange(0.0, T_TOTAL, DT)
+    T = len(t)
+
+    p_far  = np.array([0.0, 0.0, 6.0])
+    p_near = np.array([0.0, 0.0, 0.25])    # 4 D demand
+    pt = np.tile(p_far, (T, 1))
+    pt[(t >= T_NEAR_ON) & (t < T_NEAR_OFF)] = p_near
+
+    scene_present  = np.ones(T)
+    target_present = np.ones(T)
+    scene_present[t >= T_NEAR_OFF]  = 0.0
+    target_present[t >= T_NEAR_OFF] = 0.0
+
+    st = simulate(PARAMS_ACC_ONLY, t,
+                  target=km.build_target(t, lin_pos=pt),
+                  scene_present_array=scene_present,
+                  target_present_array=target_present,
+                  return_states=True, key=KEY)
+
+    acc = np.array(st.acc_plant[:, 0])
+
+    fig, ax = plt.subplots(1, 1, figsize=(10, 5))
+    fig.suptitle('Dark-focus drift after sustained near work (AC/A = CA/C = 0)',
+                 fontsize=11, fontweight='bold')
+    demand_trace = np.where((t >= T_NEAR_ON) & (t < T_NEAR_OFF), 4.0,
+                            np.where(t >= T_NEAR_OFF, np.nan, 1.0/6.0))
+    ax.plot(t, demand_trace, 'k--', lw=1.0, alpha=0.6, label='Demand (visible)')
+    ax.plot(t, acc, color=utils.C['eye'], lw=1.5, label='Accommodation')
+    ax.axhline(PARAMS_ACC_ONLY.brain.tonic_acc, color=utils.C['ni'], lw=0.9, ls=':',
+               label=f'tonic_acc = {PARAMS_ACC_ONLY.brain.tonic_acc:.2f} D')
+    ax.axvline(T_NEAR_ON,  color='gray', lw=0.7, ls=':')
+    ax.axvline(T_NEAR_OFF, color='gray', lw=0.7, ls=':')
+    ax.text(T_NEAR_ON + 0.2, 0.05, 'near work (4 D)', fontsize=8, color='#555')
+    ax.text(T_NEAR_OFF + 0.5, 0.05, 'darkness (open loop)', fontsize=8, color='#555')
+    ax_fmt(ax, ylabel='Diopters (D)', xlabel='Time (s)')
+    ax.set_ylim(-0.2, 4.5)
+    ax.legend(fontsize=9, loc='upper right')
+
+    fig.tight_layout(rect=[0, 0, 1, 0.96])
+    path, rp = utils.save_fig(fig, 'accommodation_isolated_dark_focus', show=show)
+    return utils.fig_meta(path, rp,
+        title='Dark-focus drift after sustained near work',
+        description='10 s of sustained 4 D near work followed by darkness '
+                    '(scene + target removed). Accommodation drifts back to tonic_acc.',
+        expected='Drift to tonic_acc with TC ≈ tau_acc_slow (30 s). Slight overshoot '
+                 'of tonic from sustained near work (slow integrator wound up).',
+        citation='Schor (1979); Read & Schor (2022)',
+    )
+
+
 # ── Panel 1: Near-step — depth change drives vergence + accommodation ──────────
 
 def _near_step(show):
@@ -633,15 +820,26 @@ def _refractive_error(show):
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 def run(show=SHOW):
-    results = [
-        _near_step(show),
-        _lens_aca(show),
-        _prism_cac(show),
-        _lens_step_response(show),
-        _fixation_disparity_curves(show),
-        _refractive_error(show),
-    ]
-    return results
+    print('\n=== Accommodation ===')
+    print('  1/9  isolated step (AC/A=CA/C=0) …')
+    f1  = _isolated_step(show)
+    print('  2/9  isolated amplitudes …')
+    f2  = _isolated_amplitudes(show)
+    print('  3/9  isolated dark-focus drift …')
+    f3  = _isolated_dark_focus(show)
+    print('  4/9  near step (cross-coupling on) …')
+    f4  = _near_step(show)
+    print('  5/9  lens-driven AC/A …')
+    f5  = _lens_aca(show)
+    print('  6/9  prism-driven CA/C …')
+    f6  = _prism_cac(show)
+    print('  7/9  plant step response …')
+    f7  = _lens_step_response(show)
+    print('  8/9  fixation disparity curves …')
+    f8  = _fixation_disparity_curves(show)
+    print('  9/9  refractive error …')
+    f9  = _refractive_error(show)
+    return [f1, f2, f3, f4, f5, f6, f7, f8, f9]
 
 
 if __name__ == '__main__':

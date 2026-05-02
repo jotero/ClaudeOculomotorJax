@@ -245,7 +245,7 @@ def read_outputs(x_sensory, sensory_params, q_head, a_head):
 
 def step(x_sensory,
          # ── Head kinematics ───────────────────────────────────────────────────
-         q_head, w_head, x_head, a_head,
+         q_head, w_head, x_head, v_head, a_head,
          # ── Eye kinematics (prism-shifted by ODE before this call) ────────────
          q_eye_L, w_eye_L, q_eye_R, w_eye_R,
          # ── Scene stimulus (per eye) ──────────────────────────────────────────
@@ -293,14 +293,14 @@ def step(x_sensory,
     # prisms, stereo displays, and covers are invisible to this function.
     target_pos_L, scene_angular_vel_L, scene_linear_vel_L, target_vel_L, scene_vis_L, target_vis_L = \
         _retina.world_to_retina(
-            p_target_L, eye_off_L, q_head, w_head, x_head,
+            p_target_L, eye_off_L, q_head, w_head, x_head, v_head,
             q_eye_L, w_eye_L, w_scene_L, v_scene_L, dp_dt_L,
             scene_present_L, target_present_L,
             sensory_params.visual_field_limit, sensory_params.k_visual_field)
 
     target_pos_R, scene_angular_vel_R, scene_linear_vel_R, target_vel_R, scene_vis_R, target_vis_R = \
         _retina.world_to_retina(
-            p_target_R, eye_off_R, q_head, w_head, x_head,
+            p_target_R, eye_off_R, q_head, w_head, x_head, v_head,
             q_eye_R, w_eye_R, w_scene_R, v_scene_R, dp_dt_R,
             scene_present_R, target_present_R,
             sensory_params.visual_field_limit, sensory_params.k_visual_field)

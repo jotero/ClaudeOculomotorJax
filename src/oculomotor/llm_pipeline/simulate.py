@@ -251,8 +251,11 @@ All defaults match the healthy model. Only specify parameters that differ from h
 | tau_grav (s) | 5.0 | Gravity estimate TC. Relevant for tilt / OVAR |
 | tau_vs_adapt (s) | 600.0 | VS null adaptation. Reduce to 30–60 s for PAN (periodic alternating nystagmus) |
 | tau_ni_adapt (s) | 20.0 | NI null adaptation. Controls rebound nystagmus amplitude after eccentric gaze |
-| K_verg (1/s) | 4.0 | Vergence integration gain. Reduce for convergence insufficiency |
-| tau_verg (s) | 25.0 | Vergence leak TC. Short → vergence can't hold |
+| K_phasic_verg (1/s) | 1.0 | Vergence direct phasic gain. Plant-canceling pulse |
+| K_verg_fast (1/s) | 10.0 | Vergence fast-integrator gain. Reduce for convergence insufficiency |
+| tau_verg_fast (s) | 2.0 | Vergence fast-integrator TC. Short → fast onset, long → slow but stable |
+| K_verg_slow (1/s) | 0.5 | Vergence slow tonic-adapter gain. Long-term integration |
+| tau_verg_slow (s) | 60.0 | Vergence slow tonic-adapter TC. Minutes-scale dark-vergence drift |
 | tonic_verg (deg) | 3.67 | Tonic (brainstem) vergence baseline. 3.67° ≈ 1 m dark vergence. Increase for esophoric patients |
 
 ### Cranial nerve and MLF lesions — use ONLY the parameters below, not VN/cerebellar params
