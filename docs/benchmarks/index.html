@@ -57,14 +57,17 @@ h1   { font-size: 22px; margin-bottom: 4px; }
     <a href="#gravity">3. Gravity Estimator</a>
     <a href="#pursuit">4. Smooth Pursuit</a>
     <a href="#vergence">5. Vergence</a>
+    <a href="#accommodation">6. Vergence–Accommodation</a>
+    <a href="#clinical">7. Clinical benchmarks</a>
+    <a href="#tvor">8. Translational VOR (T-VOR)</a>
     <a href="#fixation">6. Fixation</a>
     <a href="#listing">7. Listing's Law</a>
   </nav>
   <main>
     <h1>OculomotorJax — Benchmark Report</h1>
     <p class="meta">
-      Generated: <strong>2026-05-01 (edited)</strong> &nbsp;|&nbsp;
-      Version: <strong>97d08b2-dirty</strong> &nbsp;|&nbsp;
+      Generated: <strong>2026-05-03 07:02</strong> &nbsp;|&nbsp;
+      Version: <strong>3f994a7-dirty</strong> &nbsp;|&nbsp;
       <a href="../BENCHMARKS.md">BENCHMARKS.md</a>
     </p>
 
@@ -112,10 +115,10 @@ h1   { font-size: 22px; margin-bottom: 4px; }
     <div class="fig-card">
       <a href="figures/saccade_cascade_noisy.png" target="_blank"><img src="figures/saccade_cascade_noisy.png" alt="Saccade Signal Cascade (with noise)"></a>
       <h3>Saccade Signal Cascade (with noise)</h3>
-      <p class="desc">Row-by-row signal flow for 1°, 5°, 20°, 40° saccades: position, visual cascade + hold, accumulator (z_acc) + trigger IBN (z_trig) + OPN (z_opn), residual error, burst, eye velocity.</p>
+      <p class="desc">Row-by-row signal flow for 1°, 5°, 20°, 40° saccades: position, visual cascade + hold, accumulator/latch, residual error, burst, eye velocity, refractory state.</p>
       <div class="expected">
         <strong>Expected behavior</strong>
-        e_held freezes at saccade onset; z_acc rises to threshold then drains to floor (−0.5) during burst; z_trig suppresses OPN; accumulator floor enforces ~270 ms ISI.
+        e_held freezes at saccade onset; burst proportional to e_res; accumulator floor locks out next saccade for ~270 ms.
       </div>
       <p class="citation">&#128214; Robinson (1975) J Neurophysiol; Scudder et al. (2002)</p>
       <span class="badge cascade">cascade</span>
@@ -189,9 +192,9 @@ h1   { font-size: 22px; margin-bottom: 4px; }
       <p class="desc">60°/s rotation, tilt angles [10.0, 30.0, 60.0, 90.0]°. Replicates Laurens & Angelaki (2011) Fig 5.</p>
       <div class="expected">
         <strong>Expected behavior</strong>
-        SPV sinusoidally modulated at rotation period. Modulation amplitude ∝ sin(tilt). g_est oscillates ±G₀ sin(α).
+        SPV sinusoidally modulated at rotation period. Modulation amplitude ∝ sin(tilt). g_est oscillates ±G₀ sin(α). A small residual v_lin DC bias along the rotation axis ("screw direction") reflects the perceived sustained linear translation reported by subjects during prolonged OVAR (Denise et al. 1988; Wood 2002).
       </div>
-      <p class="citation">&#128214; Laurens & Angelaki (2011) Exp Brain Res 210:407</p>
+      <p class="citation">&#128214; Laurens & Angelaki (2011) Exp Brain Res 210:407; Denise, Darlot, Droulez, Cohen, Berthoz (1988) Exp Brain Res 67:629 — perceived linear translation during OVAR; Wood (2002) J Vest Res 12:223 — tilt-translation discrimination</p>
       <span class="badge behavior">behavior</span>
     </div>
 
@@ -223,7 +226,6 @@ h1   { font-size: 22px; margin-bottom: 4px; }
 
   <section class="section" id="pursuit">
     <h2>4. Smooth Pursuit</h2>
-
     <p>Smooth pursuit and catch-up saccades. Tests velocity gain at multiple speeds, sinusoidal tracking, and the pursuit integrator + saccade interaction cascade.</p>
     <div class="fig-grid">
       
@@ -315,6 +317,207 @@ h1   { font-size: 22px; margin-bottom: 4px; }
         OPN gate: pulses during version saccade; Zee burst fires during the same window and exhausts as x_copy reaches e_held. Vergence velocity: overshoot appears as negative region after peak. x_verg[H] settles at geometric vergence target.
       </div>
       <p class="citation">&#128214; Zee et al. (1992) J Neurophysiol; Collewijn et al. (1988) J Physiol</p>
+      <span class="badge behavior">behavior</span>
+    </div>
+
+    <div class="fig-card">
+      <a href="figures/vergence_main_sequence.png" target="_blank"><img src="figures/vergence_main_sequence.png" alt="Vergence Main Sequence (peak velocity vs. amplitude)"></a>
+      <h3>Vergence Main Sequence (peak velocity vs. amplitude)</h3>
+      <p class="desc">Peak vergence velocity for amplitudes 2–16°, both directions, with and without a concurrent version saccade. Left: symmetric (slow vergence only). Right: asymmetric (Zee SVBN burst active).</p>
+      <div class="expected">
+        <strong>Expected behavior</strong>
+        Symmetric: peak velocity grows roughly linearly with amplitude. Asymmetric: peak velocity 2–3× higher than symmetric (Zee facilitation). Convergence > divergence at every amplitude (asymmetric saturating gain).
+      </div>
+      <p class="citation">&#128214; Zee et al. (1992) J Neurophysiol; Rashbass & Westheimer (1961) J Physiol; Collewijn et al. (1988) J Physiol</p>
+      <span class="badge behavior">behavior</span>
+    </div>
+    </div>
+  </section>
+
+  <section class="section" id="accommodation">
+    <h2>6. Vergence–Accommodation</h2>
+    <p>AC/A and CA/C cross-links: accommodation driven by binocular disparity (near step), lens-forced accommodation driving vergence via AC/A, and prism-forced vergence driving accommodation via CA/C.  Plant dynamics follow Read & Schor (2022): τ_plant ≈ 0.156 s, τ_fast ≈ 2.5 s, G_fast = 8.</p>
+    <div class="fig-grid">
+      
+    <div class="fig-card">
+      <a href="figures/accommodation_isolated_step.png" target="_blank"><img src="figures/accommodation_isolated_step.png" alt="Isolated accommodation step response (no AC/A, no CA/C)"></a>
+      <h3>Isolated accommodation step response (no AC/A, no CA/C)</h3>
+      <p class="desc">Defocus step 0.17 D → 2.5 D → 0.17 D with cross-coupling disabled. Top: demand vs. accommodation. Bottom: defocus error.</p>
+      <div class="expected">
+        <strong>Expected behavior</strong>
+        Latency ~300 ms; rise to ~85% of demand within ~1 s; small SS residual error ~10–15% of demand. Symmetric far→near and near→far.
+      </div>
+      <p class="citation">&#128214; Read, Kaspiris-Rousellis et al. (2022) J Vision 22(9):4</p>
+      <span class="badge behavior">behavior</span>
+    </div>
+
+    <div class="fig-card">
+      <a href="figures/accommodation_isolated_amplitudes.png" target="_blank"><img src="figures/accommodation_isolated_amplitudes.png" alt="Isolated accommodation amplitude scaling"></a>
+      <h3>Isolated accommodation amplitude scaling</h3>
+      <p class="desc">Step responses at 0.5, 1, 2, 3, 4 D demand with cross-coupling disabled. Left: time-courses. Right: SS gain vs demand.</p>
+      <div class="expected">
+        <strong>Expected behavior</strong>
+        Linear scaling across amplitudes; gain ~0.85–0.90 of demand at all amplitudes. No saturation below 4 D. Rise TC ~1 s.
+      </div>
+      <p class="citation">&#128214; Hung & Semmlow (1980); Read & Schor (2022)</p>
+      <span class="badge behavior">behavior</span>
+    </div>
+
+    <div class="fig-card">
+      <a href="figures/accommodation_isolated_dark_focus.png" target="_blank"><img src="figures/accommodation_isolated_dark_focus.png" alt="Dark-focus drift after sustained near work"></a>
+      <h3>Dark-focus drift after sustained near work</h3>
+      <p class="desc">10 s of sustained 4 D near work followed by darkness (scene + target removed). Accommodation drifts back to tonic_acc.</p>
+      <div class="expected">
+        <strong>Expected behavior</strong>
+        Drift to tonic_acc with TC ≈ tau_acc_slow (30 s). Slight overshoot of tonic from sustained near work (slow integrator wound up).
+      </div>
+      <p class="citation">&#128214; Schor (1979); Read & Schor (2022)</p>
+      <span class="badge behavior">behavior</span>
+    </div>
+
+    <div class="fig-card">
+      <a href="figures/accommodation_near_step.png" target="_blank"><img src="figures/accommodation_near_step.png" alt="Near-step: binocular vergence + accommodation tracking"></a>
+      <h3>Near-step: binocular vergence + accommodation tracking</h3>
+      <p class="desc">Target steps 3 m → 0.4 m at t=1 s. Top: L/R eye yaw. Middle: vergence (L−R). Bottom: lens accommodation x_plant.</p>
+      <div class="expected">
+        <strong>Expected behavior</strong>
+        Vergence reaches ≥ 6.4° (9.1° geometric) within 4 s. Accommodation reaches ≥ 1.75 D (target 2.5 D) within 4 s.
+      </div>
+      <p class="citation">&#128214; Schor CM (1979) Vision Res 19:1359; Read et al. (2022) J Vision 22(9):4</p>
+      <span class="badge behavior">behavior</span>
+    </div>
+
+    <div class="fig-card">
+      <a href="figures/accommodation_lens_aca.png" target="_blank"><img src="figures/accommodation_lens_aca.png" alt="Lens-driven AC/A: monocular plus lens converges eyes"></a>
+      <h3>Lens-driven AC/A: monocular plus lens converges eyes</h3>
+      <p class="desc">+2.0 D right eye lens added at t=1.0 s; target at 3.0 m. Top: accommodation (with vs without AC/A). Bottom: vergence.</p>
+      <div class="expected">
+        <strong>Expected behavior</strong>
+        Accommodation rises ≥ 1 D. With AC/A: vergence increases above geometric. Without AC/A: vergence stays at geometric value.
+      </div>
+      <p class="citation">&#128214; Schor CM (1979) Vision Res 19:1359; Morgan (1944)</p>
+      <span class="badge behavior">behavior</span>
+    </div>
+
+    <div class="fig-card">
+      <a href="figures/accommodation_prism_cac.png" target="_blank"><img src="figures/accommodation_prism_cac.png" alt="Prism-driven CA/C: base-out prism increases accommodation"></a>
+      <h3>Prism-driven CA/C: base-out prism increases accommodation</h3>
+      <p class="desc">4.0° base-out R prism at t=1.0 s; target at 0.5 m. Top: vergence vs demand. Bottom: accommodation (with vs without CA/C).</p>
+      <div class="expected">
+        <strong>Expected behavior</strong>
+        Vergence drives convergence to compensate prism. With CA/C: accommodation rises above optical demand. Without CA/C: accommodation stays at optical demand.
+      </div>
+      <p class="citation">&#128214; Schor CM & Ciuffreda KJ (1983) Vergence Eye Movements</p>
+      <span class="badge behavior">behavior</span>
+    </div>
+
+    <div class="fig-card">
+      <a href="figures/accommodation_plant_step.png" target="_blank"><img src="figures/accommodation_plant_step.png" alt="Accommodation plant step response (τ_plant ≈ 0.156 s)"></a>
+      <h3>Accommodation plant step response (τ_plant ≈ 0.156 s)</h3>
+      <p class="desc">Bilateral +2.0 D lens step at t=0.5 s; target at 3.0 m. Neural command vs actual lens accommodation x_plant.</p>
+      <div class="expected">
+        <strong>Expected behavior</strong>
+        x_plant lags neural command by ~τ_plant. 50% rise time ≈ 0.51 s (τ_plant·ln2 ≈ 0.11 s). Both converge toward 2.33 D.
+      </div>
+      <p class="citation">&#128214; Schor & Bharadwaj (2006) J Neurophysiol; Read et al. (2022) J Vision</p>
+      <span class="badge behavior">behavior</span>
+    </div>
+
+    <div class="fig-card">
+      <a href="figures/accommodation_fixation_disparity.png" target="_blank"><img src="figures/accommodation_fixation_disparity.png" alt="Fixation disparity curves: prism sweep and lens sweep"></a>
+      <h3>Fixation disparity curves: prism sweep and lens sweep</h3>
+      <p class="desc">Fixation disparity (demand − achieved vergence, arcmin) vs. bilateral prism (left) and bilateral lens (right) at 0.5 m target.</p>
+      <div class="expected">
+        <strong>Expected behavior</strong>
+        Prism curve: monotonic, near-linear for small prism, flattening toward Panum area limits. Lens curve: U-shaped or monotonic depending on AC/A & CA/C gains. Both curves cross zero near zero intervention.
+      </div>
+      <p class="citation">&#128214; Sheard (1930); Saladin (1988) Optom Vis Sci; Schor (1979) Vision Res</p>
+      <span class="badge behavior">behavior</span>
+    </div>
+
+    <div class="fig-card">
+      <a href="figures/accommodation_refractive_error.png" target="_blank"><img src="figures/accommodation_refractive_error.png" alt="Refractive error: accommodation and vergence for myope/hyperope"></a>
+      <h3>Refractive error: accommodation and vergence for myope/hyperope</h3>
+      <p class="desc">Near step 3.0→0.4 m. Three groups: emmetrope, +2D hyperope, −2D myope. Top: vergence. Bottom: lens accommodation. No spectacle correction.</p>
+      <div class="expected">
+        <strong>Expected behavior</strong>
+        Hyperope accommodates more (must compensate RE); vergence slightly higher via AC/A. Myope accommodates less (RE reduces effective demand); vergence slightly lower. All groups converge vergence toward geometric value; myope may show under-accommodation.
+      </div>
+      <p class="citation">&#128214; Duke-Elder & Abrams (1970) System of Ophthalmology; Saw et al. (2005) Invest Ophthalmol Vis Sci</p>
+      <span class="badge behavior">behavior</span>
+    </div>
+    </div>
+  </section>
+
+  <section class="section" id="clinical">
+    <h2>7. Clinical benchmarks</h2>
+    <p>Standard clinical tests (NPC, cover test, fusional vergence ranges, amplitude of accommodation, AC/A measurement) across five patient profiles: healthy, convergence insufficiency, convergence excess (accommodative ET), accommodative insufficiency, and presbyopia.</p>
+    <div class="fig-grid">
+      
+    <div class="fig-card">
+      <a href="figures/clinical_npc_cover.png" target="_blank"><img src="figures/clinical_npc_cover.png" alt="NPC pull-in and Cover Test (phorias at distance + near)"></a>
+      <h3>NPC pull-in and Cover Test (phorias at distance + near)</h3>
+      <p class="desc">Top: vergence vs. target distance during NPC pull-in (1 m → 5 cm over 10 s); red line marks break point (vergence err > 5° from geometric). Middle/bottom: cover test at 3 m and 0.4 m — R eye covered at t=2 s; covered eye drifts to dissociated phoria position. Phoria sign labelled.</p>
+      <div class="expected">
+        <strong>Expected behavior</strong>
+        Healthy: NPC < 6 cm; orthophoria or small exo at distance, slight exo at near. CI: remote NPC (≥10 cm), large exo at near. CE/accomm. ET: large eso at near, small/normal at distance. AI/Presbyopia: NPC may be remote due to weak vergence drive secondary to weak accomm.
+      </div>
+      <p class="citation">&#128214; Scheiman & Wick (2008) Clinical Management of Binocular Vision; Cooper & Jamal (2012) Optometry; CITT Study Group (2008) Arch Ophthalmol</p>
+      <span class="badge behavior">behavior</span>
+    </div>
+
+    <div class="fig-card">
+      <a href="figures/clinical_fusional_ranges.png" target="_blank"><img src="figures/clinical_fusional_ranges.png" alt="Fusional vergence ranges (BI + BO ramps at distance and near)"></a>
+      <h3>Fusional vergence ranges (BI + BO ramps at distance and near)</h3>
+      <p class="desc">Slow prism ramp (0 → 30° over 10 s) on R eye. Top two rows: distance (3 m) BO then BI; bottom two: near (0.4 m). Red line marks vergence break (error > 5°).</p>
+      <div class="expected">
+        <strong>Expected behavior</strong>
+        Healthy: PFV (BO) break ≈ 18–25° at near, 12–15° at distance; NFV (BI) break ≈ 13° near, 7° distance. CI: reduced PFV at near (<10°). CE: reduced NFV at near (eyes already over-converged).
+      </div>
+      <p class="citation">&#128214; Sheard (1930); Saladin (1988) Optom Vis Sci; Scheiman & Wick (2008) Clinical Management of Binocular Vision</p>
+      <span class="badge behavior">behavior</span>
+    </div>
+
+    <div class="fig-card">
+      <a href="figures/clinical_accom_amp_facility.png" target="_blank"><img src="figures/clinical_accom_amp_facility.png" alt="Amplitude of accommodation + accommodative facility"></a>
+      <h3>Amplitude of accommodation + accommodative facility</h3>
+      <p class="desc">Top: push-up to 4 cm; peak accommodation = amplitude. Bottom: ±2 D flipper at 40 cm, 1 s alternation; cycles per minute counted when accommodation reaches within 0.75 D of demand within each phase.</p>
+      <div class="expected">
+        <strong>Expected behavior</strong>
+        Healthy adult <40 yo: amplitude ≥ 5 D; facility ≥ 11 cpm. Presbyopia: amplitude ≤ 2 D, very low facility. AI: amplitude reduced, facility reduced. CI/CE: typically normal accommodation amplitude.
+      </div>
+      <p class="citation">&#128214; Hofstetter (1965) Optom Mon; Zellers et al. (1984) Am J Optom; Wick et al. (1992); Donders, Hofstetter formulas</p>
+      <span class="badge behavior">behavior</span>
+    </div>
+
+    <div class="fig-card">
+      <a href="figures/clinical_aca_measurement.png" target="_blank"><img src="figures/clinical_aca_measurement.png" alt="AC/A measurement (gradient + heterophoria)"></a>
+      <h3>AC/A measurement (gradient + heterophoria)</h3>
+      <p class="desc">Top: gradient AC/A — vergence change for ±1 D lens at 0.4 m, slope = AC/A. Bottom: heterophoria AC/A — distance vs near phoria difference / Δdemand.</p>
+      <div class="expected">
+        <strong>Expected behavior</strong>
+        Healthy: AC/A 4–6 pd/D both methods. CE/accomm. ET: AC/A high (≥8 pd/D), classic sign. CI: AC/A low (<3 pd/D). Heterophoria method always ≥ gradient by 1–2 pd/D (proximal vergence component).
+      </div>
+      <p class="citation">&#128214; Morgan (1944) Am J Optom; Eskridge (1971); Scheiman & Wick (2008) Ch 1</p>
+      <span class="badge behavior">behavior</span>
+    </div>
+    </div>
+  </section>
+
+  <section class="section" id="tvor">
+    <h2>8. Translational VOR (T-VOR)</h2>
+    <p>Vest + visual fusion of head translation, scaled by vergence-derived distance to give compensatory eye velocity. Trapezoid pulses along sway / heave / surge in lit (scene only) and dark conditions.</p>
+    <div class="fig-grid">
+      
+    <div class="fig-card">
+      <a href="figures/tvor_cascade.png" target="_blank"><img src="figures/tvor_cascade.png" alt="T-VOR cascade — sway / heave / surge × LIT (scene only) / DARK"></a>
+      <h3>T-VOR cascade — sway / heave / surge × LIT (scene only) / DARK</h3>
+      <p class="desc">Trapezoid head velocity (peak 20 cm/s, 200 ms ramps, 1.6 s plateau) along x (sway), y (heave), z (surge); target at 40 cm. Rows: stimulus, g_est, v_lin, eye position, eye SPV.</p>
+      <div class="expected">
+        <strong>Expected behavior</strong>
+        Sway → eye yaw counter-rotates (cross product); Heave → eye pitch counter-rotates; Surge → vergence rate (dot product · IPD/D²) drives vergence change. g_est should remain ≈ [0, 9.81, 0]. SPV in DARK measures pure vestibular T-VOR; LIT scene-only adds OKR / visual heading contribution.
+      </div>
+      <p class="citation">&#128214; Paige & Tomko (1991); Angelaki & Hess (2001)</p>
       <span class="badge behavior">behavior</span>
     </div>
     </div>
