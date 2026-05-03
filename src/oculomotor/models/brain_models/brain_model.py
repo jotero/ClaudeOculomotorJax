@@ -264,11 +264,21 @@ class BrainParams(NamedTuple):
     # Otolith / gravity estimation — Laurens & Angelaki (2011, 2017)
     tau_grav:              float = 5.0    # gravity estimate TC (s); somatogravic bandwidth = 1/(2π·tau_grav) ≈ 0.032 Hz
                                           # sets how fast g_est tracks GIA changes (OCR rise time, OVAR following)
-    K_lin:                 float = 1.0    # linear acceleration adaptation gain (1/s); 0 disables â state.
-                                          # â and ĝ now compete for the same GIA residual (gia − ĝ − â);
-                                          # K_lin > 1/τ_grav (=0.2) lets â grab transient acceleration so ĝ
-                                          # doesn't drift during pure translation (T-VOR).  Sustained DC accel
-                                          # (somatogravic illusion) still leaks into ĝ as â saturates.
+    K_lin:                 float = 0.1    # linear acceleration adaptation gain (1/s); 0 disables â state.
+                                          # K_lin < 1/τ_grav (=0.2) — the Laurens-Angelaki regime where
+                                          # â adapts SLOWLY relative to ĝ.  This biases the gravity
+                                          # estimator to attribute GIA changes to gravity (tilt) rather
+                                          # than acceleration, matching the brain's prior toward
+                                          # tilt-interpretation in dark.  HE consumes a_lin directly,
+                                          # so smaller a_lin → less v_lin pollution from OVAR / OCR.
+    tau_a_lin:             float = 0.2    # a_lin decay TC (s) — the deterministic stand-in for the
+                                          # Kalman prior on translation duration.  Real self-motion
+                                          # accelerations are brief (~0.2–1 s for walking onset, sudden
+                                          # movements), so a_lin should decay back to 0 fast in absence
+                                          # of sustained evidence.  SS a_lin = K_lin·τ_a·r for sustained
+                                          # residual r — short τ_a strongly suppresses sustained-residual
+                                          # pollution (OVAR / OCR cascade) while still letting a_lin
+                                          # respond to actual translation transients.
     K_gd:                  float = 0.0    # gravity dumping gain (1/s); 0 = disabled
     g_ocr:                 float = 0.0    # OCR amplitude (deg); healthy ~10°; 0 = disabled until verified
 
@@ -351,9 +361,8 @@ class BrainParams(NamedTuple):
     # T-VOR response, prevents runaway from gravity-mismatch artifacts.
     # Vest+visual fusion of head linear velocity is now done in heading_estimator
     # (K_he_vis); T-VOR consumes the combined v_lin directly.
-    g_tvor:                float        = 0.0             # T-VOR version output gain (cross product); set to 0 to disconnect T-VOR
-                                                          # while debugging OCR cascade.  Restore to ~1 (Paige & Tomko 1991) when T-VOR is needed.
-    g_tvor_verg:           float        = 0.0             # T-VOR vergence-rate gain — also set to 0 to disconnect T-VOR's vergence drive.
+    g_tvor:                float        = 1.0             # T-VOR version output gain (cross product); ~unity per Paige & Tomko 1991
+    g_tvor_verg:           float        = 1.0             # T-VOR vergence-rate gain (dot product · IPD/D²); surge → vergence drive
     g_tvor_l2_cyclo:       float        = 0.0             # L2 cyclo-vergence cross-coupling gain in T-VOR.  Set to 0 because the
                                                           # exact geometry creates a positive feedback loop with FCP's linear
                                                           # Hering's during head tilts (OCR cascade roll cyclo-vergence drift).
@@ -512,12 +521,13 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
     # This breaks the algebraic loop: VS needs rf (from GE), GE needs w_est (from VS).
     dx_vs, w_est   = vs.step(x_vs, jnp.concatenate([sensory_out.canal, sensory_out.scene_slip, rf_state]), brain_params)
     dx_grav, g_est = ge.step(x_grav, jnp.concatenate([w_est, sensory_out.otolith]), brain_params)
+    a_lin_est      = x_grav[ge._IDX_A]   # (3,) gravity_estimator's linear-accel estimate
     # OCR: world frame [x=right, y=up, z=fwd]. Right-ear-down → g_est[0] < 0 → -g_est[0] > 0.
     # Positive motor roll = left-ear-down (left-hand rule); negative = right-ear-down (same as head tilt).
     # Partial compensatory: eyes roll right-ear-down when head is right-ear-down (−g_est[0] < 0 → roll < 0).
     ocr            = jnp.array([0.0, 0.0, -brain_params.g_ocr * g_est[0]])
     dx_head, v_lin = he.step(x_head,
-                              jnp.concatenate([g_est, sensory_out.otolith,
+                              jnp.concatenate([a_lin_est,
                                                sensory_out.scene_linear_vel,
                                                jnp.array([sensory_out.scene_visible]),
                                                sensory_out.scene_disp_rate]),

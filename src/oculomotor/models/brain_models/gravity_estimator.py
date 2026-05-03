@@ -118,11 +118,14 @@ def step(x_grav, u, brain_params):
     w_est    = u[:3]              # VS net angular velocity, [yaw, pitch, roll] (deg/s)
     gia      = u[3:]              # otolith GIA, world frame [x=right, y=up, z=fwd] (m/s²)
 
-    # Residual = gia − g_est.  (a_lin no longer subtracted from the residual; the
-    # competing-estimator scheme was driving its own coupling issues during sustained
-    # tilts.  Revisit if the somatogravic / translation-as-tilt ambiguity becomes a
-    # problem again.)
-    a_est = gia - g_est
+    # Residual after both estimates: r = gia − g_est − a_lin.  Both g_est and a_lin
+    # compete for the residual — once a_lin captures the true linear acceleration
+    # component, g_est stops being pulled toward transient accel.  This is the
+    # Laurens-Angelaki style decomposition: the brain attributes the GIA between
+    # gravity (slow, large) and translation (transient).  The downstream HE then
+    # consumes a_lin (the brain's translation estimate) instead of (gia − g_est)
+    # raw residual, so HE doesn't integrate gravity-mismatch artifacts into v_lin.
+    a_est = gia - g_est - a_lin
 
     # Transport: rotate gravity estimate with VS angular velocity (VN → uvula/nodulus pathway)
     # ypr_to_xyz converts [yaw,pitch,roll] → xyz rotation-axis vector for cross product
@@ -132,8 +135,18 @@ def step(x_grav, u, brain_params):
     # Gravity correction: pull toward residual (gia − g_est − a_lin) with TC = tau_grav
     dg = transport + (1.0 / brain_params.tau_grav) * a_est
 
-    # Linear acceleration: tracks the same residual; competes with g_est for it
-    da = brain_params.K_lin * a_est
+    # Linear acceleration: tracks the residual + decays toward 0 with TC τ_a.
+    # The decay is the deterministic stand-in for the Kalman prior on translation:
+    # without sustained evidence, a_lin returns to 0 (brain reverts to "no acceleration").
+    # SS for sustained residual r: a_lin_ss = K_lin · τ_a · r (rather than capturing
+    # the entire residual indefinitely).  Without the decay, a_lin permanently captured
+    # any DC residual, leaking into HE → spurious v_lin growth (e.g. OVAR pollution).
+    #
+    # The small residual v_lin that remains during OVAR is along the rotation axis
+    # ("screw direction"), matching subjects' perceived sustained linear translation
+    # during prolonged off-vertical-axis rotation (Denise, Darlot, Droulez, Cohen,
+    # Berthoz 1988 Exp Brain Res 67:629; Wood 2002 J Vest Res 12:223).
+    da = brain_params.K_lin * a_est - a_lin / brain_params.tau_a_lin
 
     # Rotational feedback for VS — Laurens & Angelaki (2011): GIA × G_down / G0²
     # G_down = −g_est (g_est is specific force UP; G_down points DOWN).

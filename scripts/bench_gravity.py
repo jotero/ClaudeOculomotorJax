@@ -16,6 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import bench_utils as utils
 
 import numpy as np
+import jax
 import jax.numpy as jnp
 import matplotlib
 if '--show' not in sys.argv:
@@ -183,9 +184,24 @@ def _ocr(show):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _ovar(show):
-    SPIN_VEL  = 60.0
-    TOTAL     = 60.0
-    TILTS_DEG = [10.0, 30.0, 60.0, 90.0]
+    from oculomotor.models.brain_models.brain_model import _IDX_HEAD
+    from oculomotor.models.plant_models.readout import rotation_matrix
+    from oculomotor.models.sensory_models.retina import ypr_to_xyz
+    SPIN_VEL    = 60.0
+    TILTS_DEG   = [10.0, 30.0, 60.0, 90.0]
+    # Stimulus protocol (separated tilt and rotation events):
+    #   [0, T_TILT_START):           upright at rest
+    #   [T_TILT_START, T_TILT_END):  tilt ramp at TILT_VEL deg/s up to tilt_deg
+    #   [T_TILT_END, T_ROT_START):   rest at tilted position — let g_est settle
+    #   [T_ROT_START, T_ROT_RAMP):   rotation ramp 0 → SPIN_VEL
+    #   [T_ROT_RAMP, TOTAL):         constant SPIN_VEL
+    TILT_VEL      = 30.0   # deg/s tilt rate
+    T_TILT_START  = 2.0
+    T_TILT_END_MAX = T_TILT_START + 90.0 / TILT_VEL   # 5 s for biggest tilt
+    T_ROT_START   = 35.0                              # delay rotation onset to let a_est / v_lin fully settle after tilt
+    ROT_RAMP      = 1.0                                # 1 s smooth ramp
+    T_ROT_RAMP    = T_ROT_START + ROT_RAMP
+    TOTAL         = T_ROT_RAMP + 50.0                  # 50 s of clean rotation
 
     params = with_brain(PARAMS_DEFAULT, K_gd=K_GD)
     cfg    = SimConfig(warmup_s=0.0)   # start from rest (v[0]=0 required)
@@ -194,22 +210,31 @@ def _ovar(show):
     period = 360.0 / SPIN_VEL
 
     colors = ['#1b7837', '#762a83', '#e08214', '#c0392b']
+    # Track right-axis handles so we can format them after the per-condition loop.
+    a_est_axes = []
 
-    fig, axes = plt.subplots(4, 1, figsize=(14, 12), sharex=True)
+    # Layout: SPV | g_est[x,y,z] (3) | v_lin[x,y,z] (3) | VS | Stimulus = 9 rows
+    fig, axes = plt.subplots(9, 1, figsize=(14, 22), sharex=True)
     fig.suptitle(
         f'OVAR — Off-Vertical Axis Rotation  (Laurens & Angelaki 2011, Fig 5)\n'
         f'{SPIN_VEL:.0f} °/s rotation, K_gd={K_GD}, tau_grav={TAU_GRAV}',
         fontsize=12, fontweight='bold')
 
     for ci, tilt_deg in enumerate(TILTS_DEG):
-        # Head starts tilted (left-ear-down = positive roll) then rotates at SPIN_VEL
-        # around the body yaw axis (intrinsic).  This is the classic OVAR geometry:
-        # the chair tilts the subject then rotates around the chair's (tilted) axis.
-        head_vel = np.stack([np.where(t > 0, SPIN_VEL, 0.0),
-                             np.zeros(T),
-                             np.zeros(T)], axis=1)
+        # Build per-condition velocity profile with separated tilt and rotation phases.
+        T_TILT_END = T_TILT_START + tilt_deg / TILT_VEL
+        # Roll velocity: ramp up to TILT_VEL during [T_TILT_START, T_TILT_END), 0 elsewhere.
+        # Integrates to tilt_deg by T_TILT_END.
+        roll_vel = np.where((t >= T_TILT_START) & (t < T_TILT_END), TILT_VEL, 0.0)
+        # Yaw velocity: 0 until T_ROT_START, then linear ramp to SPIN_VEL over ROT_RAMP s, hold.
+        yaw_vel = np.zeros(T)
+        ramp_mask = (t >= T_ROT_START) & (t < T_ROT_RAMP)
+        hold_mask = t >= T_ROT_RAMP
+        yaw_vel[ramp_mask] = SPIN_VEL * (t[ramp_mask] - T_ROT_START) / ROT_RAMP
+        yaw_vel[hold_mask] = SPIN_VEL
+        head_vel = np.stack([yaw_vel, np.zeros(T), roll_vel], axis=1)
         head_km  = km.build_kinematics(t, rot_vel=head_vel,
-                                       rot_pos_0=[0.0, 0.0, tilt_deg])
+                                       rot_pos_0=[0.0, 0.0, 0.0])  # start upright
 
         st       = simulate(params, t,
                             head=head_km,
@@ -220,52 +245,95 @@ def _ovar(show):
         eye_pos = (np.array(st.plant[:, 0]) + np.array(st.plant[:, 3])) / 2.0
         eye_vel = np.gradient(eye_pos, DT)
         spv     = extract_spv_states(st, t)[:, 0]
-        g_est   = np.array(st.brain[:, _IDX_GRAV])
+        g_est   = np.array(st.brain[:, _IDX_GRAV])[:, :3]
+        v_lin   = np.array(st.brain[:, _IDX_HEAD])
+
+        # Compute gia per timestep from head pose (no head translation here, so a_head=0).
+        # gia_head = R(q_head)^T @ G_WORLD.  Then a_est = gia − g_est is what HE integrates.
+        # Vectorized via jax.vmap.
+        q_head_arr = jnp.asarray(head_km.rot_pos)
+        def _gia_one(q):
+            R = rotation_matrix(ypr_to_xyz(q))
+            return R.T @ jnp.array([0.0, G0, 0.0])
+        gia   = np.asarray(jax.vmap(_gia_one)(q_head_arr))
+        a_est = gia - g_est   # what HE integrates into v_lin
 
         col = colors[ci]
         lbl = f'{tilt_deg:.0f}° tilt'
         axes[0].plot(t, spv,             color=col, lw=1.2, alpha=0.85, label=lbl)
         axes[1].plot(t, g_est[:, 0],     color=col, lw=1.2, label=lbl)
-        axes[2].plot(t, vs_net(st)[:,0], color=col, lw=1.2, label=lbl)
+        axes[2].plot(t, g_est[:, 1],     color=col, lw=1.2, label=lbl)
+        axes[3].plot(t, g_est[:, 2],     color=col, lw=1.2, label=lbl)
+        axes[4].plot(t, v_lin[:, 0]*100, color=col, lw=1.2, label=lbl)    # cm/s
+        axes[5].plot(t, v_lin[:, 1]*100, color=col, lw=1.2, label=lbl)
+        axes[6].plot(t, v_lin[:, 2]*100, color=col, lw=1.2, label=lbl)
+        # Overlay a_est (HE integrand) on a right axis for each v_lin panel.
+        for axis_idx, row in [(0, 4), (1, 5), (2, 6)]:
+            if ci == 0:
+                a_est_axes.append(axes[row].twinx())
+            ax_r = a_est_axes[axis_idx]
+            ax_r.plot(t, a_est[:, axis_idx], color=col, lw=0.8, ls='--', alpha=0.6,
+                      label=f'a_est {lbl}' if axis_idx == 0 else None)
+        axes[7].plot(t, vs_net(st)[:,0], color=col, lw=1.2, label=lbl)
         # Stimulus: yaw velocity is identical for all conditions — plot once
         if ci == 0:
-            axes[3].plot(t, head_km.rot_vel[:, 0], 'k-', lw=1.5, label=f'{SPIN_VEL:.0f}°/s body yaw')
+            axes[8].plot(t, head_km.rot_vel[:, 0], 'k-', lw=1.5, label=f'{SPIN_VEL:.0f}°/s body yaw')
 
     # Twin axis: right = initial roll tilt per condition (horizontal colored lines)
-    ax3b = axes[3].twinx()
+    ax_stim_b = axes[8].twinx()
     for ci, tilt_deg in enumerate(TILTS_DEG):
-        ax3b.axhline(tilt_deg, color=colors[ci], lw=1.5, ls='--',
+        ax_stim_b.axhline(tilt_deg, color=colors[ci], lw=1.5, ls='--',
                      label=f'Initial roll tilt = {tilt_deg:.0f}°')
-    ax3b.set_ylabel('Initial roll tilt (°)', fontsize=9, color='gray')
-    ax3b.tick_params(axis='y', labelcolor='gray')
-    ax3b.set_ylim(-5, 100)
+    ax_stim_b.set_ylabel('Initial roll tilt (°)', fontsize=9, color='gray')
+    ax_stim_b.tick_params(axis='y', labelcolor='gray')
+    ax_stim_b.set_ylim(-5, 100)
 
-    pm = np.arange(period, TOTAL, period)
-    for ax in axes[:3]:
+    # Period markers start after rotation reaches steady state (T_ROT_RAMP).
+    pm = np.arange(T_ROT_RAMP + period, TOTAL, period)
+    # Also mark the tilt and rotation onset events.
+    event_marks = [(T_TILT_START, '#1f77b4', 'tilt start'),
+                   (T_ROT_START,  '#d62728', 'rot start')]
+    for ax in axes[:8]:
         for p in pm: ax.axvline(p, color='gray', lw=0.4, ls=':', alpha=0.5)
+        for ev_t, ev_c, _ in event_marks: ax.axvline(ev_t, color=ev_c, lw=0.6, ls='--', alpha=0.4)
         ax.axhline(0, color='k', lw=0.4); ax.grid(True, alpha=0.15)
 
-    axes[3].grid(True, alpha=0.15); axes[3].axhline(0, color='k', lw=0.4)
-    for p in pm: axes[3].axvline(p, color='gray', lw=0.4, ls=':', alpha=0.5)
+    axes[8].grid(True, alpha=0.15); axes[8].axhline(0, color='k', lw=0.4)
+    for p in pm: axes[8].axvline(p, color='gray', lw=0.4, ls=':', alpha=0.5)
+    for ev_t, ev_c, _ in event_marks: axes[8].axvline(ev_t, color=ev_c, lw=0.6, ls='--', alpha=0.4)
 
-    axes[0].set_ylabel('Slow Phase Velocity (SPV, deg/s)', fontsize=9); axes[0].legend(fontsize=8)
+    axes[0].set_ylabel('SPV (deg/s)', fontsize=9); axes[0].legend(fontsize=8)
     axes[0].set_title('SPV sinusoidally modulated at rotation period', fontsize=9)
 
     amp_ref = G0 * np.sin(np.radians(TILTS_DEG[-1]))
-    axes[1].set_ylabel('g_est[0] interaural/right (m/s²)', fontsize=9); axes[1].legend(fontsize=8)
-    axes[1].set_title(f'Gravity estimate oscillates ±G0 sin(a); 90 deg: ±{amp_ref:.1f} m/s²', fontsize=9)
+    axes[1].set_ylabel('g_est[x]\ninteraural (m/s²)', fontsize=9); axes[1].legend(fontsize=8)
+    axes[1].set_title(f'g_est interaural — oscillates ±G₀ sin(α); 90° → ±{amp_ref:.1f} m/s²', fontsize=9)
     axes[1].set_ylim(-12, 12)
+    axes[2].set_ylabel('g_est[y]\nvertical (m/s²)', fontsize=9); axes[2].legend(fontsize=8)
+    axes[2].set_title(f'g_est vertical — should stay near G₀ ≈ {G0:.2f} m/s² (deviation = somatogravic illusion)', fontsize=9)
+    axes[3].set_ylabel('g_est[z]\nforward (m/s²)', fontsize=9); axes[3].legend(fontsize=8)
+    axes[3].set_title('g_est forward — should oscillate too (orthogonal to interaural at 90°)', fontsize=9)
 
-    axes[2].set_ylabel('Velocity Storage (VS) net yaw (deg/s)', fontsize=9); axes[2].legend(fontsize=8)
-    axes[2].set_title('Velocity Storage modulated by gravity dumping (K_gd)', fontsize=9)
+    axes[4].set_ylabel('v_lin[x]\nrightward (cm/s)', fontsize=9); axes[4].legend(fontsize=8, loc='upper left')
+    axes[4].set_title('v_lin (left axis, solid) and a_est = gia − g_est (right axis, dashed) — HE integrates a_est into v_lin', fontsize=9)
+    axes[5].set_ylabel('v_lin[y]\nupward (cm/s)', fontsize=9); axes[5].legend(fontsize=8, loc='upper left')
+    axes[6].set_ylabel('v_lin[z]\nforward (cm/s)', fontsize=9); axes[6].legend(fontsize=8, loc='upper left')
+    for axis_idx, row in [(0, 4), (1, 5), (2, 6)]:
+        ax_r = a_est_axes[axis_idx]
+        ax_r.set_ylabel(f'a_est[{["x","y","z"][axis_idx]}]\n(m/s²)', fontsize=8, color='gray')
+        ax_r.tick_params(axis='y', labelcolor='gray', labelsize=7)
+        ax_r.axhline(0, color='gray', lw=0.3, alpha=0.5)
 
-    axes[3].set_ylabel('Head yaw velocity (°/s)', fontsize=9, color='k')
-    axes[3].set_xlabel('Time (s)', fontsize=9)
-    axes[3].set_title('Stimulus: constant body-yaw rotation (solid) + initial roll tilt per condition (dashed, right axis)',
+    axes[7].set_ylabel('VS net yaw (deg/s)', fontsize=9); axes[7].legend(fontsize=8)
+    axes[7].set_title('Velocity Storage modulated by gravity dumping (K_gd)', fontsize=9)
+
+    axes[8].set_ylabel('Head yaw vel (°/s)', fontsize=9, color='k')
+    axes[8].set_xlabel('Time (s)', fontsize=9)
+    axes[8].set_title('Stimulus: constant body-yaw rotation (solid) + initial roll tilt per condition (dashed, right)',
                       fontsize=9)
-    lines_l, labels_l = axes[3].get_legend_handles_labels()
-    lines_r, labels_r = ax3b.get_legend_handles_labels()
-    axes[3].legend(lines_l + lines_r, labels_l + labels_r, fontsize=7, loc='center right', ncol=2)
+    lines_l, labels_l = axes[8].get_legend_handles_labels()
+    lines_r, labels_r = ax_stim_b.get_legend_handles_labels()
+    axes[8].legend(lines_l + lines_r, labels_l + labels_r, fontsize=7, loc='center right', ncol=2)
 
     fig.tight_layout()
     path, rp = utils.save_fig(fig, 'gravity_ovar', show=show)
@@ -274,8 +342,14 @@ def _ovar(show):
         description=f'{SPIN_VEL:.0f}°/s rotation, tilt angles {TILTS_DEG}°. '
                     'Replicates Laurens & Angelaki (2011) Fig 5.',
         expected='SPV sinusoidally modulated at rotation period. '
-                 'Modulation amplitude ∝ sin(tilt). g_est oscillates ±G₀ sin(α).',
-        citation='Laurens & Angelaki (2011) Exp Brain Res 210:407',
+                 'Modulation amplitude ∝ sin(tilt). g_est oscillates ±G₀ sin(α). '
+                 'A small residual v_lin DC bias along the rotation axis ("screw direction") '
+                 'reflects the perceived sustained linear translation reported by subjects '
+                 'during prolonged OVAR (Denise et al. 1988; Wood 2002).',
+        citation='Laurens & Angelaki (2011) Exp Brain Res 210:407; '
+                 'Denise, Darlot, Droulez, Cohen, Berthoz (1988) Exp Brain Res 67:629 — '
+                 'perceived linear translation during OVAR; '
+                 'Wood (2002) J Vest Res 12:223 — tilt-translation discrimination',
         fig_type='behavior')
 
 
@@ -760,3 +834,7 @@ if __name__ == '__main__':
                     help='Run only this benchmark (default: all)')
     args = ap.parse_args()
     run(show=args.show, only=args.bench)
+    if args.show:
+        # save_fig uses non-blocking show; final blocking show keeps windows open.
+        import matplotlib.pyplot as _plt
+        _plt.show()

@@ -30,7 +30,7 @@ import jax.numpy as jnp
 
 
 N_STATES  = 3   # [v_lin (3,)]
-N_INPUTS  = 13  # [g_est (3,) | gia (3,) | scene_lin_vel (3,) | scene_visible (1,) | scene_disp_rate (3,)]
+N_INPUTS  = 10  # [a_lin (3,) | scene_lin_vel (3,) | scene_visible (1,) | scene_disp_rate (3,)]
 N_OUTPUTS = 3   # [v_lin (3,)]
 
 X0 = jnp.zeros(3)
@@ -41,10 +41,13 @@ def step(x_head, u, brain_params):
 
     Args:
         x_head:       (3,)  v_lin estimate (m/s, head frame)
-        u:            (13,) [g_est (3,) | gia (3,) | scene_lin_vel (3,) |
-                             scene_visible (1,) | scene_disp_rate (3,)]
-                            g_est:           gravity estimate (m/s², head frame)
-                            gia:             gravitoinertial accel (m/s², head frame)
+        u:            (10,) [a_lin (3,) | scene_lin_vel (3,) | scene_visible (1,) |
+                             scene_disp_rate (3,)]
+                            a_lin:           linear acceleration estimate (m/s², head frame)
+                                             from gravity_estimator — the brain's translation-
+                                             attributed component of (gia − g_est).  Using a_lin
+                                             instead of raw (gia − g_est) avoids integrating
+                                             gravity-mismatch artifacts into v_lin (Laurens-style).
                             scene_lin_vel:   cyclopean translational scene flow (m/s, head frame)
                             scene_visible:   scalar in [0,1] — visual fusion gate
                             scene_disp_rate: per-eye scene-flow differential (m/s, head frame).
@@ -57,14 +60,16 @@ def step(x_head, u, brain_params):
         v_lin:   (3,)  v_lin (m/s), passed through
     """
     v_lin           = x_head
-    g_est           = u[:3]
-    gia             = u[3:6]
-    scene_lin_vel   = u[6:9]
-    scene_visible   = u[9]
-    scene_disp_rate = u[10:13]
+    a_lin           = u[:3]
+    scene_lin_vel   = u[3:6]
+    scene_visible   = u[6]
+    scene_disp_rate = u[7:10]
 
-    # Vestibular: linear acceleration after gravity removal.
-    a_est = gia - g_est
+    # Vestibular: use the gravity estimator's a_lin directly (the brain's translation-
+    # attributed component), not raw (gia − g_est).  This is the Laurens-Angelaki
+    # decomposition: g_est captures slow gravity, a_lin captures transient acceleration.
+    # HE then integrates only the translation part, not the gravity-mismatch artifact.
+    a_est = a_lin
 
     # Visual: scene flow is opposite to head motion in the head frame.  Gated by
     # scene visibility — in dark (scene_visible = 0) the visual pull turns off
