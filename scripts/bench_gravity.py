@@ -377,7 +377,7 @@ def _tilt_suppression(show):
     cfg    = SimConfig(warmup_s=0.0)
     colors = ['steelblue', '#2196a8', '#e08214', '#c62e2e']
 
-    fig, axes = plt.subplots(3, 1, figsize=(14, 11), sharex=True)
+    fig, axes = plt.subplots(4, 1, figsize=(14, 13), sharex=True)
     fig.suptitle(
         f'VOR Tilt Suppression  (Laurens & Angelaki 2011, Fig 6)\n'
         f'Upright {ROT_VEL:.0f}°/s yaw for {ROT_T:.0f} s; tilt applied after stop;  '
@@ -419,21 +419,22 @@ def _tilt_suppression(show):
         lbl = f'{tilt_deg:.0f}° roll{upright_sfx}' + (f'  τ={tau:.1f} s' if tau else '')
 
         axes[0].plot(t_rel, spv,     color=col, lw=1.2, label=lbl)
-        axes[1].plot(t_rel, g_est_y, color=col, lw=1.2, label=f'{tilt_deg:.0f}°{upright_sfx}')
+        axes[1].plot(t_rel, eye_pos, color=col, lw=1.0, label=f'{tilt_deg:.0f}°{upright_sfx}')
+        axes[2].plot(t_rel, g_est_y, color=col, lw=1.2, label=f'{tilt_deg:.0f}°{upright_sfx}')
         if t_fit is not None:
             axes[0].plot(t_fit, y_fit, color=col, lw=2.5, ls=':', alpha=0.9)
 
         # Stimulus panel: 3D head velocity — yaw (shared) and roll (per condition)
         if ci == 0:
-            axes[2].plot(t_rel, hv_yaw_base, color='#333333', lw=1.5, ls='--',
+            axes[3].plot(t_rel, hv_yaw_base, color='#333333', lw=1.5, ls='--',
                          label='Yaw vel (all cond.)')
-        axes[2].plot(t_rel, hv_roll, color=col, lw=1.5, ls='-',
+        axes[3].plot(t_rel, hv_roll, color=col, lw=1.5, ls='-',
                      label=f'Roll vel {tilt_deg:.0f}°')
 
-    axes[2].set_ylabel('Head velocity (°/s)', fontsize=8)
-    axes[2].set_title('Stimulus: head velocity 3D — yaw (dashed, shared); roll (solid, per condition)',
+    axes[3].set_ylabel('Head velocity (°/s)', fontsize=8)
+    axes[3].set_title('Stimulus: head velocity 3D — yaw (dashed, shared); roll (solid, per condition)',
                       fontsize=9)
-    axes[2].legend(fontsize=7, ncol=2, loc='upper left')
+    axes[3].legend(fontsize=7, ncol=2, loc='upper left')
 
     xlim = (-ROT_T - 2.0, max_tilt_dur + COAST_T + 2.0)
     for ax in axes:
@@ -443,16 +444,22 @@ def _tilt_suppression(show):
         ax.grid(True, alpha=0.15)
 
     axes[0].set_ylabel('SPV (°/s)', fontsize=9); axes[0].legend(fontsize=8, ncol=2)
+    axes[0].set_ylim(-100, 100)
     axes[0].set_title('Post-rotatory SPV: all conditions identical during rotation; '
                       'TC shortened by tilt after stop', fontsize=9)
 
-    axes[1].set_ylabel('g_est[0] interaural/right (m/s²)', fontsize=9)
+    axes[1].set_ylabel('Eye position yaw (°)', fontsize=9)
     axes[1].legend(fontsize=8, ncol=2)
-    axes[1].set_ylim(-12, 12)
-    axes[1].set_title('Gravity estimate (interaural): 0 during upright rotation; '
+    axes[1].set_title('Binocular yaw position — quick-phase resets visible; check for orbital saturation',
+                      fontsize=9)
+
+    axes[2].set_ylabel('g_est[0] interaural/right (m/s²)', fontsize=9)
+    axes[2].legend(fontsize=8, ncol=2)
+    axes[2].set_ylim(-12, 12)
+    axes[2].set_title('Gravity estimate (interaural): 0 during upright rotation; '
                       'steps to +G0·sin(θ) after tilt', fontsize=9)
 
-    axes[2].set_xlabel('Time relative to rotation stop (s)', fontsize=9)
+    axes[3].set_xlabel('Time relative to rotation stop (s)', fontsize=9)
 
     # Inset: TC vs tilt — bottom-right to avoid overlap with data and legend
     ax_ins = axes[0].inset_axes([0.72, 0.05, 0.25, 0.38])
