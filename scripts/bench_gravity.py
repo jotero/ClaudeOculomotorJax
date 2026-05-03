@@ -27,6 +27,7 @@ from oculomotor.sim.simulator import (
     PARAMS_DEFAULT, with_brain, simulate, SimConfig,
     _IDX_GRAV, _IDX_C, _IDX_SG, _IDX_VERG, _IDX_PURSUIT,
 )
+from oculomotor.models.brain_models.brain_model import _IDX_TVOR
 from oculomotor.sim import kinematics as km
 from oculomotor.analysis import ax_fmt, vs_net, ni_net, fit_tc, extract_spv_states
 from oculomotor.models.sensory_models.sensory_model import PINV_SENS as CANAL_PINV
@@ -362,12 +363,12 @@ def _tilt_suppression(show):
     ROT_T     = 20.0     # rotation duration (s): identical for all conditions
     COAST_T   = 60.0     # post-tilt coast (s)
     TILTS_DEG = [0.0, 30.0, 60.0, 90.0]
-    TILT_VEL  = 60.0     # roll tilt speed applied AFTER rotation stops
+    TILT_DUR  = 0.5      # all tilts complete in this time (s); roll-vel scales with angle
 
     # Protocol: rotate upright for ROT_T s (all conditions identical),
-    # then tilt to θ°, then coast for COAST_T s.
+    # then tilt to θ° over TILT_DUR s, then coast for COAST_T s.
     # t_rel = 0 at rotation stop.
-    max_tilt_dur = max(TILTS_DEG) / TILT_VEL   # = 1.5 s (90° at 60°/s)
+    max_tilt_dur = TILT_DUR
     t_total = ROT_T + max_tilt_dur + COAST_T
     t_arr   = np.arange(0.0, t_total, DT)
     T       = len(t_arr)
@@ -377,23 +378,25 @@ def _tilt_suppression(show):
     cfg    = SimConfig(warmup_s=0.0)
     colors = ['steelblue', '#2196a8', '#e08214', '#c62e2e']
 
-    fig, axes = plt.subplots(4, 1, figsize=(14, 13), sharex=True)
+    fig, axes = plt.subplots(8, 1, figsize=(14, 24), sharex=True)
     fig.suptitle(
         f'VOR Tilt Suppression  (Laurens & Angelaki 2011, Fig 6)\n'
-        f'Upright {ROT_VEL:.0f}°/s yaw for {ROT_T:.0f} s; tilt applied after stop;  '
+        f'Upright {ROT_VEL:.0f}°/s yaw for {ROT_T:.0f} s; nose-down pitch tilt applied after stop;  '
         f'K_gd={K_GD}, tau_grav={TAU_GRAV}',
-        fontsize=12, fontweight='bold')
+        fontsize=12, fontweight='bold', y=0.995)
 
     taus = {}
 
     hv_yaw_base = np.where(t_arr < ROT_T, ROT_VEL, 0.0)   # same for all conditions
 
     for ci, tilt_deg in enumerate(TILTS_DEG):
-        tilt_dur = tilt_deg / TILT_VEL if tilt_deg > 0 else 0.0
-        # Tilt starts right when rotation stops (t=ROT_T), ends at t=ROT_T+tilt_dur
-        hv_roll = np.where(
-            (t_arr >= ROT_T) & (t_arr < ROT_T + tilt_dur), TILT_VEL, 0.0)
-        hv_3d   = np.stack([hv_yaw_base, np.zeros(T), hv_roll], axis=1)
+        tilt_dur = TILT_DUR if tilt_deg > 0 else 0.0
+        tilt_vel = tilt_deg / TILT_DUR if tilt_deg > 0 else 0.0
+        # Tilt starts right when rotation stops (t=ROT_T), ends at t=ROT_T+tilt_dur.
+        # Negative pitch velocity = nose-down (chin to chest).
+        hv_pitch = np.where(
+            (t_arr >= ROT_T) & (t_arr < ROT_T + tilt_dur), -tilt_vel, 0.0)
+        hv_3d    = np.stack([hv_yaw_base, hv_pitch, np.zeros(T)], axis=1)
 
         head_km = km.build_kinematics(t_arr, rot_vel=hv_3d)
 
@@ -403,10 +406,19 @@ def _tilt_suppression(show):
                       target_present_array=np.zeros(T),
                       sim_config=cfg, return_states=True)
 
-        eye_pos = (np.array(st.plant[:, 0]) + np.array(st.plant[:, 3])) / 2.0
-        eye_vel = np.gradient(eye_pos, DT)
-        spv     = extract_spv_states(st, t_arr)[:, 0]
-        g_est_y = np.array(st.brain[:, _IDX_GRAV])[:, 0]
+        eye_pos_L = np.array(st.plant[:, 0])           # left eye yaw   (deg)
+        eye_pos_R = np.array(st.plant[:, 3])           # right eye yaw  (deg)
+        eye_pit_L = np.array(st.plant[:, 1])           # left eye pitch (deg)
+        eye_rol_L = np.array(st.plant[:, 2])           # left eye roll  (deg)
+        eye_pos   = (eye_pos_L + eye_pos_R) / 2.0      # binocular avg (for SPV gradient)
+        verg      = eye_pos_L - eye_pos_R              # vergence (L − R, deg) → convergence positive
+        eye_vel   = np.gradient(eye_pos, DT)
+        spv       = extract_spv_states(st, t_arr, eye='version')[:, 0]   # true cyclopean SPV (yaw)
+        g_est_x   = np.array(st.brain[:, _IDX_GRAV])[:, 0]    # interaural / right
+        g_est_z   = np.array(st.brain[:, _IDX_GRAV])[:, 2]    # forward / roll-axis
+        x_tvor_x  = np.array(st.brain[:, _IDX_TVOR])[:, 0]   # interaural lin vel estimate (m/s)
+        x_tvor_z  = np.array(st.brain[:, _IDX_TVOR])[:, 2]   # forward lin vel estimate (m/s)
+        vs        = np.array(vs_net(st))                     # (T, 3) VS net yaw/pitch/roll (deg/s)
 
         # Fit TC starting after tilt completes
         fit_start = tilt_dur
@@ -418,23 +430,44 @@ def _tilt_suppression(show):
         upright_sfx = ' (upright)' if tilt_deg == 0.0 else ''
         lbl = f'{tilt_deg:.0f}° roll{upright_sfx}' + (f'  τ={tau:.1f} s' if tau else '')
 
-        axes[0].plot(t_rel, spv,     color=col, lw=1.2, label=lbl)
-        axes[1].plot(t_rel, eye_pos, color=col, lw=1.0, label=f'{tilt_deg:.0f}°{upright_sfx}')
-        axes[2].plot(t_rel, g_est_y, color=col, lw=1.2, label=f'{tilt_deg:.0f}°{upright_sfx}')
+        axes[0].plot(t_rel, spv,       color=col, lw=1.2, label=lbl)
+        axes[1].plot(t_rel, vs[:, 0],  color=col, lw=1.2, ls='-',
+                     label=f'{tilt_deg:.0f}° yaw')
+        axes[1].plot(t_rel, vs[:, 1],  color=col, lw=1.0, ls='--',
+                     label=f'{tilt_deg:.0f}° pitch')
+        axes[1].plot(t_rel, vs[:, 2],  color=col, lw=1.0, ls=':',
+                     label=f'{tilt_deg:.0f}° roll')
+        axes[2].plot(t_rel, eye_pos_L, color=col, lw=1.0, ls='-',
+                     label=f'{tilt_deg:.0f}° L')
+        axes[2].plot(t_rel, eye_pos_R, color=col, lw=1.0, ls='--',
+                     label=f'{tilt_deg:.0f}° R')
+        axes[3].plot(t_rel, eye_pit_L, color=col, lw=1.0, ls='-',
+                     label=f'{tilt_deg:.0f}° pitch')
+        axes[3].plot(t_rel, eye_rol_L, color=col, lw=1.0, ls=':',
+                     label=f'{tilt_deg:.0f}° roll')
+        axes[4].plot(t_rel, verg,      color=col, lw=1.0, label=f'{tilt_deg:.0f}°{upright_sfx}')
+        axes[5].plot(t_rel, g_est_x,   color=col, lw=1.2, ls='-',
+                     label=f'{tilt_deg:.0f}° interaural')
+        axes[5].plot(t_rel, g_est_z,   color=col, lw=1.2, ls='--',
+                     label=f'{tilt_deg:.0f}° roll/fwd')
+        axes[6].plot(t_rel, x_tvor_x, color=col, lw=1.2, ls='-',
+                     label=f'{tilt_deg:.0f}° interaural')
+        axes[6].plot(t_rel, x_tvor_z, color=col, lw=1.2, ls='--',
+                     label=f'{tilt_deg:.0f}° fwd')
         if t_fit is not None:
             axes[0].plot(t_fit, y_fit, color=col, lw=2.5, ls=':', alpha=0.9)
 
-        # Stimulus panel: 3D head velocity — yaw (shared) and roll (per condition)
+        # Stimulus panel: 3D head velocity — yaw (shared) and pitch (per condition)
         if ci == 0:
-            axes[3].plot(t_rel, hv_yaw_base, color='#333333', lw=1.5, ls='--',
+            axes[7].plot(t_rel, hv_yaw_base, color='#333333', lw=1.5, ls='--',
                          label='Yaw vel (all cond.)')
-        axes[3].plot(t_rel, hv_roll, color=col, lw=1.5, ls='-',
-                     label=f'Roll vel {tilt_deg:.0f}°')
+        axes[7].plot(t_rel, hv_pitch, color=col, lw=1.5, ls='-',
+                     label=f'Pitch vel {tilt_deg:.0f}°')
 
-    axes[3].set_ylabel('Head velocity (°/s)', fontsize=8)
-    axes[3].set_title('Stimulus: head velocity 3D — yaw (dashed, shared); roll (solid, per condition)',
+    axes[7].set_ylabel('Head velocity (°/s)', fontsize=8)
+    axes[7].set_title('Stimulus: head velocity 3D — yaw (dashed, shared); pitch (solid, per condition)',
                       fontsize=9)
-    axes[3].legend(fontsize=7, ncol=2, loc='upper left')
+    axes[7].legend(fontsize=7, ncol=2, loc='upper left')
 
     xlim = (-ROT_T - 2.0, max_tilt_dur + COAST_T + 2.0)
     for ax in axes:
@@ -443,23 +476,42 @@ def _tilt_suppression(show):
         ax.axhline(0.0, color='k',   lw=0.4)
         ax.grid(True, alpha=0.15)
 
-    axes[0].set_ylabel('SPV (°/s)', fontsize=9); axes[0].legend(fontsize=8, ncol=2)
+    axes[0].set_ylabel('Version SPV (°/s)', fontsize=9); axes[0].legend(fontsize=8, ncol=2)
     axes[0].set_ylim(-100, 100)
-    axes[0].set_title('Post-rotatory SPV: all conditions identical during rotation; '
-                      'TC shortened by tilt after stop', fontsize=9)
-
-    axes[1].set_ylabel('Eye position yaw (°)', fontsize=9)
-    axes[1].legend(fontsize=8, ncol=2)
-    axes[1].set_title('Binocular yaw position — quick-phase resets visible; check for orbital saturation',
+    axes[0].set_title('Post-rotatory version SPV — TC shortened by tilt after rotation stop',
                       fontsize=9)
 
-    axes[2].set_ylabel('g_est[0] interaural/right (m/s²)', fontsize=9)
-    axes[2].legend(fontsize=8, ncol=2)
-    axes[2].set_ylim(-12, 12)
-    axes[2].set_title('Gravity estimate (interaural): 0 during upright rotation; '
-                      'steps to +G0·sin(θ) after tilt', fontsize=9)
+    axes[1].set_ylabel('VS net (°/s)', fontsize=9)
+    axes[1].legend(fontsize=7, ncol=4)
+    axes[1].set_title('Velocity storage net (xL − xR) — solid: yaw (the dumped axis); dashed: pitch; dotted: roll',
+                      fontsize=9)
 
-    axes[3].set_xlabel('Time relative to rotation stop (s)', fontsize=9)
+    axes[2].set_ylabel('Eye yaw (°)', fontsize=9)
+    axes[2].legend(fontsize=7, ncol=4)
+    axes[2].set_title('Eye yaw position — solid: left; dashed: right; check for orbital saturation and L/R divergence',
+                      fontsize=9)
+
+    axes[3].set_ylabel('Left eye pitch / roll (°)', fontsize=9)
+    axes[3].legend(fontsize=7, ncol=4)
+    axes[3].set_title('Left eye pitch (solid) and roll (dotted) — which axis hits orbital limit first',
+                      fontsize=9)
+
+    axes[4].set_ylabel('Vergence L−R yaw (°)', fontsize=9)
+    axes[4].legend(fontsize=8, ncol=2)
+    axes[4].set_title('Vergence (left − right yaw, convergence positive): should stay near 0 in dark with no target',
+                      fontsize=9)
+
+    axes[5].set_ylabel('g_est (m/s²)', fontsize=9)
+    axes[5].legend(fontsize=7, ncol=4)
+    axes[5].set_ylim(-12, 12)
+    axes[5].set_title('Gravity estimate — solid: g_est[0] interaural; dashed: g_est[2] roll/fwd', fontsize=9)
+
+    axes[6].set_ylabel('TVOR v_lin estimate (m/s)', fontsize=9)
+    axes[6].legend(fontsize=7, ncol=4)
+    axes[6].set_title('TVOR low-pass v_lin state (m/s) — solid: x_tvor[0] interaural; dashed: x_tvor[2] fwd',
+                      fontsize=9)
+
+    axes[7].set_xlabel('Time relative to rotation stop (s)', fontsize=9)
 
     # Inset: TC vs tilt — bottom-right to avoid overlap with data and legend
     ax_ins = axes[0].inset_axes([0.72, 0.05, 0.25, 0.38])
@@ -471,7 +523,7 @@ def _tilt_suppression(show):
         ax_ins.tick_params(labelsize=6); ax_ins.set_title('TC vs tilt', fontsize=7)
         ax_ins.grid(True, alpha=0.2)
 
-    fig.tight_layout()
+    fig.tight_layout(rect=[0, 0, 1, 0.975])
     path, rp = utils.save_fig(fig, 'gravity_tilt_suppression', show=show)
     return utils.fig_meta(path, rp,
         title='VOR Tilt Suppression',

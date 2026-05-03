@@ -200,17 +200,20 @@ def extract_z_opn(states):
     return np.array(states.brain[:, _IDX_SG])[:, 3]
 
 
-def extract_spv_states(states, t, margin_s=0.05):
+def extract_spv_states(states, t, margin_s=0.05, eye='left'):
     """Slow-phase velocity from a SimState trajectory, all 3 axes.
 
     Uses the OPN latch state (z_opn) for fast-phase detection, which is reliable
     even when the slow phase is fast (high-velocity nystagmus, VN infarct, etc.).
-    Eye velocity is derived from the left-eye plant state (indices 0:3).
 
     Args:
         states:   SimState trajectory
         t:        (T,) time array (s)
         margin_s: symmetric window expansion around each fast-phase epoch (s)
+        eye:      'left'    — left-eye plant state (legacy default)
+                  'right'   — right-eye plant state
+                  'version' — cyclopean (L+R)/2 — true conjugate slow-phase velocity
+                  'vergence' — (L−R), convergence positive — slow-phase vergence rate
 
     Returns:
         (T, 3) slow-phase velocity [yaw, pitch, roll] in deg/s.
@@ -218,7 +221,18 @@ def extract_spv_states(states, t, margin_s=0.05):
     """
     dt    = float(t[1] - t[0])
     z_opn = extract_z_opn(states)
-    ep    = np.array(states.plant[:, :3])   # left-eye rotation vector (T, 3)
+    ep_L  = np.array(states.plant[:, :3])   # left-eye rotation vector (T, 3)
+    ep_R  = np.array(states.plant[:, 3:6])  # right-eye rotation vector (T, 3)
+    if eye == 'left':
+        ep = ep_L
+    elif eye == 'right':
+        ep = ep_R
+    elif eye == 'version':
+        ep = 0.5 * (ep_L + ep_R)
+    elif eye == 'vergence':
+        ep = ep_L - ep_R
+    else:
+        raise ValueError(f"eye={eye!r}; expected 'left', 'right', 'version', or 'vergence'")
     return np.stack([
         extract_spv(t, np.gradient(ep[:, i], dt), z_opn=z_opn, margin_s=margin_s)
         for i in range(3)

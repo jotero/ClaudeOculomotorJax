@@ -271,7 +271,7 @@ class BrainParams(NamedTuple):
                                           # than acceleration, matching the brain's prior toward
                                           # tilt-interpretation in dark.  HE consumes a_lin directly,
                                           # so smaller a_lin → less v_lin pollution from OVAR / OCR.
-    tau_a_lin:             float = 0.2    # a_lin decay TC (s) — the deterministic stand-in for the
+    tau_a_lin:             float = 0.5    # a_lin decay TC (s) — the deterministic stand-in for the
                                           # Kalman prior on translation duration.  Real self-motion
                                           # accelerations are brief (~0.2–1 s for walking onset, sudden
                                           # movements), so a_lin should decay back to 0 fast in absence
@@ -361,20 +361,26 @@ class BrainParams(NamedTuple):
     # T-VOR response, prevents runaway from gravity-mismatch artifacts.
     # Vest+visual fusion of head linear velocity is now done in heading_estimator
     # (K_he_vis); T-VOR consumes the combined v_lin directly.
-    g_tvor:                float        = 1.0             # T-VOR version output gain (cross product); ~unity per Paige & Tomko 1991
-    g_tvor_verg:           float        = 1.0             # T-VOR vergence-rate gain (dot product · IPD/D²); surge → vergence drive
+    g_tvor:                float        = 0.5             # T-VOR version output gain (cross product); reduced from unity to soften
+                                                          # tilt-side TVOR push on yaw/pitch under gravity-decomposition leak
+    g_tvor_verg:           float        = 0.2             # T-VOR vergence-rate gain (dot product · IPD/D²); reduced — main lever
+                                                          # against vergence drift from sustained-tilt v_lin leak
     g_tvor_l2_cyclo:       float        = 0.0             # L2 cyclo-vergence cross-coupling gain in T-VOR.  Set to 0 because the
                                                           # exact geometry creates a positive feedback loop with FCP's linear
                                                           # Hering's during head tilts (OCR cascade roll cyclo-vergence drift).
                                                           # Re-enable when FCP uses rotation-matrix Hering's.
-    tau_tvor_pos:          float        = 30.0            # T-VOR direct-path position leak TC (s); long enough to hold during motion,
-                                                          # short enough to bleed off between movements
+    tau_tvor_pos:          float        = 2.0             # T-VOR low-pass TC for v_lin (s); short enough to track translation transients,
+                                                          # long enough to smooth out canal noise / quick-phase chatter
     K_visual_verg:         float        = 0.0             # visual-evidence gain on vergence rate [0..1]: pulls T-VOR's vergence
                                                           # rate toward the per-eye scene-flow differential.  Set to 0 for now —
                                                           # interacts with sustained-tilt scenarios.  Re-enable for translation tests.
     ipd_brain:             float        = 0.064           # interpupillary distance (m) used for vergence→distance calculation;
                                                           # mirror of SensoryParams.ipd — kept here so brain_model.step can convert
                                                           # vergence angle to distance for T-VOR without threading sensory_params through
+    distance_npc:          float        = 0.08            # near point of convergence (m); anatomical floor on T-VOR distance.
+                                                          # Below this depth no real target can be fused, so T-VOR distance is
+                                                          # clipped here to prevent 1/D blowup as vergence wanders past NPC.
+                                                          # Clinical Sheard / Gulick range 6–10 cm; default 8 cm.
 
 
     # Accommodation — Schor dual-interaction model + plant dynamics
@@ -548,16 +554,16 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
     # so absolute vergence = tonic_verg + x_slow at SS.  At rest (no target),
     # x_slow = 0 → vergence = tonic_verg ≈ 3.67° ≈ 1 m default distance.
     current_vergence_yaw = brain_params.tonic_verg + x_verg[3]
-    dx_tvor, pos_tvor, verg_rate_tvor = tv.step(
+    dx_tvor, omega_tvor, verg_rate_tvor = tv.step(
         x_tvor, v_lin, current_vergence_yaw, x_ni_net,
         brain_params.ipd_brain, brain_params)
 
-    # ── Neural integrator: VOR + saccades + pursuit → version motor command ───
+    # ── Neural integrator: VOR + saccades + pursuit + T-VOR → version motor command ───
     # OCR is a tonic position offset (gravity-driven); passed as u_tonic so it is added
     # to the output but not integrated into the NI state (avoids 25 s TC attenuation).
-    # T-VOR's pos_tvor is also a position offset added downstream (after NI), bypassing
-    # NI's slow leak and saccade-burst disruption — see t_vor.py docstring.
-    dx_ni, motor_cmd_ni = ni.step(x_ni, -w_est + u_burst + u_pursuit, brain_params, u_tonic=ocr + pos_tvor)
+    # T-VOR contributes a VELOCITY (omega_tvor, deg/s) that NI integrates alongside
+    # the other velocity drives — no longer a position bypass.
+    dx_ni, motor_cmd_ni = ni.step(x_ni, -w_est + u_burst + u_pursuit + omega_tvor, brain_params, u_tonic=ocr)
 
     # ── Vergence + Accommodation (Schor dual-interaction model) ─────────────────
     # Accommodation and vergence are tightly cross-coupled (AC/A and CA/C).
@@ -592,12 +598,11 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
 
     # ── Efference copy signals for pre-delay EC in cyclopean_vision ──────────
     # Rotation to eye frame is done inside cyclopean_vision.step().
-    # T-VOR contribution (ω_tvor, the cross-product output) is the eye velocity
-    # commanded by the T-VOR direct pathway via pos_tvor.  Without it in ec_vel,
-    # the OKR/pursuit loops would see the resulting retinal slip as "the world is
-    # moving" and drive the eye in the opposite direction, fighting T-VOR.
-    omega_tvor_ec = dx_tvor + x_tvor / brain_params.tau_tvor_pos   # = ω_tvor (deg/s)
-    ec_vel  = u_burst + u_pursuit + omega_tvor_ec   # version velocity efference (head frame, [yaw,pitch,roll] deg/s)
+    # T-VOR contribution (omega_tvor, deg/s) is now returned directly by tv.step.
+    # Without it in ec_vel, the OKR/pursuit loops would see the resulting retinal
+    # slip as "the world is moving" and drive the eye in the opposite direction,
+    # fighting T-VOR.
+    ec_vel  = u_burst + u_pursuit + omega_tvor   # version velocity efference (head frame, [yaw,pitch,roll] deg/s)
     ec_pos  = x_ni_net + ocr        # eye position efference     (head frame, [yaw,pitch,roll] deg)
     ec_verg = x_verg                # vergence efference         ([H,V,T] deg)
 

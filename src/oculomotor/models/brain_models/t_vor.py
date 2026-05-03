@@ -4,21 +4,24 @@ Geometry:
     ω_eye      = − ĝ × v_head / D       (head-frame angular velocity, rad/s)
     verg_rate  = IPD · (ĝ · v) / D²     (vergence change rate, rad/s)
 
-Architecture (DIRECT pathway — bypasses NI):
-    The instantaneous eye-velocity command from the cross product is **integrated
-    in T-VOR's own state** (x_tvor_pos, deg) and the resulting position offset is
-    added DIRECTLY to the motor command, alongside NI's output.  Bypassing NI
-    avoids the slow leak (τ_i = 25 s) and the disruption from saccade-burst inputs
-    that would otherwise eclipse the smooth T-VOR slow phase.
+Architecture (VELOCITY pathway):
+    No position integrator inside T-VOR.  The state is a low-pass filter on the
+    head linear-velocity estimate (m/s) — it tracks v_lin and decays to 0 in the
+    absence of head translation.  The output is an angular EYE VELOCITY command
+    (deg/s) computed algebraically from the cross product, and is integrated
+    downstream by NI (added to NI's velocity input alongside −w_est + u_burst).
 
-    State:    x_tvor_pos (3,)  — accumulated T-VOR eye position offset (deg)
-    Dynamics: dx_tvor_pos/dt = ω_tvor − x_tvor_pos / τ_tvor_pos
-                               (slow leak; default τ ≈ 30 s lets the offset reset
-                                between movements without bleeding off during the motion)
-    Output:   pos_tvor   (3,)  — added directly to motor_cmd in brain_model
-              ω_tvor     (3,)  — also returned as a velocity hint (currently unused
-                                  downstream so the slow-phase signal flows through
-                                  the bypass path only)
+    Vergence-derived distance D enters only on the OUTPUT; it does not appear
+    in the integrator dynamics, so eye convergence cannot shrink D and amplify
+    the integrated command.
+
+    State:    x_tvor_v (3,)    — low-pass filter on v_lin (m/s, head frame)
+    Dynamics: dx_tvor_v/dt = (v_lin − x_tvor_v) / τ_tvor_pos
+                               (lowpass; default τ ≈ 30 s — leaks toward 0 in
+                                absence of head translation)
+    Output:   omega_tvor (3,)  = (−ĝ × x_tvor_v) / D · g_tvor [deg/s, ypr]
+                                fed into NI as a velocity input (NI integrates it).
+              verg_rate_tvor   — H/V/cyclo-vergence rate from translation
 
 References
     Paige & Tomko (1991) J Neurophysiol 65:1170 — vergence-modulated T-VOR gain
@@ -40,6 +43,7 @@ Note on EC and parallax (future improvement):
     loops (OKR + pursuit) from fighting T-VOR.
 """
 
+import jax
 import jax.numpy as jnp
 
 from oculomotor.models.plant_models.readout import gaze_unit_vector
@@ -50,16 +54,20 @@ from oculomotor.models.brain_models import listing
 _HALF_ANGLE = jnp.pi / 360.0   # deg² → deg conversion for half-angle rule
 
 
-N_STATES  = 3   # x_tvor_pos (3,) — accumulated eye-position offset from T-VOR (deg)
+N_STATES  = 3   # x_tvor_v (3,) — low-pass-filtered head linear velocity estimate (m/s)
 N_INPUTS  = 6
 N_OUTPUTS = 3
 
 
 def step(x_tvor, v_lin, x_verg_yaw, eye_pos, ipd, brain_params):
-    """T-VOR step: integrate ω_tvor into a position offset, return that + vergence rate.
+    """T-VOR step: low-pass v_lin and convert to an angular eye VELOCITY command.
+
+    No position integrator inside T-VOR. The state is a low-pass filter on v_lin
+    (the head-frame linear velocity estimate). The output omega_tvor is an angular
+    eye-velocity command (deg/s) that NI integrates downstream.
 
     Args:
-        x_tvor:        (3,)   accumulated T-VOR eye-position offset (deg)
+        x_tvor:        (3,)   low-pass-filtered head linear velocity (m/s, head frame)
         v_lin:         (3,)   head linear velocity (m/s, head frame); from HE
         x_verg_yaw:    scalar absolute vergence (deg) → distance D
         eye_pos:       (3,)   gaze direction [yaw, pitch, roll] (deg, head frame)
@@ -67,25 +75,37 @@ def step(x_tvor, v_lin, x_verg_yaw, eye_pos, ipd, brain_params):
         brain_params:  reads g_tvor, g_tvor_verg, tau_tvor_pos
 
     Returns:
-        dx_tvor:        (3,)  state derivative (deg/s)
-        pos_tvor:       (3,)  position offset (deg) — added DIRECTLY to motor_cmd
-        verg_rate_tvor: scalar vergence rate (deg/s) → vergence slow integrator
+        dx_tvor:        (3,)  state derivative (m/s²) — lowpass dynamics
+        omega_tvor:     (3,)  angular eye-velocity command (deg/s) → NI velocity input
+        verg_rate_tvor: (3,)  H/V/cyclo-vergence rates (deg/s) → vergence slow integrator
     """
-    # ── Vergence-derived distance and gaze unit vector ──────────────────────
-    distance = ipd / (2.0 * jnp.tan(jnp.radians(x_verg_yaw) * 0.5))
-    g_hat    = gaze_unit_vector(eye_pos)
+    # ── Vergence-derived distance and effective 1/distance ──────────────────
+    # The math everywhere below needs 1/D, never D itself, so build an inverse-
+    # distance gain directly and gate it at both ends:
+    #   d → 0  (vergence past NPC, or divergence giving negative D): gain → 0
+    #   d → ∞ (no convergence): 1/d → 0 naturally
+    # Aggressive variant: gate center sits at 1.5·NPC and is steep, so the
+    # gain has already dropped sharply by the time vergence reaches NPC and
+    # the peak of (gate/d) sits well above NPC (≈ 2·NPC) instead of right at it.
+    distance_raw = ipd / (2.0 * jnp.tan(jnp.radians(x_verg_yaw) * 0.5))
+    # Guard against zero / negative distance (small or divergent vergence).
+    d_safe       = jnp.maximum(distance_raw, 1e-6)
+    npc          = brain_params.distance_npc
+    npc_gate     = jax.nn.sigmoid((d_safe - 1.5 * npc) / (0.1 * npc))
+    inv_distance = npc_gate / d_safe
+    g_hat        = gaze_unit_vector(eye_pos)
+    DEG_PER_RAD  = 180.0 / jnp.pi
 
-    # ── Cross product → instantaneous version eye velocity (rad/s, xyz) ─────
-    omega_xyz   = -jnp.cross(g_hat, v_lin) / distance
-    DEG_PER_RAD = 180.0 / jnp.pi
-    omega_tvor  = brain_params.g_tvor * DEG_PER_RAD * xyz_to_ypr(omega_xyz)
+    # ── No second integrator on v_lin: pass it straight through to the cross
+    #    product. The heading_estimator already lowpass-integrates a_lin → v_lin,
+    #    so a second lowpass here would just slow the TVOR response without
+    #    adding filtering value. State slot kept for layout compat (inert).
+    dx_tvor = jnp.zeros_like(x_tvor)
 
-    # ── Direct-pathway integrator: x_tvor_pos accumulates ω_tvor with slow leak.
-    #    The slow leak (τ_tvor_pos, default ≈ 30 s) lets the offset bleed off
-    #    between bouts of head motion — but is long enough that it doesn't
-    #    decay during the motion itself.
-    dx_tvor_pos = omega_tvor - x_tvor / brain_params.tau_tvor_pos
-    pos_tvor    = x_tvor
+    # ── Algebraic output: convert linear velocity → angular eye velocity ─────
+    #    omega_xyz_rad = (−ĝ × v_lin) · (1/D)     (instantaneous parallax velocity)
+    omega_xyz_rad = -jnp.cross(g_hat, v_lin) * inv_distance
+    omega_tvor    = brain_params.g_tvor * DEG_PER_RAD * xyz_to_ypr(omega_xyz_rad)
 
     # ── Dot product → horizontal vergence rate (rad/s) → deg/s ──────────────
     # Surge along the gaze direction changes target distance → H-vergence change.
@@ -93,30 +113,20 @@ def step(x_tvor, v_lin, x_verg_yaw, eye_pos, ipd, brain_params):
     # asymmetric parallax / depth structure); kept as a 3-vector for future L2
     # extensions and for downstream consumers that want a 3D vergence drive.
     dot_gv          = jnp.dot(g_hat, v_lin)
-    verg_rate_rad_H = ipd * dot_gv / (distance * distance)
+    verg_rate_rad_H = ipd * dot_gv * inv_distance * inv_distance
     verg_rate_tvor  = brain_params.g_tvor_verg * DEG_PER_RAD * jnp.array([
         verg_rate_rad_H,   # horizontal vergence rate (deg/s)
         0.0,               # vertical   vergence rate (deg/s) — reserved
         0.0,               # cyclo-     vergence rate (deg/s) — reserved
     ])
 
-    # ── Listing's law correction (extended L2 for vergence) ─────────────────
-    # 1) pos_tvor torsion: enforce the half-angle rule on the FULL cyclopean
-    #    eye position (eye_pos + pos_tvor), not just on pos_tvor's own H,V.
-    #    Listing's law is a constraint on the actual eye orientation, not an
-    #    additive correction — so SET (don't ADD) the T-VOR torsion to make
-    #    the total satisfy the half-angle rule:
-    #       T_required_total = -(H_total − H₀)·(V_total − V₀)·π/360
-    #    pos_tvor provides the *difference* from the existing eye_pos torsion.
-    #    L2 (per-eye plane tilts by ±verg/2) collapses to standard Listing's
-    #    at the cyclopean level because the ±verg/2 tilts cancel in (L+R)/2.
-    primary   = brain_params.listing_primary    # (2,) [H₀, V₀]
-    H_total   = (eye_pos[0] + pos_tvor[0]) - primary[0]
-    V_total   = (eye_pos[1] + pos_tvor[1]) - primary[1]
-    T_required_total = -H_total * V_total * _HALF_ANGLE
-    pos_tvor  = pos_tvor.at[2].set(T_required_total - eye_pos[2])
+    # ── Listing's law correction removed ──────────────────────────────────────
+    # The previous architecture computed an angular position offset (pos_tvor)
+    # and applied the half-angle rule to it. With the new velocity-output
+    # architecture there is no position to correct here — Listing's must be
+    # enforced wherever the integrated eye position is read (e.g. on x_ni).
 
-    # 2) verg_rate L2 cross-coupling — vertical motion at vergence drives cyclo-verg.
+    # ── verg_rate L2 cross-coupling — vertical motion at vergence drives cyclo-verg.
     #    Each eye's Listing's plane is tilted around the head's VERTICAL axis by
     #    ±verg/2.  The "horizontal rotation axis" for that eye (used for vertical
     #    motion) is therefore tilted forward/back by verg/2:
@@ -135,4 +145,4 @@ def step(x_tvor, v_lin, x_verg_yaw, eye_pos, ipd, brain_params):
     Tverg_from_L2   = brain_params.g_tvor_l2_cyclo * (-omega_tvor[1] * verg_rad)
     verg_rate_tvor  = verg_rate_tvor.at[2].set(Tverg_from_L2)
 
-    return dx_tvor_pos, pos_tvor, verg_rate_tvor
+    return dx_tvor, omega_tvor, verg_rate_tvor
