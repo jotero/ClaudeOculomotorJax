@@ -273,16 +273,22 @@ class BrainParams(NamedTuple):
     g_ocr:                 float = 0.0    # OCR amplitude (deg); healthy ~10°; 0 = disabled until verified
 
     # Heading estimator — linear velocity in head-fixed frame
-    tau_head:              float = 10.0   # linear velocity integration TC (s); long enough that
-                                          # v_lin holds during sustained translation in dark (otoliths
-                                          # only sense acceleration; v_lin must be integrated).  The
-                                          # closed-loop instability that long τ used to cause is now
-                                          # broken upstream: gravity transport uses canal-only rotation
-                                          # (not VS net), so eye motion can no longer drift g_est.
+    tau_head:              float = 2.0    # linear velocity integration TC (s).  Shorter τ trades off
+                                          # sustained-motion DARK T-VOR gain (~0.5 of LIT for a 1.6 s
+                                          # pulse) against post-pulse drift containment.  Matches
+                                          # Paige & Tomko (1991) DARK T-VOR gain of ~0.5–0.7 and
+                                          # bounds the closed-loop drift from VS-OKR contamination
+                                          # of the gravity transport input.
     K_he_vis:              float = 5.0    # visual-velocity pull gain into v_lin (1/s); fuses scene
                                           # translational flow with vestibular integration.  In dark
                                           # (scene_lin_vel=0) the pull is toward zero, suppressing
                                           # drift during pure rotation (OVAR, tilt suppression).
+    K_he_disp:             float = 0.0    # disparity-rate visual evidence gain on v_lin[z] (1/s);
+                                          # scene_disp_rate (per-eye scene-flow differential) is 0 in
+                                          # a uniform/depthless scene → pulls v_lin[z] toward 0.
+                                          # In real depth-structured scenes it provides parallax-based
+                                          # heading-z evidence that augments the vestibular estimate.
+                                          # Gated by scene_visible (off in dark).
 
     # Listing's law — torsional constraint (Listing 1854; Tweed et al. 1998)
     listing_primary:       jnp.ndarray = jnp.zeros(2)  # primary position [yaw₀, pitch₀] (deg)
@@ -345,10 +351,18 @@ class BrainParams(NamedTuple):
     # T-VOR response, prevents runaway from gravity-mismatch artifacts.
     # Vest+visual fusion of head linear velocity is now done in heading_estimator
     # (K_he_vis); T-VOR consumes the combined v_lin directly.
-    g_tvor:                float        = 1.0             # T-VOR version output gain (cross product); ~unity per Paige & Tomko 1991
-    g_tvor_verg:           float        = 1.0             # T-VOR vergence-rate gain (dot product · IPD/D²); surge → vergence drive
+    g_tvor:                float        = 0.0             # T-VOR version output gain (cross product); set to 0 to disconnect T-VOR
+                                                          # while debugging OCR cascade.  Restore to ~1 (Paige & Tomko 1991) when T-VOR is needed.
+    g_tvor_verg:           float        = 0.0             # T-VOR vergence-rate gain — also set to 0 to disconnect T-VOR's vergence drive.
+    g_tvor_l2_cyclo:       float        = 0.0             # L2 cyclo-vergence cross-coupling gain in T-VOR.  Set to 0 because the
+                                                          # exact geometry creates a positive feedback loop with FCP's linear
+                                                          # Hering's during head tilts (OCR cascade roll cyclo-vergence drift).
+                                                          # Re-enable when FCP uses rotation-matrix Hering's.
     tau_tvor_pos:          float        = 30.0            # T-VOR direct-path position leak TC (s); long enough to hold during motion,
                                                           # short enough to bleed off between movements
+    K_visual_verg:         float        = 0.0             # visual-evidence gain on vergence rate [0..1]: pulls T-VOR's vergence
+                                                          # rate toward the per-eye scene-flow differential.  Set to 0 for now —
+                                                          # interacts with sustained-tilt scenarios.  Re-enable for translation tests.
     ipd_brain:             float        = 0.064           # interpupillary distance (m) used for vergence→distance calculation;
                                                           # mirror of SensoryParams.ipd — kept here so brain_model.step can convert
                                                           # vergence angle to distance for T-VOR without threading sensory_params through
@@ -505,7 +519,8 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
     dx_head, v_lin = he.step(x_head,
                               jnp.concatenate([g_est, sensory_out.otolith,
                                                sensory_out.scene_linear_vel,
-                                               jnp.array([sensory_out.scene_visible])]),
+                                               jnp.array([sensory_out.scene_visible]),
+                                               sensory_out.scene_disp_rate]),
                               brain_params)
 
     # ── Pursuit: sensory_out.target_slip already EC-corrected (pre-delay) ────
@@ -559,7 +574,8 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
     aca_drive  = acc_mod.ac_a_drive(u_neural_acc, brain_params)   # (deg)
     z_act_verg = 1.0 - jnp.clip(x_sg[3], 0.0, 100.0) / 100.0
     dx_verg, u_verg = vg.step(x_verg, sensory_out.target_disparity, aca_drive, verg_rate_tvor,
-                              z_act_verg, x_ni_net[:2], brain_params)
+                              z_act_verg, x_ni_net[:2], brain_params,
+                              scene_disp_rate=sensory_out.scene_disp_rate)
 
     # ── Final common pathway: nucleus encode → nerve activations ─────────────
     nerves = fcp.step(jnp.concatenate([motor_cmd_ni, u_verg]), brain_params)   # (12,) [L6|R6]

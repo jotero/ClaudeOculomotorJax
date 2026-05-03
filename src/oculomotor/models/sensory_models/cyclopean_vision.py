@@ -21,6 +21,7 @@ from oculomotor.models.sensory_models.retina import (
     delay_cascade_step, ypr_to_xyz, xyz_to_ypr,
     _N_PER_SIG,
     _OFF_SCENE_LINEAR, _OFF_TARGET_POS, _OFF_TARGET_VEL, _OFF_TARGET_DISP,
+    _OFF_SCENE_DISP_RATE,
     _OFF_SCENE_VIS, _OFF_TARGET_VIS, _OFF_STROBED, _OFF_TARGET_FUSABLE, _OFF_DEFOCUS,
 )
 from oculomotor.models.plant_models.readout import rotation_matrix
@@ -217,6 +218,13 @@ def step(x_vis,
         scene_vis_L, scene_vis_R)
     scene_angular_cyc = w_s_L * scene_angular_vel_L + w_s_R * scene_angular_vel_R
     scene_linear_cyc  = w_s_L * scene_linear_vel_L  + w_s_R * scene_linear_vel_R
+    # Per-eye scene-flow disparity rate: in a uniform scene at infinity (or any scene
+    # with no depth structure / no head rotation contributing parallax), L and R see the
+    # same translational flow → diff = 0.  Real motion parallax (depth-structured scene)
+    # produces non-zero diff that informs vergence about depth changes.  Used in vergence
+    # as a "visual evidence for vergence rate" signal that constrains spurious T-VOR-driven
+    # vergence drift when there's no actual depth change.
+    scene_disp_rate   = (scene_linear_vel_L - scene_linear_vel_R) * scene_visible
 
     # EC correction pre-delay: add motor command to instantaneous slip before cascade.
     # delay(slip + u_motor) = delay(slip) + delay(u_motor) — same as old post-delay formulation.
@@ -254,27 +262,29 @@ def step(x_vis,
         sensory_params.v_max_target_vel)
 
     # ── Advance cascade ───────────────────────────────────────────────────────
-    tau_vis          = sensory_params.tau_vis
-    x_scene_angular  = x_vis[                       :  _N_PER_SIG          ]
-    x_scene_linear   = x_vis[_OFF_SCENE_LINEAR      : _OFF_TARGET_POS      ]
-    x_target_pos     = x_vis[_OFF_TARGET_POS        : _OFF_TARGET_VEL      ]
-    x_target_vel     = x_vis[_OFF_TARGET_VEL        : _OFF_TARGET_DISP     ]
-    x_target_disp    = x_vis[_OFF_TARGET_DISP       : _OFF_SCENE_VIS       ]
-    x_scene_vis      = x_vis[_OFF_SCENE_VIS         : _OFF_TARGET_VIS      ]
-    x_target_vis     = x_vis[_OFF_TARGET_VIS        : _OFF_STROBED         ]
-    x_target_motion  = x_vis[_OFF_STROBED           : _OFF_TARGET_FUSABLE  ]
-    x_target_fusable = x_vis[_OFF_TARGET_FUSABLE    : _OFF_DEFOCUS         ]
-    x_defocus        = x_vis[_OFF_DEFOCUS           :                      ]
+    tau_vis             = sensory_params.tau_vis
+    x_scene_angular     = x_vis[                            :  _N_PER_SIG               ]
+    x_scene_linear      = x_vis[_OFF_SCENE_LINEAR           : _OFF_TARGET_POS           ]
+    x_target_pos        = x_vis[_OFF_TARGET_POS             : _OFF_TARGET_VEL           ]
+    x_target_vel        = x_vis[_OFF_TARGET_VEL             : _OFF_TARGET_DISP          ]
+    x_target_disp       = x_vis[_OFF_TARGET_DISP            : _OFF_SCENE_DISP_RATE      ]
+    x_scene_disp_rate   = x_vis[_OFF_SCENE_DISP_RATE        : _OFF_SCENE_VIS            ]
+    x_scene_vis         = x_vis[_OFF_SCENE_VIS              : _OFF_TARGET_VIS           ]
+    x_target_vis        = x_vis[_OFF_TARGET_VIS             : _OFF_STROBED              ]
+    x_target_motion     = x_vis[_OFF_STROBED                : _OFF_TARGET_FUSABLE       ]
+    x_target_fusable    = x_vis[_OFF_TARGET_FUSABLE         : _OFF_DEFOCUS              ]
+    x_defocus           = x_vis[_OFF_DEFOCUS                :                           ]
 
     return jnp.concatenate([
-        delay_cascade_step(x_scene_angular,   scene_angular_vel,     tau_vis),
-        delay_cascade_step(x_scene_linear,    scene_linear_vel,      tau_vis),
-        delay_cascade_step(x_target_pos,      target_pos,            tau_vis),
-        delay_cascade_step(x_target_vel,      target_slip,           tau_vis),
-        delay_cascade_step(x_target_disp,     target_disparity,      tau_vis),
-        delay_cascade_step(x_scene_vis,       scene_visible,         tau_vis),
-        delay_cascade_step(x_target_vis,      target_visible,        tau_vis),
-        delay_cascade_step(x_target_motion,   target_motion_visible, tau_vis),
-        delay_cascade_step(x_target_fusable,  target_fusable,        tau_vis),
-        delay_cascade_step(x_defocus,         defocus_cyc,           tau_vis),
+        delay_cascade_step(x_scene_angular,    scene_angular_vel,     tau_vis),
+        delay_cascade_step(x_scene_linear,     scene_linear_vel,      tau_vis),
+        delay_cascade_step(x_target_pos,       target_pos,            tau_vis),
+        delay_cascade_step(x_target_vel,       target_slip,           tau_vis),
+        delay_cascade_step(x_target_disp,      target_disparity,      tau_vis),
+        delay_cascade_step(x_scene_disp_rate,  scene_disp_rate,       tau_vis),
+        delay_cascade_step(x_scene_vis,        scene_visible,         tau_vis),
+        delay_cascade_step(x_target_vis,       target_visible,        tau_vis),
+        delay_cascade_step(x_target_motion,    target_motion_visible, tau_vis),
+        delay_cascade_step(x_target_fusable,   target_fusable,        tau_vis),
+        delay_cascade_step(x_defocus,          defocus_cyc,           tau_vis),
     ])

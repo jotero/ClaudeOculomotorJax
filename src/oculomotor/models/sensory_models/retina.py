@@ -11,33 +11,38 @@ Two responsibilities:
      delay of tau_vis seconds.  With N_STAGES=40 and tau_vis=0.08 s:
          Mean delay = 0.08 s,  std ≈ 0.013 s,  −3 dB BW ≈ 66 Hz
 
-     Nine signals are delayed in the SINGLE CYCLOPEAN cascade (binocular
+     Ten signals are delayed in the SINGLE CYCLOPEAN cascade (binocular
      fusion happens BEFORE the delay in cyclopean_vision.pre_delay_fusion):
          Signal 0 — scene_angular_vel  (3,)  cyclopean rotational optic flow  → OKR / VS
          Signal 1 — scene_linear_vel   (3,)  cyclopean translational optic flow → looming
          Signal 2 — target_pos         (3,)  cyclopean target position          → saccade error
          Signal 3 — target_vel         (3,)  cyclopean target velocity (strobe-gated) → pursuit
          Signal 4 — target_disparity   (3,)  vergence disparity (diplopia-gated) → vergence
-         Signal 5 — scene_visible      (1,)  delay(scene_present) — cyclopean
-         Signal 6 — target_visible     (1,)  delay(target_present × target_in_vf) — cyclopean
-         Signal 7 — target_motion_vis  (1,)  delay(target_visible × (1−strobe)) — pursuit gate
-         Signal 8 — target_fusable     (1,)  delay(NPC fusion gate) — binocular fusability
+         Signal 5 — scene_disp_rate    (3,)  per-eye scene-flow differential  → vergence + HE
+         Signal 6 — scene_visible      (1,)  delay(scene_present) — cyclopean
+         Signal 7 — target_visible     (1,)  delay(target_present × target_in_vf) — cyclopean
+         Signal 8 — target_motion_vis  (1,)  delay(target_visible × (1−strobe)) — pursuit gate
+         Signal 9 — target_fusable     (1,)  delay(NPC fusion gate) — binocular fusability
 
-     State layout (760,):
-         [scene_angular_vel(120) | scene_linear_vel(120) | target_pos(120)
-          | target_vel(120) | target_disparity(120)
-          | scene_visible(40) | target_visible(40) | target_motion_visible(40) | target_fusable(40)]
+Implicit depth-map assumption
+-----------------------------
+The very fact that this retina extracts both *rotational* (scene_angular_vel) and
+*translational* (scene_linear_vel) optic flow as separable quantities is itself a
+strong assumption: it requires the visual system to have already solved the depth
+problem.  In a depthless world you can only infer rigid-body angular flow; you
+cannot decompose head-translation parallax from rotation without depth structure
+(the heading direction needs the focus-of-expansion of the depth-aware flow field).
 
-     Module-level readout matrices (exported for sensory_model / efference copy):
-         C_slip             (3, 760)  last stage of scene_angular_vel cascade
-         C_scene_linear_vel (3, 760)  last stage of scene_linear_vel cascade
-         C_pos              (3, 760)  last stage of target_pos cascade
-         C_vel              (3, 760)  last stage of target_vel cascade
-         C_target_disp      (3, 760)  last stage of target_disparity cascade
-         C_scene_visible    (1, 760)  last stage of scene_visible cascade
-         C_target_visible   (1, 760)  last stage of target_visible cascade
-         C_target_motion_visible (1, 760)  last stage of target_motion_visible cascade
-         C_target_fusable   (1, 760)  last stage of target_fusable cascade
+We side-step this by assuming the brain has a depth map (e.g., from binocular
+disparity, motion parallax, accommodation cues) and can therefore expose:
+    - clean angular flow (scene_angular_vel) as if from rigid rotation
+    - clean translational flow (scene_linear_vel) as the head-translation parallax
+    - per-eye flow differential (scene_disp_rate) as a depth-rate cue
+
+In practice for a depthless or uniform scene, scene_disp_rate degenerates to 0,
+which the brain correctly interprets as "no depth-rate change" → constrains
+heading-z and vergence-rate estimates.  This is the right zero-point behavior;
+in a depth-structured scene the same signal would carry rich heading information.
 """
 
 import jax
@@ -49,14 +54,15 @@ from oculomotor.models.plant_models.readout import rotation_matrix
 # ── Cascade parameters ──────────────────────────────────────────────────────────
 
 N_STAGES      = 40    # cascade depth (stages per signal)
-_N_SIG        = 5     # number of 3-D signals: scene_angular_vel, scene_linear_vel, target_pos, target_vel, target_disparity
+_N_SIG        = 6     # 3-D signals: scene_angular_vel, scene_linear_vel, target_pos,
+                      #              target_vel, target_disparity, scene_disp_rate
 _N_PER_SIG    = N_STAGES * 3     # 120  states per 3-D signal
 _N_SCALAR     = N_STAGES         # 40   states per scalar signal
-N_STATES      = _N_SIG * _N_PER_SIG + 5 * _N_SCALAR  # 5*120 + 5*40 = 800
+N_STATES      = _N_SIG * _N_PER_SIG + 5 * _N_SCALAR  # 6*120 + 5*40 = 920
 
 # ── State offsets ───────────────────────────────────────────────────────────────
 # State layout: [scene_angular_vel(120) | scene_linear_vel(120) | target_pos(120)
-#                | target_vel(120) | target_disparity(120)
+#                | target_vel(120) | target_disparity(120) | scene_disp_rate(120)
 #                | scene_visible(40) | target_visible(40) | target_motion_visible(40)
 #                | target_fusable(40) | defocus(40)]
 
@@ -64,11 +70,12 @@ _OFF_SCENE_LINEAR    = _N_PER_SIG                            # 120
 _OFF_TARGET_POS      = 2 * _N_PER_SIG                        # 240
 _OFF_TARGET_VEL      = 3 * _N_PER_SIG                        # 360
 _OFF_TARGET_DISP     = 4 * _N_PER_SIG                        # 480
-_OFF_SCENE_VIS       = 5 * _N_PER_SIG                        # 600
-_OFF_TARGET_VIS      = _OFF_SCENE_VIS    + _N_SCALAR          # 640
-_OFF_STROBED         = _OFF_TARGET_VIS   + _N_SCALAR          # 680
-_OFF_TARGET_FUSABLE  = _OFF_STROBED      + _N_SCALAR          # 720
-_OFF_DEFOCUS         = _OFF_TARGET_FUSABLE + _N_SCALAR        # 760
+_OFF_SCENE_DISP_RATE = 5 * _N_PER_SIG                        # 600
+_OFF_SCENE_VIS       = 6 * _N_PER_SIG                        # 720
+_OFF_TARGET_VIS      = _OFF_SCENE_VIS    + _N_SCALAR          # 760
+_OFF_STROBED         = _OFF_TARGET_VIS   + _N_SCALAR          # 800
+_OFF_TARGET_FUSABLE  = _OFF_STROBED      + _N_SCALAR          # 840
+_OFF_DEFOCUS         = _OFF_TARGET_FUSABLE + _N_SCALAR        # 880
 
 # ── Readout matrices ────────────────────────────────────────────────────────────
 # Exported so sensory_model / efference_copy can read cascade outputs directly.
@@ -78,6 +85,7 @@ C_scene_linear_vel = jnp.zeros((3, N_STATES)).at[:, 2*_N_PER_SIG-3      : 2*_N_P
 C_pos              = jnp.zeros((3, N_STATES)).at[:, 3*_N_PER_SIG-3      : 3*_N_PER_SIG      ].set(jnp.eye(3))
 C_vel              = jnp.zeros((3, N_STATES)).at[:, 4*_N_PER_SIG-3      : 4*_N_PER_SIG      ].set(jnp.eye(3))
 C_target_disp      = jnp.zeros((3, N_STATES)).at[:, 5*_N_PER_SIG-3      : 5*_N_PER_SIG      ].set(jnp.eye(3))
+C_scene_disp_rate  = jnp.zeros((3, N_STATES)).at[:, 6*_N_PER_SIG-3      : 6*_N_PER_SIG      ].set(jnp.eye(3))
 C_scene_visible    = jnp.zeros((1, N_STATES)).at[0, _OFF_SCENE_VIS     + _N_SCALAR - 1].set(1.0)
 C_target_visible   = jnp.zeros((1, N_STATES)).at[0, _OFF_TARGET_VIS    + _N_SCALAR - 1].set(1.0)
 C_target_motion_visible = jnp.zeros((1, N_STATES)).at[0, _OFF_STROBED   + _N_SCALAR - 1].set(1.0)
@@ -197,9 +205,36 @@ def world_to_retina(p_target, eye_offset_head, q_head, w_head, x_head, v_head,
     p_hat      = p_from_eye / (jnp.linalg.norm(p_from_eye) + 1e-9)
     p_eye      = R_gaze_T @ p_hat                            # target direction, eye frame
 
-    yaw_e   = jnp.degrees(jnp.arctan2(p_eye[0], p_eye[2]))
-    pitch_e = jnp.degrees(jnp.arctan2(p_eye[1], jnp.sqrt(p_eye[0]**2 + p_eye[2]**2)))
-    target_pos = jnp.array([yaw_e, pitch_e, 0.0])           # roll=0: target direction has only 2 DOF
+    # Rotation-vector extraction (axis-angle), CONSISTENT with how q_eye and other
+    # angular positions are treated throughout the code.  Fick-style arctan2 would
+    # give numerically different yaw/pitch at non-primary positions (~1° at 30° gaze),
+    # and rotation_matrix(ypr_to_xyz(target_pos)) applied to (0,0,1) wouldn't recover
+    # the target direction.  With rotation-vector extraction this is exact.
+    #
+    # IMPLICIT LISTING'S LAW: this extraction inherently produces a Listing-compliant
+    # target position.  The rotation that takes the primary direction (0,0,1) to the
+    # target direction has its axis in the (x,y) plane — i.e., perpendicular to the
+    # primary direction — which is exactly Listing's plane.  So target_pos[2] (torsion)
+    # is 0 not because "target has only 2 DOF" but because Listing's law says the
+    # eye rotation from primary stays in Listing's plane.  A non-Listing eye position
+    # would require a non-(x,y) rotation axis, which this representation can't express.
+    #
+    # TODO: factor into a helper function `direction_to_rotvec_ypr(p_eye, primary)`
+    # that takes a unit gaze direction and returns the YPR-style rotation vector.
+    # Same logic should be reusable for any "look-at" geometry.
+    #
+    # Algorithm: rotation that takes (0,0,1) to p_eye is
+    #   axis  = (0,0,1) × p_eye  = (−p_eye[1], p_eye[0], 0)
+    #   angle = arctan2(|axis|, p_eye[2])     (robust)
+    #   q_xyz = axis · (angle / |axis|)        (rotation vector, rad)
+    # Then xyz_to_ypr → [yaw, pitch, roll=0] in degrees.
+    axis_unscaled = jnp.array([-p_eye[1], p_eye[0], 0.0])
+    r             = jnp.sqrt(p_eye[0]**2 + p_eye[1]**2)
+    angle         = jnp.arctan2(r, p_eye[2])
+    scale         = jnp.where(r > 1e-9, angle / (r + 1e-9), 1.0)
+    q_xyz         = axis_unscaled * scale
+    q_ypr         = jnp.degrees(xyz_to_ypr(q_xyz))    # [yaw, pitch, roll=0]
+    target_pos    = jnp.array([q_ypr[0], q_ypr[1], 0.0])  # roll=0: implicit Listing's compliance
 
     # ── Retinal velocities in eye frame ───────────────────────────────────────
     # Angular velocities: convert ypr→xyz before rotation matrix ops, xyz→ypr after.

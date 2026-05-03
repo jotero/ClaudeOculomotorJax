@@ -634,9 +634,11 @@ def _ocr_cascade(show):
         spv_a      = extract_spv_states(st, t_np)[:, axis]
         x2         = np.array(st.sensory[:, _IDX_C])[:, 6:12]
         canal_ft_a = float(params.brain.g_vor) * (np.array(CANAL_PINV) @ x2.T)[axis, :]
+        plant_arr = np.array(st.plant)
         return dict(
             ocr=ocr_sig, vs_neg=-vs_a, ni=ni_a,
-            eye_L=np.array(st.plant)[:, axis],
+            eye_L=plant_arr[:, axis],
+            eye_R=plant_arr[:, 3 + axis],
             spv_tor=spv_a, canal_ft=canal_ft_a,
         )
 
@@ -657,7 +659,7 @@ def _ocr_cascade(show):
         ('ocr',    'OCR = -g_ocr×g_est[0] (deg)',       '#d6604d'),
         ('vs_neg', '-VS → NI input (deg/s)',           '#92c5de'),
         ('ni',     'NI net torsion (deg)',             '#4dac26'),
-        ('eye_L',  'L eye torsion (deg)',              '#1a9641'),
+        ('eye_LR', 'L (blue) vs R (orange) eye torsion (deg)', '#1a9641'),
         ('spv_tor','Eye SPV torsion (deg/s)',          '#e08214'),
     ]
     N_ROWS = len(PANELS)
@@ -677,8 +679,16 @@ def _ocr_cascade(show):
 
         for row_idx, (key, ylabel, row_color) in enumerate(PANELS):
             ax = axes[row_idx, col_idx]
-            sig = hv_roll if key == '_hv' else res[key]
-            ax.plot(t_rel, sig, color=col_color, lw=0.9)
+            if key == 'eye_LR':
+                # Plot L (blue) and R (orange) eye torsion to expose any vergence
+                ax.plot(t_rel, res['eye_L'], color='#1f77b4', lw=0.9, label='L' if col_idx == 0 else None)
+                ax.plot(t_rel, res['eye_R'], color='#ff7f0e', lw=0.9, label='R' if col_idx == 0 else None)
+                if col_idx == 0:
+                    ax.legend(fontsize=5, loc='upper right')
+                sig = res['eye_L']   # for the trailing annotation
+            else:
+                sig = hv_roll if key == '_hv' else res[key]
+                ax.plot(t_rel, sig, color=col_color, lw=0.9)
             if key == 'spv_tor':
                 ax.plot(t_rel, res['vs_neg'], color='#2166ac', lw=0.7, ls='--', alpha=0.8,
                         label='-VS' if col_idx == 0 else None)

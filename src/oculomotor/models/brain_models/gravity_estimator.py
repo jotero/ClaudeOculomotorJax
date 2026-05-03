@@ -118,12 +118,11 @@ def step(x_grav, u, brain_params):
     w_est    = u[:3]              # VS net angular velocity, [yaw, pitch, roll] (deg/s)
     gia      = u[3:]              # otolith GIA, world frame [x=right, y=up, z=fwd] (m/s²)
 
-    # Residual after both estimates are subtracted: r = gia − g_est − a_lin.
-    # Both g_est and a_lin compete for r — once a_lin captures the residual, the
-    # K_grav term shuts off and g_est stops being pulled toward transient accel.
-    # This prevents a brief translation from being misread as a sustained tilt and
-    # breaks the closed-loop drift that previously coupled eye motion back into g_est.
-    a_est = gia - g_est - a_lin
+    # Residual = gia − g_est.  (a_lin no longer subtracted from the residual; the
+    # competing-estimator scheme was driving its own coupling issues during sustained
+    # tilts.  Revisit if the somatogravic / translation-as-tilt ambiguity becomes a
+    # problem again.)
+    a_est = gia - g_est
 
     # Transport: rotate gravity estimate with VS angular velocity (VN → uvula/nodulus pathway)
     # ypr_to_xyz converts [yaw,pitch,roll] → xyz rotation-axis vector for cross product

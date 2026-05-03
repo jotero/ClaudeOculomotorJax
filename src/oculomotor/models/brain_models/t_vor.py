@@ -44,6 +44,10 @@ import jax.numpy as jnp
 
 from oculomotor.models.plant_models.readout import gaze_unit_vector
 from oculomotor.models.sensory_models.retina import xyz_to_ypr
+from oculomotor.models.brain_models import listing
+
+
+_HALF_ANGLE = jnp.pi / 360.0   # deg² → deg conversion for half-angle rule
 
 
 N_STATES  = 3   # x_tvor_pos (3,) — accumulated eye-position offset from T-VOR (deg)
@@ -83,9 +87,52 @@ def step(x_tvor, v_lin, x_verg_yaw, eye_pos, ipd, brain_params):
     dx_tvor_pos = omega_tvor - x_tvor / brain_params.tau_tvor_pos
     pos_tvor    = x_tvor
 
-    # ── Dot product → vergence rate (rad/s) → deg/s ─────────────────────────
-    dot_gv         = jnp.dot(g_hat, v_lin)
-    verg_rate_rad  = ipd * dot_gv / (distance * distance)
-    verg_rate_tvor = brain_params.g_tvor_verg * DEG_PER_RAD * verg_rate_rad
+    # ── Dot product → horizontal vergence rate (rad/s) → deg/s ──────────────
+    # Surge along the gaze direction changes target distance → H-vergence change.
+    # V- and T-vergence rates are 0 from translation in our scene model (no
+    # asymmetric parallax / depth structure); kept as a 3-vector for future L2
+    # extensions and for downstream consumers that want a 3D vergence drive.
+    dot_gv          = jnp.dot(g_hat, v_lin)
+    verg_rate_rad_H = ipd * dot_gv / (distance * distance)
+    verg_rate_tvor  = brain_params.g_tvor_verg * DEG_PER_RAD * jnp.array([
+        verg_rate_rad_H,   # horizontal vergence rate (deg/s)
+        0.0,               # vertical   vergence rate (deg/s) — reserved
+        0.0,               # cyclo-     vergence rate (deg/s) — reserved
+    ])
+
+    # ── Listing's law correction (extended L2 for vergence) ─────────────────
+    # 1) pos_tvor torsion: enforce the half-angle rule on the FULL cyclopean
+    #    eye position (eye_pos + pos_tvor), not just on pos_tvor's own H,V.
+    #    Listing's law is a constraint on the actual eye orientation, not an
+    #    additive correction — so SET (don't ADD) the T-VOR torsion to make
+    #    the total satisfy the half-angle rule:
+    #       T_required_total = -(H_total − H₀)·(V_total − V₀)·π/360
+    #    pos_tvor provides the *difference* from the existing eye_pos torsion.
+    #    L2 (per-eye plane tilts by ±verg/2) collapses to standard Listing's
+    #    at the cyclopean level because the ±verg/2 tilts cancel in (L+R)/2.
+    primary   = brain_params.listing_primary    # (2,) [H₀, V₀]
+    H_total   = (eye_pos[0] + pos_tvor[0]) - primary[0]
+    V_total   = (eye_pos[1] + pos_tvor[1]) - primary[1]
+    T_required_total = -H_total * V_total * _HALF_ANGLE
+    pos_tvor  = pos_tvor.at[2].set(T_required_total - eye_pos[2])
+
+    # 2) verg_rate L2 cross-coupling — vertical motion at vergence drives cyclo-verg.
+    #    Each eye's Listing's plane is tilted around the head's VERTICAL axis by
+    #    ±verg/2.  The "horizontal rotation axis" for that eye (used for vertical
+    #    motion) is therefore tilted forward/back by verg/2:
+    #       L_horiz_axis ≈ (cos(verg/2), 0, −sin(verg/2))
+    #       R_horiz_axis ≈ (cos(verg/2), 0, +sin(verg/2))
+    #    A vertical rotation ΔV on this tilted axis has a torsional component:
+    #       L torsion rate: −ΔV · sin(verg/2) ≈ −ΔV · verg/2
+    #       R torsion rate: +ΔV · sin(verg/2) ≈ +ΔV · verg/2
+    #    Cyclo-vergence rate (T_L − T_R) = −ΔV · verg  (in radians).
+    #    ΔV here is the cyclopean V-rate from T-VOR: omega_tvor[1] (deg/s).
+    #    Gated by g_tvor_l2_cyclo (default 0): the geometry is correct but enabling
+    #    creates a positive feedback loop with FCP's linear Hering's during head tilts
+    #    (cyclo-vergence drift in OCR cascade roll column).  Re-enable once FCP uses
+    #    rotation-matrix Hering's instead of linear motor split.
+    verg_rad        = jnp.radians(x_verg_yaw)   # absolute vergence in radians
+    Tverg_from_L2   = brain_params.g_tvor_l2_cyclo * (-omega_tvor[1] * verg_rad)
+    verg_rate_tvor  = verg_rate_tvor.at[2].set(Tverg_from_L2)
 
     return dx_tvor_pos, pos_tvor, verg_rate_tvor

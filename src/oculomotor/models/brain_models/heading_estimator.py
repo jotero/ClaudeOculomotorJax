@@ -30,7 +30,7 @@ import jax.numpy as jnp
 
 
 N_STATES  = 3   # [v_lin (3,)]
-N_INPUTS  = 10  # [g_est (3,) | gia (3,) | scene_lin_vel (3,) | scene_visible (1,)]
+N_INPUTS  = 13  # [g_est (3,) | gia (3,) | scene_lin_vel (3,) | scene_visible (1,) | scene_disp_rate (3,)]
 N_OUTPUTS = 3   # [v_lin (3,)]
 
 X0 = jnp.zeros(3)
@@ -41,22 +41,27 @@ def step(x_head, u, brain_params):
 
     Args:
         x_head:       (3,)  v_lin estimate (m/s, head frame)
-        u:            (10,) [g_est (3,) | gia (3,) | scene_lin_vel (3,) | scene_visible (1,)]
-                            g_est:         gravity estimate (m/s², head frame)
-                            gia:           gravitoinertial accel (m/s², head frame)
-                            scene_lin_vel: cyclopean translational scene flow (m/s, head frame)
-                            scene_visible: scalar in [0,1] — visual fusion gate
-        brain_params: BrainParams  (reads tau_head, K_he_vis)
+        u:            (13,) [g_est (3,) | gia (3,) | scene_lin_vel (3,) |
+                             scene_visible (1,) | scene_disp_rate (3,)]
+                            g_est:           gravity estimate (m/s², head frame)
+                            gia:             gravitoinertial accel (m/s², head frame)
+                            scene_lin_vel:   cyclopean translational scene flow (m/s, head frame)
+                            scene_visible:   scalar in [0,1] — visual fusion gate
+                            scene_disp_rate: per-eye scene-flow differential (m/s, head frame).
+                                             0 in uniform/depthless scene → constrains v_lin[z]
+                                             toward 0 (no z-motion evidence).
+        brain_params: BrainParams  (reads tau_head, K_he_vis, K_he_disp)
 
     Returns:
         dx_head: (3,)  dv_lin/dt  (m/s²)
         v_lin:   (3,)  v_lin (m/s), passed through
     """
-    v_lin         = x_head
-    g_est         = u[:3]
-    gia           = u[3:6]
-    scene_lin_vel = u[6:9]
-    scene_visible = u[9]
+    v_lin           = x_head
+    g_est           = u[:3]
+    gia             = u[3:6]
+    scene_lin_vel   = u[6:9]
+    scene_visible   = u[9]
+    scene_disp_rate = u[10:13]
 
     # Vestibular: linear acceleration after gravity removal.
     a_est = gia - g_est
@@ -68,7 +73,18 @@ def step(x_head, u, brain_params):
     v_visual = -scene_lin_vel
     K_vis    = brain_params.K_he_vis * scene_visible
 
-    # Leaky integration of vestibular accel + (gated) visual velocity pull.
-    dx = a_est - v_lin / brain_params.tau_head + K_vis * (v_visual - v_lin)
+    # Disparity-rate visual evidence for v_lin[z] (heading-z cue).
+    # scene_disp_rate is the per-eye scene-flow differential: 0 in a uniform/depthless
+    # scene → "no depth-rate change" → constrains v_lin[z] toward 0.  In a real depth-
+    # structured scene with z-motion, the differential would be non-zero and would
+    # augment the vestibular v_lin[z] estimate via parallax.
+    # We pull v_lin[z] toward the disparity-rate-implied estimate (here 0 in our model
+    # because scene_disp_rate is 0 with no depth), gated by scene_visible.
+    K_disp     = brain_params.K_he_disp * scene_visible
+    visual_z   = -scene_disp_rate[0]   # in m/s; for our depthless scene this is 0
+    z_damping  = jnp.array([0.0, 0.0, K_disp * (visual_z - v_lin[2])])
+
+    # Leaky integration of vestibular accel + (gated) visual velocity pull + disp-rate damping.
+    dx = a_est - v_lin / brain_params.tau_head + K_vis * (v_visual - v_lin) + z_damping
 
     return dx, v_lin

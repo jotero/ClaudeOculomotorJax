@@ -28,7 +28,7 @@ if '--show' not in sys.argv:
     matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
-from oculomotor.sim.simulator import PARAMS_DEFAULT, simulate
+from oculomotor.sim.simulator import PARAMS_DEFAULT, simulate, with_brain
 from oculomotor.sim import kinematics as km
 from oculomotor.analysis import (extract_spv_states, extract_spv, extract_z_opn,
                                  ax_fmt)
@@ -59,8 +59,6 @@ def _cascade(show):
     from oculomotor.sim.simulator import _IDX_GRAV
     from oculomotor.models.brain_models.brain_model import _IDX_HEAD
 
-    # Surge: head moves BACKWARD (negative v_z) to AVOID the target going inside the head /
-    # exceeding NPC during a forward motion to the near target.
     AXES   = [(0, +1, 'Sway',  'rightward'),
               (1, +1, 'Heave', 'upward'),
               (2, -1, 'Surge', 'backward (away from target)')]
@@ -69,7 +67,9 @@ def _cascade(show):
     HOLD   = 1.6     # 1.6 s plateau between ramps  → total motion ≈ 2 s
     T_PULSE= 0.5
     T_TOTAL = 8.0
-    DEPTH  = 0.4     # m, near target so 1/D scaling is significant
+    DEPTH  = 0.4     # m, near target — for the brain this is invisible (target_present=0),
+                     # so the brain uses tonic_verg for T-VOR distance regardless of DEPTH.
+    params = PARAMS_DEFAULT
     t = np.arange(0.0, T_TOTAL, DT)
     T = len(t)
 
@@ -86,7 +86,7 @@ def _cascade(show):
     fig, axes = plt.subplots(8, 3, figsize=(15, 19), sharex=True)
     fig.suptitle(f'T-VOR cascade — LIT scene-only (solid) vs DARK (dashed); '
                  f'L-eye blue, R-eye orange; peak {PEAK*100:.0f} cm/s, '
-                 f'{RAMP*1000:.0f} ms ramps, {HOLD:.1f} s plateau; target at {DEPTH*100:.0f} cm',
+                 f'{RAMP*1000:.0f} ms ramps, {HOLD:.1f} s plateau',
                  fontsize=12, fontweight='bold')
 
     CONDITIONS = [('LIT',  True,  '-'),
@@ -110,7 +110,7 @@ def _cascade(show):
 
         for cond_name, scene_on, ls in CONDITIONS:
             st = simulate(
-                PARAMS_DEFAULT, t, head=head, target=target,
+                params, t, head=head, target=target,
                 # LIT = scene visible, target invisible (no foveation target);
                 # DARK = nothing visible (pure vestibular T-VOR).
                 scene_present_array  = np.ones(T)  if scene_on else np.zeros(T),
