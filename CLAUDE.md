@@ -176,7 +176,7 @@ Four independent noise sources, **non-zero by default** (so a vanilla `simulate(
 | `sigma_canal`  | 1.0 deg/s | `tau_canal_drift`  | 0.005 s | canal afferent noise; filtered by VS/NI/plant |
 | `sigma_slip`   | 0.0 deg/s | `tau_slip_drift`   | 0.005 s | retinal slip noise (off by default); VS/OKR |
 | `sigma_pos`    | 0.2 deg   | `tau_pos_drift`    | 0.2 s   | retinal position drift; **triggers microsaccades** |
-| `sigma_vel`    | 2.0 deg/s | `tau_vel_drift`    | 0.005 s | retinal velocity noise; pursuit integrator |
+| `sigma_vel`    | 1.0 deg/s | `tau_vel_drift`    | 0.005 s | retinal velocity noise; pursuit integrator |
 
 `SG_acc` accumulator diffusion (`sigma_acc=0.2`, in `BrainParams`) adds RT variability to saccade triggering.
 

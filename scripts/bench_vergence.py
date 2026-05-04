@@ -27,18 +27,14 @@ SHOW = '--show' in sys.argv
 DT   = 0.001
 IPD  = 0.064   # m, default inter-pupillary distance
 
-# Vergence params for the main behavioral figures: cross-couplings + SVBN burst
-# off so we isolate the disparity-driven vergence loop, but sensory noise stays
-# at realistic defaults so traces include the usual microsaccades / drift.
-PARAMS_VERG = with_brain(PARAMS_DEFAULT,
-                         AC_A=0.0, CA_C=0.0,
-                         g_burst_verg=0.0,
-                         g_svbn_conv=0.0, g_svbn_div=0.0)
+# Vergence behavioral demos — full default model: AC/A + CA/C cross-links on,
+# Zee SVBN saccadic vergence burst on, sensory noise on. The figures should
+# reflect what a realistic near-response looks like end-to-end.
+PARAMS_VERG = PARAMS_DEFAULT
 
-# Debug variant for the symmetric-vergence and cascade panels — additionally
-# disables ALL sensory + accumulator noise and turns off Listing's corrections,
-# so the only signals visible are vergence-loop dynamics. Without this override
-# the OU position drift triggers microsaccades that obscure the trace.
+# Debug variant for the symmetric-vergence and cascade panels — disables ALL
+# sensory + accumulator noise, cross-couplings, the SVBN burst, and Listing's
+# corrections. Used to isolate the pure vergence loop dynamics.
 PARAMS_VERG_DEBUG = with_brain(
     with_sensory(PARAMS_DEFAULT,
                  sigma_canal=0.0, sigma_slip=0.0, sigma_pos=0.0, sigma_vel=0.0),

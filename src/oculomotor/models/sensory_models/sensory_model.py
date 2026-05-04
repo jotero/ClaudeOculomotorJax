@@ -96,7 +96,7 @@ class SensoryParams(NamedTuple):
     tau_slip_drift:     float       = 0.005  # OU TC for slip noise (s)
     sigma_pos:          float       = 0.2    # retinal position drift (deg); triggers microsaccades
     tau_pos_drift:      float       = 0.2    # OU TC for retinal-pos drift (s); inter-microsaccade interval
-    sigma_vel:          float       = 2.0    # target velocity noise (deg/s); drives pursuit jitter
+    sigma_vel:          float       = 1.0    # target velocity noise (deg/s); drives pursuit jitter
     tau_vel_drift:      float       = 0.005  # OU TC for retinal-vel noise (s); essentially band-limited white
 
     # Binocular geometry
