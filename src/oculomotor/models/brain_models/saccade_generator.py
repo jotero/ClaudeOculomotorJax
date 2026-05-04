@@ -171,12 +171,14 @@ def step(x_sg, pos_delayed, target_visible, x_ni, ocr, w_est, p, noise_acc=0.0):
         dx_sg:   (N_STATES,)  state derivative
         u_burst: (3,)         saccade velocity command (deg/s)
     """
-    # ── Listing's law corrections ─────────────────────────────────────────────
-    # OCR is no longer a tonic added on top of motor_cmd in NI; it flows through
-    # the integrator now, so x_ni already reflects the OCR-driven torsion.
+    # ── Listing's law: applied centrally now ─────────────────────────────────
+    # listing.velocity_torsion is added to the SUMMED velocity command
+    # (u_burst + u_pursuit + omega_tvor) in brain_model.step, BEFORE NI
+    # integration. So no per-module target / x_ni torsion adjustment here —
+    # SG aims at H/V only and torsion drops out of the velocity-level rule.
+    # ocr / eye_pos kept in the interface for future use.
     eye_pos = x_ni
-    pos_delayed, x_ni = listing.saccade_corrections(
-        eye_pos, pos_delayed, ocr, p.listing_primary)
+    _ = (eye_pos, ocr)
 
     # ── State extraction ──────────────────────────────────────────────────────
     e_held  = x_sg[0:3]    # (3,) error estimator = residual error (e_res = e_held)

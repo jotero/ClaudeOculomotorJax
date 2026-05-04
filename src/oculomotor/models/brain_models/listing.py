@@ -96,20 +96,75 @@ def saccade_corrections(eye_pos, target_pos, ocr, primary_pos):
     )
 
 
-def pursuit_torsion(eye_pos, eye_vel_hv, primary_pos):
-    """Torsional velocity (deg/s) to maintain Listing's plane during smooth pursuit.
+def velocity_torsion(eye_pos, vel_hv, primary_pos):
+    """Torsional velocity (deg/s) needed to keep the eye on Listing's plane.
 
-    vel_torsion = −π/360 · [ (H−H₀)·V̇  +  (V−V₀)·Ḣ ]
+    Differentiating the half-angle rule T = OCR − (H−H₀)·(V−V₀)·π/360:
+        Ṫ = −π/360 · [ (H−H₀)·V̇  +  (V−V₀)·Ḣ ]
+
+    Apply this as an additive torsional component on the summed velocity
+    command (u_burst + u_pursuit + omega_tvor) BEFORE NI integration.
+    With this in place, NI's integrated x_ni[2] satisfies the half-angle rule
+    automatically — no per-module Listing's correction needed.
 
     Args:
-        eye_pos     : (3,) current eye position [H, V, T] deg
-        eye_vel_hv  : (2,) smooth pursuit H/V velocity [Ḣ, V̇] deg/s
-                      (pursuit only — VOR follows its own 3D canal structure)
+        eye_pos     : (3,) current eye position [H, V, T] deg (use x_ni_net)
+        vel_hv      : (2,) summed H/V velocity command [Ḣ, V̇] (deg/s)
         primary_pos : (2,) [H₀, V₀] primary position (deg)
 
     Returns:
-        vel_torsion : float  torsional velocity demand (deg/s)
+        vel_torsion : float  torsional velocity demand (deg/s) — add to u_total[2]
     """
     dH = eye_pos[0] - primary_pos[0]
     dV = eye_pos[1] - primary_pos[1]
-    return -HALF_ANGLE * (dH * eye_vel_hv[1] + dV * eye_vel_hv[0])
+    return -HALF_ANGLE * (dH * vel_hv[1] + dV * vel_hv[0])
+
+
+# Backward-compat alias — pursuit-specific name, generalized version above.
+pursuit_torsion = velocity_torsion
+
+
+def listing_corrections(eye_pos, vel_hv, vergence_angle, primary_pos, l2_frac):
+    """Combined Listing's law corrections — cyclopean half-angle + L2 cyclo-vergence.
+
+    Single source of truth for all Listing's-law geometry. Returns the two
+    corrections needed:
+
+      cyc_torsion_vel  → add to the SUMMED velocity command's torsion axis
+                         (u_total[2]) BEFORE NI integration. Ensures the
+                         cyclopean eye position satisfies the half-angle rule.
+
+      cyclo_verg_rate  → add to the vergence cyclo-vergence axis input
+                         (verg_rate_tvor[2] in the vergence step). Drives the
+                         per-eye torsion difference (T_L − T_R) that arises
+                         when each eye's Listing plane tilts ±verg/2 around
+                         head-vertical and the eye moves vertically.
+
+    Math:
+      Cyclopean half-angle:
+        T_cyc = OCR − (H−H₀)·(V−V₀)·π/360
+        Ṫ_cyc = −π/360 · [(H−H₀)·V̇ + (V−V₀)·Ḣ]
+
+      L2 (each eye's Listing plane tilts ±verg/2 about head-vertical):
+        Per-eye torsion rate from vertical motion: T_L,R = ±V̇ · sin(verg/2)
+        Cyclo-vergence rate (T_L − T_R) = −V̇ · sin(verg) ≈ −V̇ · verg [rad]
+        Convert verg from deg → rad:  rate = −l2_frac · V̇ · radians(verg)
+
+    Args:
+        eye_pos        : (3,) cyclopean eye position [H, V, T] (deg)
+        vel_hv         : (2,) summed H/V velocity command [Ḣ, V̇] (deg/s)
+        vergence_angle : scalar absolute vergence (deg)
+        primary_pos    : (2,) [H₀, V₀] primary position (deg)
+        l2_frac        : scalar [0..1] L2 fraction (0 = disabled, 0.5 = physiological)
+
+    Returns:
+        cyc_torsion_vel : float  cyclopean torsional velocity (deg/s)
+        cyclo_verg_rate : float  cyclo-vergence rate from L2 (deg/s)
+    """
+    dH = eye_pos[0] - primary_pos[0]
+    dV = eye_pos[1] - primary_pos[1]
+    H_dot, V_dot = vel_hv[0], vel_hv[1]
+
+    cyc_torsion_vel = -HALF_ANGLE * (dH * V_dot + dV * H_dot)
+    cyclo_verg_rate = -l2_frac * V_dot * jnp.radians(vergence_angle)
+    return cyc_torsion_vel, cyclo_verg_rate

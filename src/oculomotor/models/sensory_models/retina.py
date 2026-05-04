@@ -54,15 +54,16 @@ from oculomotor.models.plant_models.readout import rotation_matrix
 # ── Cascade parameters ──────────────────────────────────────────────────────────
 
 N_STAGES      = 40    # cascade depth (stages per signal)
-_N_SIG        = 6     # 3-D signals: scene_angular_vel, scene_linear_vel, target_pos,
-                      #              target_vel, target_disparity, scene_disp_rate
+_N_SIG        = 5     # 3-D signals: scene_angular_vel, scene_linear_vel, target_pos,
+                      #              target_vel, target_disparity
+                      # (scene_disp_rate dropped — it was redundant with scene_linear_vel.)
 _N_PER_SIG    = N_STAGES * 3     # 120  states per 3-D signal
 _N_SCALAR     = N_STAGES         # 40   states per scalar signal
-N_STATES      = _N_SIG * _N_PER_SIG + 5 * _N_SCALAR  # 6*120 + 5*40 = 920
+N_STATES      = _N_SIG * _N_PER_SIG + 5 * _N_SCALAR  # 5*120 + 5*40 = 800
 
 # ── State offsets ───────────────────────────────────────────────────────────────
 # State layout: [scene_angular_vel(120) | scene_linear_vel(120) | target_pos(120)
-#                | target_vel(120) | target_disparity(120) | scene_disp_rate(120)
+#                | target_vel(120) | target_disparity(120)
 #                | scene_visible(40) | target_visible(40) | target_motion_visible(40)
 #                | target_fusable(40) | defocus(40)]
 
@@ -70,12 +71,11 @@ _OFF_SCENE_LINEAR    = _N_PER_SIG                            # 120
 _OFF_TARGET_POS      = 2 * _N_PER_SIG                        # 240
 _OFF_TARGET_VEL      = 3 * _N_PER_SIG                        # 360
 _OFF_TARGET_DISP     = 4 * _N_PER_SIG                        # 480
-_OFF_SCENE_DISP_RATE = 5 * _N_PER_SIG                        # 600
-_OFF_SCENE_VIS       = 6 * _N_PER_SIG                        # 720
-_OFF_TARGET_VIS      = _OFF_SCENE_VIS    + _N_SCALAR          # 760
-_OFF_STROBED         = _OFF_TARGET_VIS   + _N_SCALAR          # 800
-_OFF_TARGET_FUSABLE  = _OFF_STROBED      + _N_SCALAR          # 840
-_OFF_DEFOCUS         = _OFF_TARGET_FUSABLE + _N_SCALAR        # 880
+_OFF_SCENE_VIS       = 5 * _N_PER_SIG                        # 600
+_OFF_TARGET_VIS      = _OFF_SCENE_VIS    + _N_SCALAR          # 640
+_OFF_STROBED         = _OFF_TARGET_VIS   + _N_SCALAR          # 680
+_OFF_TARGET_FUSABLE  = _OFF_STROBED      + _N_SCALAR          # 720
+_OFF_DEFOCUS         = _OFF_TARGET_FUSABLE + _N_SCALAR        # 760
 
 # ── Readout matrices ────────────────────────────────────────────────────────────
 # Exported so sensory_model / efference_copy can read cascade outputs directly.
@@ -85,7 +85,6 @@ C_scene_linear_vel = jnp.zeros((3, N_STATES)).at[:, 2*_N_PER_SIG-3      : 2*_N_P
 C_pos              = jnp.zeros((3, N_STATES)).at[:, 3*_N_PER_SIG-3      : 3*_N_PER_SIG      ].set(jnp.eye(3))
 C_vel              = jnp.zeros((3, N_STATES)).at[:, 4*_N_PER_SIG-3      : 4*_N_PER_SIG      ].set(jnp.eye(3))
 C_target_disp      = jnp.zeros((3, N_STATES)).at[:, 5*_N_PER_SIG-3      : 5*_N_PER_SIG      ].set(jnp.eye(3))
-C_scene_disp_rate  = jnp.zeros((3, N_STATES)).at[:, 6*_N_PER_SIG-3      : 6*_N_PER_SIG      ].set(jnp.eye(3))
 C_scene_visible    = jnp.zeros((1, N_STATES)).at[0, _OFF_SCENE_VIS     + _N_SCALAR - 1].set(1.0)
 C_target_visible   = jnp.zeros((1, N_STATES)).at[0, _OFF_TARGET_VIS    + _N_SCALAR - 1].set(1.0)
 C_target_motion_visible = jnp.zeros((1, N_STATES)).at[0, _OFF_STROBED   + _N_SCALAR - 1].set(1.0)

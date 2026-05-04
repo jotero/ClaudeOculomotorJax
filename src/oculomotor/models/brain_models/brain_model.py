@@ -76,62 +76,68 @@ from typing import NamedTuple
 import jax
 import jax.numpy as jnp
 
-from oculomotor.models.brain_models  import velocity_storage    as vs
-from oculomotor.models.brain_models  import neural_integrator   as ni
-from oculomotor.models.brain_models  import saccade_generator   as sg
-from oculomotor.models.brain_models  import gravity_estimator   as ge
-from oculomotor.models.brain_models  import heading_estimator   as he
-from oculomotor.models.brain_models  import pursuit             as pu
-from oculomotor.models.brain_models  import vergence            as vg
-from oculomotor.models.brain_models  import tvor                as tv
-from oculomotor.models.brain_models  import accommodation       as acc_mod
-from oculomotor.models.brain_models  import final_common_pathway as fcp
+from oculomotor.models.brain_models  import self_motion           as sm
+from oculomotor.models.brain_models  import vergence_accommodation as va
+from oculomotor.models.brain_models  import neural_integrator      as ni
+from oculomotor.models.brain_models  import saccade_generator      as sg
+from oculomotor.models.brain_models  import pursuit                as pu
+from oculomotor.models.brain_models  import tvor                   as tv
+from oculomotor.models.brain_models  import final_common_pathway   as fcp
+from oculomotor.models.brain_models  import listing
 
 from oculomotor.models.sensory_models.sensory_model import SensoryOutput
 from oculomotor.models.brain_models.final_common_pathway import G_NUCLEUS_DEFAULT, G_NERVE_DEFAULT
 
 
 # ── State layout ───────────────────────────────────────────────────────────────
-
-N_STATES = vs.N_STATES + ni.N_STATES + sg.N_STATES + ge.N_STATES + he.N_STATES + pu.N_STATES + vg.N_STATES + tv.N_STATES + acc_mod.N_STATES
-#        = 9 + 9 + 18 + 9 + 3 + 3 + 9 + 6 + 2 = 68
-# EC delay cascades removed — EC subtraction happens pre-delay in cyclopean_vision.step().
-# acc_plant state lives in SimState.acc_plant (ODE layer owns it, not brain).
-
-# ── Index constants — relative to x_brain ─────────────────────────────────────
-# Computed from module N_STATES to stay in sync automatically.
-
-_o_vs = 0
-_o_ni = _o_vs + vs.N_STATES    #  9
-_o_sg = _o_ni + ni.N_STATES    # 18
-_o_gv = _o_sg + sg.N_STATES    # 38
-_o_hd = _o_gv + ge.N_STATES    # 47  (ge.N_STATES=9: g_est+a_lin+rf)
-_o_pu = _o_hd + he.N_STATES    # 50
-_o_vg = _o_pu + pu.N_STATES    # 53
-
-# Velocity storage (9 states: L pop + R pop + null)
-_IDX_VS      = slice(_o_vs,     _o_vs + 9)   # (9,)
-_IDX_VS_L    = slice(_o_vs,     _o_vs + 3)   # (3,) left  VN pop
-_IDX_VS_R    = slice(_o_vs + 3, _o_vs + 6)   # (3,) right VN pop
-_IDX_VS_NULL = slice(_o_vs + 6, _o_vs + 9)   # (3,) null adaptation
-
-# Neural integrator (9 states: L pop + R pop + null)
-_IDX_NI      = slice(_o_ni,     _o_ni + 9)   # (9,)
-_IDX_NI_L    = slice(_o_ni,     _o_ni + 3)   # (3,) left  NPH pop
-_IDX_NI_R    = slice(_o_ni + 3, _o_ni + 6)   # (3,) right NPH pop
-_IDX_NI_NULL = slice(_o_ni + 6, _o_ni + 9)   # (3,) null adaptation
-
-# Remaining subsystems
-_IDX_SG      = slice(_o_sg, _o_sg + sg.N_STATES)        # (20,) [18:38]
-_IDX_GRAV    = slice(_o_gv, _o_gv + ge.N_STATES)        # (9,)  [38:47]
-_IDX_HEAD    = slice(_o_hd, _o_hd + he.N_STATES)        # (3,)  [47:50]
-_IDX_PURSUIT = slice(_o_pu, _o_pu + pu.N_STATES)        # (3,)  [50:53]
-_IDX_VERG       = slice(_o_vg, _o_vg + vg.N_STATES)              # (9,)  [53:62]
-# T-VOR is stateless (tv.N_STATES == 0) — no slice; preserved here as a tombstone
-# so the layout history is visible. acc_mod immediately follows vergence.
-_o_acc          = _o_vg + vg.N_STATES                            # 62
-_IDX_ACC        = slice(_o_acc, _o_acc + acc_mod.N_STATES)       # (2,)  [62:64]
+# Two unified subsystems (self_motion = VS+GE+HE; va = vergence+accommodation)
+# come first/last respectively; the per-subsystem aliases below let external
+# code (benches, LLM pipeline) keep importing _IDX_VS / _IDX_GRAV / _IDX_HEAD /
+# _IDX_VERG / _IDX_ACC unchanged.
+#
+# Block order: self_motion | NI | SG | pursuit | va
+# T-VOR is stateless (tv.N_STATES == 0) — no slice.
 # acc_plant (1 state) is in SimState.acc_plant — not part of x_brain.
+
+N_STATES = sm.N_STATES + ni.N_STATES + sg.N_STATES + pu.N_STATES + va.N_STATES
+#        = 21 + 9 + 18 + 3 + 11 = 62
+
+# ── Top-level offsets ─────────────────────────────────────────────────────────
+_o_sm = 0
+_o_ni = _o_sm + sm.N_STATES    # 21
+_o_sg = _o_ni + ni.N_STATES    # 30
+_o_pu = _o_sg + sg.N_STATES    # 48
+_o_va = _o_pu + pu.N_STATES    # 51
+
+_IDX_SELF_MOTION = slice(_o_sm, _o_sm + sm.N_STATES)   # (21,) [0:21]  — VS|GRAV|HEAD
+_IDX_NI          = slice(_o_ni, _o_ni + ni.N_STATES)   #  (9,) [21:30]
+_IDX_SG          = slice(_o_sg, _o_sg + sg.N_STATES)   # (18,) [30:48]
+_IDX_PURSUIT     = slice(_o_pu, _o_pu + pu.N_STATES)   #  (3,) [48:51]
+_IDX_VA          = slice(_o_va, _o_va + va.N_STATES)   # (11,) [51:62] — VERG|ACC
+
+# ── Backward-compat aliases for sub-states ────────────────────────────────────
+# External code (benches, llm_pipeline) still references the per-module slices.
+# These alias into the unified self_motion / va blocks above so renames don't
+# need to ripple through the rest of the codebase.
+
+# Velocity storage sub-slices (within self_motion block)
+_IDX_VS      = slice(_o_sm,     _o_sm + 9)        # (9,)
+_IDX_VS_L    = slice(_o_sm,     _o_sm + 3)        # (3,) left  VN pop
+_IDX_VS_R    = slice(_o_sm + 3, _o_sm + 6)        # (3,) right VN pop
+_IDX_VS_NULL = slice(_o_sm + 6, _o_sm + 9)        # (3,) null adaptation
+
+# Gravity estimator + heading estimator (within self_motion block)
+_IDX_GRAV    = slice(_o_sm + 9,  _o_sm + 18)      # (9,)  g_est | a_lin | rf
+_IDX_HEAD    = slice(_o_sm + 18, _o_sm + 21)      # (3,)  v_lin
+
+# Neural integrator sub-slices (within NI block)
+_IDX_NI_L    = slice(_o_ni,     _o_ni + 3)        # (3,) left  NPH pop
+_IDX_NI_R    = slice(_o_ni + 3, _o_ni + 6)        # (3,) right NPH pop
+_IDX_NI_NULL = slice(_o_ni + 6, _o_ni + 9)        # (3,) null adaptation
+
+# Vergence + accommodation sub-slices (within va block)
+_IDX_VERG    = slice(_o_va,     _o_va + 9)        # (9,)
+_IDX_ACC     = slice(_o_va + 9, _o_va + 11)       # (2,)
 
 
 # ── Brain parameters ────────────────────────────────────────────────────────────
@@ -306,12 +312,6 @@ class BrainParams(NamedTuple):
                                           # translational flow with vestibular integration.  In dark
                                           # (scene_lin_vel=0) the pull is toward zero, suppressing
                                           # drift during pure rotation (OVAR, tilt suppression).
-    K_he_disp:             float = 0.0    # disparity-rate visual evidence gain on v_lin[z] (1/s);
-                                          # scene_disp_rate (per-eye scene-flow differential) is 0 in
-                                          # a uniform/depthless scene → pulls v_lin[z] toward 0.
-                                          # In real depth-structured scenes it provides parallax-based
-                                          # heading-z evidence that augments the vestibular estimate.
-                                          # Gated by scene_visible (off in dark).
 
     # Listing's law — torsional constraint (Listing 1854; Tweed et al. 1998)
     listing_primary:       jnp.ndarray = jnp.zeros(2)  # primary position [yaw₀, pitch₀] (deg)
@@ -374,6 +374,13 @@ class BrainParams(NamedTuple):
     # T-VOR response, prevents runaway from gravity-mismatch artifacts.
     # Vest+visual fusion of head linear velocity is now done in heading_estimator
     # (K_he_vis); T-VOR consumes the combined v_lin directly.
+    K_phasic_tvor:         float        = 1.0             # T-VOR direct (phasic) pathway gain (s) — multiplies a_lin in the
+                                                          # cross-product formula to give a fast onset velocity that bypasses
+                                                          # the heading-estimator (v_lin) integrator. Implicit units: s, since
+                                                          # it converts a_lin (m/s²) into a v-equivalent (m/s) for the cross
+                                                          # product. ~0.1–0.3 matches the ~100 ms short-latency T-VOR onset
+                                                          # reported by Paige & Tomko (1991), Angelaki et al. (1999).
+                                                          # Set 0 to disable direct pathway (integrator-only T-VOR).
     g_tvor:                float        = 1.0             # T-VOR version output gain (cross product); ~unity per Paige & Tomko 1991.
                                                           # Was lowered to 0.5 while debugging tilt-suppression with K_gd off and
                                                           # the old position-integrator TVOR architecture; restored now that
@@ -389,9 +396,6 @@ class BrainParams(NamedTuple):
                                                           # Re-enable when FCP uses rotation-matrix Hering's.
     tau_tvor_pos:          float        = 2.0             # T-VOR low-pass TC for v_lin (s); short enough to track translation transients,
                                                           # long enough to smooth out canal noise / quick-phase chatter
-    K_visual_verg:         float        = 0.0             # visual-evidence gain on vergence rate [0..1]: pulls T-VOR's vergence
-                                                          # rate toward the per-eye scene-flow differential.  Set to 0 for now —
-                                                          # interacts with sustained-tilt scenarios.  Re-enable for translation tests.
     ipd_brain:             float        = 0.064           # interpupillary distance (m) used for vergence→distance calculation;
                                                           # mirror of SensoryParams.ipd — kept here so brain_model.step can convert
                                                           # vergence angle to distance for T-VOR without threading sensory_params through
@@ -473,7 +477,7 @@ def make_x0(brain_params=None):
         brain_params: BrainParams NamedTuple.  If None, uses b_vs=0 (zero bias; old behaviour).
     """
     x0 = jnp.zeros(N_STATES)
-    x0 = x0.at[_IDX_GRAV].set(ge.X0)   # [G0,0,0, 0,0,0] — upright gravity, zero linear accel
+    x0 = x0.at[_IDX_GRAV].set(sm.GRAV_X0)   # [G0,0,0, 0,0,0] — upright gravity, zero linear accel
     if brain_params is not None:
         # VS: both populations start at resting bias; null starts at 0.
         # b_vs is (6,) float32 — normalised by simulate() before this is called.
@@ -517,49 +521,43 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
         noise_acc:    scalar  accumulator diffusion noise sample (pre-scaled)
 
     Returns:
-        dx_brain:    (62,)   dx_brain/dt
-        nerves:      (12,)   per-muscle nerve activations [L6 | R6] → plant
-        ec_vel:      (3,)    version velocity efference for cyclopean_vision EC correction
-        ec_pos:      (3,)    eye position efference
-        ec_verg:     (3,)    vergence efference
-        u_neural_acc: scalar  neural accommodation command → ODE drives acc_plant
-        A_cac:       scalar  CA/C feedforward (D) → ODE adds to u_neural_acc for acc_plant
+        dx_brain: (62,)  dx_brain/dt
+        nerves:   (12,)  per-muscle nerve activations [L6 | R6] → plant
+        ec_vel:   (3,)   version velocity efference for cyclopean_vision EC correction
+        ec_pos:   (3,)   eye position efference
+        ec_verg:  (3,)   vergence efference
+        u_acc:    scalar total lens-plant input (D) — neural + CA/C, drives acc_plant
     """
-    x_vs      = x_brain[_IDX_VS]      # (9,): bilateral VS + null
-    x_ni      = x_brain[_IDX_NI]      # (9,): bilateral NI + null
-    x_ni_net  = x_ni[:3] - x_ni[3:6]  # (3,): net eye position (L pop − R pop)
-    x_sg      = x_brain[_IDX_SG]
-    x_grav    = x_brain[_IDX_GRAV]
-    x_head    = x_brain[_IDX_HEAD]
-    x_pursuit = x_brain[_IDX_PURSUIT]
-    rf_state  = x_grav[ge._IDX_RF]   # (3,) rotational feedback: 1-step delayed, owned by GE
-    x_verg    = x_brain[_IDX_VERG]
-    # T-VOR is stateless — no x_tvor extraction.
-    x_acc     = x_brain[_IDX_ACC]     # (2,): [x_fast, x_slow] neural (D)
+    x_self_motion = x_brain[_IDX_SELF_MOTION]    # (21,) VS + GE + HE
+    x_ni          = x_brain[_IDX_NI]              # (9,)  bilateral NI + null
+    x_ni_net      = x_ni[:3] - x_ni[3:6]          # (3,)  net eye position (L pop − R pop)
+    x_sg          = x_brain[_IDX_SG]
+    x_pursuit     = x_brain[_IDX_PURSUIT]
+    x_va          = x_brain[_IDX_VA]              # (11,) vergence + accommodation
 
-    # ── Velocity storage + gravity estimator + OCR ───────────────────────────
+    # ── Self-motion observer (VS + GE + HE) — single unified step ────────────
     # sensory_out.scene_slip is already EC-corrected (pre-delay EC in cyclopean_vision).
-    # Ordering: VS runs first (using rf_state from ODE state, 1 ODE step delayed),
-    # then GE runs with the accurate w_est from VS this step.
-    # rf_state (read from x_grav above) is 1 ODE step delayed — negligible vs gravity dynamics.
-    # This breaks the algebraic loop: VS needs rf (from GE), GE needs w_est (from VS).
-    dx_vs, w_est   = vs.step(x_vs, jnp.concatenate([sensory_out.canal, sensory_out.scene_slip, rf_state]), brain_params)
-    dx_grav, g_est = ge.step(x_grav, jnp.concatenate([w_est, sensory_out.otolith]), brain_params)
-    a_lin_est      = x_grav[ge._IDX_A]   # (3,) gravity_estimator's linear-accel estimate
+    # Internal sequencing (VS uses delayed rf_state → GE uses fresh w_est → HE
+    # uses fresh a_lin) is owned by self_motion.step.
+    dx_self_motion, w_est, g_est, v_lin, a_lin_est = sm.step(
+        x_self_motion,
+        jnp.concatenate([
+            sensory_out.canal,
+            sensory_out.scene_slip,
+            sensory_out.otolith,
+            sensory_out.scene_linear_vel,
+            jnp.array([sensory_out.scene_visible]),
+        ]),
+        brain_params,
+    )
+
     # OCR: world frame [x=right, y=up, z=fwd]. Right-ear-down → g_est[0] < 0 → -g_est[0] > 0.
-    # Positive motor roll = left-ear-down (left-hand rule); negative = right-ear-down (same as head tilt).
-    # Partial compensatory: eyes roll right-ear-down when head is right-ear-down (−g_est[0] < 0 → roll < 0).
-    ocr            = jnp.array([0.0, 0.0, -brain_params.g_ocr * g_est[0]])
-    dx_head, v_lin = he.step(x_head,
-                              jnp.concatenate([a_lin_est,
-                                               sensory_out.scene_linear_vel,
-                                               jnp.array([sensory_out.scene_visible]),
-                                               sensory_out.scene_disp_rate]),
-                              brain_params)
+    # Positive motor roll = left-ear-down (left-hand rule); negative = right-ear-down.
+    ocr = jnp.array([0.0, 0.0, -brain_params.g_ocr * g_est[0]])
 
     # ── Pursuit: sensory_out.target_slip already EC-corrected (pre-delay) ────
     dx_pursuit, u_pursuit = pu.step(x_pursuit,
-                                     jnp.concatenate([sensory_out.target_slip, x_ni_net]),
+                                      jnp.concatenate([sensory_out.target_slip, x_ni_net]),
                                      brain_params)
 
     # ── Saccade generator (target selection + Listing's corrections handled internally) ──
@@ -573,9 +571,11 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
     # *deviations* from tonic_verg (per the Read & Schor 2022 dual-integrator design),
     # so absolute vergence = tonic_verg + x_slow at SS.  At rest (no target),
     # x_slow = 0 → vergence = tonic_verg ≈ 3.67° ≈ 1 m default distance.
-    current_vergence_yaw = brain_params.tonic_verg + x_verg[3]
+    # Vergence x_slow[0] (H deviation) is at index 3 inside x_va (verg block 0:9, x_slow at 3:6)
+    current_vergence_yaw = brain_params.tonic_verg + x_va[3]
     omega_tvor, verg_rate_tvor = tv.step(
         jnp.concatenate([v_lin,
+                         a_lin_est,
                          jnp.array([current_vergence_yaw]),
                          x_ni_net]),
         brain_params)
@@ -588,41 +588,37 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
     # Torsional VOR gain is ~half horizontal (Crawford 1991, Misslisch 1994); apply that
     # attenuation only at the VS→NI connection so w_est elsewhere keeps full magnitude.
     vor_torsion_gain = jnp.array([1.0, 1.0, 0.5])
-    dx_ni, motor_cmd_ni = ni.step(x_ni, -w_est * vor_torsion_gain + u_burst + u_pursuit + omega_tvor, brain_params, u_tonic=ocr)
+    u_ni_in = -w_est * vor_torsion_gain + u_burst + u_pursuit + omega_tvor
 
-    # ── Vergence + Accommodation (Schor dual-interaction model) ─────────────────
-    # Accommodation and vergence are tightly cross-coupled (AC/A and CA/C).
-    # They share this block so the data-flow is explicit:
-    #
-    #   defocus → acc controller → u_neural_acc  ─(AC/A)→  aca_drive (deg)
-    #                                             ─(+A_cac via ODE)→ acc plant
-    #   disparity + aca_drive → vergence controller → u_verg (deg)
-    #
-    # Accommodation:
-    #   - defocus = delayed(1/z + refractive_error − x_plant), gated by defocus_visible.
-    #   - CA/C (A_cac) bypasses the blur controller; returned for ODE to add to u_plant.
-    #   - u_neural_acc is the efference copy of the lens command (brain has no lens sensor).
-    #     At steady state u_neural_acc ≈ x_acc_plant; using it avoids peeking at SimState.
-    # AC/A:
-    #   - Converts u_neural_acc [D, above dark focus] → convergence drive [deg].
-    #   - Units: AC/A [pd/D] × 0.5729 [deg/pd] × (u_neural_acc − tonic_acc) [D] = deg.
-    #     Note: pd (prism diopters) ≠ D (optical diopters); _DEG_PER_PD bridges them.
-    # Vergence:
-    #   - z_act: 0=idle (OPN tonic), 1=saccade (OPN paused); from z_opn ∈ [0,100].
-    x_verg_yaw = x_verg[0]
-    dx_acc, u_neural_acc, A_cac, aca_drive = acc_mod.step(
-        x_acc,
-        jnp.array([sensory_out.defocus, x_verg_yaw]),
-        brain_params)
+    # ── Listing's law — single call returns BOTH cyclopean and L2 corrections ──
+    # Cyclopean torsion velocity → added to u_ni_in[2] (drives x_ni torsion
+    #   to satisfy the half-angle rule).
+    # L2 cyclo-vergence rate → added to verg_rate_tvor[2] (drives the per-eye
+    #   torsion difference that arises when each eye's Listing plane tilts
+    #   ±verg/2 around head-vertical and the eye moves vertically).
+    cyc_torsion_vel, cyclo_verg_rate = listing.listing_corrections(
+        x_ni_net, u_ni_in[:2], current_vergence_yaw,
+        brain_params.listing_primary, brain_params.listing_l2_frac,
+    )
+    u_ni_in        = u_ni_in.at[2].add(cyc_torsion_vel)
+    verg_rate_tvor = verg_rate_tvor.at[2].add(cyclo_verg_rate)
+
+    dx_ni, motor_cmd_ni = ni.step(x_ni, u_ni_in, brain_params, u_tonic=ocr)
+
+    # ── Vergence + Accommodation — single unified step ────────────────────────
+    # Internal sequencing (state-based AC/A & CA/C → vergence → accommodation)
+    # and CA/C application to the lens plant are all owned by va.step.
+    # Cross-couplings happen one-step-delayed via integrator state, matching
+    # synaptic latency and avoiding intra-step iteration.
     z_act_verg = 1.0 - jnp.clip(x_sg[3], 0.0, 100.0) / 100.0
-    dx_verg, u_verg = vg.step(
-        x_verg,
-        jnp.concatenate([sensory_out.target_disparity,
-                         jnp.array([aca_drive]),
-                         verg_rate_tvor,
-                         jnp.array([z_act_verg]),
-                         x_ni_net[:2],
-                         sensory_out.scene_disp_rate]),
+    dx_va, u_verg, u_acc = va.step(
+        x_va,
+        jnp.concatenate([
+            jnp.array([sensory_out.defocus]),
+            sensory_out.target_disparity,
+            verg_rate_tvor,
+            jnp.array([z_act_verg]),
+        ]),
         brain_params,
     )
 
@@ -631,17 +627,12 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
 
     # ── Efference copy signals for pre-delay EC in cyclopean_vision ──────────
     # Rotation to eye frame is done inside cyclopean_vision.step().
-    # T-VOR contribution (omega_tvor, deg/s) is now returned directly by tv.step.
-    # Without it in ec_vel, the OKR/pursuit loops would see the resulting retinal
-    # slip as "the world is moving" and drive the eye in the opposite direction,
-    # fighting T-VOR.
-    ec_vel  = u_burst + u_pursuit + omega_tvor   # version velocity efference (head frame, [yaw,pitch,roll] deg/s)
-    ec_pos  = x_ni_net               # eye position efference     (head frame, [yaw,pitch,roll] deg)
-                                     # OCR no longer added — it now flows through NI's set-point path,
-                                     # so x_ni_net already reflects the OCR-driven torsion.
-    ec_verg = x_verg                # vergence efference         ([H,V,T] deg)
+    ec_vel  = u_burst + u_pursuit + omega_tvor   # version velocity efference (deg/s)
+    ec_pos  = x_ni_net               # eye position efference (head frame, [yaw,pitch,roll] deg)
+                                     # OCR flows through NI's set-point path → already in x_ni_net.
+    ec_verg = x_va[_IDX_VERG.start - _o_va : _IDX_VERG.stop - _o_va]   # vergence efference (9,) [H,V,T,...]
 
     # ── Pack state derivative ─────────────────────────────────────────────────
-    dx_brain = jnp.concatenate([dx_vs, dx_ni, dx_sg, dx_grav, dx_head, dx_pursuit, dx_verg, dx_acc])
+    dx_brain = jnp.concatenate([dx_self_motion, dx_ni, dx_sg, dx_pursuit, dx_va])
 
-    return dx_brain, nerves, ec_vel, ec_pos, ec_verg, u_neural_acc, A_cac
+    return dx_brain, nerves, ec_vel, ec_pos, ec_verg, u_acc

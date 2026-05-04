@@ -88,6 +88,8 @@ def step(x_pursuit, u, brain_params):
     dx_pursuit = A @ x_pursuit + brain_params.K_pursuit * e_pred
     u_pursuit  = x_pursuit + K_ph * e_pred
 
-    vel_torsion = listing.pursuit_torsion(eye_pos, u_pursuit, brain_params.listing_primary)
-    u_pursuit   = u_pursuit.at[2].add(vel_torsion)
+    # Listing's torsion is now applied centrally on the SUMMED velocity command
+    # (u_burst + u_pursuit + omega_tvor) in brain_model.step, so no per-module
+    # correction here. eye_pos kept in the interface for symmetry / future use.
+    _ = eye_pos
     return dx_pursuit, u_pursuit

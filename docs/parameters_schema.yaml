@@ -21,7 +21,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 brain.tau_vs:
-  group: velocity_storage
+  group: self_motion_estimation
   units: "s"
   anatomy: "MVN, nodulus/uvula"
   description: |
@@ -36,7 +36,7 @@ brain.tau_vs:
     - {name: "Bilateral vestibular loss", value: 5.0, tag: vn}
 
 brain.tau_vs_pitch_frac:
-  group: velocity_storage
+  group: self_motion_estimation
   units: "—"
   anatomy: "MVN pitch axis"
   description: |
@@ -48,7 +48,7 @@ brain.tau_vs_pitch_frac:
     - "Angelaki & Henn (2000)"
 
 brain.tau_vs_roll_frac:
-  group: velocity_storage
+  group: self_motion_estimation
   units: "—"
   anatomy: "MVN roll axis"
   description: |
@@ -61,7 +61,7 @@ brain.tau_vs_roll_frac:
   needs_review: true
 
 brain.b_vs:
-  group: velocity_storage
+  group: self_motion_estimation
   units: "deg/s"
   anatomy: "Vestibular nucleus resting bias (Type-I VN tonic firing)"
   description: |
@@ -74,7 +74,7 @@ brain.b_vs:
     - {name: "VN infarct (one side)", value: 0, tag: vn}
 
 brain.tau_vs_adapt:
-  group: velocity_storage
+  group: self_motion_estimation
   units: "s"
   anatomy: "Cerebellar feedback to MVN (PAN-related)"
   description: |
@@ -85,7 +85,7 @@ brain.tau_vs_adapt:
     - {name: "PAN", value: 45.0, tag: cerebellar}
 
 brain.g_vor:
-  group: velocity_storage
+  group: self_motion_estimation
   units: "—"
   anatomy: "Cerebellar VOR calibration (flocculus)"
   description: |
@@ -97,7 +97,7 @@ brain.g_vor:
     - {name: "VOR gain-up adaptation (BVH)", value: 1.5, tag: vn}
 
 brain.v_max_vor:
-  group: velocity_storage
+  group: self_motion_estimation
   units: "deg/s"
   anatomy: "Type-I VN saturation"
   description: |
@@ -108,7 +108,7 @@ brain.v_max_vor:
     - "Goldberg & Fernández (1971) J Neurophysiol 34:635"
 
 brain.K_vs:
-  group: velocity_storage
+  group: self_motion_estimation
   units: "1/s"
   anatomy: "Canal afferents → MVN integrator input"
   description: |
@@ -118,7 +118,7 @@ brain.K_vs:
     - "Raphan et al. (1979)"
 
 brain.K_vis:
-  group: velocity_storage
+  group: self_motion_estimation
   units: "1/s"
   anatomy: "NOT/AOS → MVN (visual-vestibular convergence)"
   description: |
@@ -131,7 +131,7 @@ brain.K_vis:
     - {name: "OKR/OKAN abolished", value: 0.0, tag: cerebellar}
 
 brain.g_vis:
-  group: velocity_storage
+  group: self_motion_estimation
   units: "—"
   anatomy: "Direct pretectal / NOT visual pathway"
   description: |
@@ -141,7 +141,7 @@ brain.g_vis:
     - "Raphan (1979)"
 
 brain.v_max_okr:
-  group: velocity_storage
+  group: self_motion_estimation
   units: "deg/s"
   anatomy: "NOT/AOS neurons"
   description: |
@@ -477,7 +477,7 @@ brain.k_center_vel:
 # ─────────────────────────────────────────────────────────────────────────────
 
 brain.K_grav:
-  group: gravity_estimator
+  group: self_motion_estimation
   units: "1/s"
   anatomy: "Nodulus/uvula → MVN (otolith-canal fusion)"
   description: |
@@ -491,7 +491,7 @@ brain.K_grav:
     - "Mayne (1974); Holly (1996)"
 
 brain.K_lin:
-  group: gravity_estimator
+  group: self_motion_estimation
   units: "1/s"
   anatomy: "Nodulus/uvula; PIVC"
   description: |
@@ -504,7 +504,7 @@ brain.K_lin:
     - {name: "Strong somatogravic illusion", value: 0.0, tag: vn}
 
 brain.tau_a_lin:
-  group: gravity_estimator
+  group: self_motion_estimation
   units: "s"
   anatomy: "Nodulus/uvula; deterministic stand-in for Bayesian translation prior"
   description: |
@@ -516,7 +516,7 @@ brain.tau_a_lin:
     - "Laurens, Meng & Angelaki (2013) PLoS Comp Bio"
 
 brain.K_gd:
-  group: gravity_estimator
+  group: self_motion_estimation
   units: "—"
   anatomy: "Nodulus/uvula → MVN (velocity-storage gravity dumping)"
   description: |
@@ -531,7 +531,7 @@ brain.K_gd:
     - {name: "Gravity-blind VS", value: 0.0, tag: cerebellar}
 
 brain.g_ocr:
-  group: gravity_estimator
+  group: self_motion_estimation
   units: "deg/(m/s²)"
   anatomy: "Utricle → CN3 (IO/SR subnuclei); CN4 (SO)"
   description: |
@@ -548,7 +548,7 @@ brain.g_ocr:
 # ─────────────────────────────────────────────────────────────────────────────
 
 brain.tau_head:
-  group: heading_estimator
+  group: self_motion_estimation
   units: "s"
   anatomy: "Vestibular translational pathway (otolith integration)"
   description: |
@@ -560,23 +560,13 @@ brain.tau_head:
     - "Paige & Tomko (1991)"
 
 brain.K_he_vis:
-  group: heading_estimator
+  group: self_motion_estimation
   units: "1/s"
   anatomy: "MST translational flow → vestibular nuclei"
   description: |
     Visual-velocity pull gain on v_lin. Fuses scene translational flow with
     the vestibular integration of otolith. In dark the pull is toward 0,
     suppressing drift during pure rotation (OVAR, tilt suppression).
-
-brain.K_he_disp:
-  group: heading_estimator
-  units: "1/s"
-  anatomy: "Disparity-rate visual evidence on heading-z"
-  description: |
-    Disparity-rate visual evidence gain on v_lin[z]. In a uniform/depthless
-    scene this is 0 (no parallax); in real depth-structured scenes it provides
-    parallax-based heading-z evidence. Gated by scene_visible.
-  needs_review: true
 
 # ─────────────────────────────────────────────────────────────────────────────
 # BrainParams — Listing's Law
@@ -802,16 +792,6 @@ brain.tau_tvor_pos:
   description: |
     T-VOR low-pass TC for v_lin. State currently inert (post velocity-output
     refactor); value retained for state-shape compatibility.
-
-brain.K_visual_verg:
-  group: tvor
-  units: "—"
-  anatomy: "Visual evidence on T-VOR vergence rate"
-  description: |
-    Visual evidence gain pulling T-VOR vergence rate toward per-eye scene-flow
-    differential. 0 = disabled (default); enable for translation experiments
-    in lit scenes with depth structure.
-  needs_review: true
 
 brain.ipd_brain:
   group: tvor

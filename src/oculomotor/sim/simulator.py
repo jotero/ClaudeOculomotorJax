@@ -356,7 +356,7 @@ def ODE_ocular_motor(t, state, args):
 
     # ── Brain: VS + NI + SG + pursuit + vergence + accommodation ─────────────
     # x_acc_plant from SimState.acc_plant: current lens accommodation (D).
-    dx_brain, nerves, ec_vel, ec_pos, ec_verg, u_neural_acc, A_cac = brain_model.step(
+    dx_brain, nerves, ec_vel, ec_pos, ec_verg, u_acc = brain_model.step(
         state.brain, sensory_out, theta.brain, noise_acc_interp.evaluate(t))
 
     # ── Plant ─────────────────────────────────────────────────────────────────
@@ -364,11 +364,9 @@ def ODE_ocular_motor(t, state, args):
     dx_p_R, q_eye_R, w_eye_R = plant_model.step(state.plant[_IDX_P_R], nerves[6:], theta.plant, M_PLANT_EYE_R)
 
     # ── Accommodation plant ────────────────────────────────────────────────────
-    # CA/C (A_cac) drives the plant directly alongside the neural command.
-    # u_plant = u_neural + A_cac: CA/C bypasses the blur controller and adds
-    # directly to lens drive, as in the Schor dual-interaction model.
+    # u_acc = brain neural command + CA/C feedforward (combined inside va.step).
     dx_acc_plant, _ = acc_plant_mod.step(
-        state.acc_plant, u_neural_acc + A_cac, theta.brain.tau_acc_plant)
+        state.acc_plant, u_acc, theta.brain.tau_acc_plant)
 
     # ── Optical interventions — applied after plant, before sensory step ─────
     # Prisms are head-frame mounted (glasses); they rotate the apparent gaze direction

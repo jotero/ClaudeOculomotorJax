@@ -77,6 +77,17 @@ h1   { font-size: 22px; margin-bottom: 4px; }
               text-transform: uppercase; margin-top: 8px; }
 .badge.behavior { background: #d4edda; color: #155724; }
 .badge.cascade  { background: #cce5ff; color: #004085; }
+.fig-pair       { display: grid; grid-template-columns: 1fr 1fr; gap: 6px;
+                  align-items: start; }
+.fig-pair .lbl  { font-size: 10px; color: #888; text-transform: uppercase;
+                  letter-spacing: 0.04em; margin: 0 0 2px 2px; }
+.diff-badge     { display: inline-block; padding: 2px 8px; border-radius: 12px;
+                  font-size: 10px; font-weight: 700; letter-spacing: 0.04em;
+                  text-transform: uppercase; margin-bottom: 6px; margin-right: 6px; }
+.diff-match     { background: #d4edda; color: #155724; }
+.diff-changed   { background: #f8d7da; color: #721c24; }
+.diff-shape     { background: #fff3cd; color: #856404; }
+.diff-noref     { background: #e2e3e5; color: #383d41; }
 """
 
 _HTML_LIGHTBOX = """
@@ -106,23 +117,50 @@ def _badge(fig_type):
     return f'<span class="badge {label}">{label}</span>'
 
 
+def _diff_badge_html(fig):
+    """Render the regression-status badge for a figure."""
+    status = fig.get('diff_status', 'no-ref')
+    diff   = fig.get('diff')
+    if status == 'match':
+        return f'<span class="diff-badge diff-match">match (Δ={diff:.4f})</span>'
+    if status == 'changed':
+        return f'<span class="diff-badge diff-changed">CHANGED (Δ={diff:.4f})</span>'
+    if status == 'shape-changed':
+        return '<span class="diff-badge diff-shape">layout changed</span>'
+    if status == 'no-ref':
+        return '<span class="diff-badge diff-noref">no reference</span>'
+    return ''  # 'unavailable' (no PIL) — silent
+
+
 def _figure_card(fig):
-    rel   = fig.get('rel', '')
-    title = fig.get('title', '')
-    desc  = fig.get('description', '')
-    exp   = fig.get('expected', '')
-    cit   = fig.get('citation', '')
-    ftype = fig.get('type', 'behavior')
+    rel    = fig.get('rel', '')
+    title  = fig.get('title', '')
+    desc   = fig.get('description', '')
+    exp    = fig.get('expected', '')
+    cit    = fig.get('citation', '')
+    ftype  = fig.get('type', 'behavior')
+    refrel = fig.get('ref_rel', '')
 
     # Check file exists
     path  = fig.get('path', '')
     if path and not os.path.isfile(path):
         img_html = '<div style="padding:30px;text-align:center;color:#aaa;font-size:13px;">Figure not yet generated</div>'
+    elif refrel:
+        # Side-by-side: current | reference
+        img_html = (
+            '<div class="fig-pair">'
+            f'  <div><div class="lbl">current</div>'
+            f'    <a href="{rel}" target="_blank"><img src="{rel}" alt="{title}"></a></div>'
+            f'  <div><div class="lbl">reference</div>'
+            f'    <a href="{refrel}" target="_blank"><img src="{refrel}" alt="{title} (reference)"></a></div>'
+            '</div>'
+        )
     else:
         img_html = f'<a href="{rel}" target="_blank"><img src="{rel}" alt="{title}"></a>'
 
     return f"""
     <div class="fig-card">
+      {_diff_badge_html(fig)}
       {img_html}
       <h3>{title}</h3>
       <p class="desc">{desc}</p>
@@ -241,10 +279,24 @@ def main():
                 print(f'  ERROR in {mod_name}: {e}')
                 import traceback; traceback.print_exc()
                 figs = []
+        # Enrich each fig with reference-comparison metadata (no-op if no PIL).
+        figs = [utils.ref_meta(dict(f), base_dir=utils.BENCH_DIR, ref_dir=utils.REF_DIR) for f in figs]
         sections_data.append((mod.SECTION, figs))
 
     generate_html(sections_data)
     print(f'\nDone. Open: {utils.HTML_PATH}')
+
+    # Tally reference-comparison results so a regression is loud at the CLI too.
+    all_figs = [f for _, figs in sections_data for f in figs]
+    if all_figs:
+        from collections import Counter
+        tally = Counter(f.get('diff_status', 'no-ref') for f in all_figs)
+        print(f'\nReference comparison: {dict(tally)}')
+        changed = [f['title'] for f in all_figs if f.get('diff_status') == 'changed']
+        if changed:
+            print('  Changed vs. reference:')
+            for title in changed:
+                print(f'    - {title}')
 
     # Refresh parameters.html alongside the bench HTML so doc + code stay in sync.
     try:

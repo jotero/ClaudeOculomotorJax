@@ -135,8 +135,6 @@ C_scene_linear_vel = _retina.C_scene_linear_vel   # (3, 800)  delayed scene line
 C_pos              = _retina.C_pos                # (3, 800)  delayed target position (raw)
 C_vel              = _retina.C_vel                # (3, 800)  delayed target velocity (raw)
 C_target_disp      = _retina.C_target_disp        # (3, 800)  delayed target disparity (deg)
-C_scene_disp_rate  = _retina.C_scene_disp_rate    # (3, 920)  delayed scene-flow disparity rate (m/s) →
-                                                  # vergence visual evidence (0 in uniform / depthless scene)
 C_scene_visible    = _retina.C_scene_visible      # (1, 800)  delayed scene_present
 C_target_visible   = _retina.C_target_visible     # (1, 800)  delayed target_present × target_in_vf
 C_target_motion_visible = _retina.C_target_motion_visible  # (1, 800)  delayed pursuit gate
@@ -192,7 +190,6 @@ class SensoryOutput(NamedTuple):
     target_pos:      jnp.ndarray   # (3,)
     target_slip:     jnp.ndarray   # (3,)
     target_disparity: jnp.ndarray  # (3,)
-    scene_disp_rate: jnp.ndarray   # (3,)  per-eye scene-flow difference (m/s) — vergence visual evidence
     scene_visible:   jnp.ndarray   # scalar
     target_visible:  jnp.ndarray   # scalar
     target_motion_visible: jnp.ndarray  # scalar
@@ -237,7 +234,6 @@ def read_outputs(x_sensory, sensory_params, q_head, a_head):
         target_pos       = _retina.C_pos              @ x_vis,
         target_slip      = _retina.C_vel              @ x_vis,
         target_disparity = _retina.C_target_disp      @ x_vis,
-        scene_disp_rate  = _retina.C_scene_disp_rate  @ x_vis,
         scene_visible    = (_retina.C_scene_visible    @ x_vis)[0],
         target_visible   = (_retina.C_target_visible   @ x_vis)[0],
         target_motion_visible = (_retina.C_target_motion_visible @ x_vis)[0],

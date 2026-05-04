@@ -1,27 +1,27 @@
-"""Central brain submodules — every module exposes the SSM ``step()`` interface.
+"""Central brain submodules — every leaf module exposes the SSM ``step()`` interface.
 
-Direct submodule imports are preferred for clarity:
+Subpackages group physiologically-coupled modules:
 
-    from oculomotor.models.brain_models import (
-        velocity_storage, neural_integrator, saccade_generator,
-        gravity_estimator, heading_estimator, pursuit, vergence,
-        tvor, accommodation, listing, efference_copy, final_common_pathway,
-    )
+  self_motion              — VS, gravity_estimator, heading_estimator
+                             (Laurens & Angelaki self-motion observer)
+  vergence_accommodation   — vergence + accommodation (AC/A and CA/C cross-links)
 
-The connector module ``brain_model`` wires them together and owns the combined
-state layout, parameters (BrainParams), and per-step ODE evaluation order.
+Top-level leaf modules (no subpackage):
+
+  neural_integrator, saccade_generator, pursuit, tvor,
+  listing, efference_copy, final_common_pathway, brain_model
+
+The connector module ``brain_model`` wires everything together and owns the
+combined state layout, BrainParams, and per-step ODE evaluation order.
 """
 
 from oculomotor.models.brain_models import (
-    velocity_storage,
+    self_motion,
+    vergence_accommodation,
     neural_integrator,
     saccade_generator,
-    gravity_estimator,
-    heading_estimator,
     pursuit,
-    vergence,
     tvor,
-    accommodation,
     listing,
     efference_copy,
     final_common_pathway,
@@ -29,15 +29,12 @@ from oculomotor.models.brain_models import (
 )
 
 __all__ = [
-    "velocity_storage",
+    "self_motion",
+    "vergence_accommodation",
     "neural_integrator",
     "saccade_generator",
-    "gravity_estimator",
-    "heading_estimator",
     "pursuit",
-    "vergence",
     "tvor",
-    "accommodation",
     "listing",
     "efference_copy",
     "final_common_pathway",

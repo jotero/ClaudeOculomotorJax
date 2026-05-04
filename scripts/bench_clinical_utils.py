@@ -24,7 +24,14 @@ import oculomotor  # noqa: E402
 DOCS_DIR  = _DOCS
 BENCH_DIR = os.path.join(_DOCS, 'clinical_benchmarks')
 FIGS_DIR  = os.path.join(BENCH_DIR, 'figures')
+REF_DIR   = os.path.join(BENCH_DIR, 'reference')
 HTML_PATH = os.path.join(BENCH_DIR, 'index.html')
+
+# Aliases so run_clinical_benchmarks.py can read them as utils.CLIN_*
+CLIN_DIR     = BENCH_DIR
+CLIN_FIGS_DIR = FIGS_DIR
+CLIN_REF_DIR  = REF_DIR
+CLIN_HTML_PATH = HTML_PATH
 
 
 def save_fig(fig, name, show=False, dpi=150):

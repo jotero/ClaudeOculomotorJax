@@ -76,14 +76,13 @@ tr:last-child { border-bottom: none; }
   <nav>
     <h2>Sections</h2>
     <a href="#brainparams">BrainParams</a>
-    <a href="#brainparams-velocity_storage" style="padding-left:32px;font-size:11px;color:#aaa">Velocity Storage <span style="color:#666">(11)</span></a>
+    <a href="#brainparams-self_motion_estimation" style="padding-left:32px;font-size:11px;color:#aaa">Self Motion Estimation <span style="color:#666">(19)</span></a>
     <a href="#brainparams-neural_integrator" style="padding-left:32px;font-size:11px;color:#aaa">Neural Integrator <span style="color:#666">(7)</span></a>
     <a href="#brainparams-saccade_generator" style="padding-left:32px;font-size:11px;color:#aaa">Saccade Generator <span style="color:#666">(29)</span></a>
-    <a href="#brainparams-gravity_estimator" style="padding-left:32px;font-size:11px;color:#aaa">Gravity Estimator <span style="color:#666">(5)</span></a>
-    <a href="#brainparams-heading_estimator" style="padding-left:32px;font-size:11px;color:#aaa">Heading Estimator <span style="color:#666">(3)</span></a>
     <a href="#brainparams-listing" style="padding-left:32px;font-size:11px;color:#aaa">Listing <span style="color:#666">(2)</span></a>
     <a href="#brainparams-pursuit" style="padding-left:32px;font-size:11px;color:#aaa">Pursuit <span style="color:#666">(4)</span></a>
     <a href="#brainparams-vergence" style="padding-left:32px;font-size:11px;color:#aaa">Vergence <span style="color:#666">(12)</span></a>
+    <a href="#brainparams-ungrouped" style="padding-left:32px;font-size:11px;color:#aaa">Ungrouped <span style="color:#666">(1)</span></a>
     <a href="#brainparams-tvor" style="padding-left:32px;font-size:11px;color:#aaa">Tvor <span style="color:#666">(7)</span></a>
     <a href="#brainparams-accommodation" style="padding-left:32px;font-size:11px;color:#aaa">Accommodation <span style="color:#666">(9)</span></a>
     <a href="#brainparams-final_common_pathway" style="padding-left:32px;font-size:11px;color:#aaa">Final Common Pathway <span style="color:#666">(4)</span></a>
@@ -106,20 +105,20 @@ tr:last-child { border-bottom: none; }
   <main>
     <h1>OculomotorJax — Parameter Reference</h1>
     <p class="meta">
-      Generated: <strong>2026-05-03 20:28</strong> &nbsp;|&nbsp;
-      Version: <strong>b9275b5-dirty</strong> &nbsp;|&nbsp;
+      Generated: <strong>2026-05-03 22:21</strong> &nbsp;|&nbsp;
+      Version: <strong>c03bcf3-dirty</strong> &nbsp;|&nbsp;
       Schema: <strong>d:\OneDrive\UC Berkeley\OMlab - JOM\Code\ClaudeOculomotorJax\docs\parameters_schema.yaml</strong>
     </p>
     <input id="search" type="search" placeholder="Search parameters by name, description, anatomy, disorder…" autofocus>
     <div id="match-count" class="match-count"></div>
-    
+    <div class="warning"><b>1 fields lack schema entries</b> and are flagged TODO below. Add to <code>docs/parameters_schema.yaml</code> to provide rich descriptions, anatomy, and disorder tags.</div>
     
   <section class="section" id="brainparams">
-    <h2>BrainParams <small style="font-size:12px;font-weight:400;color:#888">(93 fields)</small></h2>
+    <h2>BrainParams <small style="font-size:12px;font-weight:400;color:#888">(94 fields)</small></h2>
     <p class="desc">Central neural model parameters — VS, NI, SG, gravity, vergence, accommodation, T-VOR, OCR, CN/MLF gains. Read by every brain submodule's <code>step()</code>.</p>
     
-    <div class="subsection" id="brainparams-velocity_storage">
-      <h3>Velocity Storage <small style="font-size:11px;font-weight:400;color:#888">(11 fields)</small></h3>
+    <div class="subsection" id="brainparams-self_motion_estimation">
+      <h3>Self Motion Estimation <small style="font-size:11px;font-weight:400;color:#888">(19 fields)</small></h3>
       <table class="param-table">
         <thead><tr>
           <th style="width:160px">Parameter</th>
@@ -226,6 +225,78 @@ tr:last-child { border-bottom: none; }
           <td class="units">deg/s</td>
           <td class="desc-cell"><p>Visual slip saturation feeding VS. NOT neurons saturate ~80 deg/s (Hoffmann 1979). OKR gain ≈1 below 30 deg/s, half-max ~60 deg/s.</p><div class="refs">Hoffmann (1979) Exp Brain Res · Cohen, Matsuo & Raphan (1977)</div></td>
           <td class="anatomy-cell">NOT/AOS neurons</td>
+          <td></td>
+        </tr>
+
+        <tr>
+          <td class="param-name">K_grav</td>
+          <td><span class="default">0.2</span></td>
+          <td class="units">1/s</td>
+          <td class="desc-cell"><p>Somatogravic gain — pulls g_est toward the GIA residual. L&A 2011 calls this "g_o" and uses 0.6 (faster commitment to tilt percept). Our 0.2 keeps the somatogravic bandwidth around 0.032 Hz, matching slower psychophysical tilt-percept onset (Mayne 1974, Holly 1996). Higher K_grav → stronger / faster somatogravic illusion.</p><div class="refs">Laurens & Angelaki (2011) J Neurosci 31:11414 · Mayne (1974); Holly (1996)</div></td>
+          <td class="anatomy-cell">Nodulus/uvula → MVN (otolith-canal fusion)</td>
+          <td></td>
+        </tr>
+
+        <tr>
+          <td class="param-name">K_lin</td>
+          <td><span class="default">0.1</span></td>
+          <td class="units">1/s</td>
+          <td class="desc-cell"><p>Linear-acceleration adaptation gain — competing share-claim on the GIA residual. Smaller K_lin → more somatogravic effect (gravity wins more of the residual). Larger → faster separation of true translation from tilt.</p><div class="refs">Laurens & Angelaki (2011)</div></td>
+          <td class="anatomy-cell">Nodulus/uvula; PIVC</td>
+          <td><span class="tag tag-vn">Strong somatogravic illusion: 0.0</span></td>
+        </tr>
+
+        <tr>
+          <td class="param-name">tau_a_lin</td>
+          <td><span class="default">0.5</span></td>
+          <td class="units">s</td>
+          <td class="desc-cell"><p>Decay TC of the linear-acceleration estimate. Bayesian "translation duration prior" — real self-motion accelerations are brief, so â returns to 0 in absence of sustained evidence. SS â for sustained residual r: K_lin · τ_a_lin · r.</p><div class="refs">Laurens, Meng & Angelaki (2013) PLoS Comp Bio</div></td>
+          <td class="anatomy-cell">Nodulus/uvula; deterministic stand-in for Bayesian translation prior</td>
+          <td></td>
+        </tr>
+
+        <tr>
+          <td class="param-name">K_gd</td>
+          <td><span class="default">2.86</span></td>
+          <td class="units">—</td>
+          <td class="desc-cell"><p>Gravity-dumping gain. Scales the rotational feedback rf = (GIA × −g_est)/G0² fed into VS. Drives velocity-storage dumping ⊥ gravity (tilt suppression) and OVAR sustained nystagmus. Default 2.86 = L&A's 0.05 rad/s² in deg-converted units.</p><div class="refs">Laurens & Angelaki (2011) · Raphan & Cohen (1988)</div></td>
+          <td class="anatomy-cell">Nodulus/uvula → MVN (velocity-storage gravity dumping)</td>
+          <td><span class="tag tag-cerebellar">Gravity-blind VS: 0.0</span></td>
+        </tr>
+
+        <tr>
+          <td class="param-name">g_ocr</td>
+          <td><span class="default">1.019</span></td>
+          <td class="units">deg/(m/s²)</td>
+          <td class="desc-cell"><p>Ocular counter-roll gain — torsion command per unit lateral gravity. Default 10°/9.81 ≈ 1.019 → ~10° SS torsion at 90° lateral tilt.</p><div class="refs">Howard & Templeton (1966) · Diamond, Markham et al. (1979)</div></td>
+          <td class="anatomy-cell">Utricle → CN3 (IO/SR subnuclei); CN4 (SO)</td>
+          <td><span class="tag tag-vn">Utricle lesion: 0.0</span></td>
+        </tr>
+
+        <tr>
+          <td class="param-name">tau_head</td>
+          <td><span class="default">2</span></td>
+          <td class="units">s</td>
+          <td class="desc-cell"><p>Linear-velocity integration TC. Longer τ_head → bigger v_lin during sustained translation (better DARK T-VOR gain) but more drift containment needed. Paige & Tomko (1991) DARK gain ~0.5–0.7 for 1.6 s pulses suggests τ_head in 2–4 s range; we use 10 s for stronger DARK T-VOR coupling.</p><div class="refs">Paige & Tomko (1991)</div></td>
+          <td class="anatomy-cell">Vestibular translational pathway (otolith integration)</td>
+          <td></td>
+        </tr>
+
+        <tr>
+          <td class="param-name">K_he_vis</td>
+          <td><span class="default">5</span></td>
+          <td class="units">1/s</td>
+          <td class="desc-cell"><p>Visual-velocity pull gain on v_lin. Fuses scene translational flow with the vestibular integration of otolith. In dark the pull is toward 0, suppressing drift during pure rotation (OVAR, tilt suppression).</p></td>
+          <td class="anatomy-cell">MST translational flow → vestibular nuclei</td>
+          <td></td>
+        </tr>
+
+        <tr>
+          <td class="param-name">K_he_disp<span class="review">needs review</span></td>
+          <td><span class="default">0</span></td>
+          <td class="units">1/s</td>
+          <td class="desc-cell"><p>Disparity-rate visual evidence gain on v_lin[z]. In a uniform/depthless scene this is 0 (no parallax); in real depth-structured scenes it provides parallax-based heading-z evidence. Gated by scene_visible.</p></td>
+          <td class="anatomy-cell">Disparity-rate visual evidence on heading-z</td>
           <td></td>
         </tr>
         </tbody>
@@ -586,108 +657,6 @@ tr:last-child { border-bottom: none; }
       </table>
     </div>
 
-    <div class="subsection" id="brainparams-gravity_estimator">
-      <h3>Gravity Estimator <small style="font-size:11px;font-weight:400;color:#888">(5 fields)</small></h3>
-      <table class="param-table">
-        <thead><tr>
-          <th style="width:160px">Parameter</th>
-          <th style="width:90px">Default</th>
-          <th style="width:60px">Units</th>
-          <th>Description</th>
-          <th style="width:170px">Anatomical locus</th>
-          <th style="width:200px">Disorders / notable values</th>
-        </tr></thead>
-        <tbody>
-        <tr>
-          <td class="param-name">K_grav</td>
-          <td><span class="default">0.2</span></td>
-          <td class="units">1/s</td>
-          <td class="desc-cell"><p>Somatogravic gain — pulls g_est toward the GIA residual. L&A 2011 calls this "g_o" and uses 0.6 (faster commitment to tilt percept). Our 0.2 keeps the somatogravic bandwidth around 0.032 Hz, matching slower psychophysical tilt-percept onset (Mayne 1974, Holly 1996). Higher K_grav → stronger / faster somatogravic illusion.</p><div class="refs">Laurens & Angelaki (2011) J Neurosci 31:11414 · Mayne (1974); Holly (1996)</div></td>
-          <td class="anatomy-cell">Nodulus/uvula → MVN (otolith-canal fusion)</td>
-          <td></td>
-        </tr>
-
-        <tr>
-          <td class="param-name">K_lin</td>
-          <td><span class="default">0.1</span></td>
-          <td class="units">1/s</td>
-          <td class="desc-cell"><p>Linear-acceleration adaptation gain — competing share-claim on the GIA residual. Smaller K_lin → more somatogravic effect (gravity wins more of the residual). Larger → faster separation of true translation from tilt.</p><div class="refs">Laurens & Angelaki (2011)</div></td>
-          <td class="anatomy-cell">Nodulus/uvula; PIVC</td>
-          <td><span class="tag tag-vn">Strong somatogravic illusion: 0.0</span></td>
-        </tr>
-
-        <tr>
-          <td class="param-name">tau_a_lin</td>
-          <td><span class="default">0.5</span></td>
-          <td class="units">s</td>
-          <td class="desc-cell"><p>Decay TC of the linear-acceleration estimate. Bayesian "translation duration prior" — real self-motion accelerations are brief, so â returns to 0 in absence of sustained evidence. SS â for sustained residual r: K_lin · τ_a_lin · r.</p><div class="refs">Laurens, Meng & Angelaki (2013) PLoS Comp Bio</div></td>
-          <td class="anatomy-cell">Nodulus/uvula; deterministic stand-in for Bayesian translation prior</td>
-          <td></td>
-        </tr>
-
-        <tr>
-          <td class="param-name">K_gd</td>
-          <td><span class="default">2.86</span></td>
-          <td class="units">—</td>
-          <td class="desc-cell"><p>Gravity-dumping gain. Scales the rotational feedback rf = (GIA × −g_est)/G0² fed into VS. Drives velocity-storage dumping ⊥ gravity (tilt suppression) and OVAR sustained nystagmus. Default 2.86 = L&A's 0.05 rad/s² in deg-converted units.</p><div class="refs">Laurens & Angelaki (2011) · Raphan & Cohen (1988)</div></td>
-          <td class="anatomy-cell">Nodulus/uvula → MVN (velocity-storage gravity dumping)</td>
-          <td><span class="tag tag-cerebellar">Gravity-blind VS: 0.0</span></td>
-        </tr>
-
-        <tr>
-          <td class="param-name">g_ocr</td>
-          <td><span class="default">1.019</span></td>
-          <td class="units">deg/(m/s²)</td>
-          <td class="desc-cell"><p>Ocular counter-roll gain — torsion command per unit lateral gravity. Default 10°/9.81 ≈ 1.019 → ~10° SS torsion at 90° lateral tilt.</p><div class="refs">Howard & Templeton (1966) · Diamond, Markham et al. (1979)</div></td>
-          <td class="anatomy-cell">Utricle → CN3 (IO/SR subnuclei); CN4 (SO)</td>
-          <td><span class="tag tag-vn">Utricle lesion: 0.0</span></td>
-        </tr>
-        </tbody>
-      </table>
-    </div>
-
-    <div class="subsection" id="brainparams-heading_estimator">
-      <h3>Heading Estimator <small style="font-size:11px;font-weight:400;color:#888">(3 fields)</small></h3>
-      <table class="param-table">
-        <thead><tr>
-          <th style="width:160px">Parameter</th>
-          <th style="width:90px">Default</th>
-          <th style="width:60px">Units</th>
-          <th>Description</th>
-          <th style="width:170px">Anatomical locus</th>
-          <th style="width:200px">Disorders / notable values</th>
-        </tr></thead>
-        <tbody>
-        <tr>
-          <td class="param-name">tau_head</td>
-          <td><span class="default">2</span></td>
-          <td class="units">s</td>
-          <td class="desc-cell"><p>Linear-velocity integration TC. Longer τ_head → bigger v_lin during sustained translation (better DARK T-VOR gain) but more drift containment needed. Paige & Tomko (1991) DARK gain ~0.5–0.7 for 1.6 s pulses suggests τ_head in 2–4 s range; we use 10 s for stronger DARK T-VOR coupling.</p><div class="refs">Paige & Tomko (1991)</div></td>
-          <td class="anatomy-cell">Vestibular translational pathway (otolith integration)</td>
-          <td></td>
-        </tr>
-
-        <tr>
-          <td class="param-name">K_he_vis</td>
-          <td><span class="default">5</span></td>
-          <td class="units">1/s</td>
-          <td class="desc-cell"><p>Visual-velocity pull gain on v_lin. Fuses scene translational flow with the vestibular integration of otolith. In dark the pull is toward 0, suppressing drift during pure rotation (OVAR, tilt suppression).</p></td>
-          <td class="anatomy-cell">MST translational flow → vestibular nuclei</td>
-          <td></td>
-        </tr>
-
-        <tr>
-          <td class="param-name">K_he_disp<span class="review">needs review</span></td>
-          <td><span class="default">0</span></td>
-          <td class="units">1/s</td>
-          <td class="desc-cell"><p>Disparity-rate visual evidence gain on v_lin[z]. In a uniform/depthless scene this is 0 (no parallax); in real depth-structured scenes it provides parallax-based heading-z evidence. Gated by scene_visible.</p></td>
-          <td class="anatomy-cell">Disparity-rate visual evidence on heading-z</td>
-          <td></td>
-        </tr>
-        </tbody>
-      </table>
-    </div>
-
     <div class="subsection" id="brainparams-listing">
       <h3>Listing <small style="font-size:11px;font-weight:400;color:#888">(2 fields)</small></h3>
       <table class="param-table">
@@ -889,6 +858,30 @@ tr:last-child { border-bottom: none; }
           <td class="units">—</td>
           <td class="desc-cell"><p>Legacy vergence burst gain. Kept for bench compatibility; default 0 (replaced by SVBN params above).</p></td>
           <td class="anatomy-cell">(legacy)</td>
+          <td></td>
+        </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="subsection" id="brainparams-ungrouped">
+      <h3>Ungrouped <small style="font-size:11px;font-weight:400;color:#888">(1 field)</small></h3>
+      <table class="param-table">
+        <thead><tr>
+          <th style="width:160px">Parameter</th>
+          <th style="width:90px">Default</th>
+          <th style="width:60px">Units</th>
+          <th>Description</th>
+          <th style="width:170px">Anatomical locus</th>
+          <th style="width:200px">Disorders / notable values</th>
+        </tr></thead>
+        <tbody>
+        <tr>
+          <td class="param-name">K_phasic_tvor<span class="todo">TODO: enrich schema</span></td>
+          <td><span class="default">1</span></td>
+          <td class="units"></td>
+          <td class="desc-cell"><p>T-VOR direct (phasic) pathway gain (s) — multiplies a_lin in the cross-product formula to give a fast onset velocity that bypasses the heading-estimator (v_lin) integrator. Implicit units: s, since it converts a_lin (m/s²) into a v-equivalent (m/s) for the cross product. ~0.1–0.3 matches the ~100 ms short-latency T-VOR onset reported by Paige & Tomko (1991), Angelaki et al. (1999). Set 0 to disable direct pathway (integrator-only T-VOR).</p></td>
+          <td class="anatomy-cell"></td>
           <td></td>
         </tr>
         </tbody>
