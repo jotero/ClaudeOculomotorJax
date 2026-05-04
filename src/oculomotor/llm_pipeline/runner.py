@@ -215,7 +215,7 @@ def _extract_signals(states, params, t_np: np.ndarray) -> dict:
         x_ni_     = state.brain[_IDX_NI]
         x_ni_net  = x_ni_[:3] - x_ni_[3:6]   # bilateral → net (x_L − x_R), (3,)
         _, u  = sg_mod.step(state.brain[_IDX_SG], e_pd, gate, x_ni_net,
-                            0.0, jnp.zeros(3), params.brain)
+                            jnp.zeros(3), jnp.zeros(3), params.brain)
         return u
     u_burst = np.array(jax.vmap(_burst_at)(states))  # (T, 3)
 

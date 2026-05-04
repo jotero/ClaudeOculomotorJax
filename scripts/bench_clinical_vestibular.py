@@ -211,7 +211,8 @@ def _test_spontaneous(show):
     ax.legend(fontsize=8)
 
     fig.tight_layout()
-    path, rp = utils.save_fig(fig, 'clin_vest_spontaneous', show=show)
+    path, rp = utils.save_fig(fig, 'clin_vest_spontaneous', show=show, params=PARAMS_DEFAULT,
+                              conditions='Dark, no head motion — spontaneous nystagmus from unilateral canal asymmetry')
     return utils.fig_meta(path, rp,
         title='Spontaneous Nystagmus — Dark vs Fixation Suppression',
         description='Left UVH (10% canal gain, tau_vs=10 s) vs VN infarct (tau_vs=5 s). '
@@ -349,7 +350,8 @@ def _test_vhit(show):
     axes[1, 1].set_visible(False)
 
     fig.tight_layout()
-    path, rp = utils.save_fig(fig, 'clin_vest_vhit', show=show)
+    path, rp = utils.save_fig(fig, 'clin_vest_vhit', show=show, params=PARAMS_DEFAULT,
+                              conditions='Lit, fast head impulse (vHIT protocol) — control vs canal hypofunction')
     return utils.fig_meta(path, rp,
         title='vHIT — Acute vs Chronic Left UVH (10% left canal gain)',
         description='150 deg/s half-sine impulse, left and right.  Scene absent, fixation target only. '
@@ -479,7 +481,8 @@ def _test_rotary_okn(show):
     ax.legend(fontsize=8)
 
     fig.tight_layout()
-    path, rp = utils.save_fig(fig, 'clin_vest_rotary_okn', show=show)
+    path, rp = utils.save_fig(fig, 'clin_vest_rotary_okn', show=show, params=PARAMS_DEFAULT,
+                              conditions='Dark/Lit, sustained yaw rotation — rotary chair + OKN protocol')
     return utils.fig_meta(path, rp,
         title='Rotary Chair (Dark) + OKN — SPV and VS State',
         description=f'Step rotation {ROT_V:.0f} deg/s × {ROT_DUR:.0f} s in dark, '

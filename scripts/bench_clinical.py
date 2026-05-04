@@ -217,7 +217,9 @@ def _npc_and_cover(show):
     axes[2, 0].set_ylabel('Cover @ 0.4 m\nEye yaw (deg)', fontsize=9)
 
     fig.tight_layout(rect=[0, 0, 1, 0.97])
-    path, rp = utils.save_fig(fig, 'clinical_npc_cover', show=show, figs_dir=utils.CLIN_FIGS_DIR, base_dir=utils.CLIN_DIR)
+    path, rp = utils.save_fig(fig, 'clinical_npc_cover', show=show, figs_dir=utils.CLIN_FIGS_DIR, base_dir=utils.CLIN_DIR,
+                              params=PARAMS_DEFAULT,
+                              conditions='Lit, near-point convergence pull-in + cover test (3 m and 0.4 m) — control vs simulated patient profiles')
     return utils.fig_meta(path, rp,
         title='NPC pull-in and Cover Test (phorias at distance + near)',
         description='Top: vergence vs. target distance during NPC pull-in (1 m → 5 cm over 10 s); '
@@ -329,7 +331,9 @@ def _fusional_ranges(show):
             ax.legend(fontsize=7)
 
     fig.tight_layout(rect=[0, 0, 1, 0.97])
-    path, rp = utils.save_fig(fig, 'clinical_fusional_ranges', show=show, figs_dir=utils.CLIN_FIGS_DIR, base_dir=utils.CLIN_DIR)
+    path, rp = utils.save_fig(fig, 'clinical_fusional_ranges', show=show, figs_dir=utils.CLIN_FIGS_DIR, base_dir=utils.CLIN_DIR,
+                              params=PARAMS_DEFAULT,
+                              conditions='Lit, prism-induced disparity ramps — fusional vergence ranges (BO/BI) per profile')
     return utils.fig_meta(path, rp,
         title='Fusional vergence ranges (BI + BO ramps at distance and near)',
         description='Slow prism ramp (0 → 30° over 10 s) on R eye. '
@@ -450,7 +454,9 @@ def _accom_amplitude_facility(show):
     axes[1, 0].set_ylabel('±2 D flipper\nAccommodation (D)', fontsize=9)
 
     fig.tight_layout(rect=[0, 0, 1, 0.97])
-    path, rp = utils.save_fig(fig, 'clinical_accom_amp_facility', show=show, figs_dir=utils.CLIN_FIGS_DIR, base_dir=utils.CLIN_DIR)
+    path, rp = utils.save_fig(fig, 'clinical_accom_amp_facility', show=show, figs_dir=utils.CLIN_FIGS_DIR, base_dir=utils.CLIN_DIR,
+                              params=PARAMS_DEFAULT,
+                              conditions='Lit — push-up amplitude + ±2D flipper facility test (per simulated profile)')
     return utils.fig_meta(path, rp,
         title='Amplitude of accommodation + accommodative facility',
         description='Top: push-up to 4 cm; peak accommodation = amplitude. '
@@ -572,7 +578,9 @@ def _ac_a_measurement(show):
     axes[1, 0].set_ylabel('Heterophoria AC/A\nPhoria (deg)', fontsize=9)
 
     fig.tight_layout(rect=[0, 0, 1, 0.97])
-    path, rp = utils.save_fig(fig, 'clinical_aca_measurement', show=show, figs_dir=utils.CLIN_FIGS_DIR, base_dir=utils.CLIN_DIR)
+    path, rp = utils.save_fig(fig, 'clinical_aca_measurement', show=show, figs_dir=utils.CLIN_FIGS_DIR, base_dir=utils.CLIN_DIR,
+                              params=PARAMS_DEFAULT,
+                              conditions='Lit, gradient AC/A measurement protocol — vergence response to ±lens add')
     return utils.fig_meta(path, rp,
         title='AC/A measurement (gradient + heterophoria)',
         description='Top: gradient AC/A — vergence change for ±1 D lens at 0.4 m, slope = AC/A. '

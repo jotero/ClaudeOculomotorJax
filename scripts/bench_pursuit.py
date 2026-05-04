@@ -117,7 +117,8 @@ def _velocity_range(show):
         if ci == 0: axes[2, ci].legend(fontsize=7)
 
     fig.tight_layout()
-    path, rp = utils.save_fig(fig, 'pursuit_velocity_range', show=show)
+    path, rp = utils.save_fig(fig, 'pursuit_velocity_range', show=show, params=THETA,
+                              conditions='Lit, foveal target ramping at 5–80 °/s (constant velocity pursuit)')
     return utils.fig_meta(path, rp,
         title='Smooth Pursuit — Velocity Range',
         description='Step-ramp target at 5, 10, 20, 40 deg/s. '
@@ -188,7 +189,8 @@ def _sinusoidal(show):
         axes[2, ci].grid(True, alpha=0.25)
 
     fig.tight_layout()
-    path, rp = utils.save_fig(fig, 'pursuit_sinusoidal', show=show)
+    path, rp = utils.save_fig(fig, 'pursuit_sinusoidal', show=show, params=THETA,
+                              conditions='Lit, foveal target sinusoidal in horizontal position')
     return utils.fig_meta(path, rp,
         title='Sinusoidal Pursuit (H + V)',
         description='Horizontal sinusoidal target at 0.2, 0.5, 1.0 Hz (peak 15 deg/s). '
@@ -293,7 +295,8 @@ def _cascade(show):
     axes[6].legend(fontsize=8)
 
     fig.tight_layout()
-    path, rp = utils.save_fig(fig, 'pursuit_cascade', show=show)
+    path, rp = utils.save_fig(fig, 'pursuit_cascade', show=show, params=THETA_NOISELESS,
+                              conditions='Lit, foveal ramp + catch-up saccades (noiseless cascade trace)')
     return utils.fig_meta(path, rp,
         title='Smooth Pursuit Signal Cascade (Internal)',
         description='Full signal chain for 20 deg/s pursuit: target ramps 0.2–2.0 s then holds. '

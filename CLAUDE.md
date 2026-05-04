@@ -169,15 +169,24 @@ Use `with_sensory(params, sigma_canal=2.0)` / `with_brain(params, tau_vs=15.0)` 
 
 ### Sensory noise
 
-Four independent noise sources, all zero by default. Pre-generated as arrays before `diffeqsolve` and passed as `LinearInterpolation` inputs — ODE remains pure and differentiable.
+Four independent noise sources, **non-zero by default** (so a vanilla `simulate(PARAMS_DEFAULT, ...)` already produces realistic fixational drift, microsaccades, and pursuit jitter). All four are Ornstein-Uhlenbeck processes — small τ approaches band-limited white noise, longer τ produces drift-like fluctuations. Defaults from `SensoryParams`:
+
+| σ param      | default     | τ param            | default | what it drives |
+|--------------|-------------|--------------------|---------|----------------|
+| `sigma_canal`  | 1.0 deg/s | `tau_canal_drift`  | 0.005 s | canal afferent noise; filtered by VS/NI/plant |
+| `sigma_slip`   | 0.0 deg/s | `tau_slip_drift`   | 0.005 s | retinal slip noise (off by default); VS/OKR |
+| `sigma_pos`    | 0.2 deg   | `tau_pos_drift`    | 0.2 s   | retinal position drift; **triggers microsaccades** |
+| `sigma_vel`    | 2.0 deg/s | `tau_vel_drift`    | 0.005 s | retinal velocity noise; pursuit integrator |
+
+`SG_acc` accumulator diffusion (`sigma_acc=0.2`, in `BrainParams`) adds RT variability to saccade triggering.
+
+Noise is pre-generated as arrays before `diffeqsolve` and passed as `LinearInterpolation` inputs — ODE remains pure and differentiable.
 
 ```python
 params = with_sensory(PARAMS_DEFAULT,
-    sigma_canal    = 2.0,   # canal afferent noise (deg/s); filtered heavily by VS/NI/plant
-    sigma_slip     = 0.0,   # retinal slip noise (deg/s); drives VS/OKR
-    sigma_pos      = 0.3,   # retinal position drift (deg); OU process → microsaccades
-    tau_pos_drift  = 0.3,   # OU time constant (s); controls inter-microsaccade interval
-    sigma_vel      = 5.0,   # retinal velocity noise (deg/s); drives pursuit integrator
+    sigma_canal    = 2.0,   # crank up canal noise
+    sigma_pos      = 0.0,   # disable microsaccades for clean cascade traces
+    ...
 )
 states = simulate(params, t, ..., key=jax.random.PRNGKey(42))
 ```
@@ -185,6 +194,8 @@ states = simulate(params, t, ..., key=jax.random.PRNGKey(42))
 `sigma_pos` uses an Ornstein-Uhlenbeck process (not white noise) so drift accumulates slowly,
 crosses the SG threshold occasionally, and triggers sparse corrective microsaccades.
 White noise on `pos_delayed` would fire the SG continuously.
+
+**Debug benches that need noiseless traces** (e.g. cascade figures, symmetric-vergence triggers, anything where you need exact bilateral cancellation) must explicitly disable the relevant noise sources via `with_sensory(...sigma_canal=0, sigma_pos=0, sigma_vel=0)` and `with_brain(...sigma_acc=0)`. By convention these go in the bench's top-level `PARAMS_*` constant alongside any other overrides, so the figure footer (params overrides line) makes them visible.
 
 ### Versioning
 

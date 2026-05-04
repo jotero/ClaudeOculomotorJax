@@ -135,7 +135,8 @@ def _isolated_step(show):
     ax.legend(fontsize=9)
 
     fig.tight_layout(rect=[0, 0, 1, 0.96])
-    path, rp = utils.save_fig(fig, 'accommodation_isolated_step', show=show)
+    path, rp = utils.save_fig(fig, 'accommodation_isolated_step', show=show, params=PARAMS_ACC_ONLY,
+                              conditions='Lit, defocus step (cross-links AC/A=0, CA/C=0 — accommodation isolated)')
     return utils.fig_meta(path, rp,
         title='Isolated accommodation step response (no AC/A, no CA/C)',
         description='Defocus step 0.17 D → 2.5 D → 0.17 D with cross-coupling disabled. '
@@ -200,7 +201,8 @@ def _isolated_amplitudes(show):
     axes[1].set_ylim(0, max(AMPS_D) + 0.3)
 
     fig.tight_layout(rect=[0, 0, 1, 0.96])
-    path, rp = utils.save_fig(fig, 'accommodation_isolated_amplitudes', show=show)
+    path, rp = utils.save_fig(fig, 'accommodation_isolated_amplitudes', show=show, params=PARAMS_ACC_ONLY,
+                              conditions='Lit, defocus steps at multiple amplitudes (AC/A=0, CA/C=0)')
     return utils.fig_meta(path, rp,
         title='Isolated accommodation amplitude scaling',
         description='Step responses at 0.5, 1, 2, 3, 4 D demand with cross-coupling '
@@ -255,7 +257,8 @@ def _isolated_dark_focus(show):
     ax.legend(fontsize=9, loc='upper right')
 
     fig.tight_layout(rect=[0, 0, 1, 0.96])
-    path, rp = utils.save_fig(fig, 'accommodation_isolated_dark_focus', show=show)
+    path, rp = utils.save_fig(fig, 'accommodation_isolated_dark_focus', show=show, params=PARAMS_ACC_ONLY,
+                              conditions='Dark (no scene), no target — dark-focus / tonic accommodation level')
     return utils.fig_meta(path, rp,
         title='Dark-focus drift after sustained near work',
         description='10 s of sustained 4 D near work followed by darkness '
@@ -349,7 +352,8 @@ def _near_step(show):
     ax_fmt(ax2, ylabel='Accommodation (D)', xlabel='Time (s)')
     ax2.legend(fontsize=8)
 
-    path, rp = utils.save_fig(fig, 'accommodation_near_step', show=show)
+    path, rp = utils.save_fig(fig, 'accommodation_near_step', show=show, params=PARAMS_DEFAULT,
+                              conditions='Lit, target stepping near (defocus + disparity stimulus, full cross-links)')
     return utils.fig_meta(path, rp,
         title='Near-step: binocular vergence + accommodation tracking',
         description='Target steps 3 m → 0.4 m at t=1 s. Top: L/R eye yaw. '
@@ -439,7 +443,8 @@ def _lens_aca(show):
     ax_fmt(ax1, ylabel='Vergence L−R (deg)', xlabel='Time (s)')
     ax1.legend(fontsize=8)
 
-    path, rp = utils.save_fig(fig, 'accommodation_lens_aca', show=show)
+    path, rp = utils.save_fig(fig, 'accommodation_lens_aca', show=show, params=PARAMS_DEFAULT,
+                              conditions='Lit, lens-only stimulus — AC/A drives vergence (compared with AC_A=0)')
     return utils.fig_meta(path, rp,
         title='Lens-driven AC/A: monocular plus lens converges eyes',
         description=f'+{LENS_D} D right eye lens added at t={T_STEP} s; target at {D_FAR} m. '
@@ -531,7 +536,8 @@ def _prism_cac(show):
     ax_fmt(ax1, ylabel='Accommodation (D)', xlabel='Time (s)')
     ax1.legend(fontsize=8)
 
-    path, rp = utils.save_fig(fig, 'accommodation_prism_cac', show=show)
+    path, rp = utils.save_fig(fig, 'accommodation_prism_cac', show=show, params=PARAMS_DEFAULT,
+                              conditions='Lit, prism-induced disparity — CA/C drives accommodation (compared with CA_C=0)')
     return utils.fig_meta(path, rp,
         title='Prism-driven CA/C: base-out prism increases accommodation',
         description=f'{PRISM_H}° base-out R prism at t={T_STEP} s; target at {D_MID} m. '
@@ -607,7 +613,8 @@ def _lens_step_response(show):
     ax_fmt(ax, ylabel='Accommodation (D)', xlabel='Time (s)')
     ax.legend(fontsize=8)
 
-    path, rp = utils.save_fig(fig, 'accommodation_plant_step', show=show)
+    path, rp = utils.save_fig(fig, 'accommodation_plant_step', show=show, params=PARAMS_ACC_ONLY,
+                              conditions='Lit, defocus step — lens-plant (mechanical) step response')
 
     # Check: plant lags neural command by ~τ_plant = 0.156 s
     step_start = _acc_demand_d(D_FAR) + tonic   # approx baseline
@@ -709,7 +716,8 @@ def _fixation_disparity_curves(show):
     ax_fmt(ax, ylabel='Fixation disparity (arcmin)', xlabel='Lens power (D; plus = converging)')
 
     fig.tight_layout(rect=[0, 0, 1, 0.93])
-    path, rp = utils.save_fig(fig, 'accommodation_fixation_disparity', show=show)
+    path, rp = utils.save_fig(fig, 'accommodation_fixation_disparity', show=show, params=PARAMS_DEFAULT,
+                              conditions='Lit, midline target at multiple distances — accommodation lag vs depth')
     return utils.fig_meta(path, rp,
         title='Fixation disparity curves: prism sweep and lens sweep',
         description=f'Fixation disparity (demand − achieved vergence, arcmin) vs. bilateral prism (left) '
@@ -804,7 +812,8 @@ def _refractive_error(show):
     ax_fmt(ax_acc, ylabel='Accommodation (D)', xlabel='Time (s)')
     ax_acc.legend(fontsize=8)
 
-    path, rp = utils.save_fig(fig, 'accommodation_refractive_error', show=show)
+    path, rp = utils.save_fig(fig, 'accommodation_refractive_error', show=show, params=PARAMS_DEFAULT,
+                              conditions='Lit — emmetrope vs ±2D uncorrected hyperope/myope (refractive_error swept)')
     return utils.fig_meta(path, rp,
         title='Refractive error: accommodation and vergence for myope/hyperope',
         description=f'Near step {D_FAR}→{D_NEAR} m. Three groups: emmetrope, +2D hyperope, −2D myope. '

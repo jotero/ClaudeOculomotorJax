@@ -64,7 +64,9 @@
       "Bash(\"d:/OneDrive/UC Berkeley/OMlab - JOM/Code/ClaudeOculomotorJax/.venv/Scripts/python.exe\" -X utf8 scripts/gen_parameters.py)",
       "Bash(\"d:/OneDrive/UC Berkeley/OMlab - JOM/Code/ClaudeOculomotorJax/.venv/Scripts/python.exe\" -m pip install pyyaml)",
       "Bash(mkdir -p vergence_accommodation)",
-      "Bash(git mv *)"
+      "Bash(git mv *)",
+      "PowerShell($sw = [System.Diagnostics.Stopwatch]::StartNew\\(\\); & \"d:\\\\OneDrive\\\\UC Berkeley\\\\OMlab - JOM\\\\Code\\\\ClaudeOculomotorJax\\\\.venv\\\\Scripts\\\\python.exe\" -X utf8 scripts\\\\bench_pursuit.py 2>&1 | Select-Object -Last 30; $sw.Stop\\(\\); \"ELAPSED: $\\($sw.Elapsed.TotalSeconds.ToString\\('F2'\\)\\) s\")",
+      "PowerShell($sw = [System.Diagnostics.Stopwatch]::StartNew\\(\\); & \"d:\\\\OneDrive\\\\UC Berkeley\\\\OMlab - JOM\\\\Code\\\\ClaudeOculomotorJax\\\\.venv\\\\Scripts\\\\python.exe\" -X utf8 scripts\\\\bench_vergence.py 2>&1 | Select-Object -Last 20; $sw.Stop\\(\\); \"ELAPSED: $\\($sw.Elapsed.TotalSeconds.ToString\\('F2'\\)\\) s\")"
     ],
     "additionalDirectories": [
       "d:\\OneDrive\\UC Berkeley\\OMlab - JOM\\Code\\ClaudeOculomotorJax\\outputs"

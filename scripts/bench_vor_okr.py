@@ -29,7 +29,15 @@ from oculomotor.analysis import ax_fmt, extract_canal, vs_net, vs_null, ni_net, 
 
 SHOW  = '--show' in sys.argv
 DT    = 0.001
-THETA = with_brain(with_sensory(PARAMS_DEFAULT, sigma_canal=0.0, sigma_pos=0.0, sigma_vel=0.0), sigma_acc=0.0)
+
+# Behavioral params: realistic noise on (defaults from SensoryParams + BrainParams).
+THETA = PARAMS_DEFAULT
+
+# Cascade DEBUG params: all sensory + accumulator noise off so the cascade traces
+# show only the pure signal flow (no microsaccades, no fixational drift).
+THETA_NOISELESS = with_brain(
+    with_sensory(PARAMS_DEFAULT, sigma_canal=0.0, sigma_slip=0.0, sigma_pos=0.0, sigma_vel=0.0),
+    sigma_acc=0.0)
 
 
 def _simulate(theta, t_arr, head_vel=None, scene_vel=None, scene_present=None,
@@ -203,7 +211,8 @@ def _raphan(show):
     ax.legend(fontsize=7); ax_fmt(ax); ax.set_xlim(*xlim); _lbl(ax, 'F')
 
     fig.tight_layout()
-    path, rp = utils.save_fig(fig, 'vor_raphan_fig9', show=show)
+    path, rp = utils.save_fig(fig, 'vor_raphan_fig9', show=show, params=THETA,
+                              conditions='Dark/lit conditions per panel — head velocity step + scene step (Raphan 1979 Fig.9 protocol)')
     return utils.fig_meta(path, rp,
         title='Raphan 1979 Fig. 9 Replication',
         description='Panels A–F matching Raphan et al. (1979) Fig.9. Left col: SPV only. '
@@ -252,7 +261,8 @@ def _okn_zoom(show):
     axes[1].legend(fontsize=9); axes[1].grid(True, alpha=0.25)
 
     fig.tight_layout()
-    path, rp = utils.save_fig(fig, 'okn_nystagmus_zoom', show=show)
+    path, rp = utils.save_fig(fig, 'okn_nystagmus_zoom', show=show, params=THETA,
+                              conditions='Lit, full-field scene velocity step (OKN sawtooth + post-OKAN)')
     return utils.fig_meta(path, rp,
         title='OKN Nystagmus Zoom',
         description='First 15 s of OKN at 30 deg/s. Top: eye position showing sawtooth waveform. '
@@ -272,7 +282,7 @@ def _cascade(show):
     _head = km.head_rotation_step(30.0, rotate_dur=15.0, coast_dur=15.0, dt=DT)
     t_rot, hv_3d = _head.t, _head.rot_vel
     t_vor = np.array(t_rot); T_vor = len(t_vor)
-    st_v  = _simulate(THETA, jnp.array(t_rot), head_vel=jnp.array(hv_3d),
+    st_v  = _simulate(THETA_NOISELESS, jnp.array(t_rot), head_vel=jnp.array(hv_3d),
                       scene_present=jnp.zeros(T_vor),
                       target_present=jnp.zeros(T_vor), key=5)
 
@@ -291,7 +301,7 @@ def _cascade(show):
     t_okn  = jnp.arange(0.0, 20.0, DT); t_okn_np = np.array(t_okn); T_okn = len(t_okn)
     sv     = jnp.zeros((T_okn, 3)).at[:, 0].set(30.0)
     sp     = jnp.ones(T_okn)
-    st_o   = _simulate(THETA, t_okn, scene_vel=sv,
+    st_o   = _simulate(THETA_NOISELESS, t_okn, scene_vel=sv,
                        scene_present=sp, target_present=jnp.zeros(T_okn), key=6)
 
     x_vis  = np.array(st_o.sensory[:, _IDX_VIS])
@@ -380,7 +390,8 @@ def _cascade(show):
     ax_fmt(axes[6, 1]); axes[6, 1].legend(fontsize=7)
     axes[6, 1].set_xlabel('Time (s)', fontsize=8)
     fig.tight_layout(pad=0.4)
-    path, rp = utils.save_fig(fig, 'vor_okr_cascade', show=show)
+    path, rp = utils.save_fig(fig, 'vor_okr_cascade', show=show, params=THETA_NOISELESS,
+                              conditions='VOR, VVOR, OKR cascade — head + scene combinations across 3 columns (noiseless DEBUG)')
     return utils.fig_meta(path, rp,
         title='VOR / OKR Signal Cascade (Internal)',
         description='Left column (VOR in dark): head velocity → canal afferents → VS state → NI state → eye velocity. '

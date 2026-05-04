@@ -219,7 +219,8 @@ def _nine_position(show):
                  fontsize=10, fontweight='bold')
     plt.tight_layout()
 
-    path, rp = utils.save_fig(fig, 'clin_cn_9positions', show=show)
+    path, rp = utils.save_fig(fig, 'clin_cn_9positions', show=show, params=PARAMS_DEFAULT,
+                              conditions='Lit, 9-cardinal-positions test — control vs simulated CN III/IV/VI palsy')
     return utils.fig_meta(path, rp,
         title='9 Positions of Gaze',
         description='Standard clinical 9-position gaze test. Each panel shows '
@@ -304,7 +305,8 @@ def _ino_timeseries(show):
     fig.suptitle('INO Saccade Trajectories', fontsize=10, fontweight='bold')
     plt.tight_layout()
 
-    path, rp = utils.save_fig(fig, 'clin_cn_ino_timeseries', show=show)
+    path, rp = utils.save_fig(fig, 'clin_cn_ino_timeseries', show=show, params=PARAMS_DEFAULT,
+                              conditions='Lit, horizontal saccades — INO (MLF lesion) abducting/adducting eye dynamics')
     return utils.fig_meta(path, rp,
         title='INO Saccade Trajectories',
         description='Horizontal saccade position and velocity for healthy, left INO, '
@@ -400,7 +402,8 @@ def _graded_palsy(show):
     axes[0, 1].legend(title='MLF gain',   fontsize=7, loc='lower left', ncol=3)
 
     plt.tight_layout()
-    path, rp = utils.save_fig(fig, 'clin_cn_graded', show=show)
+    path, rp = utils.save_fig(fig, 'clin_cn_graded', show=show, params=PARAMS_DEFAULT,
+                              conditions='Lit, horizontal saccades — graded CN VI / INO severity sweep')
     return utils.fig_meta(path, rp,
         title='Graded CN VI and INO Recovery',
         description=f'Continuous ipsilateral (+{H_DEG}°) then contralateral (−{H_DEG}°) saccade. '

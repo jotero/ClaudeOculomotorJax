@@ -179,7 +179,8 @@ def _ocr(show):
     ax3.legend(fontsize=8); ax3.grid(True, alpha=0.2)
 
     fig.tight_layout()
-    path, rp = utils.save_fig(fig, 'gravity_ocr', show=show)
+    path, rp = utils.save_fig(fig, 'gravity_ocr', show=show, params=params,
+                              conditions='Dark, static head tilt (roll) — OCR torsion vs tilt angle')
     ocr_30 = G_OCR * G0 * np.sin(np.radians(30))
     return utils.fig_meta(path, rp,
         title='Ocular Counterroll (OCR)',
@@ -347,7 +348,8 @@ def _ovar(show):
     axes[8].legend(lines_l + lines_r, labels_l + labels_r, fontsize=7, loc='center right', ncol=2)
 
     fig.tight_layout()
-    path, rp = utils.save_fig(fig, 'gravity_ovar', show=show)
+    path, rp = utils.save_fig(fig, 'gravity_ovar', show=show, params=params,
+                              conditions='Dark, off-vertical axis rotation (OVAR) — yaw rotation about tilted axis')
     return utils.fig_meta(path, rp,
         title='OVAR — Off-Vertical Axis Rotation',
         description=f'{SPIN_VEL:.0f}°/s rotation, tilt angles {TILTS_DEG}°. '
@@ -535,7 +537,8 @@ def _tilt_suppression(show):
         ax_ins.grid(True, alpha=0.2)
 
     fig.tight_layout(rect=[0, 0, 1, 0.975])
-    path, rp = utils.save_fig(fig, 'gravity_tilt_suppression', show=show)
+    path, rp = utils.save_fig(fig, 'gravity_tilt_suppression', show=show, params=params,
+                              conditions='Dark, simultaneous tilt + yaw rotation (Laurens & Angelaki tilt suppression)')
     return utils.fig_meta(path, rp,
         title='VOR Tilt Suppression',
         description=f'Upright {ROT_VEL:.0f}°/s yaw; tilt {TILTS_DEG}° applied after stop. '
@@ -742,7 +745,8 @@ def _somatogravic_frequency(show):
     ax_bode.set_xlim(0.01, 5.0)
 
     fig.tight_layout(rect=[0, 0, 1, 0.96])
-    path, rp = utils.save_fig(fig, 'gravity_somatogravic_freq', show=show)
+    path, rp = utils.save_fig(fig, 'gravity_somatogravic_freq', show=show, params=params,
+                              conditions='Dark, sinusoidal linear acceleration — gravity-estimator frequency response')
     return utils.fig_meta(path, rp,
         title='Somatogravic OCR — Frequency Dependence',
         description=f'Sinusoidal lateral translation at {FREQS_HZ} Hz, '
@@ -796,7 +800,13 @@ def _ocr_cascade(show):
     HOLD_T   = 30.0
     tilt_dur = TILT_DEG / TILT_VEL
 
-    params  = PARAMS_DEFAULT   # g_ocr is now non-zero by default
+    # Cascade trace — disable all sensory + accumulator noise so the curves are clean.
+    from oculomotor.sim.simulator import with_sensory
+    params  = with_brain(
+        with_sensory(PARAMS_DEFAULT,
+                     sigma_canal=0.0, sigma_slip=0.0, sigma_pos=0.0, sigma_vel=0.0),
+        sigma_acc=0.0,
+    )
     t_np    = np.arange(0.0, tilt_dur + HOLD_T, DT)
     T       = len(t_np)
     hv_roll = np.where(t_np < tilt_dur, TILT_VEL, 0.0)
@@ -908,7 +918,8 @@ def _ocr_cascade(show):
                 axes[row_idx, col_idx].set_ylim(-SPV_LIM, SPV_LIM)
 
     fig.tight_layout()
-    path, rp = utils.save_fig(fig, 'gravity_ocr_cascade', show=show)
+    path, rp = utils.save_fig(fig, 'gravity_ocr_cascade', show=show, params=params,
+                              conditions='Dark, static head tilt — OCR cascade: otolith → g_est → torsion command (noiseless)')
     return utils.fig_meta(
         path, rp,
         title='OCR cascade (4-condition comparison)',

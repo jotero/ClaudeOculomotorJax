@@ -186,7 +186,8 @@ def _cover_test(show):
             ax.legend(fontsize=7.5, loc='upper left')
 
     fig.tight_layout(rect=[0, 0, 1, 0.96])
-    path, rp = utils.save_fig(fig, 'cover_test_phoria', show=show)
+    path, rp = utils.save_fig(fig, 'cover_test_phoria', show=show, params=PARAMS_DEFAULT,
+                              conditions='Lit, alternate cover test at 3 m and 0.4 m — phoria measurement (control + simulated profiles)')
     return utils.fig_meta(
         path, rp,
         title='Cover Test — Phoria Detection',

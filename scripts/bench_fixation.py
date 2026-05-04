@@ -63,13 +63,33 @@ def _run_fixation(sigma_canal, sigma_pos, sigma_vel, seed, T):
 # ── Figure 1: noise source comparison ────────────────────────────────────────
 
 def _noise_comparison(show):
-    conditions = [
-        (0.0, 0.0, 0.0,  'Noiseless',                'none'),
-        (3.0, 0.0, 0.0,  'Canal  σ=3 deg/s',          'canal'),
-        (0.0, 0.3, 0.0,  'Retinal pos  σ=0.3 deg',    'pos'),
-        (0.0, 0.0, 5.0,  'Retinal vel  σ=5 deg/s',    'vel'),
-        (3.0, 0.3, 5.0,  'All combined',               'all'),
+    sp_def = PARAMS_DEFAULT.sensory
+    sc_d, sp_d, sv_d = float(sp_def.sigma_canal), float(sp_def.sigma_pos), float(sp_def.sigma_vel)
+    tau_canal = float(sp_def.tau_canal_drift)
+    tau_pos   = float(sp_def.tau_pos_drift)
+    tau_vel   = float(sp_def.tau_vel_drift)
+
+    # Each row: (sigma_canal, sigma_pos, sigma_vel, key). Default values pulled from
+    # SensoryParams; per-row only the relevant σ is enabled, so each panel shows
+    # the contribution of one noise source in isolation.
+    sweeps = [
+        (0.0,  0.0,  0.0,  'none'),
+        (sc_d, 0.0,  0.0,  'canal'),
+        (0.0,  sp_d, 0.0,  'pos'),
+        (0.0,  0.0,  sv_d, 'vel'),
+        (sc_d, sp_d, sv_d, 'all'),
     ]
+
+    def _title(sc, sp, sv):
+        if sc == 0 and sp == 0 and sv == 0:
+            return 'Noiseless'
+        parts = []
+        if sc:  parts.append(f'canal σ={sc:g} deg/s, τ={tau_canal:g} s')
+        if sp:  parts.append(f'pos σ={sp:g} deg, τ={tau_pos:g} s')
+        if sv:  parts.append(f'vel σ={sv:g} deg/s, τ={tau_vel:g} s')
+        return '  +  '.join(parts) if len(parts) > 1 else parts[0]
+
+    conditions = [(sc, sp, sv, _title(sc, sp, sv), key) for (sc, sp, sv, key) in sweeps]
     T    = int(TEND / DT)
     seed = 7
 
@@ -133,7 +153,8 @@ def _noise_comparison(show):
         ax3.set_xlabel('Time (s)', fontsize=8)
 
     fig.tight_layout()
-    path, rp = utils.save_fig(fig, 'fixation_noise_comparison', show=show)
+    path, rp = utils.save_fig(fig, 'fixation_noise_comparison', show=show, params=PARAMS_DEFAULT,
+                              conditions='Lit, fixation on midline target — each panel sweeps a different sensory noise σ (canal/pos/vel)')
     return utils.fig_meta(path, rp,
         title='Fixational Eye Movements — Noise Source Comparison',
         description='5-column comparison: noiseless, canal noise only, retinal position OU drift, '

@@ -69,7 +69,13 @@ def _cascade(show):
     T_TOTAL = 8.0
     DEPTH  = 0.4     # m, near target — for the brain this is invisible (target_present=0),
                      # so the brain uses tonic_verg for T-VOR distance regardless of DEPTH.
-    params = PARAMS_DEFAULT
+    # Cascade trace — disable all sensory + accumulator noise so the curves are clean.
+    from oculomotor.sim.simulator import with_sensory
+    params = with_brain(
+        with_sensory(PARAMS_DEFAULT,
+                     sigma_canal=0.0, sigma_slip=0.0, sigma_pos=0.0, sigma_vel=0.0),
+        sigma_acc=0.0,
+    )
     t = np.arange(0.0, T_TOTAL, DT)
     T = len(t)
 
@@ -206,7 +212,8 @@ def _cascade(show):
                 ax.legend(fontsize=6.5, loc='upper right', ncol=2)
 
     fig.tight_layout(rect=[0, 0, 1, 0.97])
-    path, rp = utils.save_fig(fig, 'tvor_cascade', show=show)
+    path, rp = utils.save_fig(fig, 'tvor_cascade', show=show, params=params,
+                              conditions='Lit, head linear acceleration + near/far targets (translational VOR cascade) — noiseless')
     return utils.fig_meta(path, rp,
         title='T-VOR cascade — sway / heave / surge × LIT (scene only) / DARK',
         description=f'Trapezoid head velocity (peak {PEAK*100:.0f} cm/s, {RAMP*1000:.0f} ms ramps, '

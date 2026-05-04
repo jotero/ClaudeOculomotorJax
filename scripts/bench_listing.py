@@ -163,7 +163,8 @@ def _listing_plane(show):
     ax2.grid(True, alpha=0.15)
 
     fig.tight_layout()
-    path, rp = utils.save_fig(fig, 'listing_plane', show=show)
+    path, rp = utils.save_fig(fig, 'listing_plane', show=show, params=params,
+                              conditions='Lit, foveal targets across H/V grid — Listing\'s plane structure')
     return utils.fig_meta(path, rp,
         title="Listing's Plane",
         description='Saccades to a (H, V) grid; torsion measured at steady state. '
@@ -259,7 +260,8 @@ def _listing_ocr(show):
         'saccade corrects rapidly (solid)', fontsize=9)
 
     fig.tight_layout()
-    path, rp = utils.save_fig(fig, 'listing_ocr_saccade', show=show)
+    path, rp = utils.save_fig(fig, 'listing_ocr_saccade', show=show, params=params_with_sac,
+                              conditions='Lit, head tilted — torsional Listing error drives corrective saccade')
     return utils.fig_meta(path, rp,
         title="OCR Torsional Correction Saccade",
         description=f'Head tilt {TILT_DEG:.0f}°; g_ocr={G_OCR:.2f}. '
@@ -346,7 +348,8 @@ def _listing_pursuit(show):
     ax_fmt(axes[2], ylabel='Listing error (deg)', xlabel='Time rel. pursuit onset (s)')
 
     fig.tight_layout()
-    path, rp = utils.save_fig(fig, 'listing_pursuit', show=show)
+    path, rp = utils.save_fig(fig, 'listing_pursuit', show=show, params=params,
+                              conditions='Lit, foveal target moving along oblique paths — Listing\'s law during pursuit')
     return utils.fig_meta(path, rp,
         title="Listing's Plane During Smooth Pursuit",
         description=f'Sinusoidal H pursuit ({AMPL_DEG:.0f}° at {FREQ_HZ:.1f} Hz) at V={V_DEG:.0f}°. '

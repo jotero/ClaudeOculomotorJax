@@ -320,6 +320,8 @@ class BrainParams(NamedTuple):
     listing_l2_frac:       float = 0.0    # L2 cyclovergence fraction (0=off, 0.5=physiological)
                                           # Listing's plane tilts ±l2_frac·φ/2 per eye with vergence
                                           # Disabled until validated with binocular torsion data
+    listing_gain:          float = 1.0    # master gain on the Listing's corrections (cyc_torsion_vel
+                                          # and cyclo_verg_rate). Set to 0 to disable both for debugging.
 
     # Smooth pursuit — leaky integrator + Smith predictor (Lisberger 1988)
     K_pursuit:             float = 4.0    # pursuit integration gain (1/s); rise TC ≈ 1/K_pursuit
@@ -336,17 +338,17 @@ class BrainParams(NamedTuple):
     # References: Schor & Kotulak 1986; Read & Schor 2022; Rashbass & Westheimer 1961
     # Direct phasic path provides the ~150–200 ms fast onset (Rashbass & Westheimer 1961
     # J Physiol 159:339; achieved via plant-cancellation, not via integrator dynamics).
-    K_phasic_verg:         float        = 4.0             # direct phasic gain (1/s)
-    # Fast integrator TC from Schor (1979) Vision Res 19:1359 and Hung & Semmlow (1980)
-    # IEEE TBME 27:722 — vergence "fast" controller TC ≈ 5 s. Static gain G_fast ≈ 8
-    # matches Read & Schor (2022) J Vision 22(9):4 Table 1 (analogous to accommodation).
-    K_verg_fast:           float        = 1.6             # fast integrator gain (1/s); G_fast = 1.6·5 = 8
-    tau_verg_fast:         float        = 5.0             # fast integrator TC (s) [Schor 1979; Hung & Semmlow 1980]
-    # Slow tonic adapter TC from Schor (1979, 1992) — minutes-scale dark-vergence drift.
-    # G_slow ≈ 6 boosts DC gain so steady-state fixation disparity stays small.
-    K_verg_slow:           float        = 0.1             # slow integrator gain (1/s); G_slow = 0.1·60 = 6
-    tau_verg_slow:         float        = 60.0            # slow tonic adapter TC (s) [Schor 1979]
-    tau_vp:                float        = 0.15            # vergence plant TC for phasic feedthrough (s) = τ_p (same muscles)
+    # Schor 1999 Table 1 (vergence column) — TCs and dimensionless K gains.
+    #   Kb (proportional/direct) = 1 (NI-matched, NOT Schor's 1.5 — we use NI's
+    #     pure pass-through form: direct contribution = τ_p · rate_drive).
+    #   Kf (phasic) = 2.5, Ks (tonic) = 1.5  (Schor 1999 Table 1)
+    #   Tf (phasic) = 5 s, Ts (tonic) = 20 s
+    K_phasic_verg:         float        = 1.0             # Kb (direct path); set to NI unit gain
+    K_verg_fast:           float        = 2.5             # Kf (phasic gain)  [Schor 1999 Table 1]
+    K_verg_slow:           float        = 1.5             # Ks (tonic gain)   [Schor 1999 Table 1]
+    tau_verg_fast:         float        = 5.0             # phasic Tf (s)     [Schor 1999 Table 1]
+    tau_verg_slow:         float        = 20.0            # tonic  Ts (s)     [Schor 1999 Table 1]
+    tau_vp:                float        = 0.15            # legacy alias of tau_p; va.step uses brain_params.tau_p directly
     tonic_verg:            float        = 3.67            # tonic (brainstem) vergence baseline (deg); resting dark vergence
                                                           # = 2·arctan(IPD/2 / 1 m); recomputed from IPD in default_params()
                                                           # Riggs & Niehl 1960, Morgan 1944: dark vergence ≈ 1 m
@@ -411,15 +413,16 @@ class BrainParams(NamedTuple):
     tonic_acc:             float = 1.0    # dark-focus resting level (D); ~1 D ≈ 1 m for young adults
                                           # x_fast and x_slow represent DEVIATIONS from this baseline.
                                           # Calibrate to match: tonic_acc ≈ IPD / (2·tan(tonic_verg·π/360))
+    # Schor 1999 Table 1 (accommodation column) — Kf, Ks, TCs;
+    # plant kept at 0.156 s (Schor & Bharadwaj 2006).
+    #   Kb (direct/proportional) = 1 (implicit, defocus added directly to output)
+    #   Kf (phasic) = 2.5, Ks (tonic) = 1.5
+    #   Tf (phasic) = 5 s, Ts (tonic) = 20 s
     tau_acc_plant:         float = 0.156  # lens / ciliary muscle TC (s) [Schor & Bharadwaj 2006]
-                                          # First-order biomechanical: P(s) = 1/(1 + τ_plant·s)
-    tau_acc_fast:          float = 2.5    # fast neural integrator TC (s) [Read & Schor 2022]
-                                          # Stability requires τ_fast ≥ 2·G_fast·τ_plant ≈ 2.5 s
-    tau_acc_slow:          float = 30.0   # slow tonic adaptation TC (s) [Schor 1979]
-    K_acc_fast:            float = 3.2    # fast blur gain (1/s) = G_fast / tau_fast = 8 / 2.5
-                                          # Closed-loop G_fast = K_acc_fast * tau_acc_fast = 8 [Read & Schor 2022]
-                                          # Stability: ζ = (1/tau_fast + 1/tau_plant) / (2*sqrt(K_fast/tau_plant)) ≈ 0.75
-    K_acc_slow:            float = 0.17   # slow integration gain (1/s) = G_slow / tau_slow = 5 / 30
+    tau_acc_fast:          float = 5.0    # phasic Tf (s) [Schor 1999 Table 1]
+    tau_acc_slow:          float = 20.0   # tonic  Ts (s) [Schor 1999 Table 1]
+    K_acc_fast:            float = 2.5    # Kf (phasic gain) [Schor 1999 Table 1]
+    K_acc_slow:            float = 1.5    # Ks (tonic gain)  [Schor 1999 Table 1]
     AC_A:                  float = 5.0    # AC/A ratio (prism diopters / diopter); typical 4–6
                                           # At 40 cm (2.5 D): AC/A drive ≈ 5×0.573×2.5 ≈ 7.2°
                                           # At   6 m (0.17 D): drive ≈ 0.5° — explains why
@@ -488,13 +491,14 @@ def make_x0(brain_params=None):
         # _IDX_NI_L/R/NULL all stay at 0
         # OPN: initialise to tonic firing rate (100); stays there between saccades.
         x0 = x0.at[_IDX_SG.start + 3].set(100.0)
-        # Vergence: x_fast and x_slow are deviations from tonic_verg → both zero at rest.
-        # tonic_verg is added in vg.step's u_verg output, so the system holds at tonic
-        # vergence with zero integrator state.  Reserved slot [6:9] also zero (Step 1).
-        # Accommodation neural: x_fast=0, x_slow=0 (deviations from tonic baseline).
-        # Neural command at rest = 0+0+tonic_acc → plant settles at tonic_acc.
+        # Vergence: x_fast=0 at rest; x_slow holds the tonic baseline (setpoint
+        # is now baked into the slow integrator dynamics in va.step). Init H slot
+        # of x_slow to tonic_verg so u_verg = tonic_verg at rest.  x_copy stays 0.
+        x0 = x0.at[_IDX_VERG.start + 3].set(brain_params.tonic_verg)   # x_slow[H]
+        # Accommodation: x_fast=0; x_slow holds tonic_acc baseline (same pattern).
+        # Neural command at rest = 0 + 0 + tonic_acc + 0 = tonic_acc → plant settles.
         # acc_plant initial state lives in SimState.acc_plant (set in simulate()).
-        x0 = x0.at[_IDX_ACC].set(jnp.array([0.0, 0.0]))
+        x0 = x0.at[_IDX_ACC].set(jnp.array([0.0, brain_params.tonic_acc]))
     return x0
 
 
@@ -561,18 +565,16 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
                                      brain_params)
 
     # ── Saccade generator (target selection + Listing's corrections handled internally) ──
-    dx_sg, u_burst = sg.step(x_sg, sensory_out.target_pos, sensory_out.target_visible, x_ni_net, ocr[2], w_est, brain_params, noise_acc)
+    dx_sg, u_burst = sg.step(x_sg, sensory_out.target_pos, sensory_out.target_visible, x_ni_net, ocr, w_est, brain_params, noise_acc)
 
     # ── Translational VOR (T-VOR): vestibular + visual fusion, distance-scaled ───
     # Uses heading_estimator's v_lin (already gravity-corrected, τ_head ≈ 2 s) as the
     # vestibular linear-velocity estimate.
     # Distance proxy: the absolute vergence command from the slow integrator.
-    # x_verg layout is [x_fast(3) | x_slow(3) | x_copy(3)]; x_fast and x_slow are
-    # *deviations* from tonic_verg (per the Read & Schor 2022 dual-integrator design),
-    # so absolute vergence = tonic_verg + x_slow at SS.  At rest (no target),
-    # x_slow = 0 → vergence = tonic_verg ≈ 3.67° ≈ 1 m default distance.
-    # Vergence x_slow[0] (H deviation) is at index 3 inside x_va (verg block 0:9, x_slow at 3:6)
-    current_vergence_yaw = brain_params.tonic_verg + x_va[3]
+    # x_verg layout is [x_fast(3) | x_slow(3) | x_copy(3)]; x_slow now carries the
+    # tonic_verg setpoint baseline directly (Schor 1999 adapter form), so absolute
+    # vergence = x_slow[H] at SS.  At rest, x_slow[H] = tonic_verg ≈ 3.67° ≈ 1 m.
+    current_vergence_yaw = x_va[3]   # x_slow[H] = vergence H component
     omega_tvor, verg_rate_tvor = tv.step(
         jnp.concatenate([v_lin,
                          a_lin_est,
@@ -600,8 +602,8 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
         x_ni_net, u_ni_in[:2], current_vergence_yaw,
         brain_params.listing_primary, brain_params.listing_l2_frac,
     )
-    u_ni_in        = u_ni_in.at[2].add(cyc_torsion_vel)
-    verg_rate_tvor = verg_rate_tvor.at[2].add(cyclo_verg_rate)
+    u_ni_in        = u_ni_in.at[2].add(brain_params.listing_gain * cyc_torsion_vel)
+    verg_rate_tvor = verg_rate_tvor.at[2].add(brain_params.listing_gain * cyclo_verg_rate)
 
     dx_ni, motor_cmd_ni = ni.step(x_ni, u_ni_in, brain_params, u_tonic=ocr)
 

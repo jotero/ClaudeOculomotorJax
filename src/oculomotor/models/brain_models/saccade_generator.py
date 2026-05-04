@@ -152,7 +152,7 @@ def step(x_sg, pos_delayed, target_visible, x_ni, ocr, w_est, p, noise_acc=0.0):
 
     Target selection (inside step — uses brain-internal x_ni, not plant state):
         target_visible ≈ 1  (in visual field):
-            e_cmd = clip(pos_delayed, −orbital_limit − x_ni,  +orbital_limit − x_ni)
+            e_cmd = clip(pos_delayed + ocr, −orbital_limit − x_ni, +orbital_limit − x_ni)
         target_visible ≈ 0  (quick-phase generator — target outside ~90° visual field):
             e_cmd = −alpha_reset · (x_ni − k_center_vel·τ_ref · w_vs)
             Predictive centripetal quick phase.
@@ -162,7 +162,9 @@ def step(x_sg, pos_delayed, target_visible, x_ni, ocr, w_est, p, noise_acc=0.0):
         pos_delayed:   (3,)         delayed retinal position error (deg)
         target_visible: scalar       visual-field gate (≈1 in-field, ≈0 out-of-field)
         x_ni:          (3,)         NI net state — brain's eye-position estimate (deg)
-        ocr:           scalar        torsional OCR offset (deg)
+        ocr:           (3,)         OCR vector (rotation-vec) — added to target so the
+                                    saccade aims at (H, V, T_with_OCR). Only torsion is
+                                    non-zero in practice.
         w_est:         (3,)         velocity storage head-velocity estimate (deg/s)
         p:             BrainParams
         noise_acc:     scalar        pre-generated accumulator diffusion term
@@ -171,14 +173,9 @@ def step(x_sg, pos_delayed, target_visible, x_ni, ocr, w_est, p, noise_acc=0.0):
         dx_sg:   (N_STATES,)  state derivative
         u_burst: (3,)         saccade velocity command (deg/s)
     """
-    # ── Listing's law: applied centrally now ─────────────────────────────────
-    # listing.velocity_torsion is added to the SUMMED velocity command
-    # (u_burst + u_pursuit + omega_tvor) in brain_model.step, BEFORE NI
-    # integration. So no per-module target / x_ni torsion adjustment here —
-    # SG aims at H/V only and torsion drops out of the velocity-level rule.
-    # ocr / eye_pos kept in the interface for future use.
-    eye_pos = x_ni
-    _ = (eye_pos, ocr)
+    # Listing's law is applied centrally in brain_model.step (added to the
+    # summed velocity command before NI integration), so SG aims at H/V only
+    # and torsion drops out of the velocity-level rule here.
 
     # ── State extraction ──────────────────────────────────────────────────────
     e_held  = x_sg[0:3]    # (3,) error estimator = residual error (e_res = e_held)
@@ -191,8 +188,10 @@ def step(x_sg, pos_delayed, target_visible, x_ni, ocr, w_est, p, noise_acc=0.0):
     x_ibn_L = x_sg[15:18]  # (3,) left  IBN membrane potentials
 
     # ── Target selection ──────────────────────────────────────────────────────
-    # In-field: clip to oculomotor range; Quick-phase: predictive centripetal reset.
-    e_target = jnp.clip(pos_delayed, -p.orbital_limit - x_ni, p.orbital_limit - x_ni)
+    # In-field: clip (pos_delayed + OCR) to oculomotor range so the saccade end
+    # state aligns the eye torsion with the head-tilt-driven OCR offset.
+    # Quick-phase: predictive centripetal reset.
+    e_target = jnp.clip(pos_delayed + ocr, -p.orbital_limit - x_ni, p.orbital_limit - x_ni)
 
     tau_refractory = (p.threshold_acc - p.acc_burst_floor) * p.tau_acc
     x_ni_pred = x_ni - p.k_center_vel * tau_refractory * w_est

@@ -34,9 +34,15 @@ CLIN_REF_DIR  = REF_DIR
 CLIN_HTML_PATH = HTML_PATH
 
 
-def save_fig(fig, name, show=False, dpi=150):
-    """Save figure to docs/clinical_benchmarks/figures/{name}.png; return (path, rel)."""
+def save_fig(fig, name, show=False, dpi=150, params=None, conditions=None):
+    """Save figure to docs/clinical_benchmarks/figures/{name}.png; return (path, rel).
+
+    If `params` is provided, a one-line list of non-default overrides is embedded
+    in the bottom-left.  If `conditions` is provided, a one-line stimulus-conditions
+    string is embedded just above it.  Delegates the diff logic to bench_utils.
+    """
     import matplotlib.pyplot as plt
+    import bench_utils as _bu
     os.makedirs(FIGS_DIR, exist_ok=True)
 
     ts  = datetime.datetime.now().strftime('%Y-%m-%d %H:%M')
@@ -44,6 +50,16 @@ def save_fig(fig, name, show=False, dpi=150):
     fig.text(0.998, 0.003, f'{ts}  |  {ver}',
              ha='right', va='bottom', fontsize=6, color='#888888',
              transform=fig.transFigure)
+
+    if conditions:
+        fig.text(0.005, 0.018, f'Conditions: {conditions}',
+                 ha='left', va='bottom', fontsize=6, color='#666666',
+                 transform=fig.transFigure)
+    if params is not None:
+        overrides = _bu.fmt_param_overrides(params)
+        fig.text(0.005, 0.003, f'Param overrides: {overrides}',
+                 ha='left', va='bottom', fontsize=6, color='#888888',
+                 transform=fig.transFigure)
 
     path = os.path.join(FIGS_DIR, f'{name}.png')
     fig.savefig(path, dpi=dpi, bbox_inches='tight')

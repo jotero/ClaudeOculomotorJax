@@ -185,7 +185,8 @@ def _slow_saccades(show):
     fig.suptitle('Slow Saccades — Reduced Burst Neuron Drive (PPRF / IBN Lesion)',
                  fontsize=10, fontweight='bold')
 
-    path, rp = utils.save_fig(fig, 'clin_sac_slow', show=show)
+    path, rp = utils.save_fig(fig, 'clin_sac_slow', show=show, params=PARAMS_DEFAULT,
+                              conditions='Lit, horizontal saccades — slowed velocity (PPRF/IBN lesion sweep on g_burst)')
     return utils.fig_meta(path, rp,
         title='Slow Saccades (Main Sequence Shift)',
         description='Main sequence curves (left, full height) and 20° saccade position + '
@@ -267,7 +268,8 @@ def _flutter_swj(show):
 
     plt.tight_layout()
 
-    path, rp = utils.save_fig(fig, 'clin_sac_flutter_swj', show=show)
+    path, rp = utils.save_fig(fig, 'clin_sac_flutter_swj', show=show, params=PARAMS_DEFAULT,
+                              conditions='Lit, fixation — saccadic intrusions: flutter, square-wave jerks (OPN failure)')
     return utils.fig_meta(path, rp,
         title='Ocular Flutter and Square Wave Jerks',
         description='Static center fixation under healthy, flutter, and SWJ conditions. '

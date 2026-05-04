@@ -144,7 +144,8 @@ def _gen(show):
     axes[2].legend(fontsize=8)
 
     fig.tight_layout()
-    path, rp = utils.save_fig(fig, 'clin_ni_gen', show=show)
+    path, rp = utils.save_fig(fig, 'clin_ni_gen', show=show, params=PARAMS_DEFAULT,
+                              conditions='Lit, eccentric fixation — gaze-evoked nystagmus (impaired NI tau_i)')
     return utils.fig_meta(path, rp,
         title='Gaze-Evoked Nystagmus (GEN)',
         description='NI leak TC reduced: healthy 25 s → moderate 6 s → severe 2 s. '
@@ -217,7 +218,8 @@ def _rebound(show):
     ax.legend(fontsize=8)
 
     fig.tight_layout()
-    path, rp = utils.save_fig(fig, 'clin_ni_rebound', show=show)
+    path, rp = utils.save_fig(fig, 'clin_ni_rebound', show=show, params=PARAMS_DEFAULT,
+                              conditions='Lit, sustained eccentric fixation then return — rebound nystagmus (NI null adapt)')
     return utils.fig_meta(path, rp,
         title='Rebound Nystagmus',
         description=f'NI null adaptation TC = {THETA.brain.tau_ni_adapt:.0f} s. '
@@ -306,7 +308,8 @@ def _alexander_law(show):
                      ha='center', fontsize=7.5, color='gray')
 
     fig.tight_layout()
-    path, rp = utils.save_fig(fig, 'clin_ni_alexander_law', show=show)
+    path, rp = utils.save_fig(fig, 'clin_ni_alexander_law', show=show, params=PARAMS_DEFAULT,
+                              conditions='Lit, eccentric fixation across H positions — Alexander\'s law (UVL spontaneous nystagmus)')
     return utils.fig_meta(path, rp,
         title="Alexander's Law (UVH + GEN)",
         description="Left UVH + leaky NI (τ_i=3 s) + NI null adaptation (τ=15 s). "
@@ -389,7 +392,8 @@ def _okan_extension(show):
     ax.legend(fontsize=8)
 
     fig.tight_layout()
-    path, rp = utils.save_fig(fig, 'clin_ni_okan', show=show)
+    path, rp = utils.save_fig(fig, 'clin_ni_okan', show=show, params=PARAMS_DEFAULT,
+                              conditions='Lit→Dark, full-field scene velocity step then off — OKAN decay (impaired tau_vs)')
     return utils.fig_meta(path, rp,
         title='Extended OKAN / VS Null Adaptation',
         description='VS null adaptation (τ_vs_adapt 600→60 s) prolongs OKAN. '

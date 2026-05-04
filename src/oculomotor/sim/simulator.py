@@ -559,21 +559,28 @@ def simulate(
         key = jax.random.PRNGKey(0)
     k_canal, k_slip, k_pos, k_vel, k_acc_n = jax.random.split(key, 5)
 
-    noise_canal = jax.random.normal(k_canal, (T, 6)) * params.sensory.sigma_canal
-    noise_slip  = jax.random.normal(k_slip,  (T, 3)) * params.sensory.sigma_slip
-    noise_vel   = jax.random.normal(k_vel,   (T, 3)) * params.sensory.sigma_vel
+    # All four sensory noise sources are Ornstein-Uhlenbeck processes:
+    #   x_{n+1} = α·x_n + √(1−α²)·σ·w_n,   α = exp(−dt/τ)
+    # Stationary stddev = σ. Short τ → ~white noise (band-limited at 1/(2π·τ)).
+    def _ou_noise(rng_key, shape, sigma, tau):
+        alpha = jnp.exp(-dt / tau)
+        drive = jnp.sqrt(1.0 - alpha ** 2) * sigma
+        white = jax.random.normal(rng_key, shape)
+        x0    = jnp.zeros(shape[1:])
+        def step(carry, w):
+            x = alpha * carry + drive * w
+            return x, x
+        _, ou = jax.lax.scan(step, x0, white)
+        return ou
+
+    sp = params.sensory
+    noise_canal = _ou_noise(k_canal, (T, 6), sp.sigma_canal, sp.tau_canal_drift)
+    noise_slip  = _ou_noise(k_slip,  (T, 3), sp.sigma_slip,  sp.tau_slip_drift)
+    noise_pos   = _ou_noise(k_pos,   (T, 3), sp.sigma_pos,   sp.tau_pos_drift)
+    noise_vel   = _ou_noise(k_vel,   (T, 3), sp.sigma_vel,   sp.tau_vel_drift)
     # Accumulator diffusion noise: pre-scaled so that after ODE multiply-by-dt gives
     # N(0, sigma_acc·√dt) per step — standard Euler-Maruyama / Langevin scaling.
     noise_acc   = jax.random.normal(k_acc_n, (T,))   * (params.brain.sigma_acc / jnp.sqrt(dt))
-
-    alpha_ou = jnp.exp(-dt / params.sensory.tau_pos_drift)
-    ou_drive = jnp.sqrt(1.0 - alpha_ou ** 2) * params.sensory.sigma_pos
-
-    def _ou_step(carry, w):
-        x = alpha_ou * carry + ou_drive * w
-        return x, x
-
-    _, noise_pos = jax.lax.scan(_ou_step, jnp.zeros(3), jax.random.normal(k_pos, (T, 3)))
 
     # ── Warmup prepend ────────────────────────────────────────────────────────
     warmup_s = cfg.warmup_s

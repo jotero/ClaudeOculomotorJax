@@ -131,53 +131,80 @@ def step(x_va, u, brain_params):
     verg_rate_tvor   = u[_IDX_INPUT_VERG_RATE_TVOR]
     z_act            = u[_IDX_INPUT_Z_ACT]
 
-    # ── Cross-couplings from current state ──────────────────────────────────
-    # Brain's current accommodation neural output = fast + slow + tonic (D)
-    u_neural_acc = x_acc_fast + x_acc_slow + brain_params.tonic_acc
-    # Current vergence yaw = tonic + slow integrator H component (deg)
-    x_verg_yaw   = brain_params.tonic_verg + x_verg_slow[_AXIS_H]
-
-    # AC/A: accommodation increment (D above dark focus) → vergence drive (deg)
-    aca_drive = brain_params.AC_A * _DEG_PER_PD * (u_neural_acc - brain_params.tonic_acc)
-    # CA/C: vergence increment (deg above tonic)        → lens-plant feedforward (D)
-    A_cac     = brain_params.CA_C * ((x_verg_yaw - brain_params.tonic_verg) / _DEG_PER_PD)
+    # ── Cross-couplings (Schor 1999: PHASIC-only, no tonic contribution) ────
+    # Schor 1999 p.3: "tonic accommodation and tonic convergence have been shown
+    # not to stimulate accommodative vergence and vergence accommodation under
+    # open-loop conditions". So both cross-links read only the fast (phasic)
+    # state — once the response transfers to the tonic, the cross-link drops out.
+    # AC/A: accommodation phasic (D above dark focus) → vergence drive (deg)
+    aca_drive = brain_params.AC_A * _DEG_PER_PD * x_acc_fast
+    # CA/C: vergence phasic (deg above tonic, H only) → lens-plant feedforward (D)
+    cac_drive = brain_params.CA_C * (x_verg_fast[_AXIS_H] / _DEG_PER_PD)
 
     # ── Vergence ────────────────────────────────────────────────────────────
-    # Zee (1992) SVBN — H-only saccade-gated asymmetric saturating burst.
-    # Conv much stronger than div (Table 1: peak 50°/s for 10° conv vs 12°/s for 2.5° div).
+    # SVBN — H-only saccade-gated saturating burst (symmetric for conv and div).
+    # Uses g_svbn_conv / X_svbn_conv for both directions; the _div params are
+    # legacy (Zee 1992 Table 1 has asymmetric conv/div but we ignore that for now).
     disp_h    = target_disparity[_AXIS_H]
-    is_conv   = (disp_h > 0).astype(jnp.float32)
-    g_eff     = is_conv * brain_params.g_svbn_conv + (1.0 - is_conv) * brain_params.g_svbn_div
-    X_eff     = is_conv * brain_params.X_svbn_conv + (1.0 - is_conv) * brain_params.X_svbn_div
-    u_svbn_h  = z_act * jnp.sign(disp_h) * g_eff * (1.0 - jnp.exp(-jnp.abs(disp_h) / X_eff))
+    u_svbn_h  = (z_act * jnp.sign(disp_h) * brain_params.g_svbn_conv
+                 * (1.0 - jnp.exp(-jnp.abs(disp_h) / brain_params.X_svbn_conv)))
     u_svbn    = jnp.zeros(3).at[_AXIS_H].set(u_svbn_h)    # H-only burst vector
 
-    # Dual integrators — same form as accommodation, with extras:
-    #   fast: + SVBN burst boosts during saccade for persistence
-    #   slow: + TVOR vergence rate (open-loop integration during head translation)
-    dx_v_fast = -x_verg_fast / brain_params.tau_verg_fastn + brain_params.K_verg_fast * target_disparity + u_svbn
-    dx_v_slow = -x_verg_slow / brain_params.tau_verg_slow  + brain_params.K_verg_slow * target_disparity + verg_rate_tvor
     # x_copy: integrated SVBN burst for observability; slow decay between saccades
     dx_v_copy = u_svbn - x_verg_copy / _TAU_COPY_RESET
+    
+    # ── Collect all vergence drive (disparity + TVOR + burst) ───────────────
+    # Disparity goes into the fast integrator AS IS (no K) and into the direct
+    # bypass pathway with unit gain (Kb=1, matching NI's pure pass-through).
+    # TVOR rate and SVBN burst go to BOTH the integrator and the direct pathway.
 
-    # Output: tonic baseline + AC/A direct + integrators + Robinson direct phasic + SVBN feedthrough.
-    # AC/A enters as a direct add (unity gain) so open-loop conditions don't amplify
-    # it through the high-gain integrator stack and run vergence to the orbital walls.
-    u_phasic  = brain_params.K_phasic_verg * target_disparity            # deg/s
-    tonic_vec = jnp.zeros(3).at[_AXIS_H].set(brain_params.tonic_verg)    # H-only tonic
-    aca_vec   = jnp.zeros(3).at[_AXIS_H].set(aca_drive)                  # H-only AC/A
-    u_verg    = (tonic_vec + aca_vec
-                 + x_verg_fast + x_verg_slow
-                 + brain_params.tau_vp * (u_phasic + u_svbn))
+    # Fast leaky integrator (Schor 1999): Tf·dx + x = Kf·input
+    # Disparity is the position-form input (gets Kf gain). Burst and TVOR are
+    # rate inputs added directly.
+    dx_v_fast = ((brain_params.K_verg_fast * target_disparity - x_verg_fast)
+                 / brain_params.tau_verg_fast
+                 + u_svbn + verg_rate_tvor)
 
-    # ── Accommodation ───────────────────────────────────────────────────────
-    # Dual integrators on residual blur. CA/C is added to the lens-plant input
-    # directly (bypasses the blur controller, so x_fast/x_slow only see the
-    # residual defocus from retina once x_plant has caught up).
-    e_blur    = defocus
-    dx_a_fast = -x_acc_fast / brain_params.tau_acc_fast + brain_params.K_acc_fast * e_blur
-    dx_a_slow = -x_acc_slow / brain_params.tau_acc_slow + brain_params.K_acc_slow * e_blur
-    u_acc     = (x_acc_fast + x_acc_slow + brain_params.tonic_acc) + A_cac
+    # Direct (bypass) pathway with plant compensation via brain.tau_p (NI form).
+    # Disparity gets unit Kb (NI-matched pass-through); rate drives × τ_p.
+    direct_path_pos = (target_disparity
+                       + brain_params.tau_p * (u_svbn + verg_rate_tvor))   # deg
+    fast_pathway_out = x_verg_fast + direct_path_pos                       # deg
+
+    # Cross-link: AC/A from accommodation (H-only, deg)
+    tonic_vec = jnp.zeros(3).at[_AXIS_H].set(brain_params.tonic_verg)
+    aca_vec   = jnp.zeros(3).at[_AXIS_H].set(aca_drive)
+
+    # Adaptable tonic (Schor 1999): leaky integrator with setpoint at tonic_verg,
+    # driven by Ks · (fast pathway output + AC/A cross-link).
+    tonic_input = brain_params.K_verg_slow * (fast_pathway_out + aca_vec)
+    dx_v_slow = (tonic_vec + tonic_input - x_verg_slow) / brain_params.tau_verg_slow
+
+
+    # Output: sum of everything — direct (phasic) + fast + slow + cross-link.
+    # x_verg_slow already includes the tonic_verg setpoint baseline, so at rest
+    # u_verg = 0 + 0 + tonic_vec + 0 = tonic_vec.
+    u_verg = direct_path_pos + x_verg_fast + x_verg_slow + aca_vec
+
+    # ── Accommodation (mirror of vergence — no burst, no rate inputs) ───────
+    # Defocus goes into the fast integrator AS IS (no K) and into the direct
+    # pathway with unit Kb.  No rate inputs to scale by τ_acc_plant.
+
+    # Fast leaky integrator (Schor 1999): Tf·dx + x = Kf·input
+    dx_a_fast = (brain_params.K_acc_fast * defocus - x_acc_fast) / brain_params.tau_acc_fast
+
+    # Direct (bypass) pathway — defocus with unit Kb (no rate inputs)
+    direct_path_pos_acc  = defocus                                       # D
+    fast_pathway_out_acc = x_acc_fast + direct_path_pos_acc              # D
+
+    # Adaptable tonic (Schor 1999): leaky integrator with setpoint at tonic_acc,
+    # driven by Ks · (fast pathway output + CA/C cross-link).
+    tonic_input_acc  = brain_params.K_acc_slow * (fast_pathway_out_acc + cac_drive)
+    dx_a_slow        = (brain_params.tonic_acc + tonic_input_acc - x_acc_slow) / brain_params.tau_acc_slow
+
+    # Output: sum of everything — direct (phasic) + fast + slow + cross-link.
+    # x_acc_slow already includes the tonic_acc setpoint baseline.
+    u_acc = direct_path_pos_acc + x_acc_fast + x_acc_slow + cac_drive
 
     # ── Pack ────────────────────────────────────────────────────────────────
     dx_va = jnp.concatenate([

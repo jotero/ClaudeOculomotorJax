@@ -139,7 +139,8 @@ def _main_sequence(show):
     axes[1].grid(True, alpha=0.25)
 
     fig.tight_layout()
-    path, rp = utils.save_fig(fig, 'saccade_main_sequence', show=show)
+    path, rp = utils.save_fig(fig, 'saccade_main_sequence', show=show, params=THETA,
+                              conditions='Lit, foveal target stepping 1°–40° horizontally')
     return utils.fig_meta(path, rp,
         title='Saccade Main Sequence',
         description='Peak velocity vs amplitude scatter (left) and aligned eye traces (right) for amplitudes 0.5–20°.',
@@ -198,7 +199,8 @@ def _oblique(show):
     axes[2].legend(fontsize=9); axes[2].grid(True, alpha=0.25); axes[2].axhline(0, color='k', lw=0.4)
 
     fig.tight_layout()
-    path, rp = utils.save_fig(fig, 'saccade_oblique', show=show)
+    path, rp = utils.save_fig(fig, 'saccade_oblique', show=show, params=THETA,
+                              conditions='Lit, foveal target stepping diagonally (oblique amplitudes/angles)')
     return utils.fig_meta(path, rp,
         title='Oblique Saccades',
         description='Sequence of saccades to 5 oblique targets. Left: 2D trajectory. Center/right: H and V components.',
@@ -280,7 +282,8 @@ def _refractoriness(show):
         f'0→{AMPS[0]//2}°→{AMPS[0]}°\n(Eye solid · target dashed)', fontsize=9)
 
     fig.tight_layout()
-    path, rp = utils.save_fig(fig, 'saccade_refractoriness', show=show)
+    path, rp = utils.save_fig(fig, 'saccade_refractoriness', show=show, params=THETA,
+                              conditions='Lit, double-step target with varying inter-step intervals')
     return utils.fig_meta(path, rp,
         title='Saccade Double-Step Refractoriness',
         description='Double-step paradigm: target jumps 0→A/2 then A/2→A for A=10,20,30,40° '
@@ -393,7 +396,8 @@ def _cascade(show, noisy=False):
         if ci == 0: axes[7, ci].legend(fontsize=7)
 
     fig.tight_layout()
-    path, rp = utils.save_fig(fig, fname, show=show)
+    path, rp = utils.save_fig(fig, fname, show=show, params=params,
+                              conditions=f'Lit, foveal targets at 1°/5°/20°/40° horizontal{noise_tag}')
     return utils.fig_meta(path, rp,
         title='Saccade Signal Cascade' + noise_tag,
         description='Row-by-row signal flow for 1°, 5°, 20°, 40° saccades: position, visual cascade + hold, '

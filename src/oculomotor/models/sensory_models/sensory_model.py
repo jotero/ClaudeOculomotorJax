@@ -87,12 +87,17 @@ class SensoryParams(NamedTuple):
     visual_field_limit: float       = 90.0   # retinal eccentricity limit (deg); ~90° monocular field
     k_visual_field:     float       = 1.0    # sigmoid steepness for visual field gate (1/deg)
 
-    # Sensory noise (std in output units; 0 = noiseless)
-    sigma_canal:        float       = 0.5    # canal afferent noise (deg/s equiv.); ~1–3 deg/s realistic
-    sigma_slip:         float       = 0.0    # retinal slip noise (deg/s); drives VS/OKR
-    sigma_pos:          float       = 0.2    # retinal position noise (deg);  drives SG → microsaccades
-    tau_pos_drift:      float       = 0.3    # OU drift TC (s); sets how slowly pos error wanders
-    sigma_vel:          float       = 0.2    # target velocity noise (deg/s); drives pursuit
+    # Sensory noise (std in output units; 0 = noiseless). All four sources are
+    # Ornstein-Uhlenbeck processes — short τ approaches white noise (band-limited),
+    # longer τ produces drift-like fluctuations.
+    sigma_canal:        float       = 1.0    # canal afferent noise (deg/s); filtered heavily by VS/NI/plant
+    tau_canal_drift:    float       = 0.005  # OU TC for canal noise (s); essentially band-limited white
+    sigma_slip:         float       = 0.0    # retinal slip noise (deg/s); drives VS/OKR (off by default)
+    tau_slip_drift:     float       = 0.005  # OU TC for slip noise (s)
+    sigma_pos:          float       = 0.2    # retinal position drift (deg); triggers microsaccades
+    tau_pos_drift:      float       = 0.2    # OU TC for retinal-pos drift (s); inter-microsaccade interval
+    sigma_vel:          float       = 2.0    # target velocity noise (deg/s); drives pursuit jitter
+    tau_vel_drift:      float       = 0.005  # OU TC for retinal-vel noise (s); essentially band-limited white
 
     # Binocular geometry
     ipd:                float       = 0.064  # inter-pupillary distance (m); ~64 mm adult

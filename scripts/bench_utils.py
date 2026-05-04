@@ -35,12 +35,50 @@ CLIN_REF_DIR  = os.path.join(CLIN_DIR, 'reference')
 CLIN_HTML_PATH = os.path.join(CLIN_DIR, 'index.html')
 
 
-def save_fig(fig, name, show=False, dpi=150, figs_dir=None, base_dir=None):
+def fmt_param_overrides(params):
+    """Diff `params` against PARAMS_DEFAULT and return a one-line override string.
+
+    Returns 'defaults' if nothing differs, else a comma-separated list of the
+    non-default fields, e.g. 'AC_A=0, CA_C=0, sigma_acc=0'. Walks the three
+    sub-NamedTuples (sensory, brain, plant) and reports any field whose value
+    differs from default. Handles scalars and arrays.
+    """
+    from oculomotor.sim.simulator import PARAMS_DEFAULT
+    import numpy as np
+    overrides = []
+    for sub in ('sensory', 'brain', 'plant'):
+        cur, ref = getattr(params, sub), getattr(PARAMS_DEFAULT, sub)
+        for fname in cur._fields:
+            cv = getattr(cur, fname)
+            rv = getattr(ref, fname)
+            try:
+                same = bool(np.allclose(np.asarray(cv), np.asarray(rv)))
+            except (TypeError, ValueError):
+                same = (cv == rv)
+            if not same:
+                # Format the override value compactly
+                cv_arr = np.asarray(cv)
+                if cv_arr.shape == ():
+                    val_str = f'{float(cv):g}'
+                else:
+                    val_str = np.array2string(cv_arr, precision=3, separator=',',
+                                              suppress_small=True, max_line_width=80)
+                overrides.append(f'{fname}={val_str}')
+    return ', '.join(overrides) if overrides else 'defaults'
+
+
+def save_fig(fig, name, show=False, dpi=150, figs_dir=None, base_dir=None,
+             params=None, conditions=None):
     """Save figure to {figs_dir}/{name}.png with watermark; return (path, rel).
 
-    The timestamp and git version are embedded as small text in the bottom-right
-    corner of the figure image itself.  The filename is fixed (no timestamp) so
-    re-running a script simply overwrites the previous figure.
+    The timestamp and git version are embedded in the bottom-right corner.
+    If `params` is provided, a one-line list of non-default overrides is also
+    embedded in the bottom-left.  If `conditions` is provided, a one-line
+    stimulus-conditions string (e.g. 'Lit, midline target stepping 3 m → 0.3 m')
+    is embedded just above the overrides line.
+
+    The filename is fixed (no timestamp) so re-running a script overwrites
+    the previous figure.
 
     figs_dir: directory to save PNGs (default: FIGS_DIR)
     base_dir: root for computing rel path in HTML (default: BENCH_DIR)
@@ -57,6 +95,17 @@ def save_fig(fig, name, show=False, dpi=150, figs_dir=None, base_dir=None):
     fig.text(0.998, 0.003, f'{ts}  |  {ver}',
              ha='right', va='bottom', fontsize=6, color='#888888',
              transform=fig.transFigure)
+
+    # Bottom-left footer: conditions (top line) and parameter overrides (bottom line).
+    if conditions:
+        fig.text(0.005, 0.018, f'Conditions: {conditions}',
+                 ha='left', va='bottom', fontsize=6, color='#666666',
+                 transform=fig.transFigure)
+    if params is not None:
+        overrides = fmt_param_overrides(params)
+        fig.text(0.005, 0.003, f'Param overrides: {overrides}',
+                 ha='left', va='bottom', fontsize=6, color='#888888',
+                 transform=fig.transFigure)
 
     path = os.path.join(figs_dir, f'{name}.png')
     fig.savefig(path, dpi=dpi, bbox_inches='tight')
