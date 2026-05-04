@@ -70,11 +70,16 @@ def step(x_ni, u_vel, brain_params, u_tonic=0.0):
         x_ni:         (9,)  NI state [x_L (3,) | x_R (3,) | x_null (3,)]
         u_vel:        (3,)  combined eye-velocity command (deg/s) — sign-flipped upstream
         brain_params: BrainParams
-        u_tonic:      (3,)  tonic position offset added to output (e.g. OCR).
-                            Not integrated — does not affect state dynamics.
+        u_tonic:      (3,)  tonic position-offset set-point (e.g. OCR).
+                            Acts as a shift on x_null for the population leak target,
+                            so x_net leaks toward (x_null + u_tonic). A saccade landing
+                            at the OCR position is therefore stable (no drift back to 0).
+                            Not added to u_p directly — it flows through the integrator,
+                            so x_ni already reflects the offset and ec_pos stays
+                            consistent with the actual eye position.
 
     Returns:
-        dx:  (9,)  dx_ni/dt
+        dx:  (9,)  dx_ni/dt  (state derivative for the original x_null state)
         u_p: (3,)  pulse-step motor command to plant
     """
     x_L    = x_ni[_IDX_L]    # (3,) left  pop
@@ -83,13 +88,23 @@ def step(x_ni, u_vel, brain_params, u_tonic=0.0):
 
     b_ni   = jnp.asarray(brain_params.b_ni,  dtype=jnp.float32)
     L      = brain_params.orbital_limit
-    tau_i  = brain_params.tau_i
+    # Per-axis NI leak TC: yaw uses tau_i directly; pitch/roll scale by their fractions.
+    # Torsional integrator is leakier (~7.5 s vs 25 s) per Crawford & Vilis 1991.
+    tau_i  = brain_params.tau_i * jnp.array([1.0,
+                                              brain_params.tau_i_pitch_frac,
+                                              brain_params.tau_i_roll_frac])
 
-    # ── Population equilibria: leak toward b_ni ± half-null ──────────────────
-    # b_eff_L = b_ni + x_null/2   (left  pop target rises with rightward null)
-    # b_eff_R = b_ni - x_null/2   (right pop target falls with rightward null)
-    dx_L_raw = -(1.0 / tau_i) * (x_L - b_ni - x_null / 2.0) + u_vel / 2.0
-    dx_R_raw = -(1.0 / tau_i) * (x_R - b_ni + x_null / 2.0) - u_vel / 2.0
+    # u_tonic shifts the effective null/leak target without altering the stored
+    # x_null state. Without quick-phase resets, x_net only reaches a fraction
+    # τ_ni_adapt / (τ_i + τ_ni_adapt) ≈ 0.44 of u_tonic at SS — saccades and
+    # quick phases drive the rest of the way (visible in the OCR cascade bench).
+    x_null_eff = x_null + u_tonic
+
+    # ── Population equilibria: leak toward b_ni ± half-(shifted)-null ────────
+    # b_eff_L = b_ni + x_null_eff/2   (left  pop target rises with rightward null)
+    # b_eff_R = b_ni - x_null_eff/2   (right pop target falls with rightward null)
+    dx_L_raw = -(1.0 / tau_i) * (x_L - b_ni - x_null_eff / 2.0) + u_vel / 2.0
+    dx_R_raw = -(1.0 / tau_i) * (x_R - b_ni + x_null_eff / 2.0) - u_vel / 2.0
 
     # ── Anti-windup on net ────────────────────────────────────────────────────
     x_net   = x_L - x_R                      # current net position
@@ -103,10 +118,17 @@ def step(x_ni, u_vel, brain_params, u_tonic=0.0):
     dx_L = (dx_net + dx_sum) / 2.0
     dx_R = (dx_sum - dx_net) / 2.0
 
-    # ── Null adaptation: null slowly tracks net position ──────────────────────
-    dx_null = (x_net - x_null) / brain_params.tau_ni_adapt
+    # ── Null adaptation: null tracks (x_net − x_null_eff) ────────────────────
+    # With sustained u_tonic and no input the system has a 1-D family of
+    # equilibria along x_net = x_null + u_tonic. Starting from (0,0) it settles
+    # at  x_net = u_tonic·τ_ni_adapt/(τ_i+τ_ni_adapt)  and
+    #     x_null = -u_tonic·τ_i/(τ_i+τ_ni_adapt)  on TC τ_eff = τ_i·τ_ni_adapt/(τ_i+τ_ni_adapt).
+    # So the null partially adapts to OCR — when OCR is later removed, x_null
+    # stays negative briefly and drives a small post-OCR rebound, which is at
+    # least directionally consistent with reported post-tilt-removal drift.
+    dx_null = (x_net - x_null_eff) / brain_params.tau_ni_adapt
 
     # ── Pulse-step motor command: lag cancellation feedthrough ────────────────
-    u_p = x_net + brain_params.tau_p * u_vel + u_tonic
+    u_p = x_net + brain_params.tau_p * u_vel
 
     return jnp.concatenate([dx_L, dx_R, dx_null]), u_p

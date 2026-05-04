@@ -190,7 +190,12 @@ class BrainParams(NamedTuple):
                                           # (Cohen, Matsuo & Raphan 1977 J Neurophysiol; Demer & Zee 1984 J Neurophysiol).
 
     # Neural integrator — bilateral push-pull + null adaptation (Robinson 1975; rebound: Zee et al. 1980)
-    tau_i:                 float = 25.0   # leak TC (s); healthy >20 s (Cannon & Robinson 1985)
+    # Per-axis TCs via fractions of tau_i (matches the VS pattern). Yaw uses tau_i directly;
+    # torsional NI in the INC is reported as substantially leakier (Crawford & Vilis 1991:
+    # ~5–10 s vs 20–25 s for horizontal NPH; Suzuki et al. 1995; Anastasopoulos & Mergner 1982).
+    tau_i:                 float = 25.0   # yaw leak TC (s); healthy >20 s (Cannon & Robinson 1985)
+    tau_i_pitch_frac:      float = 1.0    # pitch TC = tau_i × this  → 25 s (vertical NI similar to horizontal)
+    tau_i_roll_frac:       float = 0.3    # roll  TC = tau_i × this  → 7.5 s (Crawford & Vilis 1991)
     tau_p:                 float = 0.15   # plant TC copy — NI feedthrough for lag cancellation
     tau_vis:               float = 0.08   # visual delay copy — EC delay must match retinal delay
                                           # should match PlantParams.tau_p in healthy subjects;
@@ -279,8 +284,13 @@ class BrainParams(NamedTuple):
                                           # residual r — short τ_a strongly suppresses sustained-residual
                                           # pollution (OVAR / OCR cascade) while still letting a_lin
                                           # respond to actual translation transients.
-    K_gd:                  float = 0.0    # gravity dumping gain (1/s); 0 = disabled
-    g_ocr:                 float = 0.0    # OCR amplitude (deg); healthy ~10°; 0 = disabled until verified
+    K_gd:                  float = 2.86   # gravity dumping gain — Laurens & Angelaki (2011) 0.05 rad/s
+                                          # converted to deg/s units (0.05 × 180/π ≈ 2.86). Drives VS dumping
+                                          # ⊥ gravity (tilt suppression) and OVAR sustained nystagmus.
+                                          # 0 = disabled / gravity-blind VS.
+    g_ocr:                 float = 1.019  # OCR gain (deg/(m/s²)): 10°/9.81 → ~10° torsion at 90° lateral tilt
+                                          # (Howard & Templeton 1966; Diamond, Markham et al. 1979).
+                                          # 0 = disabled; useful for benches that want eye torsion off.
 
     # Heading estimator — linear velocity in head-fixed frame
     tau_head:              float = 2.0    # linear velocity integration TC (s).  Shorter τ trades off
@@ -559,11 +569,14 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
         brain_params.ipd_brain, brain_params)
 
     # ── Neural integrator: VOR + saccades + pursuit + T-VOR → version motor command ───
-    # OCR is a tonic position offset (gravity-driven); passed as u_tonic so it is added
-    # to the output but not integrated into the NI state (avoids 25 s TC attenuation).
+    # OCR is a tonic position-offset set-point (gravity-driven); passed as u_tonic so it
+    # shifts the NI leak target via x_null_eff (saccade landing on OCR is then stable).
     # T-VOR contributes a VELOCITY (omega_tvor, deg/s) that NI integrates alongside
     # the other velocity drives — no longer a position bypass.
-    dx_ni, motor_cmd_ni = ni.step(x_ni, -w_est + u_burst + u_pursuit + omega_tvor, brain_params, u_tonic=ocr)
+    # Torsional VOR gain is ~half horizontal (Crawford 1991, Misslisch 1994); apply that
+    # attenuation only at the VS→NI connection so w_est elsewhere keeps full magnitude.
+    vor_torsion_gain = jnp.array([1.0, 1.0, 0.5])
+    dx_ni, motor_cmd_ni = ni.step(x_ni, -w_est * vor_torsion_gain + u_burst + u_pursuit + omega_tvor, brain_params, u_tonic=ocr)
 
     # ── Vergence + Accommodation (Schor dual-interaction model) ─────────────────
     # Accommodation and vergence are tightly cross-coupled (AC/A and CA/C).
@@ -603,7 +616,9 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
     # slip as "the world is moving" and drive the eye in the opposite direction,
     # fighting T-VOR.
     ec_vel  = u_burst + u_pursuit + omega_tvor   # version velocity efference (head frame, [yaw,pitch,roll] deg/s)
-    ec_pos  = x_ni_net + ocr        # eye position efference     (head frame, [yaw,pitch,roll] deg)
+    ec_pos  = x_ni_net               # eye position efference     (head frame, [yaw,pitch,roll] deg)
+                                     # OCR no longer added — it now flows through NI's set-point path,
+                                     # so x_ni_net already reflects the OCR-driven torsion.
     ec_verg = x_verg                # vergence efference         ([H,V,T] deg)
 
     # ── Pack state derivative ─────────────────────────────────────────────────

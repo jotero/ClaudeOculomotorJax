@@ -172,7 +172,9 @@ def step(x_sg, pos_delayed, target_visible, x_ni, ocr, w_est, p, noise_acc=0.0):
         u_burst: (3,)         saccade velocity command (deg/s)
     """
     # ── Listing's law corrections ─────────────────────────────────────────────
-    eye_pos = x_ni.at[2].add(ocr)
+    # OCR is no longer a tonic added on top of motor_cmd in NI; it flows through
+    # the integrator now, so x_ni already reflects the OCR-driven torsion.
+    eye_pos = x_ni
     pos_delayed, x_ni = listing.saccade_corrections(
         eye_pos, pos_delayed, ocr, p.listing_primary)
 

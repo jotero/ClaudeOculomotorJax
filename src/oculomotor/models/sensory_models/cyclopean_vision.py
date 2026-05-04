@@ -196,7 +196,7 @@ def step(x_vis,
                                  eye_dominant, v_max_scene_vel, v_max_target_vel, tau_vis
         ec_vel:                  (3,) version velocity efference [yaw,pitch,roll] (deg/s)
                                  rotated head→eye frame internally via rotation_matrix(ypr_to_xyz(ec_pos))
-        ec_pos:                  (3,) eye position efference [yaw,pitch,roll] (deg) = x_ni_net + ocr
+        ec_pos:                  (3,) eye position efference [yaw,pitch,roll] (deg) = x_ni_net
         ec_verg:                 (3,) vergence efference [H,V,T] (deg); [0] used for NPC gate
         defocus_L/R:             scalar per-eye defocus (D) = acc_demand + RE − x_plant
 

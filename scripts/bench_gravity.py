@@ -41,6 +41,13 @@ K_GD     = 0.05 * (180 / 3.14159265)   # 0.05 rad/s² → deg/s² ≈ 2.86
 TAU_GRAV = 5.0                          # gravity estimate TC (s); somatogravic BW = 1/(2π×5) ≈ 0.032 Hz
 G_OCR  = 10.0 / 9.81   # OCR gain (deg/(m/s²)): ~10° at 90° tilt (Howard & Templeton 1966)
 
+# ── Literature reference values (used only for the somatogravic LP-theory line) ──
+# Independent of model parameters; lets the bench show "what an idealised
+# somatogravic system with literature parameters would predict" alongside the
+# model output, instead of self-referentially comparing the model to itself.
+TAU_GRAV_LIT = 4.0          # s — Mayne (1974), Holly (1996); somatogravic BW ≈ 0.04 Hz
+G_OCR_LIT    = 10.0 / 9.81  # deg/(m/s²) — Diamond, Markham et al. (1979): ~10° SS torsion at 90° lateral tilt
+
 
 SECTION = dict(
     id='gravity', title='3. Gravity Estimator',
@@ -83,7 +90,7 @@ def _ocr(show):
     TILT_VEL  = 60.0
     HOLD_T    = 10.0
 
-    params = with_brain(PARAMS_DEFAULT, g_ocr=G_OCR)
+    params = PARAMS_DEFAULT   # g_ocr is now non-zero by default
     cmap   = plt.get_cmap('plasma')
     colors = [cmap(i / (len(TILTS_DEG) - 1)) for i in range(len(TILTS_DEG))]
 
@@ -204,7 +211,7 @@ def _ovar(show):
     T_ROT_RAMP    = T_ROT_START + ROT_RAMP
     TOTAL         = T_ROT_RAMP + 50.0                  # 50 s of clean rotation
 
-    params = with_brain(PARAMS_DEFAULT, K_gd=K_GD)
+    params = PARAMS_DEFAULT   # K_gd is now non-zero by default
     cfg    = SimConfig(warmup_s=0.0)   # start from rest (v[0]=0 required)
     t      = np.arange(0.0, TOTAL, DT)
     T      = len(t)
@@ -374,7 +381,7 @@ def _tilt_suppression(show):
     T       = len(t_arr)
     t_rel   = t_arr - ROT_T   # aligned to rotation stop
 
-    params = with_brain(PARAMS_DEFAULT, K_gd=K_GD)
+    params = PARAMS_DEFAULT   # K_gd is now non-zero by default
     cfg    = SimConfig(warmup_s=0.0)
     colors = ['steelblue', '#2196a8', '#e08214', '#c62e2e']
 
@@ -553,12 +560,14 @@ def _somatogravic_frequency(show):
     A_ACCEL  = 2.0       # m/s² peak lateral acceleration (≈ 0.2g)
     N_CYCLES = 6
     SETTLE_S = 5.0 * TAU_GRAV
+    PRE_OSC_S   = 2.0    # extra rest after settle, before oscillation starts (debug initialization bias)
+    MAX_TOTAL_S = 60.0   # cap total simulation duration (low-freq trials would otherwise be 225 s)
 
     # Note: saccades left ON. Disabling them (g_burst=0) caused NaN at long durations
     # (≥120 s) due to a numerical interaction between un-corrected eye drift and the
     # saccade generator's accumulator state.  Quick phases now appear as small
     # transients on top of the OCR slow-phase response.
-    params = with_brain(PARAMS_DEFAULT, g_ocr=G_OCR)
+    params = PARAMS_DEFAULT   # g_ocr is now non-zero by default
 
     cmap   = plt.get_cmap('coolwarm')
     colors = [cmap(i / (len(FREQS_HZ) - 1)) for i in range(len(FREQS_HZ))]
@@ -568,14 +577,22 @@ def _somatogravic_frequency(show):
     trace_data = {}
 
     for i, freq in enumerate(FREQS_HZ):
-        omega   = 2.0 * np.pi * freq
-        total   = SETTLE_S + N_CYCLES / freq
+        omega       = 2.0 * np.pi * freq
+        # Cap total simulation length; short oscillation if we run out of budget.
+        osc_target  = N_CYCLES / freq
+        total       = min(SETTLE_S + PRE_OSC_S + osc_target, MAX_TOTAL_S)
+        osc_start_s = SETTLE_S + PRE_OSC_S
         t       = np.arange(0.0, total, DT)
         T       = len(t)
 
         # Lateral (interaural = world x = rightward) translation.
         # World frame: x=right, y=up, z=fwd  → lateral acceleration is component 0.
-        a_lat   = A_ACCEL * np.sin(omega * t)
+        # Acceleration is held at 0 during the SETTLE_S + PRE_OSC_S preamble
+        # (so any initialization-driven torsion bias has time to wash out before
+        # the sinusoid begins) and turns on at osc_start_s.
+        a_lat   = np.where(t >= osc_start_s,
+                           A_ACCEL * np.sin(omega * (t - osc_start_s)),
+                           0.0)
         lin_acc = np.stack([a_lat, np.zeros(T), np.zeros(T)], axis=1)
 
         st = simulate(params, t,
@@ -587,37 +604,45 @@ def _somatogravic_frequency(show):
         eye_roll = (np.array(st.plant[:, 2]) + np.array(st.plant[:, 5])) / 2.0
         g_est    = np.array(st.brain[:, _IDX_GRAV])
 
-        # Align display start to a complete cycle boundary so a_lat starts at 0.
-        n_full_cycles   = int(total * freq)
-        display_cycle   = max(0, n_full_cycles - 3)
-        i_ss            = int(display_cycle / freq / DT)
-        peak = float(np.max(np.abs(eye_roll[i_ss:])))
+        # Display window: align to a full cycle so a_lat starts at 0.
+        # Show up to the last 3 complete cycles after osc_start_s.
+        n_full_cycles = int((total - osc_start_s) * freq)
+        display_cycle = max(0, n_full_cycles - 3)
+        i_ss          = int((osc_start_s + display_cycle / freq) / DT)
+        # Use peak-to-peak / 2 so a residual DC bias does NOT inflate the amplitude.
+        win   = eye_roll[i_ss:]
+        peak  = 0.5 * float(np.max(win) - np.min(win))
         amp_model.append(peak)
 
         if freq in SHOW_FREQS:
+            vs_torsion = vs_net(st)[:, 2]   # roll component of VS net (= w_est roll in dark/no-rotation)
             trace_data[freq] = {
                 't': t, 'a_lat': a_lat, 'eye_roll': eye_roll, 'g_est_0': g_est[:, 0],
+                'vs_torsion': vs_torsion,
                 'i_ss': i_ss,
             }
 
-    fc          = 1.0 / (2.0 * np.pi * TAU_GRAV)
+    # Literature LP theory (independent of model parameters) — so the dashed
+    # line is a true external reference, not a self-consistency check.
+    fc          = 1.0 / (2.0 * np.pi * TAU_GRAV_LIT)
     f_theory    = np.logspace(np.log10(0.01), np.log10(5.0), 200)
     gain_theory = 1.0 / np.sqrt(1.0 + (f_theory / fc) ** 2)
-    torsion_dc  = G_OCR * A_ACCEL
+    torsion_dc  = G_OCR_LIT * A_ACCEL
     amp_theory  = gain_theory * torsion_dc
 
-    fig = plt.figure(figsize=(14, 11))
+    fig = plt.figure(figsize=(14, 14))
     fig.suptitle(
         f'Somatogravic OCR — Frequency Dependence of Lateral Translation\n'
         f'Constant {A_ACCEL:.0f} m/s² peak acceleration;  g_ocr={G_OCR},  '
         f'tau_grav={TAU_GRAV}  (corner freq fc ≈ {fc:.3f} Hz)',
         fontsize=12, fontweight='bold')
 
-    gs        = fig.add_gridspec(3, len(SHOW_FREQS), hspace=0.45, wspace=0.3,
-                                 height_ratios=[1, 1, 1.3])
+    gs        = fig.add_gridspec(4, len(SHOW_FREQS), hspace=0.45, wspace=0.3,
+                                 height_ratios=[1, 1, 1, 1.3])
     axes_acc  = [fig.add_subplot(gs[0, j]) for j in range(len(SHOW_FREQS))]
     axes_gest = [fig.add_subplot(gs[1, j]) for j in range(len(SHOW_FREQS))]
-    ax_bode   = fig.add_subplot(gs[2, :])
+    axes_vs   = [fig.add_subplot(gs[2, j]) for j in range(len(SHOW_FREQS))]
+    ax_bode   = fig.add_subplot(gs[3, :])
 
     show_colors = {f: cmap(FREQS_HZ.index(f) / (len(FREQS_HZ) - 1))
                    for f in SHOW_FREQS if f in FREQS_HZ}
@@ -642,15 +667,18 @@ def _somatogravic_frequency(show):
         ax_ge = axes_gest[j]
         g_data = d['g_est_0'][i_ss:]
         eye_data = d['eye_roll'][i_ss:]
-        g_amp   = max(float(np.max(np.abs(g_data))),   1e-3)
-        eye_amp = max(float(np.max(np.abs(eye_data))), 1e-3)
+        g_amp   = max(0.5 * float(np.max(g_data)   - np.min(g_data)),   1e-3)
+        eye_amp = max(0.5 * float(np.max(eye_data) - np.min(eye_data)), 1e-3)
+        # Use mean-centred limits so a DC offset doesn't push the trace off-axis.
+        g_mid   = 0.5 * float(np.max(g_data)   + np.min(g_data))
+        eye_mid = 0.5 * float(np.max(eye_data) + np.min(eye_data))
 
         ax_ge.plot(t_show, g_data, color=col, lw=1.8)
         ax_ge.axhline(0, color='k', lw=0.4)
         ax_ge.set_ylabel('g_est[0] (m/s²)', fontsize=7, color=col)
         ax_ge.tick_params(axis='y', labelcolor=col, labelsize=7)
         ax_ge.grid(True, alpha=0.15)
-        ax_ge.set_ylim(-1.3 * g_amp, 1.3 * g_amp)
+        ax_ge.set_ylim(g_mid - 1.3 * g_amp, g_mid + 1.3 * g_amp)
         # Annotate peak amplitude on each panel for clarity
         ax_ge.text(0.02, 0.96, f'g_est peak ≈ {g_amp:.3f} m/s²',
                    transform=ax_ge.transAxes, fontsize=7, va='top', color=col,
@@ -663,14 +691,34 @@ def _somatogravic_frequency(show):
         ax_eye2.plot(t_show, eye_data, color='darkorange', lw=1.4, ls='-.')
         ax_eye2.set_ylabel('Eye torsion (deg)', fontsize=7, color='darkorange')
         ax_eye2.tick_params(axis='y', labelcolor='darkorange', labelsize=7)
-        ax_eye2.set_ylim(-1.3 * eye_amp, 1.3 * eye_amp)
+        ax_eye2.set_ylim(eye_mid - 1.3 * eye_amp, eye_mid + 1.3 * eye_amp)
         ax_eye2.text(0.98, 0.96, f'torsion peak ≈ {eye_amp:.3f}°',
                      transform=ax_eye2.transAxes, fontsize=7, va='top', ha='right',
                      color='darkorange',
                      bbox=dict(facecolor='white', edgecolor='none', alpha=0.7))
 
+        # Third row: VS net torsion (= w_est torsion in dark/no-rotation).
+        # Should oscillate at the same frequency as g_est if the gravity-dumping rf
+        # path correctly transports the rotating g_est into VS as a perceived rotation.
+        ax_vs = axes_vs[j]
+        vs_data = d['vs_torsion'][i_ss:]
+        vs_amp  = max(0.5 * float(np.max(vs_data) - np.min(vs_data)), 1e-3)
+        ax_vs.plot(t_show, vs_data, color=col, lw=1.4)
+        ax_vs.axhline(0, color='k', lw=0.4)
+        ax_vs.set_ylabel('VS torsion / w_est_z (°/s)', fontsize=7, color=col)
+        ax_vs.tick_params(axis='y', labelcolor=col, labelsize=7)
+        ax_vs.grid(True, alpha=0.15)
+        ax_vs.set_ylim(-1.3 * vs_amp, 1.3 * vs_amp)
+        ax_vs.text(0.02, 0.96, f'VS_z peak ≈ {vs_amp:.3f}°/s',
+                   transform=ax_vs.transAxes, fontsize=7, va='top', color=col,
+                   bbox=dict(facecolor='white', edgecolor='none', alpha=0.7))
+        if j == 1:
+            ax_vs.set_title('VS net torsion = w_est_z (°/s) — should oscillate with g_est if rf transports gravity rotation',
+                            fontsize=8)
+
     ax_bode.loglog(f_theory, amp_theory, color='gray', lw=2.0, ls='--',
-                   label=f'LP theory: fc={fc:.3f} Hz  (TC=tau_grav={TAU_GRAV:.1f} s)')
+                   label=f'Literature LP: fc={fc:.3f} Hz  (τ_grav_lit={TAU_GRAV_LIT:.1f} s, '
+                         f'G_OCR_lit={G_OCR_LIT:.2f} deg/(m/s²))')
     ax_bode.axvline(fc, color='gray', lw=0.8, ls=':', alpha=0.7)
     ax_bode.text(fc * 1.15, amp_theory[0] * 0.6, f'fc={fc:.3f} Hz', fontsize=8, color='gray')
 
@@ -744,7 +792,7 @@ def _ocr_cascade(show):
     HOLD_T   = 30.0
     tilt_dur = TILT_DEG / TILT_VEL
 
-    params  = with_brain(PARAMS_DEFAULT, g_ocr=G_OCR)
+    params  = PARAMS_DEFAULT   # g_ocr is now non-zero by default
     t_np    = np.arange(0.0, tilt_dur + HOLD_T, DT)
     T       = len(t_np)
     hv_roll = np.where(t_np < tilt_dur, TILT_VEL, 0.0)
@@ -823,8 +871,10 @@ def _ocr_cascade(show):
                 sig = hv_roll if key == '_hv' else res[key]
                 ax.plot(t_rel, sig, color=col_color, lw=0.9)
             if key == 'spv_tor':
-                ax.plot(t_rel, res['vs_neg'], color='#2166ac', lw=0.7, ls='--', alpha=0.8,
-                        label='-VS' if col_idx == 0 else None)
+                # Flip VS sign only so VS and canal sit on opposite signs and can
+                # be visually compared (canal FT keeps its original −canal_ft form).
+                ax.plot(t_rel, -res['vs_neg'], color='#2166ac', lw=0.7, ls='--', alpha=0.8,
+                        label='VS' if col_idx == 0 else None)
                 ax.plot(t_rel, -res['canal_ft'], color='#d6604d', lw=0.7, ls=':', alpha=0.8,
                         label='-canal FT' if col_idx == 0 else None)
                 if col_idx == 0:
