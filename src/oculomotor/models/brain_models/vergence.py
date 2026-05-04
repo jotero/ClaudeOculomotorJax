@@ -61,45 +61,58 @@ import jax.numpy as jnp
 
 
 N_STATES  = 9   # [x_fast(3) | x_slow(3) | x_copy(3)]
-N_INPUTS  = 3
+N_INPUTS  = 13  # see _IDX_INPUT_* below
 N_OUTPUTS = 3
 
+# Sub-state slices within x_verg
 _IDX_FAST = slice(0, 3)
 _IDX_SLOW = slice(3, 6)
 _IDX_COPY = slice(6, 9)
+
+# Bundled-input layout — match the SSM convention: step(x, u, theta).
+_IDX_INPUT_E_DISP            = slice(0, 3)    # delayed binocular disparity (deg)
+_IDX_INPUT_ACA_DRIVE         = 3              # AC/A drive (deg); scalar
+_IDX_INPUT_VERG_RATE_TVOR    = slice(4, 7)    # T-VOR vergence rate (deg/s, [H,V,T])
+_IDX_INPUT_Z_ACT             = 7              # OPN gate (0=idle, 1=saccade); scalar
+_IDX_INPUT_EYE_HV            = slice(8, 10)   # gaze [H,V] (deg); reserved for L2
+_IDX_INPUT_SCENE_DISP_RATE   = slice(10, 13)  # per-eye scene-flow diff (m/s); pass zeros if N/A
 
 # x_copy decays slowly between saccades so accumulated burst contribution doesn't drift forever
 _TAU_COPY_RESET = 30.0   # s
 
 
-def step(x_verg_full, e_disp, ac_a_drive, verg_rate_tvor, z_act, eye_hv, brain_params,
-         scene_disp_rate=None):
+def step(x_verg, u, brain_params):
     """Vergence step: dual integrator + direct phasic + tonic baseline.
 
     Args:
-        x_verg_full:    (9,)  [x_fast(3) | x_slow(3) | reserved(3)]
-        e_disp:         (3,)  delayed binocular disparity (deg) = pos_L − pos_R
-        ac_a_drive:     scalar  accommodative convergence drive (deg); direct add to u_verg
-        verg_rate_tvor: (3,)  T-VOR vergence rate (deg/s, [H, V, T]); drives slow integrator —
-                              H from surge (target distance change), V/T from L2 cross-coupling at
-                              non-primary cyclopean
-        z_act:          scalar  OPN gate (0=idle, 1=saccade) — gates SVBN burst
-        eye_hv:         (2,)    gaze [H, V] (deg); reserved for L2 cyclovergence
-        brain_params:   BrainParams
-        scene_disp_rate: (3,) or None  — per-eye scene-flow difference (m/s, head frame).
-                              Visual evidence for vergence rate: 0 in uniform / depthless scenes,
-                              non-zero with motion parallax.  Used to constrain spurious T-VOR
-                              vergence drives when there's no actual depth-change signal.
+        x_verg:       (9,)  [x_fast(3) | x_slow(3) | x_copy(3)]
+        u:            (13,) bundled input vector:
+                            [_IDX_INPUT_E_DISP]          = binocular disparity (3,) (deg) = pos_L − pos_R
+                            [_IDX_INPUT_ACA_DRIVE]       = AC/A drive (deg); positive = converging
+                            [_IDX_INPUT_VERG_RATE_TVOR]  = T-VOR vergence rate (3,) (deg/s, [H,V,T])
+                            [_IDX_INPUT_Z_ACT]           = OPN gate (0=idle, 1=saccade); SVBN trigger
+                            [_IDX_INPUT_EYE_HV]          = gaze [H,V] (deg); reserved for L2
+                            [_IDX_INPUT_SCENE_DISP_RATE] = per-eye scene-flow diff (3,) (m/s);
+                                                           pass zeros if no depth/parallax evidence
+        brain_params: BrainParams (reads tonic_verg, tau_vp, tau_verg_fast, tau_verg_slow,
+                                          K_phasic_verg, K_verg_fast, K_verg_slow,
+                                          g_svbn_conv, X_svbn_conv, g_svbn_div, X_svbn_div,
+                                          K_visual_verg, ipd_brain)
 
     Returns:
         dx_verg: (9,)  state derivative
         u_verg:  (3,)  vergence position command (deg) → split ±½ in final_common_pathway
     """
-    _ = eye_hv   # reserved for future L2 cyclovergence
+    e_disp          = u[_IDX_INPUT_E_DISP]
+    ac_a_drive      = u[_IDX_INPUT_ACA_DRIVE]
+    verg_rate_tvor  = u[_IDX_INPUT_VERG_RATE_TVOR]
+    z_act           = u[_IDX_INPUT_Z_ACT]
+    _eye_hv         = u[_IDX_INPUT_EYE_HV]   # reserved for future L2 cyclovergence
+    scene_disp_rate = u[_IDX_INPUT_SCENE_DISP_RATE]
 
-    x_fast = x_verg_full[_IDX_FAST]
-    x_slow = x_verg_full[_IDX_SLOW]
-    x_copy = x_verg_full[_IDX_COPY]
+    x_fast = x_verg[_IDX_FAST]
+    x_slow = x_verg[_IDX_SLOW]
+    x_copy = x_verg[_IDX_COPY]
 
     # Disparity drives the dual integrator + direct phasic path (closed loop with retina).
     # AC/A drive (from accommodation cross-link) does NOT enter here — it bypasses the
@@ -133,13 +146,12 @@ def step(x_verg_full, e_disp, ac_a_drive, verg_rate_tvor, z_act, eye_hv, brain_p
     # vergence drives when the visual world doesn't agree.  Convert from m/s differential
     # to deg/s vergence rate via 1/IPD (small-angle): per-eye flow difference of v m/s
     # implies vergence rate of v/IPD rad/s if interpreted as approaching a target.
-    if scene_disp_rate is not None:
-        # Project the per-eye flow differential onto the horizontal vergence axis.
-        # For pure translation in a uniform scene this is 0 → damps spurious T-VOR drift.
-        K_visual_verg     = brain_params.K_visual_verg
-        visual_evidence_H = scene_disp_rate[0] / brain_params.ipd_brain * jnp.degrees(1.0)  # deg/s
-        # Pull verg_rate_tvor toward visual evidence (damps disagreement).
-        verg_rate_tvor    = verg_rate_tvor.at[0].add(K_visual_verg * (visual_evidence_H - verg_rate_tvor[0]))
+    # Project per-eye flow differential onto the horizontal vergence axis.
+    # For pure translation in a uniform scene scene_disp_rate is 0 → damps
+    # spurious T-VOR drift. Caller passes zeros if scene/depth signal absent.
+    K_visual_verg     = brain_params.K_visual_verg
+    visual_evidence_H = scene_disp_rate[0] / brain_params.ipd_brain * jnp.degrees(1.0)  # deg/s
+    verg_rate_tvor    = verg_rate_tvor.at[0].add(K_visual_verg * (visual_evidence_H - verg_rate_tvor[0]))
     dx_slow = (-x_slow / brain_params.tau_verg_slow
                + brain_params.K_verg_slow * e_total
                + verg_rate_tvor)

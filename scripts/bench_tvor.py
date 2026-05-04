@@ -196,8 +196,10 @@ def _cascade(show):
             ax.axhline(0, color='k', lw=0.4)
             if col == 0: ax.set_ylabel(ylab, fontsize=9)
             ax.grid(True, alpha=0.2)
-            if r in (4, 5, 6, 7):
-                ax.set_ylim(-15, 15)   # tight zoom so slow phase is visible
+            if r in (4, 5):
+                ax.set_ylim(-15, 15)   # yaw/pitch eye velocity — wider range
+            if r in (6, 7):
+                ax.set_ylim(-2, 2)     # roll + vergence — tight zoom for slow-phase detail
             if r == 7:
                 ax.set_xlabel('Time (s)', fontsize=9)
             if col == 0:

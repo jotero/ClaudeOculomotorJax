@@ -98,8 +98,16 @@ References:
 import jax.numpy as jnp
 
 N_STATES  = 2   # [x_fast (D), x_slow (D)] — neural integrators only; plant state in ODE/SimState
-N_INPUTS  = 2   # defocus (D), x_verg_yaw (deg)
-N_OUTPUTS = 2   # u_neural (D), A_cac (D)
+N_INPUTS  = 2   # defocus (D), x_verg_yaw (deg) — see _IDX_INPUT_* below
+N_OUTPUTS = 3   # u_neural (D), A_cac (D), aca_drive (deg)
+
+# Sub-state slices within x_acc (matches vergence module style)
+_IDX_FAST = 0    # x_fast (D)
+_IDX_SLOW = 1    # x_slow (D)
+
+# Bundled-input layout — match the SSM convention: step(x, u, theta).
+_IDX_INPUT_DEFOCUS    = 0   # delayed cyclopean defocus (D)
+_IDX_INPUT_VERG_YAW   = 1   # vergence yaw state (deg) → CA/C feedback
 
 # Unit glossary for this module:
 #   D   = optical diopters (1/metres)  — used for defocus and accommodation
@@ -114,7 +122,7 @@ N_OUTPUTS = 2   # u_neural (D), A_cac (D)
 _DEG_PER_PD = 0.5729   # deg per prism diopter; 1 pd = arctan(0.01) rad ≈ 0.5729 deg
 
 
-def step(x_acc, defocus, x_verg_yaw, brain_params):
+def step(x_acc, u, brain_params):
     """Single ODE step for the dual neural accommodation controller.
 
     Blur error is derived from the pre-delayed defocus signal (= acc_demand + RE − x_plant),
@@ -131,19 +139,24 @@ def step(x_acc, defocus, x_verg_yaw, brain_params):
 
     Args:
         x_acc:        (2,)   [x_fast, x_slow] neural integrator states (D)
-        defocus:      scalar  delayed cyclopean defocus (D) from sensory_out.defocus
-                              = delay(acc_demand + refractive_error − x_plant)
-                              Positive = need more accommodation.
-        x_verg_yaw:   scalar  vergence yaw state (deg) → CA/C feedback
+        u:            (2,)   bundled input vector:
+                             [_IDX_INPUT_DEFOCUS]   = delayed cyclopean defocus (D);
+                                                      positive → more accommodation needed
+                             [_IDX_INPUT_VERG_YAW]  = vergence yaw state (deg) → CA/C
         brain_params: BrainParams  (reads tonic_acc, tonic_verg, tau_acc_fast, tau_acc_slow,
-                                          K_acc_fast, K_acc_slow, CA_C)
+                                          K_acc_fast, K_acc_slow, CA_C, AC_A)
 
     Returns:
-        dx_acc:   (2,)   state derivative (D/s)
-        u_neural: scalar  total neural command = x_fast + x_slow + tonic_acc (D)
-        A_cac:    scalar  CA/C feedforward drive (D); add to u_neural before plant
+        dx_acc:    (2,)   state derivative (D/s)
+        u_neural:  scalar  total neural command = x_fast + x_slow + tonic_acc (D)
+        A_cac:     scalar  CA/C feedforward drive (D); add to u_neural before plant
+        aca_drive: scalar  AC/A vergence drive (deg); positive = converging.
+                           Computed from u_neural (efference copy of accommodation
+                           command) since the brain has no direct lens sensor.
     """
-    x_fast, x_slow = x_acc[0], x_acc[1]
+    defocus    = u[_IDX_INPUT_DEFOCUS]
+    x_verg_yaw = u[_IDX_INPUT_VERG_YAW]
+    x_fast, x_slow = x_acc[_IDX_FAST], x_acc[_IDX_SLOW]
 
     # CA/C: DELTA vergence from dark vergence drives accommodation feedforward.
     # At rest (x_verg_yaw = tonic_verg): A_cac = 0 → controller holds at tonic_acc.
@@ -165,7 +178,11 @@ def step(x_acc, defocus, x_verg_yaw, brain_params):
     # Total neural command includes tonic bias (dark-focus baseline)
     u_neural = x_fast + x_slow + brain_params.tonic_acc
 
-    return jnp.array([dx_fast, dx_slow]), u_neural, A_cac
+    # AC/A: efference copy of u_neural drives vergence.  Returned here (no separate
+    # ac_a_drive() call needed downstream).
+    aca_drive = ac_a_drive(u_neural, brain_params)
+
+    return jnp.array([dx_fast, dx_slow]), u_neural, A_cac, aca_drive
 
 
 def ac_a_drive(x_plant, brain_params):

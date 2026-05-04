@@ -60,7 +60,9 @@
       "Bash(\"d:/OneDrive/UC Berkeley/OMlab - JOM/Code/ClaudeOculomotorJax/.venv/Scripts/python.exe\" -X utf8 scripts/diag_heave_drift.py)",
       "Bash(\"d:/OneDrive/UC Berkeley/OMlab - JOM/Code/ClaudeOculomotorJax/.venv/Scripts/python.exe\" -X utf8 scripts/bench_gravity.py --bench ocr)",
       "Bash(\"d:/OneDrive/UC Berkeley/OMlab - JOM/Code/ClaudeOculomotorJax/.venv/Scripts/python.exe\" -X utf8 scripts/bench_gravity.py --bench ocr_cascade)",
-      "Bash(\"d:/OneDrive/UC Berkeley/OMlab - JOM/Code/ClaudeOculomotorJax/.venv/Scripts/python.exe\" -X utf8 scripts/bench_gravity.py --bench somatogravic)"
+      "Bash(\"d:/OneDrive/UC Berkeley/OMlab - JOM/Code/ClaudeOculomotorJax/.venv/Scripts/python.exe\" -X utf8 scripts/bench_gravity.py --bench somatogravic)",
+      "Bash(\"d:/OneDrive/UC Berkeley/OMlab - JOM/Code/ClaudeOculomotorJax/.venv/Scripts/python.exe\" -X utf8 scripts/gen_parameters.py)",
+      "Bash(\"d:/OneDrive/UC Berkeley/OMlab - JOM/Code/ClaudeOculomotorJax/.venv/Scripts/python.exe\" -m pip install pyyaml)"
     ],
     "additionalDirectories": [
       "d:\\OneDrive\\UC Berkeley\\OMlab - JOM\\Code\\ClaudeOculomotorJax\\outputs"

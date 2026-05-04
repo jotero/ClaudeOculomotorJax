@@ -27,7 +27,7 @@ from oculomotor.sim.simulator import (
     PARAMS_DEFAULT, with_brain, simulate, SimConfig,
     _IDX_GRAV, _IDX_C, _IDX_SG, _IDX_VERG, _IDX_PURSUIT,
 )
-from oculomotor.models.brain_models.brain_model import _IDX_TVOR
+from oculomotor.models.brain_models.brain_model import _IDX_HEAD
 from oculomotor.sim import kinematics as km
 from oculomotor.analysis import ax_fmt, vs_net, ni_net, fit_tc, extract_spv_states
 from oculomotor.models.sensory_models.sensory_model import PINV_SENS as CANAL_PINV
@@ -37,9 +37,12 @@ SHOW = '--show' in sys.argv
 DT   = 0.001
 G0   = 9.81
 
-K_GD     = 0.05 * (180 / 3.14159265)   # 0.05 rad/s² → deg/s² ≈ 2.86
-TAU_GRAV = 5.0                          # gravity estimate TC (s); somatogravic BW = 1/(2π×5) ≈ 0.032 Hz
-G_OCR  = 10.0 / 9.81   # OCR gain (deg/(m/s²)): ~10° at 90° tilt (Howard & Templeton 1966)
+# Display constants pulled live from the model defaults so titles always match
+# the actual values used at simulation time. (No more drift between bench label
+# and live param.)
+K_GD     = float(PARAMS_DEFAULT.brain.K_gd)
+TAU_GRAV = 1.0 / float(PARAMS_DEFAULT.brain.K_grav)   # somatogravic BW = K_grav / 2π Hz
+G_OCR    = float(PARAMS_DEFAULT.brain.g_ocr)
 
 # ── Literature reference values (used only for the somatogravic LP-theory line) ──
 # Independent of model parameters; lets the bench show "what an idealised
@@ -423,8 +426,9 @@ def _tilt_suppression(show):
         spv       = extract_spv_states(st, t_arr, eye='version')[:, 0]   # true cyclopean SPV (yaw)
         g_est_x   = np.array(st.brain[:, _IDX_GRAV])[:, 0]    # interaural / right
         g_est_z   = np.array(st.brain[:, _IDX_GRAV])[:, 2]    # forward / roll-axis
-        x_tvor_x  = np.array(st.brain[:, _IDX_TVOR])[:, 0]   # interaural lin vel estimate (m/s)
-        x_tvor_z  = np.array(st.brain[:, _IDX_TVOR])[:, 2]   # forward lin vel estimate (m/s)
+        v_lin    = np.array(st.brain[:, _IDX_HEAD])          # (T, 3) heading-estimator v_lin (m/s, head frame)
+        x_tvor_x = v_lin[:, 0]   # interaural lin vel estimate (m/s)
+        x_tvor_z = v_lin[:, 2]   # forward lin vel estimate (m/s)
         vs        = np.array(vs_net(st))                     # (T, 3) VS net yaw/pitch/roll (deg/s)
 
         # Fit TC starting after tilt completes
@@ -515,7 +519,7 @@ def _tilt_suppression(show):
 
     axes[6].set_ylabel('TVOR v_lin estimate (m/s)', fontsize=9)
     axes[6].legend(fontsize=7, ncol=4)
-    axes[6].set_title('TVOR low-pass v_lin state (m/s) — solid: x_tvor[0] interaural; dashed: x_tvor[2] fwd',
+    axes[6].set_title('Heading-estimator v_lin (m/s) — solid: v_lin[0] interaural; dashed: v_lin[2] fwd',
                       fontsize=9)
 
     axes[7].set_xlabel('Time relative to rotation stop (s)', fontsize=9)

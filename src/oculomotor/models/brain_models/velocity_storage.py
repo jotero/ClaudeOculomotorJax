@@ -113,6 +113,10 @@ N_STATES  = 9   # x_A(3) + x_B(3) + x_null(3)
 N_INPUTS  = N_CANALS + 3 + 3   # 6 canal afferents + 3 slip + 3 rf (rotational feedback)
 N_OUTPUTS = 3   # w_est (3,)
 
+# Sub-state slices within x_vs (matches NI / vergence module style)
+_IDX_A    = slice(0, 3)   # population A — codes preferred-direction (yaw R / pitch UP / roll RED)
+_IDX_B    = slice(3, 6)   # population B — codes opposite preferred direction
+_IDX_POP  = slice(0, 6)   # both populations together (used for ABCD math)
 _IDX_NULL = slice(6, 9)   # null adaptation state within x_vs
 
 B_NOMINAL = 100.0   # healthy resting bias (deg/s); used to derive per-population input scaling

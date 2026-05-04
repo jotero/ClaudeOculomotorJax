@@ -246,6 +246,13 @@ def main():
     generate_html(sections_data)
     print(f'\nDone. Open: {utils.HTML_PATH}')
 
+    # Refresh parameters.html alongside the bench HTML so doc + code stay in sync.
+    try:
+        import gen_parameters
+        gen_parameters.main()
+    except Exception as e:
+        print(f'Warning: parameters.html regeneration failed: {e}')
+
 
 if __name__ == '__main__':
     main()

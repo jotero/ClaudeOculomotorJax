@@ -52,25 +52,34 @@ import jax.numpy as jnp
 from oculomotor.models.brain_models import listing
 
 N_STATES  = 3   # x_p: pursuit velocity memory (deg/s, one per axis)
-N_INPUTS  = 3   # e_vel_delayed after saccade EC subtraction
+N_INPUTS  = 6   # target_slip_ec(3) + eye_pos(3) — see _IDX_INPUT_* below
 N_OUTPUTS = 3   # u_pursuit: velocity command → NI and VS
 
+# Bundled-input layout — match the SSM convention: step(x, u, theta).
+_IDX_INPUT_TARGET_SLIP_EC = slice(0, 3)   # EC-corrected target slip (deg/s)
+_IDX_INPUT_EYE_POS        = slice(3, 6)   # current eye position [H, V, T] deg (NI net)
 
-def step(x_pursuit, target_slip_ec, eye_pos, brain_params):
+
+def step(x_pursuit, u, brain_params):
     """Single ODE step: Smith predictor → pursuit derivative + output command.
 
     Args:
-        x_pursuit:      (3,)   pursuit memory state (deg/s)
-        target_slip_ec: (3,)   EC-corrected target slip = target_slip + motor_ec * target_motion_visible
-                               assembled in brain_model.py; pre-clipped before respective cascades
-        eye_pos:        (3,)   current eye position [H, V, T] deg (NI net, proxy for gaze)
-        brain_params:   BrainParams  (reads K_pursuit, K_phasic_pursuit, tau_pursuit)
+        x_pursuit:    (3,)  pursuit memory state (deg/s)
+        u:            (6,)  bundled input vector:
+                            [_IDX_INPUT_TARGET_SLIP_EC] = EC-corrected target slip (3,)
+                                                          (target_slip + motor_ec · target_motion_visible)
+                            [_IDX_INPUT_EYE_POS]        = current eye position (3,) [H, V, T] (deg)
+        brain_params: BrainParams  (reads K_pursuit, K_phasic_pursuit, tau_pursuit,
+                                          listing_primary)
 
     Returns:
         dx_pursuit: (3,)  dx_p/dt  (deg/s²)
         u_pursuit:  (3,)  pursuit velocity command (deg/s), torsional component includes
                           Listing's half-angle correction
     """
+    target_slip_ec = u[_IDX_INPUT_TARGET_SLIP_EC]
+    eye_pos        = u[_IDX_INPUT_EYE_POS]
+
     K_ph = brain_params.K_phasic_pursuit
     # Smith predictor: e_pred = (target_slip_ec − x_pursuit) / (1 + K_phasic)
     e_pred = (target_slip_ec - x_pursuit) / (1.0 + K_ph)

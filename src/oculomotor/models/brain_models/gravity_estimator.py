@@ -125,15 +125,16 @@ def step(x_grav, u, brain_params):
     # gravity (slow, large) and translation (transient).  The downstream HE then
     # consumes a_lin (the brain's translation estimate) instead of (gia − g_est)
     # raw residual, so HE doesn't integrate gravity-mismatch artifacts into v_lin.
-    a_est = gia - g_est - a_lin
+    residual = gia - g_est - a_lin
 
     # Transport: rotate gravity estimate with VS angular velocity (VN → uvula/nodulus pathway)
     # ypr_to_xyz converts [yaw,pitch,roll] → xyz rotation-axis vector for cross product
     w_rad_xyz = jnp.radians(ypr_to_xyz(w_est))
     transport = -jnp.cross(w_rad_xyz, g_est)
 
-    # Gravity correction: pull toward residual (gia − g_est − a_lin) with TC = tau_grav
-    dg = transport + (1.0 / brain_params.tau_grav) * a_est
+    # Gravity correction: pull toward residual (gia − g_est − a_lin) with somatogravic gain K_grav.
+    # L&A 2011 notation: this is "go" — strength of the brain's commitment to the tilt percept.
+    dg = transport + brain_params.K_grav * residual
 
     # Linear acceleration: tracks the residual + decays toward 0 with TC τ_a.
     # The decay is the deterministic stand-in for the Kalman prior on translation:
@@ -146,7 +147,7 @@ def step(x_grav, u, brain_params):
     # ("screw direction"), matching subjects' perceived sustained linear translation
     # during prolonged off-vertical-axis rotation (Denise, Darlot, Droulez, Cohen,
     # Berthoz 1988 Exp Brain Res 67:629; Wood 2002 J Vest Res 12:223).
-    da = brain_params.K_lin * a_est - a_lin / brain_params.tau_a_lin
+    da = brain_params.K_lin * residual - a_lin / brain_params.tau_a_lin
 
     # Rotational feedback for VS — Laurens & Angelaki (2011): GIA × G_down / G0²
     # G_down = −g_est (g_est is specific force UP; G_down points DOWN).

@@ -1,0 +1,1207 @@
+# Parameter schema — human-curated descriptions, anatomy, references, and
+# disorder mappings. Layered on top of code-side defaults at HTML-gen time.
+#
+# Keys are "<class>.<field>" where class ∈ {brain, sensory, plant}.
+#
+# Schema fields (all optional — generator falls back to inline source comments):
+#   group:        section grouping in the HTML output
+#   units:        physical units displayed alongside the value
+#   description:  multi-line markdown-friendly description (overrides inline comment)
+#   anatomy:      brief anatomical locus
+#   references:   list of citation strings
+#   disorders:    list of {name, value, tag} entries shown as colored chips
+#                 tag ∈ {vn, cerebellar, ino, cn, other}
+#   needs_review: true → adds a "TODO: needs review" badge for entries that need
+#                 expert verification (anatomy unclear, default uncertain, etc.)
+#
+# Default values in the model code are authoritative — never duplicate here.
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BrainParams — Velocity Storage
+# ─────────────────────────────────────────────────────────────────────────────
+
+brain.tau_vs:
+  group: velocity_storage
+  units: "s"
+  anatomy: "MVN, nodulus/uvula"
+  description: |
+    Yaw velocity-storage time constant. Healthy ~20 s monkey, ~15 s human.
+    Determines OKAN decay TC after scene off and post-rotational nystagmus
+    decay in the dark.
+  references:
+    - "Raphan, Matsuo & Cohen (1979)"
+    - "Cohen, Henn, Raphan & Dennett (1981)"
+  disorders:
+    - {name: "Nodulus/uvula lesion", value: 1.5, tag: cerebellar}
+    - {name: "Bilateral vestibular loss", value: 5.0, tag: vn}
+
+brain.tau_vs_pitch_frac:
+  group: velocity_storage
+  units: "—"
+  anatomy: "MVN pitch axis"
+  description: |
+    Pitch VS TC = tau_vs × this fraction. Default 1.0 (yaw and pitch held
+    equally well in the model). Literature suggests pitch may be slightly
+    leakier than yaw (Hess & Dieringer 1991: ~5–10 s vs ~15–20 s yaw).
+  references:
+    - "Hess & Dieringer (1991)"
+    - "Angelaki & Henn (2000)"
+
+brain.tau_vs_roll_frac:
+  group: velocity_storage
+  units: "—"
+  anatomy: "MVN roll axis"
+  description: |
+    Roll VS TC = tau_vs × this fraction. Default 1.0; literature suggests
+    roll storage is the leakiest axis (Dai et al. 1991: ~2–5 s).
+    Consider lowering for closer literature match.
+  references:
+    - "Dai et al. (1991)"
+    - "Angelaki et al. (1995)"
+  needs_review: true
+
+brain.b_vs:
+  group: velocity_storage
+  units: "deg/s"
+  anatomy: "Vestibular nucleus resting bias (Type-I VN tonic firing)"
+  description: |
+    VN resting firing rate (deg/s equivalent). Scalar broadcasts to all 6
+    states; pass a (6,) array for asymmetric (lesion) cases. Simultaneously
+    sets equilibrium firing rate AND input responsiveness (canal drive
+    scales by b_vs / B_NOMINAL = 100).
+  disorders:
+    - {name: "Vestibular neuritis (one side)", value: 70, tag: vn}
+    - {name: "VN infarct (one side)", value: 0, tag: vn}
+
+brain.tau_vs_adapt:
+  group: velocity_storage
+  units: "s"
+  anatomy: "Cerebellar feedback to MVN (PAN-related)"
+  description: |
+    VS null-adaptation TC. Default 600 s → negligible in normal demos.
+    Reduce to ~30–60 s to engage PAN-like (periodic alternating nystagmus)
+    slow oscillation through anti-symmetric VS drift.
+  disorders:
+    - {name: "PAN", value: 45.0, tag: cerebellar}
+
+brain.g_vor:
+  group: velocity_storage
+  units: "—"
+  anatomy: "Cerebellar VOR calibration (flocculus)"
+  description: |
+    Central VOR gain — scales canal feedthrough to VS output. 1.0 = healthy;
+    <1 = hypofunction / VOR adaptation down; >1 = adaptation up. Distinct
+    from peripheral canal_gains (transduction sensitivity).
+  disorders:
+    - {name: "VOR hypofunction", value: 0.5, tag: vn}
+    - {name: "VOR gain-up adaptation (BVH)", value: 1.5, tag: vn}
+
+brain.v_max_vor:
+  group: velocity_storage
+  units: "deg/s"
+  anatomy: "Type-I VN saturation"
+  description: |
+    Excitatory canal afferent saturation. Inhibitory floor (~80 deg/s,
+    Ewald's 2nd law) is implemented in canal nonlinearity. Excitatory
+    ceiling 300–600 deg/s (Goldberg & Fernandez 1971).
+  references:
+    - "Goldberg & Fernández (1971) J Neurophysiol 34:635"
+
+brain.K_vs:
+  group: velocity_storage
+  units: "1/s"
+  anatomy: "Canal afferents → MVN integrator input"
+  description: |
+    Canal-to-VS integration gain. Bilateral push-pull, so effective net gain
+    = 2·K_vs.
+  references:
+    - "Raphan et al. (1979)"
+
+brain.K_vis:
+  group: velocity_storage
+  units: "1/s"
+  anatomy: "NOT/AOS → MVN (visual-vestibular convergence)"
+  description: |
+    Visual-to-VS gain, drives OKR/OKAN charging. Bilateral push-pull, so
+    effective net gain = 2·K_vis. Combined with g_vis, OKN steady-state
+    gain ≈ 0.82 at K_vis=0.1, g_vis=0.6 (Raphan 1979).
+  references:
+    - "Raphan (1979)"
+  disorders:
+    - {name: "OKR/OKAN abolished", value: 0.0, tag: cerebellar}
+
+brain.g_vis:
+  group: velocity_storage
+  units: "—"
+  anatomy: "Direct pretectal / NOT visual pathway"
+  description: |
+    Direct visual feedthrough gain (Raphan 1979 Fig 8: gl=0.6). OKR inner
+    loop stable iff g_vis < 1. Larger → faster OKR onset but ringing risk.
+  references:
+    - "Raphan (1979)"
+
+brain.v_max_okr:
+  group: velocity_storage
+  units: "deg/s"
+  anatomy: "NOT/AOS neurons"
+  description: |
+    Visual slip saturation feeding VS. NOT neurons saturate ~80 deg/s
+    (Hoffmann 1979). OKR gain ≈1 below 30 deg/s, half-max ~60 deg/s.
+  references:
+    - "Hoffmann (1979) Exp Brain Res"
+    - "Cohen, Matsuo & Raphan (1977)"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BrainParams — Neural Integrator
+# ─────────────────────────────────────────────────────────────────────────────
+
+brain.tau_i:
+  group: neural_integrator
+  units: "s"
+  anatomy: "NPH (horizontal); INC (vertical/torsional)"
+  description: |
+    Yaw NI leak TC. Healthy >20 s (Cannon & Robinson 1985). Per-axis fractions
+    apply for pitch/roll. Short tau_i (2–8 s) → centripetal drift → gaze-evoked
+    nystagmus.
+  references:
+    - "Cannon & Robinson (1985)"
+    - "Robinson (1975) Brain Res 71:195"
+  disorders:
+    - {name: "Cerebellar GEN", value: 4.0, tag: cerebellar}
+
+brain.tau_i_pitch_frac:
+  group: neural_integrator
+  units: "—"
+  anatomy: "Vertical NI in INC"
+  description: |
+    Pitch NI TC = tau_i × this fraction. Vertical NI similar to horizontal
+    in healthy humans; default 1.0.
+
+brain.tau_i_roll_frac:
+  group: neural_integrator
+  units: "—"
+  anatomy: "Torsional NI in INC"
+  description: |
+    Roll (torsion) NI TC = tau_i × this fraction. Torsional integrator is
+    leakier — Crawford & Vilis (1991) report ~5–10 s vs 20–25 s for
+    horizontal NPH; default 0.3 → 7.5 s.
+  references:
+    - "Crawford & Vilis (1991)"
+    - "Suzuki et al. (1995)"
+    - "Anastasopoulos & Mergner (1982)"
+
+brain.tau_p:
+  group: neural_integrator
+  units: "s"
+  anatomy: "NI feedforward to plant (pulse-step compensation)"
+  description: |
+    Plant TC copy used by NI for lag-cancellation feedthrough. Should match
+    PlantParams.tau_p in healthy subjects; mismatch in pathology models
+    imperfect internal models.
+
+brain.tau_vis:
+  group: neural_integrator
+  units: "s"
+  anatomy: "Efference-copy delay matching"
+  description: |
+    Visual delay copy — efference-copy delay must match retinal delay
+    (sensory tau_vis) for clean slip cancellation. Mismatch creates
+    visual-vestibular misalignment artifacts.
+
+brain.b_ni:
+  group: neural_integrator
+  units: "deg"
+  anatomy: "NPH intrinsic resting bias"
+  description: |
+    NPH resting bias (deg). 0 = no net bias at centre gaze. Set >0 to model
+    unilateral NPH asymmetric drive (future work — currently unused).
+  needs_review: true
+
+brain.tau_ni_adapt:
+  group: neural_integrator
+  units: "s"
+  anatomy: "NPH null-adaptation circuit (cerebellar input)"
+  description: |
+    Null-adaptation TC: x_null slowly tracks current net position. After
+    sustained eccentric gaze, x_null = E; on return to centre, NI leaks toward
+    x_null = E → eye drifts back → corrective fast phase = rebound nystagmus.
+  references:
+    - "Zee et al. (1980)"
+  disorders:
+    - {name: "No rebound (cerebellar)", value: 1000000, tag: cerebellar}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BrainParams — Saccade Generator (Robinson 1975 + Schmitt-trigger OPN)
+# ─────────────────────────────────────────────────────────────────────────────
+
+brain.g_burst:
+  group: saccade_generator
+  units: "deg/s"
+  anatomy: "Excitatory burst neurons (PPRF / riMLF)"
+  description: |
+    Burst neuron ceiling firing (deg/s equivalent). Sets peak saccade
+    velocity ~700 deg/s for healthy. 0 disables saccades entirely.
+  disorders:
+    - {name: "Slow saccades (PSP, SCA)", value: 250, tag: cerebellar}
+    - {name: "Saccadic palsy", value: 0, tag: other}
+
+brain.e_sat_sac:
+  group: saccade_generator
+  units: "deg"
+  anatomy: "Burst neuron sigmoid scaling"
+  description: |
+    Main-sequence saturation amplitude. Saccade peak velocity follows
+    v_peak ≈ g_burst·(1 − exp(−A/e_sat_sac)).
+
+brain.k_sac:
+  group: saccade_generator
+  units: "1/deg"
+  anatomy: "Saccade trigger gating"
+  description: |
+    Trigger sigmoid steepness — controls how sharply the OPN-pause / burst
+    initiation gate fires once retinal error exceeds threshold.
+
+brain.threshold_sac:
+  group: saccade_generator
+  units: "deg"
+  anatomy: "Saccade trigger threshold (in-field)"
+  description: |
+    Retinal error threshold to fire a saccade when target is visible (in-field
+    foveation path). Default 0.5° matches subjects' minimum saccade amplitude.
+
+brain.threshold_stop:
+  group: saccade_generator
+  units: "deg"
+  anatomy: "Burst termination (e_held → 0)"
+  description: |
+    Burst-stop threshold — saccade ends when residual error falls below this.
+
+brain.tau_latch:
+  group: saccade_generator
+  units: "s"
+  anatomy: "(legacy)"
+  description: |
+    Unused; kept for backward compatibility with older bench scripts.
+  needs_review: true
+
+brain.tau_hold:
+  group: saccade_generator
+  units: "s"
+  anatomy: "e_held tracking integrator"
+  description: |
+    e_held tracking TC between saccades (not during). 180 ms accumulator /
+    20 ms hold TC = 9 TCs → 99.99% capture. Burst freezes tracking during
+    saccade.
+
+brain.tau_sac:
+  group: saccade_generator
+  units: "s"
+  anatomy: "OPN latch dynamics"
+  description: |
+    Saccade latch TC — OPN state-update rate. Combined with k_tonic_opn sets
+    the post-saccade OPN recovery (~2 ms with default k=0.5).
+
+brain.k_tonic_opn:
+  group: saccade_generator
+  units: "—"
+  anatomy: "OPN tonic recovery (always-on)"
+  description: |
+    OPN tonic recovery gain. Recovery TC = tau_sac/k_tonic = 2 ms. Keeps
+    z_opn at 100 unless IBN inhibition overcomes it.
+
+brain.tau_bn:
+  group: saccade_generator
+  units: "s"
+  anatomy: "EBN/IBN membrane TC"
+  description: |
+    Burst-neuron state TC. Constrained by Heun stability:
+    (1+g_opn_bn·100)·dt/tau_bn < 2 → tau_bn > 2.5 ms with default params.
+
+brain.g_opn_bn:
+  group: saccade_generator
+  units: "—"
+  anatomy: "OPN → BN multiplicative inhibition"
+  description: |
+    OPN→BN multiplicative suppression gain. Constrained by Heun stability
+    (g_opn_bn < 0.09 with dt=1ms, tau_bn=3ms).
+
+brain.g_opn_bn_hold:
+  group: saccade_generator
+  units: "—"
+  anatomy: "OPN → BN additive offset"
+  description: |
+    OPN→BN additive offset. At tonic OPN (act=100): opn_inh=40°. Tonic BN_eq =
+    (e_held−40)/5. Keeps BNs negative for fixation errors up to ~40°, so IBN
+    stays at 0 between saccades.
+
+brain.g_ibn_bn:
+  group: saccade_generator
+  units: "—"
+  anatomy: "IBN → contralateral BN"
+  description: |
+    IBN → contralateral BN inhibition gain (= g_ci/g_burst = 100/700).
+    Element-wise across yaw/pitch/roll axes.
+
+brain.g_opn_pause:
+  group: saccade_generator
+  units: "—"
+  anatomy: "OPN inhibitory overshoot floor"
+  description: |
+    OPN inhibitory overshoot — IBN inhibition drives OPN membrane to
+    −g_opn_pause (below spike threshold). Firing rate clips at 0; large value
+    → OPN pauses in ~2 ms.
+
+brain.tau_acc:
+  group: saccade_generator
+  units: "s"
+  anatomy: "Accumulator integrator (rise-to-bound)"
+  description: |
+    Saccade-trigger accumulator rise TC. ~120 ms to threshold, refractory
+    cycle ~270 ms (matches inter-saccade interval).
+
+brain.tau_burst_drain:
+  group: saccade_generator
+  units: "s"
+  anatomy: "Accumulator drain during burst"
+  description: |
+    Accumulator drain TC during OPN-paused burst. Drives z_acc → acc_burst_floor
+    (forces re-climb after each saccade).
+
+brain.acc_burst_floor:
+  group: saccade_generator
+  units: "—"
+  anatomy: "Post-saccade accumulator reset point"
+  description: |
+    Accumulator target during burst — negative so accumulator must re-climb
+    over the refractory period, enforcing minimum inter-saccade interval
+    (~270 ms with default params).
+
+brain.threshold_acc:
+  group: saccade_generator
+  units: "—"
+  anatomy: "Accumulator → OPN-pause trigger"
+  description: |
+    Accumulator trigger threshold. Natural unit: triggers at 1.
+
+brain.threshold_sac_qp:
+  group: saccade_generator
+  units: "deg"
+  anatomy: "Quick-phase trigger threshold (out-of-field)"
+  description: |
+    Error threshold to begin accumulating for quick phases (target absent).
+    Higher → larger drift required before accumulation → fewer spurious resets.
+
+brain.k_acc:
+  group: saccade_generator
+  units: "—"
+  anatomy: "Accumulator → OPN sigmoid steepness"
+  description: |
+    Accumulator → OPN suppression steepness. High value → near-hard threshold
+    (OPN drops sharply just before z_acc crosses threshold_acc).
+
+brain.sigma_acc:
+  group: saccade_generator
+  units: "1/√s"
+  anatomy: "Accumulator diffusion noise (RT variability)"
+  description: |
+    Accumulator diffusion noise. ~0.15–0.25 gives ±15–25 ms RT SD;
+    0 = deterministic.
+
+brain.g_ibn_opn:
+  group: saccade_generator
+  units: "—"
+  anatomy: "IBN → OPN inhibition (Schmitt trigger)"
+  description: |
+    IBN → OPN inhibition gain. Forms Schmitt trigger: burst → IBN keeps OPN
+    suppressed; burst ends → IBN → 0 → OPN recovers.
+
+brain.tau_trig:
+  group: saccade_generator
+  units: "s"
+  anatomy: "z_trig smoothing integrator"
+  description: |
+    z_trig rise TC — smooth onset for OPN suppression. Drained fast by IBN
+    during burst (effective TC ≈ 0.7 ms).
+
+brain.g_ibn_trig:
+  group: saccade_generator
+  units: "—"
+  anatomy: "IBN → z_trig drain"
+  description: |
+    IBN → z_trig drain gain. Sets z_trig drain TC during burst:
+    tau_trig/(1+g_ibn_trig).
+
+brain.g_acc_drain:
+  group: saccade_generator
+  units: "—"
+  anatomy: "IBN → accumulator drain multiplier"
+  description: |
+    IBN drain multiplier for z_acc. Boosts drain for small saccades (weak
+    IBN) without breaking triggering.
+
+brain.tau_acc_leak:
+  group: saccade_generator
+  units: "s"
+  anatomy: "Accumulator passive leak"
+  description: |
+    Passive accumulator leak TC. Pulls z_acc → 0 between saccades. Keep
+    ≥ 5 s — shorter values starve small saccades during OPN suppression.
+
+brain.orbital_limit:
+  group: saccade_generator
+  units: "deg"
+  anatomy: "Saccade target clip (motor range)"
+  description: |
+    Oculomotor range half-width — target position is clipped to ±limit
+    before the saccade goal is sent to the burst generator.
+
+brain.alpha_reset:
+  group: saccade_generator
+  units: "—"
+  anatomy: "Quick-phase centring gain"
+  description: |
+    Centripetal reset gain — e_center = −α·x_ni when target is out-of-field.
+    Default 1.25 → quick phases overshoot centre slightly to compensate
+    for slow-phase drift during refractory.
+
+brain.k_center_vel:
+  group: saccade_generator
+  units: "—"
+  anatomy: "Quick-phase predictive look-ahead"
+  description: |
+    Quick-phase prediction gain. look_ahead = k·τ_ref; aims past centre to
+    compensate for slow-phase drift during the refractory period.
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BrainParams — Gravity Estimator (already in starter; keep here in canonical order)
+# ─────────────────────────────────────────────────────────────────────────────
+
+brain.K_grav:
+  group: gravity_estimator
+  units: "1/s"
+  anatomy: "Nodulus/uvula → MVN (otolith-canal fusion)"
+  description: |
+    Somatogravic gain — pulls g_est toward the GIA residual. L&A 2011 calls
+    this "g_o" and uses 0.6 (faster commitment to tilt percept). Our 0.2 keeps
+    the somatogravic bandwidth around 0.032 Hz, matching slower psychophysical
+    tilt-percept onset (Mayne 1974, Holly 1996).
+    Higher K_grav → stronger / faster somatogravic illusion.
+  references:
+    - "Laurens & Angelaki (2011) J Neurosci 31:11414"
+    - "Mayne (1974); Holly (1996)"
+
+brain.K_lin:
+  group: gravity_estimator
+  units: "1/s"
+  anatomy: "Nodulus/uvula; PIVC"
+  description: |
+    Linear-acceleration adaptation gain — competing share-claim on the GIA
+    residual. Smaller K_lin → more somatogravic effect (gravity wins more
+    of the residual). Larger → faster separation of true translation from tilt.
+  references:
+    - "Laurens & Angelaki (2011)"
+  disorders:
+    - {name: "Strong somatogravic illusion", value: 0.0, tag: vn}
+
+brain.tau_a_lin:
+  group: gravity_estimator
+  units: "s"
+  anatomy: "Nodulus/uvula; deterministic stand-in for Bayesian translation prior"
+  description: |
+    Decay TC of the linear-acceleration estimate. Bayesian "translation
+    duration prior" — real self-motion accelerations are brief, so â returns
+    to 0 in absence of sustained evidence. SS â for sustained residual r:
+    K_lin · τ_a_lin · r.
+  references:
+    - "Laurens, Meng & Angelaki (2013) PLoS Comp Bio"
+
+brain.K_gd:
+  group: gravity_estimator
+  units: "—"
+  anatomy: "Nodulus/uvula → MVN (velocity-storage gravity dumping)"
+  description: |
+    Gravity-dumping gain. Scales the rotational feedback rf =
+    (GIA × −g_est)/G0² fed into VS. Drives velocity-storage dumping ⊥ gravity
+    (tilt suppression) and OVAR sustained nystagmus. Default 2.86 = L&A's
+    0.05 rad/s² in deg-converted units.
+  references:
+    - "Laurens & Angelaki (2011)"
+    - "Raphan & Cohen (1988)"
+  disorders:
+    - {name: "Gravity-blind VS", value: 0.0, tag: cerebellar}
+
+brain.g_ocr:
+  group: gravity_estimator
+  units: "deg/(m/s²)"
+  anatomy: "Utricle → CN3 (IO/SR subnuclei); CN4 (SO)"
+  description: |
+    Ocular counter-roll gain — torsion command per unit lateral gravity.
+    Default 10°/9.81 ≈ 1.019 → ~10° SS torsion at 90° lateral tilt.
+  references:
+    - "Howard & Templeton (1966)"
+    - "Diamond, Markham et al. (1979)"
+  disorders:
+    - {name: "Utricle lesion", value: 0.0, tag: vn}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BrainParams — Heading Estimator
+# ─────────────────────────────────────────────────────────────────────────────
+
+brain.tau_head:
+  group: heading_estimator
+  units: "s"
+  anatomy: "Vestibular translational pathway (otolith integration)"
+  description: |
+    Linear-velocity integration TC. Longer τ_head → bigger v_lin during
+    sustained translation (better DARK T-VOR gain) but more drift containment
+    needed. Paige & Tomko (1991) DARK gain ~0.5–0.7 for 1.6 s pulses suggests
+    τ_head in 2–4 s range; we use 10 s for stronger DARK T-VOR coupling.
+  references:
+    - "Paige & Tomko (1991)"
+
+brain.K_he_vis:
+  group: heading_estimator
+  units: "1/s"
+  anatomy: "MST translational flow → vestibular nuclei"
+  description: |
+    Visual-velocity pull gain on v_lin. Fuses scene translational flow with
+    the vestibular integration of otolith. In dark the pull is toward 0,
+    suppressing drift during pure rotation (OVAR, tilt suppression).
+
+brain.K_he_disp:
+  group: heading_estimator
+  units: "1/s"
+  anatomy: "Disparity-rate visual evidence on heading-z"
+  description: |
+    Disparity-rate visual evidence gain on v_lin[z]. In a uniform/depthless
+    scene this is 0 (no parallax); in real depth-structured scenes it provides
+    parallax-based heading-z evidence. Gated by scene_visible.
+  needs_review: true
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BrainParams — Listing's Law
+# ─────────────────────────────────────────────────────────────────────────────
+
+brain.listing_primary:
+  group: listing
+  units: "deg"
+  anatomy: "Cerebellar/INC torsion calibration"
+  description: |
+    Primary position [yaw₀, pitch₀] — centre of Listing's plane. Default
+    [0, 0] = straight ahead. Shifts the half-angle rule's reference point.
+  references:
+    - "Tweed et al. (1998)"
+
+brain.listing_l2_frac:
+  group: listing
+  units: "—"
+  anatomy: "Per-eye Listing's plane tilt at vergence"
+  description: |
+    L2 cyclovergence fraction (0=off, 0.5=physiological). Listing's plane
+    tilts ±l2_frac·φ/2 per eye with vergence. Disabled until validated with
+    binocular torsion data.
+  needs_review: true
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BrainParams — Pursuit
+# ─────────────────────────────────────────────────────────────────────────────
+
+brain.K_pursuit:
+  group: pursuit
+  units: "1/s"
+  anatomy: "MT/MST → cerebellar pursuit pathway"
+  description: |
+    Pursuit integration gain. Rise TC ≈ 1/K_pursuit (~250 ms for default).
+    Cerebellar/MT lesion → 0.1–0.5 = severe pursuit deficit.
+  references:
+    - "Lisberger (1988)"
+  disorders:
+    - {name: "Cerebellar pursuit deficit", value: 0.3, tag: cerebellar}
+
+brain.K_phasic_pursuit:
+  group: pursuit
+  units: "—"
+  anatomy: "Direct pursuit feedthrough"
+  description: |
+    Pursuit direct feedthrough gain. Controls fast onset velocity step
+    before the integrator catches up.
+
+brain.tau_pursuit:
+  group: pursuit
+  units: "s"
+  anatomy: "Pursuit memory leak"
+  description: |
+    Pursuit leak TC. ~40 s → ~97% gain at 1 Hz. Short (5–15 s) → poor pursuit
+    maintenance.
+
+brain.v_max_pursuit:
+  group: pursuit
+  units: "deg/s"
+  anatomy: "MT/MST velocity tuning ceiling"
+  description: |
+    MT/MST velocity saturation. Pursuit gain ≈1 up to ~30–40 deg/s, then
+    falls (Fuchs 1967, Lisberger & Westbrook 1985).
+  references:
+    - "Fuchs (1967) J Physiol"
+    - "Lisberger & Westbrook (1985) J Neurosci"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BrainParams — Vergence (Schor + Read & Schor 2022 + Zee SVBN)
+# ─────────────────────────────────────────────────────────────────────────────
+
+brain.K_phasic_verg:
+  group: vergence
+  units: "1/s"
+  anatomy: "Vergence direct phasic pathway"
+  description: |
+    Direct phasic vergence gain. Provides the ~150–200 ms fast onset
+    (Rashbass & Westheimer 1961), achieved via plant cancellation.
+  references:
+    - "Rashbass & Westheimer (1961) J Physiol 159:339"
+
+brain.K_verg_fast:
+  group: vergence
+  units: "1/s"
+  anatomy: "Fast vergence integrator (cerebellar/midbrain)"
+  description: |
+    Fast vergence integrator gain. Static gain G_fast = K·tau ≈ 8 matches
+    Read & Schor (2022) Table 1.
+  references:
+    - "Schor (1979) Vision Res 19:1359"
+    - "Hung & Semmlow (1980)"
+    - "Read & Schor (2022) J Vision 22(9):4"
+
+brain.tau_verg_fast:
+  group: vergence
+  units: "s"
+  anatomy: "Fast vergence integrator (cerebellar/midbrain)"
+  description: |
+    Fast vergence integrator TC. Schor 1979 / Hung & Semmlow 1980: ≈ 5 s.
+    Sub-second to ~2 s tracking.
+
+brain.K_verg_slow:
+  group: vergence
+  units: "1/s"
+  anatomy: "Slow tonic vergence adapter"
+  description: |
+    Slow integrator gain. G_slow = K·tau ≈ 6 boosts DC gain so steady-state
+    fixation disparity stays small.
+
+brain.tau_verg_slow:
+  group: vergence
+  units: "s"
+  anatomy: "Slow tonic vergence adapter"
+  description: |
+    Slow tonic adapter TC. Minutes-scale dark-vergence drift (Schor 1979).
+
+brain.tau_vp:
+  group: vergence
+  units: "s"
+  anatomy: "Vergence plant TC for phasic feedthrough"
+  description: |
+    Vergence plant TC for phasic path = τ_p (same muscles as version).
+
+brain.tonic_verg:
+  group: vergence
+  units: "deg"
+  anatomy: "Brainstem tonic vergence baseline"
+  description: |
+    Tonic (brainstem) vergence baseline — resting dark-vergence position.
+    3.67° ≈ 1 m at IPD=64 mm (Riggs & Niehl 1960). Increase for esophoric,
+    decrease for exophoric. Phoria is a clinical *measurement*; tonic_verg
+    is the underlying model parameter.
+  references:
+    - "Riggs & Niehl (1960)"
+    - "Morgan (1944)"
+  disorders:
+    - {name: "Esophoria (large tonic)", value: 8.0, tag: other}
+    - {name: "Exophoria", value: 1.0, tag: other}
+
+brain.g_svbn_conv:
+  group: vergence
+  units: "deg/s"
+  anatomy: "Saccade-vergence burst neurons (SVBN) — convergence"
+  description: |
+    SVBN convergence asymptotic burst velocity. Zee (1992) Table 1: pure
+    convergence peaks 41–58 deg/s for 10° amplitude. Fires only during
+    OPN pause (z_act ≈ 1).
+  references:
+    - "Zee, FitzGibbon, Optican (1992)"
+
+brain.X_svbn_conv:
+  group: vergence
+  units: "deg"
+  anatomy: "SVBN convergence saturation scale"
+  description: |
+    Convergence saturation scale: y = g·(1 − exp(−|disp|/X_conv)). Tuned so
+    y(10°) ≈ 58 deg/s (Zee 1992 Table 1).
+
+brain.g_svbn_div:
+  group: vergence
+  units: "deg/s"
+  anatomy: "SVBN divergence asymptotic burst"
+  description: |
+    SVBN divergence asymptotic burst velocity. Zee (1992) Table 1: pure
+    divergence peaks 9.5–13 deg/s for 2.5° amplitude (much weaker than conv).
+
+brain.X_svbn_div:
+  group: vergence
+  units: "deg"
+  anatomy: "SVBN divergence saturation scale"
+  description: |
+    Divergence saturation scale, tuned so y(2.5°) ≈ 13 deg/s (Zee 1992).
+
+brain.g_burst_verg:
+  group: vergence
+  units: "—"
+  anatomy: "(legacy)"
+  description: |
+    Legacy vergence burst gain. Kept for bench compatibility; default 0
+    (replaced by SVBN params above).
+  needs_review: true
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BrainParams — Translational VOR
+# ─────────────────────────────────────────────────────────────────────────────
+
+brain.g_tvor:
+  group: tvor
+  units: "—"
+  anatomy: "Cerebellar T-VOR calibration (flocculus)"
+  description: |
+    T-VOR version output gain (cross product). ~unity per Paige & Tomko
+    (1991) for sustained translation in the light.
+  references:
+    - "Paige & Tomko (1991) J Neurophysiol 65:1170"
+  disorders:
+    - {name: "Cerebellar T-VOR loss", value: 0.3, tag: cerebellar}
+
+brain.g_tvor_verg:
+  group: tvor
+  units: "—"
+  anatomy: "Cerebellar T-VOR vergence pathway"
+  description: |
+    T-VOR vergence-rate gain. Drives vergence integrator from
+    (g_hat · v_lin)/D². Kept below unity because vergence drift from
+    sustained-tilt v_lin leak is harder to contain than the version output.
+
+brain.g_tvor_l2_cyclo:
+  group: tvor
+  units: "—"
+  anatomy: "Per-eye Listing tilt × T-VOR cross-coupling"
+  description: |
+    L2 cyclo-vergence cross-coupling gain. Currently disabled (positive
+    feedback risk during head tilts via FCP linear Hering's). Re-enable
+    when FCP uses rotation-matrix Hering's.
+  needs_review: true
+
+brain.tau_tvor_pos:
+  group: tvor
+  units: "s"
+  anatomy: "T-VOR pathway low-pass (legacy state)"
+  description: |
+    T-VOR low-pass TC for v_lin. State currently inert (post velocity-output
+    refactor); value retained for state-shape compatibility.
+
+brain.K_visual_verg:
+  group: tvor
+  units: "—"
+  anatomy: "Visual evidence on T-VOR vergence rate"
+  description: |
+    Visual evidence gain pulling T-VOR vergence rate toward per-eye scene-flow
+    differential. 0 = disabled (default); enable for translation experiments
+    in lit scenes with depth structure.
+  needs_review: true
+
+brain.ipd_brain:
+  group: tvor
+  units: "m"
+  anatomy: "Brain's internal IPD estimate"
+  description: |
+    Interpupillary distance for vergence→distance calc. Mirror of
+    SensoryParams.ipd, kept brain-side so brain_model.step doesn't need
+    to thread sensory_params through.
+
+brain.distance_npc:
+  group: tvor
+  units: "m"
+  anatomy: "Anatomical near-point of convergence floor"
+  description: |
+    NPC — anatomical floor on T-VOR distance. Below this depth no real
+    target can be fused; T-VOR's 1/D scaling is gated to zero.
+    Clinical Sheard / Gulick range 6–10 cm.
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BrainParams — Accommodation (Read & Schor 2022)
+# ─────────────────────────────────────────────────────────────────────────────
+
+brain.tonic_acc:
+  group: accommodation
+  units: "D"
+  anatomy: "Resting dark focus (ciliary muscle tonus)"
+  description: |
+    Dark-focus resting accommodation. ~1 D ≈ 1 m for young adults. x_fast
+    and x_slow represent DEVIATIONS from this baseline. Calibrate with
+    tonic_verg via tan/half-angle formula.
+
+brain.tau_acc_plant:
+  group: accommodation
+  units: "s"
+  anatomy: "Lens / ciliary muscle mechanics"
+  description: |
+    Lens / ciliary muscle TC. First-order biomechanical: P(s) = 1/(1 + τ_p·s).
+  references:
+    - "Schor & Bharadwaj (2006)"
+
+brain.tau_acc_fast:
+  group: accommodation
+  units: "s"
+  anatomy: "Fast accommodation neural integrator"
+  description: |
+    Fast neural integrator TC. Stability requires τ_fast ≥ 2·G_fast·τ_plant
+    ≈ 2.5 s.
+  references:
+    - "Read & Schor (2022)"
+
+brain.tau_acc_slow:
+  group: accommodation
+  units: "s"
+  anatomy: "Slow tonic accommodation adapter"
+  description: |
+    Slow tonic adaptation TC.
+  references:
+    - "Schor (1979)"
+
+brain.K_acc_fast:
+  group: accommodation
+  units: "1/s"
+  anatomy: "Fast blur → accommodation gain"
+  description: |
+    Fast blur gain = G_fast / tau_fast = 8 / 2.5. Closed-loop G_fast =
+    K_acc_fast · tau_acc_fast = 8 (Read & Schor 2022).
+
+brain.K_acc_slow:
+  group: accommodation
+  units: "1/s"
+  anatomy: "Slow accommodation integration gain"
+  description: |
+    Slow integration gain = G_slow / tau_slow = 5 / 30.
+
+brain.AC_A:
+  group: accommodation
+  units: "pd/D"
+  anatomy: "Accommodative-convergence cross-link"
+  description: |
+    AC/A ratio (prism diopters per diopter). Typical 4–6. At 40 cm (2.5 D):
+    AC/A drive ≈ 5×0.573×2.5 ≈ 7.2°. At 6 m (0.17 D): ~0.5° — explains why
+    intermittent exotropia decompensates preferentially at distance.
+  disorders:
+    - {name: "High AC/A (esotropia at near)", value: 12.0, tag: other}
+    - {name: "Low AC/A (exotropia at near)", value: 2.0, tag: other}
+
+brain.CA_C:
+  group: accommodation
+  units: "D/pd"
+  anatomy: "Convergence-accommodation cross-link"
+  description: |
+    CA/C ratio. Schor & Kotulak 1986 report ≈ 0.5 D/MA (meter-angle); at
+    IPD 64 mm that's ≈ 0.08 D/pd. Loop product AC_A·CA_C ≈ 0.4 D/D < 1
+    keeps the cross-loop stable.
+  references:
+    - "Schor & Kotulak (1986)"
+    - "Schor (1992) J Opt Soc Am"
+
+brain.refractive_error:
+  group: accommodation
+  units: "D"
+  anatomy: "Patient refractive error"
+  description: |
+    Patient refractive error. >0 hyperopia (needs more accommodation at every
+    distance), <0 myopia (natural far point = 1/|RE| m).
+  disorders:
+    - {name: "+2 D hyperope (uncorrected)", value: 2.0, tag: other}
+    - {name: "−2 D myope (uncorrected)", value: -2.0, tag: other}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BrainParams — Final Common Pathway (cranial nerves, MLF)
+# ─────────────────────────────────────────────────────────────────────────────
+
+brain.g_nucleus:
+  group: final_common_pathway
+  units: "—"
+  anatomy: "12 motor nuclei: ABN, CN4, CN3 subnuclei (L/R)"
+  description: |
+    Per-nucleus gain [0..1]. 12 elements:
+    [ABN_L, ABN_R, CN4_L, CN4_R,
+     CN3_MR_L, CN3_MR_R, CN3_SR_L, CN3_SR_R,
+     CN3_IR_L, CN3_IR_R, CN3_IO_L, CN3_IO_R].
+    0 = nucleus lesion (isolates ipsilateral muscle).
+  disorders:
+    - {name: "CN VI nucleus palsy (R)", value: "[1,0,1,1,1,1,1,1,1,1,1,1]", tag: cn}
+    - {name: "CN III nucleus palsy (R)", value: "[1,1,1,1,1,0,1,1,1,1,1,0]", tag: cn}
+
+brain.g_nerve:
+  group: final_common_pathway
+  units: "—"
+  anatomy: "12 cranial nerve fascicles to extraocular muscles"
+  description: |
+    Per-nerve gain [0..1]. 12 elements (left then right):
+    [LR_L, MR_L, SR_L, IR_L, SO_L, IO_L,
+     LR_R, MR_R, SR_R, IR_R, SO_R, IO_R].
+    0 = complete nerve palsy.
+  disorders:
+    - {name: "CN VI palsy (R)", value: "[1,1,1,1,1,1, 0,1,1,1,1,1]", tag: cn}
+    - {name: "CN III palsy (R)", value: "[1,1,1,1,1,1, 1,0,0,0,1,0]", tag: cn}
+    - {name: "CN IV palsy (R, SO)", value: "[1,1,1,1,1,1, 1,1,1,1,0,1]", tag: cn}
+
+brain.g_mlf_ver_L:
+  group: final_common_pathway
+  units: "—"
+  anatomy: "Left MR version-yaw gain (right MLF pathway)"
+  description: |
+    Version-yaw gain for the left MR subnucleus. 0 = left INO: left eye
+    cannot adduct on rightward conjugate gaze; convergence (vergence
+    component) preserved.
+  disorders:
+    - {name: "Left INO", value: 0.0, tag: ino}
+    - {name: "Partial INO (recovering)", value: 0.5, tag: ino}
+
+brain.g_mlf_ver_R:
+  group: final_common_pathway
+  units: "—"
+  anatomy: "Right MR version-yaw gain (left MLF pathway)"
+  description: |
+    Version-yaw gain for the right MR subnucleus. 0 = right INO; bilateral
+    INO when both g_mlf_ver_L and g_mlf_ver_R = 0.
+  disorders:
+    - {name: "Right INO", value: 0.0, tag: ino}
+    - {name: "Bilateral INO", value: 0.0, tag: ino}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SensoryParams — Semicircular Canals
+# ─────────────────────────────────────────────────────────────────────────────
+
+sensory.tau_c:
+  group: canals
+  units: "s"
+  anatomy: "Cupula long-TC (Steinhausen pendulum)"
+  description: |
+    Cupula adaptation TC — high-pass corner ≈ 0.03 Hz. Sets the drop-off of
+    canal afferents to sustained rotation (post-rotational decay).
+  references:
+    - "Fernandez & Goldberg (1971)"
+
+sensory.tau_s:
+  group: canals
+  units: "s"
+  anatomy: "Endolymph inertia (Steinhausen pendulum)"
+  description: |
+    Endolymph inertia TC — low-pass corner ≈ 32 Hz. Defines the upper
+    frequency limit of canal sensitivity.
+  references:
+    - "Fernandez & Goldberg (1971)"
+
+sensory.canal_gains:
+  group: canals
+  units: "—"
+  anatomy: "Per-canal afferent sensitivity (6 ducts)"
+  description: |
+    (6,) per-canal scale [L_HC, L_AC, L_PC, R_HC, R_AC, R_PC]. 1.0 = intact,
+    0 = paresis. Used for unilateral / per-canal lesion modelling.
+  disorders:
+    - {name: "Left vestibular neuritis", value: "[0,0,0,1,1,1]", tag: vn}
+    - {name: "Right vestibular neuritis", value: "[1,1,1,0,0,0]", tag: vn}
+    - {name: "Bilateral vestibular loss", value: "[0,0,0,0,0,0]", tag: vn}
+
+sensory.canal_floor:
+  group: canals
+  units: "deg/s"
+  anatomy: "Resting discharge (inhibitory saturation point)"
+  description: |
+    Resting canal afferent firing rate (deg/s equivalent). Inhibitory
+    saturation occurs at velocity = canal_floor (Ewald's 2nd law).
+  references:
+    - "Goldberg & Fernandez (1971) J Neurophysiol 34:635"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SensoryParams — Otolith
+# ─────────────────────────────────────────────────────────────────────────────
+
+sensory.tau_oto:
+  group: otolith
+  units: "s"
+  anatomy: "Utricle/saccule afferent low-pass adaptation"
+  description: |
+    Otolith adaptation TC. Large value → near-DC pass — otoliths report
+    sustained gravito-inertial force with little adaptation.
+  references:
+    - "Fernandez & Goldberg (1976)"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SensoryParams — Visual pathway
+# ─────────────────────────────────────────────────────────────────────────────
+
+sensory.tau_vis:
+  group: visual
+  units: "s"
+  anatomy: "Visual processing delay (gamma cascade)"
+  description: |
+    Gamma-cascade mean delay. ~80 ms matches retina → V1/MT/MST processing
+    latency for motion signals.
+  references:
+    - "Lisberger & Movshon (1999)"
+
+sensory.visual_field_limit:
+  group: visual
+  units: "deg"
+  anatomy: "Retinal eccentricity boundary"
+  description: |
+    Eccentricity limit beyond which target is considered out-of-field.
+    ~90° per eye for monocular field.
+
+sensory.k_visual_field:
+  group: visual
+  units: "1/deg"
+  anatomy: "Visual-field gate sigmoid steepness"
+  description: |
+    Sigmoid steepness for the in-field / out-of-field gate.
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SensoryParams — Sensory noise
+# ─────────────────────────────────────────────────────────────────────────────
+
+sensory.sigma_canal:
+  group: noise
+  units: "deg/s"
+  anatomy: "Canal afferent noise"
+  description: |
+    Canal afferent noise std. Realistic ~1–3 deg/s. Filtered heavily by
+    VS/NI/plant before reaching the eye.
+
+sensory.sigma_slip:
+  group: noise
+  units: "deg/s"
+  anatomy: "Retinal slip noise (drives VS/OKR)"
+  description: |
+    Retinal scene-velocity noise std. Affects OKR/VS drive.
+
+sensory.sigma_pos:
+  group: noise
+  units: "deg"
+  anatomy: "Retinal position drift (OU process)"
+  description: |
+    Retinal position noise std (Ornstein-Uhlenbeck). Drives the saccade
+    generator → microsaccades. Default 0.2° matches realistic
+    fixational-eye-movement amplitudes.
+
+sensory.tau_pos_drift:
+  group: noise
+  units: "s"
+  anatomy: "OU drift correlation TC"
+  description: |
+    OU TC for the position drift — sets how slowly retinal position error
+    wanders, controlling inter-microsaccade interval.
+
+sensory.sigma_vel:
+  group: noise
+  units: "deg/s"
+  anatomy: "Target velocity noise (drives pursuit integrator)"
+  description: |
+    Target velocity noise std — creates pursuit-like slow drift.
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SensoryParams — Binocular geometry & motor limits
+# ─────────────────────────────────────────────────────────────────────────────
+
+sensory.ipd:
+  group: binocular
+  units: "m"
+  anatomy: "Inter-pupillary distance"
+  description: |
+    IPD — adult typical 64 mm. Sets vergence/distance conversion (mirror
+    of brain.ipd_brain).
+
+sensory.npc:
+  group: binocular
+  units: "deg"
+  anatomy: "Convergence motor limit"
+  description: |
+    Near point of convergence (vergence angle limit). 50° ≈ NPC 7 cm at
+    IPD 64 mm. Closes diplopia gate beyond this.
+
+sensory.div_max:
+  group: binocular
+  units: "deg"
+  anatomy: "Divergence motor limit"
+  description: |
+    Maximum divergence — ~6° for young adults.
+
+sensory.vert_max:
+  group: binocular
+  units: "deg"
+  anatomy: "Vertical vergence motor limit"
+  description: |
+    Maximum vertical vergence ±deg. ~3–5° clinical range.
+
+sensory.tors_max:
+  group: binocular
+  units: "deg"
+  anatomy: "Cyclovergence motor limit"
+  description: |
+    Maximum cyclo-vergence ±deg. ~5–8° max physiologically.
+
+sensory.eye_dominant:
+  group: binocular
+  units: "—"
+  anatomy: "Sensory eye dominance flag"
+  description: |
+    1.0 = right eye dominant, 0.0 = left dominant. Used in fusion / diplopia
+    suppression.
+
+sensory.v_max_target_vel:
+  group: visual
+  units: "deg/s"
+  anatomy: "MT/MST target-velocity ceiling"
+  description: |
+    MT/MST speed ceiling — clips target velocity before the visual cascade.
+    Must match brain.v_max_pursuit so the EC correction cancels exactly.
+
+sensory.v_max_scene_vel:
+  group: visual
+  units: "deg/s"
+  anatomy: "NOT/AOS scene-velocity ceiling"
+  description: |
+    NOT/AOS speed ceiling — clips scene velocity before the visual cascade.
+    Must match brain.v_max_okr.
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PlantParams — Extraocular plant
+# ─────────────────────────────────────────────────────────────────────────────
+
+plant.tau_p:
+  group: plant
+  units: "s"
+  anatomy: "Extraocular muscle / orbital mechanics"
+  description: |
+    First-order plant time constant. Converts pulse-step motor command to eye
+    rotation velocity.
+  references:
+    - "Robinson (1981)"
+    - "Goldstein (1983) Biol Cybern"
+
+plant.orbital_limit:
+  group: plant
+  units: "deg"
+  anatomy: "Mechanical orbital range"
+  description: |
+    Mechanical half-range of the orbit. Anatomical wall — eye velocity is
+    zeroed when the eye reaches ±orbital_limit and the motor drive would
+    push it further outward.
+
+plant.k_orbital:
+  group: plant
+  units: "1/deg"
+  anatomy: "Orbital wall sigmoid steepness"
+  description: |
+    Sigmoid steepness for the orbital-limit gate; controls how sharply the
+    velocity-clip kicks in near ±orbital_limit.
