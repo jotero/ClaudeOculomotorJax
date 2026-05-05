@@ -28,15 +28,15 @@ t = np.arange(0.0, TOTAL, DT)
 T = len(t)
 
 combos = [
-    ('with gate (K=1.0/τ=1.5/gate=5)',  1.0,  1.5, 5.0),
+    ('current (K_gd=2.86, K_grav=0.6) ',  0.1, 1.5, 1e6),
 ]
 
 print(f"OVAR: yaw {SPIN_VEL}°/s spin in tilted body. Spin starts t={T_ROT_START}s.")
 print()
 print(f"Expected: SPV modulation amplitude ∝ sin(tilt). 90° should be max, 10° tiny.")
 print()
-print(f"{'tilt':<6}{'sin(tilt)':<11}{'SPV pk-pk':>11}{'SPV-yaw mean':>14}"
-      f"{'|v_lin|peak':>14}{'|v_lin|mean':>13}")
+print(f"{'tilt':<6}{'sin(tilt)':<11}{'K_gd':>10}{'SPV pk-pk':>11}{'SPV-mean':>11}"
+      f"{'v_lin pk':>10}")
 print("-" * 80)
 
 for tilt_deg in TILTS:
@@ -50,13 +50,15 @@ for tilt_deg in TILTS:
     head_vel = np.stack([yaw_vel, np.zeros(T), roll_vel], axis=1)
     head_km  = km.build_kinematics(t, rot_vel=head_vel, rot_pos_0=[0.0, 0.0, 0.0])
 
-    for name, kl, ta, gate in combos:
+    # Sweep K_gd to test its effect on OVAR modulation across tilts
+    for kgd in [2.86, 1.0, 0.5, 0.0]:
         params = with_brain(
             with_sensory(PARAMS_DEFAULT,
                          sigma_canal=0.0, sigma_slip=0.0, sigma_pos=0.0, sigma_vel=0.0),
-            K_lin=kl, tau_a_lin=ta, w_canal_gate=gate,
+            K_gd=kgd,
             sigma_acc=0.0,
         )
+        name = f'K_gd={kgd:.2f}'
         st = simulate(params, t, head=head_km,
                       scene_present_array=np.zeros(T),
                       target_present_array=np.zeros(T),
@@ -70,5 +72,6 @@ for tilt_deg in TILTS:
         v_norm = np.linalg.norm(v_lin[steady], axis=1)
         spv = spv_full[steady]
         print(f"{tilt_deg:<6.0f}{np.sin(np.radians(tilt_deg)):<11.3f}"
-              f"{spv.max()-spv.min():>11.2f}{spv.mean():>14.2f}"
-              f"{v_norm.max():>14.3f}{v_norm.mean():>13.3f}")
+              f"{kgd:>10.2f}{spv.max()-spv.min():>11.2f}{spv.mean():>11.2f}"
+              f"{v_norm.max():>10.3f}")
+    print()

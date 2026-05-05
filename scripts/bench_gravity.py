@@ -865,6 +865,7 @@ def _ocr_cascade(show):
                              sharex=True, squeeze=False)
     fig.suptitle(
         f'OCR cascade — {TILT_DEG:.0f}° tilt, {HOLD_T:.0f} s hold — roll vs. yaw vs. pitch\n'
+        f'LIT (scene + target on), noiseless cascade  |  '
         f'g_ocr={G_OCR:.2f}  |  roll SS OCR ≈ {ocr_ss:.2f}°',
         fontsize=11, fontweight='bold')
 

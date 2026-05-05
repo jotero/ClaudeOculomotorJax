@@ -96,11 +96,11 @@ def save_fig(fig, name, show=False, dpi=150, figs_dir=None, base_dir=None,
              ha='right', va='bottom', fontsize=6, color='#888888',
              transform=fig.transFigure)
 
-    # Bottom-left footer: conditions (top line) and parameter overrides (bottom line).
-    if conditions:
-        fig.text(0.005, 0.018, f'Conditions: {conditions}',
-                 ha='left', va='bottom', fontsize=6, color='#666666',
-                 transform=fig.transFigure)
+    # Bottom-left footer: parameter overrides only. The `conditions` argument is
+    # kept for API compatibility but no longer rendered — it tended to drift out
+    # of sync with the actual stimulus across edits, so we trust the param
+    # overrides line (read directly from params) and rely on each bench's main
+    # suptitle to describe the stimulus.
     if params is not None:
         overrides = fmt_param_overrides(params)
         fig.text(0.005, 0.003, f'Param overrides: {overrides}',

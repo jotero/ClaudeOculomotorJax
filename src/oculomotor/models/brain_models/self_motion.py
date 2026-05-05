@@ -207,19 +207,25 @@ def _ge_step(x_grav, w_est, gia, brain_params):
     w_rad_xyz = jnp.radians(ypr_to_xyz(w_est))
     transport = -jnp.cross(w_rad_xyz, g_est)
 
-    # Gravity correction: pulled toward residual with somatogravic gain K_grav.
-    dg = transport + brain_params.K_grav * residual
+    # Kalman-derived state-dependent gain modulation.
+    # The bilinear gravity-transport term [ω]_× couples (ω, g) in the EKF Riccati
+    # equation; the resulting Kalman gain has the structure:
+    #   K_grav,eff = K_grav · √(1 + ρ)         (boost when rotation ⊥ gravity)
+    #   K_lin,eff  = K_lin  / √(1 + ρ)         (suppress same regime)
+    # where ρ = |ω̂ × ĝ_hat| / w_canal_gate is the "rotation-perpendicular-to-
+    # gravity" Bayes factor. Rotation parallel to gravity (e.g. upright yaw)
+    # gives ρ → 0 → no gating, since parallel rotations don't change head-frame
+    # gravity and produce no spurious otolith residual to misattribute.
+    g_hat       = g_est / (jnp.linalg.norm(g_est) + 1e-9)
+    w_xyz       = ypr_to_xyz(w_est)
+    w_perp_g    = jnp.linalg.norm(jnp.cross(w_xyz, g_hat))   # deg/s
+    rho         = w_perp_g / brain_params.w_canal_gate
+    gate_factor = jnp.sqrt(1.0 + rho)
+    K_grav_eff  = brain_params.K_grav * gate_factor
+    K_lin_eff   = brain_params.K_lin  / gate_factor
 
-    # Canal-gated translation interpretation (Laurens & Angelaki 2017
-    # Bayesian-style tilt-translation disambiguation):
-    #   Rotation → P(rotation|canal) high → K_lin → 0 (residual goes to gravity)
-    #   Canal silent → P(translation|residual) high → K_lin full (residual goes to a_lin)
-    # Smooth gate on |w_est| with half-suppression at w_canal_gate. The gate
-    # operates on the perceived angular velocity (w_est is already canal+slip-fused
-    # via VS), so visual rotation also disambiguates.
-    w_mag = jnp.linalg.norm(w_est)
-    rot_gate = 1.0 / (1.0 + (w_mag / brain_params.w_canal_gate) ** 2)
-    K_lin_eff = brain_params.K_lin * rot_gate
+    # Gravity correction: pulled toward residual with state-modulated K_grav.
+    dg = transport + K_grav_eff * residual
 
     # Linear acceleration: tracks residual (gated), decays toward 0 on TC τ_a_lin
     # (deterministic stand-in for L&A's translation-duration prior).

@@ -35,10 +35,12 @@ pitch_vel[pitch_mask] = PITCH_VEL
 head_vel = np.stack([yaw_vel, pitch_vel, np.zeros(T)], axis=1)
 head_km = km.build_kinematics(t, rot_vel=head_vel)
 
+# K_gd sweep at fixed Laurens GE values. Format: (label, K_grav, K_lin, tau_a_lin, tau_head, K_gd)
 combos = [
-    ('Laurens 2011 (K=0.1, gate=5)  ', 0.6, 0.1,  1.5, 2.0),
-    ('K=1.0 (over-tuned)            ', 0.5, 1.0,  1.5, 2.0),
-    ('K=0.05 τ=0.5 (pre-Laurens)    ', 0.2, 0.05, 0.5, 2.0),
+    ('K_gd=2.86 (current)        ', 0.6, 0.1, 1.5, 2.0, 2.86),
+    ('K_gd=1.0                   ', 0.6, 0.1, 1.5, 2.0, 1.0),
+    ('K_gd=0.5                   ', 0.6, 0.1, 1.5, 2.0, 0.5),
+    ('K_gd=0.0 (b861fd9 default) ', 0.6, 0.1, 1.5, 2.0, 0.0),
 ]
 
 print(f"Tilt-suppression: yaw {SPIN_VEL}°/s constant, pitch {PITCH_DEG}° at "
@@ -47,8 +49,8 @@ print()
 print(f"{'combo':<18}{'|v_lin|max':>12}{'|verg|max':>12}{'pitchmax':>12}{'g_est_x':>10}{'g_est_y':>10}")
 print("-" * 74)
 
-for name, kg, kl, ta, th in combos:
-    p = with_brain(PARAMS_DEFAULT, K_grav=kg, K_lin=kl, tau_a_lin=ta, tau_head=th)
+for name, kg, kl, ta, th, kgd in combos:
+    p = with_brain(PARAMS_DEFAULT, K_grav=kg, K_lin=kl, tau_a_lin=ta, tau_head=th, K_gd=kgd)
     st = simulate(p, t, head=head_km,
                   scene_present_array=np.zeros(T),
                   target_present_array=np.zeros(T),

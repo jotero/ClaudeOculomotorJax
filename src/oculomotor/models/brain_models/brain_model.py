@@ -154,7 +154,7 @@ class BrainParams(NamedTuple):
     #   tau_vs * f_roll    : roll  ~2–5 s    (Dai et al. 1991; Angelaki et al. 1995)
     # Disorders that shorten tau_vs (nodulus lesion, UVH) only need to set tau_vs —
     # the ratios stay fixed, so all axes scale together and no existing code breaks.
-    tau_vs:                float = 20.0   # yaw (main) VS TC (s); ~20 s monkey (Cohen 1977)
+    tau_vs:                float = 20.0   # yaw (main) VS TC (s); Cohen 1977 monkey ~20 s
     tau_vs_pitch_frac:     float = 1.0    # pitch TC = tau_vs × this  → 20 s
     tau_vs_roll_frac:      float = 1.0    # roll  TC = tau_vs × this  → 20 s
     b_vs:                  float = 100.0  # VN resting bias AND population gain (deg/s).
@@ -280,8 +280,11 @@ class BrainParams(NamedTuple):
     K_lin:                 float = 0.1    # linear-acc adaptation gain — Laurens & Angelaki (2011) "ka".
                                           # Static value (canal-gating below modulates it state-dependently).
     w_canal_gate:          float = 5.0    # canal-gating threshold (deg/s) — Laurens 2017 Bayesian
-                                          # disambiguation extension. Not in Laurens 2011. Set high (e.g.
-                                          # 1e6) to disable and recover pure-Laurens-2011 behaviour.
+                                          # disambiguation extension. Suppresses K_lin during head
+                                          # rotation (rotation hypothesis dominates over translation).
+                                          # Needed for clean tilt-suppression. Tested as orthogonal to
+                                          # OVAR modulation (gate vs no-gate gives same OVAR pattern).
+                                          # Set to 1e6 to disable for pure Laurens-2011 testing.
     tau_a_lin:             float = 1.5    # translation-duration prior τ_a — Laurens, Meng & Angelaki (2013).
     K_gd:                  float = 2.86   # gravity dumping gain — Laurens & Angelaki (2011) 0.05 rad/s
                                           # converted to deg/s units (0.05 × 180/π ≈ 2.86). Drives VS dumping
