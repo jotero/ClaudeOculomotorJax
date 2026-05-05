@@ -188,14 +188,21 @@ def step(x_sg, pos_delayed, target_visible, x_ni, ocr, w_est, p, noise_acc=0.0):
     x_ibn_L = x_sg[15:18]  # (3,) left  IBN membrane potentials
 
     # ── Target selection ──────────────────────────────────────────────────────
-    # In-field: clip (pos_delayed + OCR) to oculomotor range so the saccade end
+    # In-field: clip (pos_delayed + OCR_delta) to oculomotor range so the saccade end
     # state aligns the eye torsion with the head-tilt-driven OCR offset.
-    # Quick-phase: predictive centripetal reset.
-    e_target = jnp.clip(pos_delayed + ocr, -p.orbital_limit - x_ni, p.orbital_limit - x_ni)
+    # OCR is an ABSOLUTE torsion setpoint (head-tilt-driven); pos_delayed[2] is always 0
+    # (Listing's compliance in retina). To make the saccade land AT ocr (not ocr more
+    # each saccade), convert to a delta: ocr_delta = ocr − x_ni_torsion. The H/V
+    # axes already work as deltas via pos_delayed and OCR is zero on those axes.
+    ocr_delta = ocr.at[2].add(-x_ni[2])
+    e_target = jnp.clip(pos_delayed + ocr_delta, -p.orbital_limit - x_ni, p.orbital_limit - x_ni)
 
     tau_refractory = (p.threshold_acc - p.acc_burst_floor) * p.tau_acc
     x_ni_pred = x_ni - p.k_center_vel * tau_refractory * w_est
-    e_center  = -p.alpha_reset * x_ni_pred
+    # Quick-phase reset target: centripetal toward 0 in H/V, but toward OCR setpoint
+    # in torsion (head-tilt-driven). Without OCR here, dark quick phases would drag
+    # the eye to 0 torsion every reset and OCR would never reach the eye.
+    e_center  = -p.alpha_reset * (x_ni_pred - ocr)
     
     doing_saccade = target_visible;
     doing_quick_phase = 1.0 - target_visible;

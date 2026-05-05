@@ -32,15 +32,14 @@ IPD  = 0.064   # m, default inter-pupillary distance
 # reflect what a realistic near-response looks like end-to-end.
 PARAMS_VERG = PARAMS_DEFAULT
 
-# Debug variant for the symmetric-vergence and cascade panels — disables ALL
-# sensory + accumulator noise, cross-couplings, the SVBN burst, and Listing's
-# corrections. Used to isolate the pure vergence loop dynamics.
+# Debug variant — noiseless + cross-links off + Listing's off, but the SVBN
+# saccadic vergence burst is left ON (g_svbn_conv/div at defaults) so the
+# debug cascades show its contribution. Used by both sym and asym debug panels.
 PARAMS_VERG_DEBUG = with_brain(
     with_sensory(PARAMS_DEFAULT,
                  sigma_canal=0.0, sigma_slip=0.0, sigma_pos=0.0, sigma_vel=0.0),
     AC_A=0.0, CA_C=0.0,
     g_burst_verg=0.0,
-    g_svbn_conv=0.0, g_svbn_div=0.0,
     sigma_acc=0.0,
     listing_gain=0.0,
 )
@@ -832,7 +831,7 @@ def _asym_vergence_debug(show):
 
     fig.tight_layout(rect=[0, 0, 1, 0.97])
     path, rp = utils.save_fig(fig, 'vergence_asym_debug', show=show, params=PARAMS_VERG_DEBUG,
-                              conditions='Lit, lateral target stepping in depth + horizontal (asymmetric vergence) — noiseless DEBUG')
+                              conditions='Lit, lateral target stepping in depth + horizontal (asym vergence) — noiseless DEBUG, SVBN burst ON, cross-links OFF')
     return utils.fig_meta(
         path, rp,
         title='Asymmetric Vergence Debug Cascade',

@@ -826,29 +826,238 @@ def _refractive_error(show):
     )
 
 
+# ── Panel: Gradient AC/A and CA/C — cross-link regression panels ───────────────
+
+def _gradient_aca_cac(show):
+    """Gradient AC/A and CA/C protocols — behavioral measurements of both
+    cross-links from stimulus sweeps at a fixed fixation distance.
+
+    Both cross-links (AC/A and CA/C) are LEFT ON at defaults in both sweeps —
+    the goal is to measure the closed-loop, end-to-end behavioral cross-link
+    gain that a clinician would observe, not an idealized open-loop value.
+
+    Row 1 — Gradient AC/A (lens sweep, Maddox-style):
+      - Target visible only to the LEFT eye → disparity vergence open-loop.
+      - Equal lenses on both eyes step the accommodation demand → AC/A
+        cross-link drives vergence, measured at SS.
+      - Slope of SS vergence (pd) vs lens (D) = behavioral AC/A.
+
+    Row 2 — Gradient CA/C (prism sweep, fully binocular):
+      - Both eyes see the target → disparity vergence is closed-loop, but the
+        defocus loop is also closed (we lack a true pinhole/DoG mechanism).
+      - Bilateral mirrored prisms (BO/BI) shift the apparent target nasally
+        or temporally → fusional vergence response → CA/C cross-link drives
+        accommodation, measured at SS.
+      - Slope of SS accommodation (D) vs achieved SS vergence (pd) =
+        behavioral CA/C. Closed defocus loop suppresses this slope below
+        the parameter; the regression should still be monotonic and positive.
+    """
+    DEPTH    = 0.4          # m — clinical gradient AC/A typically at 40 cm
+    TEND     = 8.0          # s, settle time
+    T_STEP   = 1.0          # stimulus applied at t = T_STEP
+    LENSES_D = np.array([-2.0, -1.0, 0.0, 1.0, 2.0])
+    PRISMS_D = np.array([-4.0, -2.0, 0.0, 2.0, 4.0])   # deg, mirrored bilaterally; +ve = BO (convergence demand)
+    SS_WIN   = 0.5          # s — average over the last SS_WIN seconds for SS
+
+    t   = np.arange(0.0, TEND, DT)
+    T   = len(t)
+    p0  = np.array([0.0, 0.0, DEPTH])
+    target = km.build_target(t, lin_pos=np.tile(p0, (T, 1)))
+    scene  = np.ones(T)
+
+    # Both cross-links left ON at defaults — measure end-to-end behavioral gain.
+    params = PARAMS_DEFAULT
+    deg_per_pd = 0.5729
+    aca_param = float(params.brain.AC_A)   # pd/D
+    cac_param = float(params.brain.CA_C)   # D/pd
+
+    # ── ACA sweep (lens sweep, Maddox-style monocular target) ───────────────
+    tgt_L = np.ones(T, dtype=np.float32)
+    tgt_R = np.zeros(T, dtype=np.float32)
+
+    aca_verg_traces, aca_acc_traces = [], []
+    aca_ss_verg, aca_ss_acc = [], []
+    for L in LENSES_D:
+        lens_arr = np.where(t >= T_STEP, float(L), 0.0).astype(np.float32)
+        st = simulate(params, t,
+                      target=target,
+                      scene_present_array=scene,
+                      target_present_L_array=tgt_L,
+                      target_present_R_array=tgt_R,
+                      lens_L_array=lens_arr, lens_R_array=lens_arr,
+                      return_states=True, key=KEY)
+        verg = np.array(st.plant[:, 0] - st.plant[:, 3])
+        acc  = np.array(st.acc_plant[:, 0])
+        aca_verg_traces.append(verg)
+        aca_acc_traces.append(acc)
+        n_ss = int(SS_WIN / DT)
+        aca_ss_verg.append(float(np.mean(verg[-n_ss:])))
+        aca_ss_acc.append(float(np.mean(acc[-n_ss:])))
+
+    aca_ss_verg = np.array(aca_ss_verg)
+    aca_ss_verg_pd = aca_ss_verg / deg_per_pd
+    aca_slope_pd_per_D, aca_intercept_pd = np.polyfit(LENSES_D, aca_ss_verg_pd, 1)
+
+    # ── CAC sweep (prism sweep, full binocular) ─────────────────────────────
+    # Bilateral mirrored prisms on yaw axis: prism_L = +Δ (rightward shift = nasal
+    # for L eye); prism_R = −Δ (leftward shift = nasal for R eye). Δ>0 = BO bilaterally.
+    cac_verg_traces, cac_acc_traces = [], []
+    cac_ss_verg, cac_ss_acc = [], []
+    for P in PRISMS_D:
+        prism_L_arr = np.zeros((T, 3), dtype=np.float32)
+        prism_R_arr = np.zeros((T, 3), dtype=np.float32)
+        prism_L_arr[t >= T_STEP, 0] = +float(P)
+        prism_R_arr[t >= T_STEP, 0] = -float(P)
+        st = simulate(params, t,
+                      target=target,
+                      scene_present_array=scene,
+                      prism_L_array=prism_L_arr, prism_R_array=prism_R_arr,
+                      return_states=True, key=KEY)
+        verg = np.array(st.plant[:, 0] - st.plant[:, 3])
+        acc  = np.array(st.acc_plant[:, 0])
+        cac_verg_traces.append(verg)
+        cac_acc_traces.append(acc)
+        n_ss = int(SS_WIN / DT)
+        cac_ss_verg.append(float(np.mean(verg[-n_ss:])))
+        cac_ss_acc.append(float(np.mean(acc[-n_ss:])))
+
+    cac_ss_verg = np.array(cac_ss_verg)
+    cac_ss_acc  = np.array(cac_ss_acc)
+    # Behavioral CA/C: ΔAcc (D) per ΔVerg (pd) — closed-loop slope.
+    cac_ss_verg_pd = cac_ss_verg / deg_per_pd
+    cac_slope_D_per_pd, cac_intercept_D = np.polyfit(cac_ss_verg_pd, cac_ss_acc, 1)
+
+    # ── Plot ────────────────────────────────────────────────────────────────
+    fig, axes = plt.subplots(2, 3, figsize=(15, 9))
+    fig.suptitle('Cross-link gradient regressions — both AC/A and CA/C cross-links ON',
+                 fontsize=11, fontweight='bold')
+
+    cmap = plt.get_cmap('coolwarm')
+
+    # ── Row 1: ACA ──────────────────────────────────────────────────────────
+    ax = axes[0, 0]
+    for i, (L, v) in enumerate(zip(LENSES_D, aca_verg_traces)):
+        c = cmap(i / max(len(LENSES_D) - 1, 1))
+        ax.plot(t, v, color=c, lw=1.2, label=f'{L:+.0f} D')
+    ax.axvline(T_STEP, color='gray', lw=0.8, ls=':')
+    ax.axhline(_verg_angle_deg(DEPTH), color='black', lw=0.6, ls='--',
+               label=f'geometric {_verg_angle_deg(DEPTH):.1f}°')
+    ax_fmt(ax, ylabel='Vergence L−R (deg)', xlabel='Time (s)')
+    ax.set_title(f'AC/A — Vergence vs lens (target at {DEPTH:.2f} m, Maddox L-only)', fontsize=9)
+    ax.legend(fontsize=7, loc='best', title='Lens')
+
+    ax = axes[0, 1]
+    for i, (L, a) in enumerate(zip(LENSES_D, aca_acc_traces)):
+        c = cmap(i / max(len(LENSES_D) - 1, 1))
+        ax.plot(t, a, color=c, lw=1.2, label=f'{L:+.0f} D')
+    ax.axvline(T_STEP, color='gray', lw=0.8, ls=':')
+    ax.axhline(_acc_demand_d(DEPTH), color='black', lw=0.6, ls='--',
+               label=f'demand at {DEPTH:.2f} m  ({_acc_demand_d(DEPTH):.2f} D)')
+    ax_fmt(ax, ylabel='Accommodation (D)', xlabel='Time (s)')
+    ax.set_title('AC/A — Accommodation response', fontsize=9)
+    ax.legend(fontsize=7, loc='best', title='Lens')
+
+    ax = axes[0, 2]
+    ax.scatter(LENSES_D, aca_ss_verg_pd, s=60, color='#cc3333', zorder=5)
+    Lfit = np.linspace(LENSES_D.min() - 0.3, LENSES_D.max() + 0.3, 50)
+    Vfit = aca_slope_pd_per_D * Lfit + aca_intercept_pd
+    ax.plot(Lfit, Vfit, '-', color='#cc3333', lw=1.2,
+            label=f'Behavioral AC/A = {aca_slope_pd_per_D:.2f} pd/D\n(parameter AC_A = {aca_param:.1f} pd/D)')
+    ax.axhline(_verg_angle_deg(DEPTH) / deg_per_pd, color='gray', lw=0.6, ls='--',
+               label=f'geometric {_verg_angle_deg(DEPTH)/deg_per_pd:.1f} pd')
+    ax.set_xlabel('Lens power (D)')
+    ax.set_ylabel('Steady-state vergence (pd)')
+    ax.set_title(f'Gradient AC/A regression (SS over last {SS_WIN:g} s)', fontsize=9)
+    ax.legend(fontsize=7, loc='best')
+    ax.grid(True, alpha=0.2)
+
+    # ── Row 2: CAC ──────────────────────────────────────────────────────────
+    ax = axes[1, 0]
+    for i, (P, v) in enumerate(zip(PRISMS_D, cac_verg_traces)):
+        c = cmap(i / max(len(PRISMS_D) - 1, 1))
+        ax.plot(t, v, color=c, lw=1.2, label=f'{P:+.0f}°')
+    ax.axvline(T_STEP, color='gray', lw=0.8, ls=':')
+    ax.axhline(_verg_angle_deg(DEPTH), color='black', lw=0.6, ls='--',
+               label=f'geometric {_verg_angle_deg(DEPTH):.1f}°')
+    ax_fmt(ax, ylabel='Vergence L−R (deg)', xlabel='Time (s)')
+    ax.set_title(f'CA/C — Vergence vs prism (binocular, target at {DEPTH:.2f} m)', fontsize=9)
+    ax.legend(fontsize=7, loc='best', title='Prism (BO+)')
+
+    ax = axes[1, 1]
+    for i, (P, a) in enumerate(zip(PRISMS_D, cac_acc_traces)):
+        c = cmap(i / max(len(PRISMS_D) - 1, 1))
+        ax.plot(t, a, color=c, lw=1.2, label=f'{P:+.0f}°')
+    ax.axvline(T_STEP, color='gray', lw=0.8, ls=':')
+    ax.axhline(_acc_demand_d(DEPTH), color='black', lw=0.6, ls='--',
+               label=f'demand at {DEPTH:.2f} m  ({_acc_demand_d(DEPTH):.2f} D)')
+    ax_fmt(ax, ylabel='Accommodation (D)', xlabel='Time (s)')
+    ax.set_title('CA/C — Accommodation response', fontsize=9)
+    ax.legend(fontsize=7, loc='best', title='Prism (BO+)')
+
+    ax = axes[1, 2]
+    ax.scatter(cac_ss_verg_pd, cac_ss_acc, s=60, color='#3366cc', zorder=5)
+    Vfit = np.linspace(cac_ss_verg_pd.min() - 0.5, cac_ss_verg_pd.max() + 0.5, 50)
+    Afit = cac_slope_D_per_pd * Vfit + cac_intercept_D
+    ax.plot(Vfit, Afit, '-', color='#3366cc', lw=1.2,
+            label=f'Behavioral CA/C = {cac_slope_D_per_pd:.3f} D/pd\n(parameter CA_C = {cac_param:.2f} D/pd)')
+    ax.axhline(_acc_demand_d(DEPTH), color='gray', lw=0.6, ls='--',
+               label=f'optical demand {_acc_demand_d(DEPTH):.2f} D')
+    ax.axvline(_verg_angle_deg(DEPTH) / deg_per_pd, color='gray', lw=0.6, ls=':',
+               label=f'geometric {_verg_angle_deg(DEPTH)/deg_per_pd:.1f} pd')
+    ax.set_xlabel('Steady-state vergence (pd)')
+    ax.set_ylabel('Steady-state accommodation (D)')
+    ax.set_title(f'Gradient CA/C regression (SS over last {SS_WIN:g} s)', fontsize=9)
+    ax.legend(fontsize=7, loc='best')
+    ax.grid(True, alpha=0.2)
+
+    fig.tight_layout(rect=[0, 0, 1, 0.96])
+    path, rp = utils.save_fig(fig, 'accommodation_gradient_aca_cac', show=show, params=params,
+                              conditions=f'Lit, midline target at {DEPTH:.2f} m. '
+                                         f'AC/A row: lens sweep {LENSES_D[0]:+.0f}…{LENSES_D[-1]:+.0f} D, '
+                                         f'L-eye-only (Maddox). '
+                                         f'CA/C row: bilateral mirrored prism sweep '
+                                         f'{PRISMS_D[0]:+.0f}…{PRISMS_D[-1]:+.0f}°, full binocular. '
+                                         f'Both cross-links ON.')
+    return utils.fig_meta(path, rp,
+        title='Gradient AC/A and CA/C — behavioral measurements vs parameters',
+        description=f'Top row (AC/A): binocular lens sweep at {DEPTH:.2f} m, L-eye-only target. '
+                    f'Bottom row (CA/C): bilateral mirrored prism sweep at {DEPTH:.2f} m, full '
+                    f'binocular fusion. Both cross-links left at defaults — measures realistic '
+                    f'closed-loop behavioral gains. Behavioral CA/C is reduced by closed defocus '
+                    f'loop (model lacks true pinhole/DoG mechanism for open-loop accommodation).',
+        expected=f'Behavioral AC/A < parameter AC_A ({aca_param:.1f} pd/D): phasic decays into '
+                 f'tonic in closed loop, expect ~{0.5*aca_param:.1f}–{0.8*aca_param:.1f} pd/D. '
+                 f'Behavioral CA/C < parameter CA_C ({cac_param:.2f} D/pd): closed defocus loop '
+                 f'suppresses additional, expect monotone positive but small slope.',
+        citation='Hofstetter (1948); Schor & Kotulak (1986); Sheedy & Saladin (1983); Schor (1992, 1999); Daum (1983).',
+    )
+
+
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 def run(show=SHOW):
     print('\n=== Accommodation ===')
-    print('  1/9  isolated step (AC/A=CA/C=0) …')
+    print('  1/10 isolated step (AC/A=CA/C=0) …')
     f1  = _isolated_step(show)
-    print('  2/9  isolated amplitudes …')
+    print('  2/10 isolated amplitudes …')
     f2  = _isolated_amplitudes(show)
-    print('  3/9  isolated dark-focus drift …')
+    print('  3/10 isolated dark-focus drift …')
     f3  = _isolated_dark_focus(show)
-    print('  4/9  near step (cross-coupling on) …')
+    print('  4/10 near step (cross-coupling on) …')
     f4  = _near_step(show)
-    print('  5/9  lens-driven AC/A …')
+    print('  5/10 lens-driven AC/A (single +2D step) …')
     f5  = _lens_aca(show)
-    print('  6/9  prism-driven CA/C …')
+    print('  6/10 prism-driven CA/C …')
     f6  = _prism_cac(show)
-    print('  7/9  plant step response …')
+    print('  7/10 plant step response …')
     f7  = _lens_step_response(show)
-    print('  8/9  fixation disparity curves …')
+    print('  8/10 fixation disparity curves …')
     f8  = _fixation_disparity_curves(show)
-    print('  9/9  refractive error …')
+    print('  9/10 refractive error …')
     f9  = _refractive_error(show)
-    return [f1, f2, f3, f4, f5, f6, f7, f8, f9]
+    print(' 10/10 gradient AC/A and CA/C regression …')
+    f10 = _gradient_aca_cac(show)
+    return [f1, f2, f3, f4, f5, f6, f7, f8, f9, f10]
 
 
 if __name__ == '__main__':

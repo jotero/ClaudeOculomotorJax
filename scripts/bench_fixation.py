@@ -183,7 +183,7 @@ def _drift_quiver(show):
     The quiver arrows show mean (vx, vy) of the SPV at the fixation location.
     """
     DEPTH    = 1.0     # m, screen distance
-    DURATION = 10.0    # s
+    DURATION = 5.0     # s
     DROP_S   = 1.0     # discard the first 1 s (initial transients) when averaging
     NDIR     = 8       # cardinal + 45° = 8 directions
 

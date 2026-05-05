@@ -272,27 +272,17 @@ class BrainParams(NamedTuple):
                                           # look-ahead = k·τ_ref; aims past centre to compensate for slow-phase
                                           # drift during refractory.  Only applied in out-of-field (quick-phase) path.
 
-    # Otolith / gravity estimation — Laurens & Angelaki (2011, 2017)
-    K_grav:                float = 0.2    # somatogravic gain (1/s); pull on g_est toward GIA residual.
-                                          # L&A 2011 calls this go (≈ 0.6); we use 0.2 to keep tilt-percept
-                                          # bandwidth around 0.032 Hz (matches Mayne / Holly slow-percept range).
-                                          # Higher K_grav = stronger somatogravic illusion (faster tilt commitment).
-                                          # sets how fast g_est tracks GIA changes (OCR rise time, OVAR following)
-    K_lin:                 float = 0.1    # linear acceleration adaptation gain (1/s); 0 disables â state.
-                                          # K_lin < 1/τ_grav (=0.2) — the Laurens-Angelaki regime where
-                                          # â adapts SLOWLY relative to ĝ.  This biases the gravity
-                                          # estimator to attribute GIA changes to gravity (tilt) rather
-                                          # than acceleration, matching the brain's prior toward
-                                          # tilt-interpretation in dark.  HE consumes a_lin directly,
-                                          # so smaller a_lin → less v_lin pollution from OVAR / OCR.
-    tau_a_lin:             float = 0.5    # a_lin decay TC (s) — the deterministic stand-in for the
-                                          # Kalman prior on translation duration.  Real self-motion
-                                          # accelerations are brief (~0.2–1 s for walking onset, sudden
-                                          # movements), so a_lin should decay back to 0 fast in absence
-                                          # of sustained evidence.  SS a_lin = K_lin·τ_a·r for sustained
-                                          # residual r — short τ_a strongly suppresses sustained-residual
-                                          # pollution (OVAR / OCR cascade) while still letting a_lin
-                                          # respond to actual translation transients.
+    # Otolith / gravity estimation — Laurens & Angelaki (2011, 2013, 2017)
+    # Values held to Laurens-published numbers, no hand-tuning compromises.
+    K_grav:                float = 0.6    # somatogravic gain "go" — Laurens & Angelaki (2011) Table 1.
+                                          # Sets corner frequency f_c = K_grav/(2π) ≈ 0.095 Hz for
+                                          # tilt-percept commitment.
+    K_lin:                 float = 0.1    # linear-acc adaptation gain — Laurens & Angelaki (2011) "ka".
+                                          # Static value (canal-gating below modulates it state-dependently).
+    w_canal_gate:          float = 5.0    # canal-gating threshold (deg/s) — Laurens 2017 Bayesian
+                                          # disambiguation extension. Not in Laurens 2011. Set high (e.g.
+                                          # 1e6) to disable and recover pure-Laurens-2011 behaviour.
+    tau_a_lin:             float = 1.5    # translation-duration prior τ_a — Laurens, Meng & Angelaki (2013).
     K_gd:                  float = 2.86   # gravity dumping gain — Laurens & Angelaki (2011) 0.05 rad/s
                                           # converted to deg/s units (0.05 × 180/π ≈ 2.86). Drives VS dumping
                                           # ⊥ gravity (tilt suppression) and OVAR sustained nystagmus.
@@ -361,7 +351,7 @@ class BrainParams(NamedTuple):
     # Zee (1992) Table 1: pure conv peak velocity 41–58 °/s for 10° amplitude;
     # pure div 9.5–13 °/s for 2.5°. Saturating exponential y = g·(1 − exp(−|disp|/X))
     # tuned so y(10°, conv) ≈ 60·(1−e^{-10/3}) ≈ 58 °/s and y(2.5°, div) ≈ 14·(1−e^{-2.5/1}) ≈ 13 °/s.
-    g_svbn_conv:           float        = 60.0            # convergence asymptotic burst velocity (deg/s)
+    g_svbn_conv:           float        = 30.0            # convergence asymptotic burst velocity (deg/s)
     X_svbn_conv:           float        = 3.0             # convergence saturating scale (deg)
     g_svbn_div:            float        = 14.0            # divergence  asymptotic burst velocity (deg/s)
     X_svbn_div:            float        = 1.0             # divergence  saturating scale (deg)
@@ -427,13 +417,15 @@ class BrainParams(NamedTuple):
                                           # At 40 cm (2.5 D): AC/A drive ≈ 5×0.573×2.5 ≈ 7.2°
                                           # At   6 m (0.17 D): drive ≈ 0.5° — explains why
                                           # IXT decompensates preferentially at distance.
-    CA_C:                  float = 0.08   # CA/C ratio (diopters / prism diopter). Schor & Kotulak (1986)
-                                          # report ≈ 0.5 D/MA (meter-angle); 1 MA ≈ 6.4 pd at IPD 64 mm
-                                          # so 0.5 D/MA ≈ 0.08 D/pd. Loop product AC_A·CA_C ≈ 0.4 D/D < 1
-                                          # keeps the AC/A·CA/C cross-loop stable (was 0.4 D/pd → loop gain 2,
-                                          # driving runaway oscillation; see Schor 1992 J Opt Soc Am).
-                                          # Drives accommodation when vergence is disparity-driven;
-                                          # reduces defocus during vergence eye movements.
+    CA_C:                  float = 0.0    # CA/C ratio (diopters / prism diopter). Literature value
+                                          # ≈ 0.08 D/pd (Schor & Kotulak 1986: 0.5 D/MA × 1 MA / 6.4 pd at
+                                          # IPD 64 mm; consistent with Schor 1992, Daum 1983).
+                                          # Set to 0 by default until the model gains a pinhole/DoG mechanism
+                                          # for open-loop accommodation — without one, the closed defocus loop
+                                          # clamps accommodation near optical demand and a literature-valued
+                                          # CA/C only contributes a small, hard-to-measure perturbation.
+                                          # When enabled (≈0.08): drives accommodation when vergence is
+                                          # disparity-driven; AC_A·CA_C ≈ 0.4 D/D < 1 keeps the cross-loop stable.
     refractive_error:      float = 0.0   # patient refractive error (diopters); >0 hyperopia, <0 myopia
                                           # Added to 1/z before defocus = 1/z + RE − x_plant.
                                           # Hyperope needs more accommodation at every distance;
@@ -590,7 +582,11 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
     # Torsional VOR gain is ~half horizontal (Crawford 1991, Misslisch 1994); apply that
     # attenuation only at the VS→NI connection so w_est elsewhere keeps full magnitude.
     vor_torsion_gain = jnp.array([1.0, 1.0, 0.5])
-    u_ni_in = -w_est * vor_torsion_gain + u_burst + u_pursuit + omega_tvor
+    # Active eye-movement velocity: burst + pursuit + T-VOR (no VOR).
+    # Listing's law applies to active gaze-shifts, not to vestibular reflexes —
+    # VOR counter-rotates head motion and should not drive Listing's correction.
+    u_ni_active = u_burst + u_pursuit + omega_tvor
+    u_ni_in     = -w_est * vor_torsion_gain + u_ni_active
 
     # ── Listing's law — single call returns BOTH cyclopean and L2 corrections ──
     # Cyclopean torsion velocity → added to u_ni_in[2] (drives x_ni torsion
@@ -599,7 +595,7 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
     #   torsion difference that arises when each eye's Listing plane tilts
     #   ±verg/2 around head-vertical and the eye moves vertically).
     cyc_torsion_vel, cyclo_verg_rate = listing.listing_corrections(
-        x_ni_net, u_ni_in[:2], current_vergence_yaw,
+        x_ni_net, u_ni_active[:2], current_vergence_yaw,
         brain_params.listing_primary, brain_params.listing_l2_frac,
     )
     u_ni_in        = u_ni_in.at[2].add(brain_params.listing_gain * cyc_torsion_vel)

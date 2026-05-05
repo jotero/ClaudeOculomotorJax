@@ -210,9 +210,20 @@ def _ge_step(x_grav, w_est, gia, brain_params):
     # Gravity correction: pulled toward residual with somatogravic gain K_grav.
     dg = transport + brain_params.K_grav * residual
 
-    # Linear acceleration: tracks residual, decays toward 0 on TC τ_a_lin
+    # Canal-gated translation interpretation (Laurens & Angelaki 2017
+    # Bayesian-style tilt-translation disambiguation):
+    #   Rotation → P(rotation|canal) high → K_lin → 0 (residual goes to gravity)
+    #   Canal silent → P(translation|residual) high → K_lin full (residual goes to a_lin)
+    # Smooth gate on |w_est| with half-suppression at w_canal_gate. The gate
+    # operates on the perceived angular velocity (w_est is already canal+slip-fused
+    # via VS), so visual rotation also disambiguates.
+    w_mag = jnp.linalg.norm(w_est)
+    rot_gate = 1.0 / (1.0 + (w_mag / brain_params.w_canal_gate) ** 2)
+    K_lin_eff = brain_params.K_lin * rot_gate
+
+    # Linear acceleration: tracks residual (gated), decays toward 0 on TC τ_a_lin
     # (deterministic stand-in for L&A's translation-duration prior).
-    da = brain_params.K_lin * residual - a_lin / brain_params.tau_a_lin
+    da = K_lin_eff * residual - a_lin / brain_params.tau_a_lin
 
     # Rotational feedback (Laurens 2011): GIA × G_down / G0². Zero at SS;
     # active when ĝ lags GIA. Stored in state (1-step delayed) so brain_model
