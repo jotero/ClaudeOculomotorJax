@@ -65,8 +65,12 @@ _DEG_PER_PD = 0.5729   # 1 pd = arctan(0.01) rad ≈ 0.5729 deg
 # Vergence x_copy is the local-feedback efference of the saccadic vergence
 # burst (Robinson-style): integrates the SVBN output and is SUBTRACTED from
 # disparity so the burst self-terminates as the saccadic vergence command
-# accumulates. Fast reset between saccades.
-_TAU_COPY_RESET = 0.2    # s
+# accumulates. The integration is gated by the saccade gate z_act:
+#   z_act ≈ 1 (during saccade): perfect integration (no leak)
+#   z_act ≈ 0 (between saccades): fast leak (TC = _TAU_COPY_RESET)
+# This way x_copy holds the accumulated burst command during the saccade,
+# then drains quickly afterward.
+_TAU_COPY_RESET = 0.02   # s — 20 ms drain between saccades
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -76,10 +80,13 @@ _TAU_COPY_RESET = 0.2    # s
 # Axis layout for 3-vectors in this module (matches whole-codebase convention)
 _AXIS_H, _AXIS_V, _AXIS_T = 0, 1, 2   # [yaw, pitch, roll] = [H, V, T]
 
-# Vergence sub-state slices (within x_verg = x_va[0:9]) — fast/slow/copy each (3,)
-_VG_IDX_FAST = slice(0, 3)
-_VG_IDX_SLOW = slice(3, 6)
-_VG_IDX_COPY = slice(6, 9)
+# Vergence sub-state slices (within x_verg = x_va[0:9]):
+#   _VG_IDX_VERG  — vergence integrator (was x_verg_fast)
+#   _VG_IDX_TONIC — tonic vergence integrator (was x_verg_slow)
+#   _VG_IDX_COPY  — saccadic-vergence efference copy (vestigial, kept for state layout)
+_VG_IDX_VERG  = slice(0, 3)
+_VG_IDX_TONIC = slice(3, 6)
+_VG_IDX_COPY  = slice(6, 9)
 
 # Accommodation sub-state slices (within x_acc = x_va[9:11]) — fast/slow each scalar
 _ACC_IDX_FAST = 0
@@ -121,11 +128,11 @@ def step(x_va, u, brain_params):
     x_verg = x_va[_IDX_VERG]
     x_acc  = x_va[_IDX_ACC]
 
-    x_verg_fast = x_verg[_VG_IDX_FAST]   # (3,)
-    x_verg_slow = x_verg[_VG_IDX_SLOW]   # (3,)
-    x_verg_copy = x_verg[_VG_IDX_COPY]   # (3,)
-    x_acc_fast  = x_acc[_ACC_IDX_FAST]   # scalar
-    x_acc_slow  = x_acc[_ACC_IDX_SLOW]   # scalar
+    x_verg_v     = x_verg[_VG_IDX_VERG]    # (3,) vergence integrator
+    x_verg_tonic = x_verg[_VG_IDX_TONIC]   # (3,) tonic vergence integrator
+    x_verg_copy  = x_verg[_VG_IDX_COPY]    # (3,) saccadic-vergence efference copy (vestigial)
+    x_acc_fast   = x_acc[_ACC_IDX_FAST]    # scalar
+    x_acc_slow   = x_acc[_ACC_IDX_SLOW]    # scalar
 
     # ── Split bundled inputs ────────────────────────────────────────────────
     defocus          = u[_IDX_INPUT_DEFOCUS]
@@ -133,64 +140,64 @@ def step(x_va, u, brain_params):
     verg_rate_tvor   = u[_IDX_INPUT_VERG_RATE_TVOR]
     z_act            = u[_IDX_INPUT_Z_ACT]
 
-    # Robinson local feedback for vergence: subtract the integrated saccadic
-    # vergence command (x_verg_copy) from the raw disparity so both the SVBN
-    # burst and the rest of the vergence pathway see the RESIDUAL TARGET
-    # DISPARITY — i.e. what's left after the saccade command has been issued.
-    # With τ_copy ≈ 0.2 s, x_verg_copy decays quickly between saccades so the
-    # slow loop sees raw disparity once the saccade is over.
-    residual_target_disparity = target_disparity - x_verg_copy
+    # Robinson local feedback for the SVBN burst only: subtract x_verg_copy
+    # (integrated burst command) from disparity so the burst self-terminates.
+    # The vergence integrator (x_verg_v) below uses RAW target_disparity —
+    # the visual feedback loop already attenuates target_disparity as the eye
+    # converges, so the integrator doesn't need its own residual.
+    burst_residual_disparity = target_disparity - x_verg_copy
 
     # ── Cross-couplings (Schor 1999: PHASIC-only, no tonic contribution) ────
     # Schor 1999 p.3: "tonic accommodation and tonic convergence have been shown
     # not to stimulate accommodative vergence and vergence accommodation under
-    # open-loop conditions". So both cross-links read only the fast (phasic)
-    # state — once the response transfers to the tonic, the cross-link drops out.
+    # open-loop conditions". So both cross-links read only the phasic state
+    # (vergence integrator, accommodation fast) — once the response transfers
+    # to the tonic, the cross-link drops out.
     # AC/A: accommodation phasic (D above dark focus) → vergence drive (deg)
     aca_drive = brain_params.AC_A * _DEG_PER_PD * x_acc_fast
     # CA/C: vergence phasic (deg above tonic, H only) → lens-plant feedforward (D)
-    cac_drive = brain_params.CA_C * (x_verg_fast[_AXIS_H] / _DEG_PER_PD)
+    cac_drive = brain_params.CA_C * (x_verg_v[_AXIS_H] / _DEG_PER_PD)
 
     # ── Vergence ────────────────────────────────────────────────────────────
     # SVBN — saccade-gated saturating burst, applied per-axis (H, V, T).
     # Uses g_svbn_conv / X_svbn_conv symmetrically for both directions on each
     # axis; the _div params are legacy (Zee 1992 Table 1 has asymmetric conv/div
-    # but we ignore that for now). Driven by the RESIDUAL disparity, so the
-    # burst shrinks as x_verg_copy fills in (Robinson local feedback).
-    u_svbn = (z_act * jnp.sign(residual_target_disparity) * brain_params.g_svbn_conv
-              * (1.0 - jnp.exp(-jnp.abs(residual_target_disparity) / brain_params.X_svbn_conv)))
+    # but we ignore that for now). Driven by the BURST residual (target_disparity
+    # − x_verg_copy) so the burst self-terminates via x_verg_copy filling in.
+    u_svbn = (z_act * jnp.sign(burst_residual_disparity) * brain_params.g_svbn_conv
+              * (1.0 - jnp.exp(-jnp.abs(burst_residual_disparity) / brain_params.X_svbn_conv)))
 
-    # x_copy: integrated SVBN burst — fast reset (τ_copy = 0.2 s) so it drains
-    # between saccades and only shapes the burst self-termination.
-    dx_v_copy = u_svbn - x_verg_copy / _TAU_COPY_RESET
+    # x_verg_copy: integrated SVBN burst with z_act-gated leak.
+    # During saccade (z_act ≈ 1): perfect integration (no leak).
+    # Between saccades (z_act ≈ 0): fast leak (TC = _TAU_COPY_RESET = 20 ms).
+    dx_v_copy = u_svbn - (1.0 - z_act) * x_verg_copy / _TAU_COPY_RESET
 
-    # ── Collect all vergence drive (residual disparity + TVOR + burst) ──────
-    # Schor-1999 block-diagram form: Kf and τ_p apply uniformly to the combined
-    # drive vector. Units mix (disparity in deg, burst/tvor in deg/s) — that's
-    # accepted: the integrator equation `dx = K·u - x/τ` is unit-agnostic when K
-    # is treated as a tunable gain, and a leaky integrator can equivalently be
-    # read as "integrate the rate" or "track the setpoint" depending on viewpoint.
-    verg_drive = residual_target_disparity + u_svbn + verg_rate_tvor
+    # ── Collect all vergence drive (raw target disparity + TVOR + burst) ────
+    # The vergence integrator x_verg_v sees RAW target_disparity (closed-loop
+    # via visual feedback) plus the burst velocity, not the burst-residual
+    # disparity. This avoids double-counting the burst contribution.
+    verg_drive = target_disparity + u_svbn + verg_rate_tvor
 
-    # Fast leaky integrator
-    dx_v_fast = brain_params.K_verg_fast * verg_drive - x_verg_fast / brain_params.tau_verg_fast
+    # Vergence integrator (leaky)
+    dx_v = brain_params.K_verg * verg_drive - x_verg_v / brain_params.tau_verg
 
     # Direct (bypass) pathway: plant-compensation form (= NI's u_p = x + τ_p·u_vel)
     direct_path_pos = brain_params.tau_p * verg_drive
 
     # Cross-link: AC/A from accommodation (H-only, deg)
-    tonic_vec = jnp.zeros(3).at[_AXIS_H].set(brain_params.tonic_verg)
-    aca_vec   = jnp.zeros(3).at[_AXIS_H].set(aca_drive)
+    tonic_setpoint = jnp.zeros(3).at[_AXIS_H].set(brain_params.tonic_verg)
+    aca_vec        = jnp.zeros(3).at[_AXIS_H].set(aca_drive)
 
-    # Adaptable tonic — leaky integrator with setpoint tonic_verg, driven by
-    # Ks · (fast integrator out + direct pathway + AC/A cross-link).
-    fast_pathway_out = x_verg_fast + direct_path_pos
-    tonic_input  = brain_params.K_verg_slow * (fast_pathway_out + aca_vec)
-    dx_v_slow    = (tonic_vec + tonic_input - x_verg_slow) / brain_params.tau_verg_slow
+    # Tonic vergence integrator — adaptable tonic, leaky integrator with setpoint
+    # tonic_verg, driven by K_verg_tonic · (vergence integrator out + direct
+    # pathway + AC/A cross-link).
+    verg_pathway_out = x_verg_v + direct_path_pos
+    tonic_input  = brain_params.K_verg_tonic * (verg_pathway_out + aca_vec)
+    dx_v_tonic   = (tonic_setpoint + tonic_input - x_verg_tonic) / brain_params.tau_verg_tonic
 
-    # Output: direct + fast + slow + cross-link. x_verg_slow already carries
+    # Output: direct + vergence + tonic + cross-link. x_verg_tonic carries
     # the tonic_verg setpoint baseline.
-    u_verg = direct_path_pos + x_verg_fast + x_verg_slow + aca_vec
+    u_verg = direct_path_pos + x_verg_v + x_verg_tonic + aca_vec
 
     # ── Accommodation (mirror of vergence — only defocus drive) ─────────────
     # Same Schor block-diagram form. Direct pathway scales by τ_acc_plant
@@ -209,7 +216,7 @@ def step(x_va, u, brain_params):
 
     # ── Pack ────────────────────────────────────────────────────────────────
     dx_va = jnp.concatenate([
-        dx_v_fast, dx_v_slow, dx_v_copy,
+        dx_v, dx_v_tonic, dx_v_copy,
         jnp.array([dx_a_fast, dx_a_slow]),
     ])
     return dx_va, u_verg, u_acc

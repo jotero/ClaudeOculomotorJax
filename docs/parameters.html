@@ -76,14 +76,14 @@ tr:last-child { border-bottom: none; }
   <nav>
     <h2>Sections</h2>
     <a href="#brainparams">BrainParams</a>
-    <a href="#brainparams-self_motion_estimation" style="padding-left:32px;font-size:11px;color:#aaa">Self Motion Estimation <span style="color:#666">(19)</span></a>
+    <a href="#brainparams-self_motion_estimation" style="padding-left:32px;font-size:11px;color:#aaa">Self Motion Estimation <span style="color:#666">(18)</span></a>
     <a href="#brainparams-neural_integrator" style="padding-left:32px;font-size:11px;color:#aaa">Neural Integrator <span style="color:#666">(7)</span></a>
     <a href="#brainparams-saccade_generator" style="padding-left:32px;font-size:11px;color:#aaa">Saccade Generator <span style="color:#666">(29)</span></a>
+    <a href="#brainparams-ungrouped" style="padding-left:32px;font-size:11px;color:#aaa">Ungrouped <span style="color:#666">(3)</span></a>
     <a href="#brainparams-listing" style="padding-left:32px;font-size:11px;color:#aaa">Listing <span style="color:#666">(2)</span></a>
     <a href="#brainparams-pursuit" style="padding-left:32px;font-size:11px;color:#aaa">Pursuit <span style="color:#666">(4)</span></a>
     <a href="#brainparams-vergence" style="padding-left:32px;font-size:11px;color:#aaa">Vergence <span style="color:#666">(12)</span></a>
-    <a href="#brainparams-ungrouped" style="padding-left:32px;font-size:11px;color:#aaa">Ungrouped <span style="color:#666">(1)</span></a>
-    <a href="#brainparams-tvor" style="padding-left:32px;font-size:11px;color:#aaa">Tvor <span style="color:#666">(7)</span></a>
+    <a href="#brainparams-tvor" style="padding-left:32px;font-size:11px;color:#aaa">Tvor <span style="color:#666">(6)</span></a>
     <a href="#brainparams-accommodation" style="padding-left:32px;font-size:11px;color:#aaa">Accommodation <span style="color:#666">(9)</span></a>
     <a href="#brainparams-final_common_pathway" style="padding-left:32px;font-size:11px;color:#aaa">Final Common Pathway <span style="color:#666">(4)</span></a>
     <div style="height:8px"></div>
@@ -92,6 +92,7 @@ tr:last-child { border-bottom: none; }
     <a href="#sensoryparams-otolith" style="padding-left:32px;font-size:11px;color:#aaa">Otolith <span style="color:#666">(1)</span></a>
     <a href="#sensoryparams-visual" style="padding-left:32px;font-size:11px;color:#aaa">Visual <span style="color:#666">(5)</span></a>
     <a href="#sensoryparams-noise" style="padding-left:32px;font-size:11px;color:#aaa">Noise <span style="color:#666">(5)</span></a>
+    <a href="#sensoryparams-ungrouped" style="padding-left:32px;font-size:11px;color:#aaa">Ungrouped <span style="color:#666">(3)</span></a>
     <a href="#sensoryparams-binocular" style="padding-left:32px;font-size:11px;color:#aaa">Binocular <span style="color:#666">(6)</span></a>
     <div style="height:8px"></div>
     <a href="#plantparams">PlantParams</a>
@@ -105,20 +106,20 @@ tr:last-child { border-bottom: none; }
   <main>
     <h1>OculomotorJax — Parameter Reference</h1>
     <p class="meta">
-      Generated: <strong>2026-05-03 22:21</strong> &nbsp;|&nbsp;
-      Version: <strong>c03bcf3-dirty</strong> &nbsp;|&nbsp;
-      Schema: <strong>d:\OneDrive\UC Berkeley\OMlab - JOM\Code\ClaudeOculomotorJax\docs\parameters_schema.yaml</strong>
+      Generated: <strong>2026-05-05 13:52</strong> &nbsp;|&nbsp;
+      Version: <strong>8f9b383-dirty</strong> &nbsp;|&nbsp;
+      Schema: <strong>D:\OneDrive\UC Berkeley\OMlab - JOM\Code\ClaudeOculomotorJax\docs\parameters_schema.yaml</strong>
     </p>
     <input id="search" type="search" placeholder="Search parameters by name, description, anatomy, disorder…" autofocus>
     <div id="match-count" class="match-count"></div>
-    <div class="warning"><b>1 fields lack schema entries</b> and are flagged TODO below. Add to <code>docs/parameters_schema.yaml</code> to provide rich descriptions, anatomy, and disorder tags.</div>
+    <div class="warning"><b>6 fields lack schema entries</b> and are flagged TODO below. Add to <code>docs/parameters_schema.yaml</code> to provide rich descriptions, anatomy, and disorder tags.</div>
     
   <section class="section" id="brainparams">
     <h2>BrainParams <small style="font-size:12px;font-weight:400;color:#888">(94 fields)</small></h2>
     <p class="desc">Central neural model parameters — VS, NI, SG, gravity, vergence, accommodation, T-VOR, OCR, CN/MLF gains. Read by every brain submodule's <code>step()</code>.</p>
     
     <div class="subsection" id="brainparams-self_motion_estimation">
-      <h3>Self Motion Estimation <small style="font-size:11px;font-weight:400;color:#888">(19 fields)</small></h3>
+      <h3>Self Motion Estimation <small style="font-size:11px;font-weight:400;color:#888">(18 fields)</small></h3>
       <table class="param-table">
         <thead><tr>
           <th style="width:160px">Parameter</th>
@@ -230,7 +231,7 @@ tr:last-child { border-bottom: none; }
 
         <tr>
           <td class="param-name">K_grav</td>
-          <td><span class="default">0.2</span></td>
+          <td><span class="default">0.6</span></td>
           <td class="units">1/s</td>
           <td class="desc-cell"><p>Somatogravic gain — pulls g_est toward the GIA residual. L&A 2011 calls this "g_o" and uses 0.6 (faster commitment to tilt percept). Our 0.2 keeps the somatogravic bandwidth around 0.032 Hz, matching slower psychophysical tilt-percept onset (Mayne 1974, Holly 1996). Higher K_grav → stronger / faster somatogravic illusion.</p><div class="refs">Laurens & Angelaki (2011) J Neurosci 31:11414 · Mayne (1974); Holly (1996)</div></td>
           <td class="anatomy-cell">Nodulus/uvula → MVN (otolith-canal fusion)</td>
@@ -248,7 +249,7 @@ tr:last-child { border-bottom: none; }
 
         <tr>
           <td class="param-name">tau_a_lin</td>
-          <td><span class="default">0.5</span></td>
+          <td><span class="default">1.5</span></td>
           <td class="units">s</td>
           <td class="desc-cell"><p>Decay TC of the linear-acceleration estimate. Bayesian "translation duration prior" — real self-motion accelerations are brief, so â returns to 0 in absence of sustained evidence. SS â for sustained residual r: K_lin · τ_a_lin · r.</p><div class="refs">Laurens, Meng & Angelaki (2013) PLoS Comp Bio</div></td>
           <td class="anatomy-cell">Nodulus/uvula; deterministic stand-in for Bayesian translation prior</td>
@@ -288,15 +289,6 @@ tr:last-child { border-bottom: none; }
           <td class="units">1/s</td>
           <td class="desc-cell"><p>Visual-velocity pull gain on v_lin. Fuses scene translational flow with the vestibular integration of otolith. In dark the pull is toward 0, suppressing drift during pure rotation (OVAR, tilt suppression).</p></td>
           <td class="anatomy-cell">MST translational flow → vestibular nuclei</td>
-          <td></td>
-        </tr>
-
-        <tr>
-          <td class="param-name">K_he_disp<span class="review">needs review</span></td>
-          <td><span class="default">0</span></td>
-          <td class="units">1/s</td>
-          <td class="desc-cell"><p>Disparity-rate visual evidence gain on v_lin[z]. In a uniform/depthless scene this is 0 (no parallax); in real depth-structured scenes it provides parallax-based heading-z evidence. Gated by scene_visible.</p></td>
-          <td class="anatomy-cell">Disparity-rate visual evidence on heading-z</td>
           <td></td>
         </tr>
         </tbody>
@@ -657,6 +649,48 @@ tr:last-child { border-bottom: none; }
       </table>
     </div>
 
+    <div class="subsection" id="brainparams-ungrouped">
+      <h3>Ungrouped <small style="font-size:11px;font-weight:400;color:#888">(3 fields)</small></h3>
+      <table class="param-table">
+        <thead><tr>
+          <th style="width:160px">Parameter</th>
+          <th style="width:90px">Default</th>
+          <th style="width:60px">Units</th>
+          <th>Description</th>
+          <th style="width:170px">Anatomical locus</th>
+          <th style="width:200px">Disorders / notable values</th>
+        </tr></thead>
+        <tbody>
+        <tr>
+          <td class="param-name">w_canal_gate<span class="todo">TODO: enrich schema</span></td>
+          <td><span class="default">2</span></td>
+          <td class="units"></td>
+          <td class="desc-cell"><p>canal-gating threshold (deg/s) — Laurens 2017 Bayesian disambiguation extension. Used by the dynamic gate ρ = |ω × ĝ| / w_canal_gate; K_grav_eff = K_grav · √(1+ρ), K_lin_eff = K_lin / √(1+ρ). Lower threshold → gating engages at slower rotations. Set to 1e6 to disable for pure Laurens-2011 testing.</p></td>
+          <td class="anatomy-cell"></td>
+          <td></td>
+        </tr>
+
+        <tr>
+          <td class="param-name">listing_gain<span class="todo">TODO: enrich schema</span></td>
+          <td><span class="default">1</span></td>
+          <td class="units"></td>
+          <td class="desc-cell"><p>master gain on the Listing's corrections (cyc_torsion_vel and cyclo_verg_rate). Set to 0 to disable both for debugging.</p></td>
+          <td class="anatomy-cell"></td>
+          <td></td>
+        </tr>
+
+        <tr>
+          <td class="param-name">K_phasic_tvor<span class="todo">TODO: enrich schema</span></td>
+          <td><span class="default">1</span></td>
+          <td class="units"></td>
+          <td class="desc-cell"><p>T-VOR direct (phasic) pathway gain (s) — multiplies a_lin in the cross-product formula to give a fast onset velocity that bypasses the heading-estimator (v_lin) integrator. Implicit units: s, since it converts a_lin (m/s²) into a v-equivalent (m/s) for the cross product. ~0.1–0.3 matches the ~100 ms short-latency T-VOR onset reported by Paige & Tomko (1991), Angelaki et al. (1999). Set 0 to disable direct pathway (integrator-only T-VOR).</p></td>
+          <td class="anatomy-cell"></td>
+          <td></td>
+        </tr>
+        </tbody>
+      </table>
+    </div>
+
     <div class="subsection" id="brainparams-listing">
       <h3>Listing <small style="font-size:11px;font-weight:400;color:#888">(2 fields)</small></h3>
       <table class="param-table">
@@ -755,7 +789,7 @@ tr:last-child { border-bottom: none; }
         <tbody>
         <tr>
           <td class="param-name">K_phasic_verg</td>
-          <td><span class="default">4</span></td>
+          <td><span class="default">1</span></td>
           <td class="units">1/s</td>
           <td class="desc-cell"><p>Direct phasic vergence gain. Provides the ~150–200 ms fast onset (Rashbass & Westheimer 1961), achieved via plant cancellation.</p><div class="refs">Rashbass & Westheimer (1961) J Physiol 159:339</div></td>
           <td class="anatomy-cell">Vergence direct phasic pathway</td>
@@ -763,38 +797,38 @@ tr:last-child { border-bottom: none; }
         </tr>
 
         <tr>
-          <td class="param-name">K_verg_fast</td>
-          <td><span class="default">1.6</span></td>
+          <td class="param-name">K_verg</td>
+          <td><span class="default">2.5</span></td>
           <td class="units">1/s</td>
-          <td class="desc-cell"><p>Fast vergence integrator gain. Static gain G_fast = K·tau ≈ 8 matches Read & Schor (2022) Table 1.</p><div class="refs">Schor (1979) Vision Res 19:1359 · Hung & Semmlow (1980) · Read & Schor (2022) J Vision 22(9):4</div></td>
-          <td class="anatomy-cell">Fast vergence integrator (cerebellar/midbrain)</td>
+          <td class="desc-cell"><p>Vergence integrator gain. Static gain G = K·tau ≈ 8 matches Read & Schor (2022) Table 1. (Was K_verg_fast / Schor's Kf.)</p><div class="refs">Schor (1979) Vision Res 19:1359 · Hung & Semmlow (1980) · Read & Schor (2022) J Vision 22(9):4</div></td>
+          <td class="anatomy-cell">Vergence integrator (cerebellar/midbrain)</td>
           <td></td>
         </tr>
 
         <tr>
-          <td class="param-name">tau_verg_fast</td>
+          <td class="param-name">K_verg_tonic</td>
+          <td><span class="default">1.5</span></td>
+          <td class="units">1/s</td>
+          <td class="desc-cell"><p>Tonic vergence integrator gain. G_tonic = K·tau ≈ 6 boosts DC gain so steady-state fixation disparity stays small. (Was K_verg_slow / Schor's Ks.)</p></td>
+          <td class="anatomy-cell">Tonic vergence integrator (slow adapter)</td>
+          <td></td>
+        </tr>
+
+        <tr>
+          <td class="param-name">tau_verg</td>
           <td><span class="default">5</span></td>
           <td class="units">s</td>
-          <td class="desc-cell"><p>Fast vergence integrator TC. Schor 1979 / Hung & Semmlow 1980: ≈ 5 s. Sub-second to ~2 s tracking.</p></td>
-          <td class="anatomy-cell">Fast vergence integrator (cerebellar/midbrain)</td>
+          <td class="desc-cell"><p>Vergence integrator TC. Schor 1979 / Hung & Semmlow 1980: ≈ 5 s. Sub-second to ~2 s tracking. (Was tau_verg_fast / Schor's Tf.)</p></td>
+          <td class="anatomy-cell">Vergence integrator (cerebellar/midbrain)</td>
           <td></td>
         </tr>
 
         <tr>
-          <td class="param-name">K_verg_slow</td>
-          <td><span class="default">0.1</span></td>
-          <td class="units">1/s</td>
-          <td class="desc-cell"><p>Slow integrator gain. G_slow = K·tau ≈ 6 boosts DC gain so steady-state fixation disparity stays small.</p></td>
-          <td class="anatomy-cell">Slow tonic vergence adapter</td>
-          <td></td>
-        </tr>
-
-        <tr>
-          <td class="param-name">tau_verg_slow</td>
-          <td><span class="default">60</span></td>
+          <td class="param-name">tau_verg_tonic</td>
+          <td><span class="default">20</span></td>
           <td class="units">s</td>
-          <td class="desc-cell"><p>Slow tonic adapter TC. Minutes-scale dark-vergence drift (Schor 1979).</p></td>
-          <td class="anatomy-cell">Slow tonic vergence adapter</td>
+          <td class="desc-cell"><p>Tonic vergence integrator TC. Minutes-scale dark-vergence drift (Schor 1979). (Was tau_verg_slow / Schor's Ts.)</p></td>
+          <td class="anatomy-cell">Tonic vergence integrator (slow adapter)</td>
           <td></td>
         </tr>
 
@@ -818,7 +852,7 @@ tr:last-child { border-bottom: none; }
 
         <tr>
           <td class="param-name">g_svbn_conv</td>
-          <td><span class="default">60</span></td>
+          <td><span class="default">30</span></td>
           <td class="units">deg/s</td>
           <td class="desc-cell"><p>SVBN convergence asymptotic burst velocity. Zee (1992) Table 1: pure convergence peaks 41–58 deg/s for 10° amplitude. Fires only during OPN pause (z_act ≈ 1).</p><div class="refs">Zee, FitzGibbon, Optican (1992)</div></td>
           <td class="anatomy-cell">Saccade-vergence burst neurons (SVBN) — convergence</td>
@@ -864,32 +898,8 @@ tr:last-child { border-bottom: none; }
       </table>
     </div>
 
-    <div class="subsection" id="brainparams-ungrouped">
-      <h3>Ungrouped <small style="font-size:11px;font-weight:400;color:#888">(1 field)</small></h3>
-      <table class="param-table">
-        <thead><tr>
-          <th style="width:160px">Parameter</th>
-          <th style="width:90px">Default</th>
-          <th style="width:60px">Units</th>
-          <th>Description</th>
-          <th style="width:170px">Anatomical locus</th>
-          <th style="width:200px">Disorders / notable values</th>
-        </tr></thead>
-        <tbody>
-        <tr>
-          <td class="param-name">K_phasic_tvor<span class="todo">TODO: enrich schema</span></td>
-          <td><span class="default">1</span></td>
-          <td class="units"></td>
-          <td class="desc-cell"><p>T-VOR direct (phasic) pathway gain (s) — multiplies a_lin in the cross-product formula to give a fast onset velocity that bypasses the heading-estimator (v_lin) integrator. Implicit units: s, since it converts a_lin (m/s²) into a v-equivalent (m/s) for the cross product. ~0.1–0.3 matches the ~100 ms short-latency T-VOR onset reported by Paige & Tomko (1991), Angelaki et al. (1999). Set 0 to disable direct pathway (integrator-only T-VOR).</p></td>
-          <td class="anatomy-cell"></td>
-          <td></td>
-        </tr>
-        </tbody>
-      </table>
-    </div>
-
     <div class="subsection" id="brainparams-tvor">
-      <h3>Tvor <small style="font-size:11px;font-weight:400;color:#888">(7 fields)</small></h3>
+      <h3>Tvor <small style="font-size:11px;font-weight:400;color:#888">(6 fields)</small></h3>
       <table class="param-table">
         <thead><tr>
           <th style="width:160px">Parameter</th>
@@ -933,15 +943,6 @@ tr:last-child { border-bottom: none; }
           <td class="units">s</td>
           <td class="desc-cell"><p>T-VOR low-pass TC for v_lin. State currently inert (post velocity-output refactor); value retained for state-shape compatibility.</p></td>
           <td class="anatomy-cell">T-VOR pathway low-pass (legacy state)</td>
-          <td></td>
-        </tr>
-
-        <tr>
-          <td class="param-name">K_visual_verg<span class="review">needs review</span></td>
-          <td><span class="default">0</span></td>
-          <td class="units">—</td>
-          <td class="desc-cell"><p>Visual evidence gain pulling T-VOR vergence rate toward per-eye scene-flow differential. 0 = disabled (default); enable for translation experiments in lit scenes with depth structure.</p></td>
-          <td class="anatomy-cell">Visual evidence on T-VOR vergence rate</td>
           <td></td>
         </tr>
 
@@ -998,7 +999,7 @@ tr:last-child { border-bottom: none; }
 
         <tr>
           <td class="param-name">tau_acc_fast</td>
-          <td><span class="default">2.5</span></td>
+          <td><span class="default">5</span></td>
           <td class="units">s</td>
           <td class="desc-cell"><p>Fast neural integrator TC. Stability requires τ_fast ≥ 2·G_fast·τ_plant ≈ 2.5 s.</p><div class="refs">Read & Schor (2022)</div></td>
           <td class="anatomy-cell">Fast accommodation neural integrator</td>
@@ -1007,7 +1008,7 @@ tr:last-child { border-bottom: none; }
 
         <tr>
           <td class="param-name">tau_acc_slow</td>
-          <td><span class="default">30</span></td>
+          <td><span class="default">20</span></td>
           <td class="units">s</td>
           <td class="desc-cell"><p>Slow tonic adaptation TC.</p><div class="refs">Schor (1979)</div></td>
           <td class="anatomy-cell">Slow tonic accommodation adapter</td>
@@ -1016,7 +1017,7 @@ tr:last-child { border-bottom: none; }
 
         <tr>
           <td class="param-name">K_acc_fast</td>
-          <td><span class="default">3.2</span></td>
+          <td><span class="default">2.5</span></td>
           <td class="units">1/s</td>
           <td class="desc-cell"><p>Fast blur gain = G_fast / tau_fast = 8 / 2.5. Closed-loop G_fast = K_acc_fast · tau_acc_fast = 8 (Read & Schor 2022).</p></td>
           <td class="anatomy-cell">Fast blur → accommodation gain</td>
@@ -1025,7 +1026,7 @@ tr:last-child { border-bottom: none; }
 
         <tr>
           <td class="param-name">K_acc_slow</td>
-          <td><span class="default">0.17</span></td>
+          <td><span class="default">1.5</span></td>
           <td class="units">1/s</td>
           <td class="desc-cell"><p>Slow integration gain = G_slow / tau_slow = 5 / 30.</p></td>
           <td class="anatomy-cell">Slow accommodation integration gain</td>
@@ -1043,7 +1044,7 @@ tr:last-child { border-bottom: none; }
 
         <tr>
           <td class="param-name">CA_C</td>
-          <td><span class="default">0.08</span></td>
+          <td><span class="default">0</span></td>
           <td class="units">D/pd</td>
           <td class="desc-cell"><p>CA/C ratio. Schor & Kotulak 1986 report ≈ 0.5 D/MA (meter-angle); at IPD 64 mm that's ≈ 0.08 D/pd. Loop product AC_A·CA_C ≈ 0.4 D/D < 1 keeps the cross-loop stable.</p><div class="refs">Schor & Kotulak (1986) · Schor (1992) J Opt Soc Am</div></td>
           <td class="anatomy-cell">Convergence-accommodation cross-link</td>
@@ -1115,7 +1116,7 @@ tr:last-child { border-bottom: none; }
   </section>
     
   <section class="section" id="sensoryparams">
-    <h2>SensoryParams <small style="font-size:12px;font-weight:400;color:#888">(21 fields)</small></h2>
+    <h2>SensoryParams <small style="font-size:12px;font-weight:400;color:#888">(24 fields)</small></h2>
     <p class="desc">Peripheral sensor parameters — canal/otolith dynamics, visual delay, retinal noise, IPD.</p>
     
     <div class="subsection" id="sensoryparams-canals">
@@ -1267,7 +1268,7 @@ tr:last-child { border-bottom: none; }
         <tbody>
         <tr>
           <td class="param-name">sigma_canal</td>
-          <td><span class="default">0.5</span></td>
+          <td><span class="default">1</span></td>
           <td class="units">deg/s</td>
           <td class="desc-cell"><p>Canal afferent noise std. Realistic ~1–3 deg/s. Filtered heavily by VS/NI/plant before reaching the eye.</p></td>
           <td class="anatomy-cell">Canal afferent noise</td>
@@ -1294,7 +1295,7 @@ tr:last-child { border-bottom: none; }
 
         <tr>
           <td class="param-name">tau_pos_drift</td>
-          <td><span class="default">0.3</span></td>
+          <td><span class="default">0.2</span></td>
           <td class="units">s</td>
           <td class="desc-cell"><p>OU TC for the position drift — sets how slowly retinal position error wanders, controlling inter-microsaccade interval.</p></td>
           <td class="anatomy-cell">OU drift correlation TC</td>
@@ -1303,10 +1304,52 @@ tr:last-child { border-bottom: none; }
 
         <tr>
           <td class="param-name">sigma_vel</td>
-          <td><span class="default">0.2</span></td>
+          <td><span class="default">1</span></td>
           <td class="units">deg/s</td>
           <td class="desc-cell"><p>Target velocity noise std — creates pursuit-like slow drift.</p></td>
           <td class="anatomy-cell">Target velocity noise (drives pursuit integrator)</td>
+          <td></td>
+        </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="subsection" id="sensoryparams-ungrouped">
+      <h3>Ungrouped <small style="font-size:11px;font-weight:400;color:#888">(3 fields)</small></h3>
+      <table class="param-table">
+        <thead><tr>
+          <th style="width:160px">Parameter</th>
+          <th style="width:90px">Default</th>
+          <th style="width:60px">Units</th>
+          <th>Description</th>
+          <th style="width:170px">Anatomical locus</th>
+          <th style="width:200px">Disorders / notable values</th>
+        </tr></thead>
+        <tbody>
+        <tr>
+          <td class="param-name">tau_canal_drift<span class="todo">TODO: enrich schema</span></td>
+          <td><span class="default">0.005</span></td>
+          <td class="units"></td>
+          <td class="desc-cell"><p>OU TC for canal noise (s); essentially band-limited white</p></td>
+          <td class="anatomy-cell"></td>
+          <td></td>
+        </tr>
+
+        <tr>
+          <td class="param-name">tau_slip_drift<span class="todo">TODO: enrich schema</span></td>
+          <td><span class="default">0.005</span></td>
+          <td class="units"></td>
+          <td class="desc-cell"><p>OU TC for slip noise (s)</p></td>
+          <td class="anatomy-cell"></td>
+          <td></td>
+        </tr>
+
+        <tr>
+          <td class="param-name">tau_vel_drift<span class="todo">TODO: enrich schema</span></td>
+          <td><span class="default">0.005</span></td>
+          <td class="units"></td>
+          <td class="desc-cell"><p>OU TC for retinal-vel noise (s); essentially band-limited white</p></td>
+          <td class="anatomy-cell"></td>
           <td></td>
         </tr>
         </tbody>

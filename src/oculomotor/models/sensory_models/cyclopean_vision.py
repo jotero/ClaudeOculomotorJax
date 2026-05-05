@@ -116,10 +116,12 @@ def binocular_fusion_policy(target_pos_L, target_vel_L, target_vis_L,
     raw_disp = bino_raw * (target_pos_L - target_pos_R)
 
     total_demand_h = raw_disp[0] + ec_verg[0]
+    total_demand_v = raw_disp[1] + ec_verg[1]
+    total_demand_t = raw_disp[2] + ec_verg[2]
     gate_conv = jax.nn.sigmoid(100.0 * (sensory_params.npc      - total_demand_h))
-    gate_div  = jax.nn.sigmoid(100.0 * (total_demand_h          + sensory_params.div_max))
-    gate_vert = jax.nn.sigmoid(100.0 * (sensory_params.vert_max - jnp.abs(raw_disp[1])))
-    gate_tors = jax.nn.sigmoid(100.0 * (sensory_params.tors_max - jnp.abs(raw_disp[2])))
+    gate_div  = jax.nn.sigmoid(100.0 * (sensory_params.div_max  - total_demand_h))
+    gate_vert = jax.nn.sigmoid(100.0 * (sensory_params.vert_max - jnp.abs(total_demand_v)))
+    gate_tors = jax.nn.sigmoid(100.0 * (sensory_params.tors_max - jnp.abs(total_demand_t)))
     target_fusable = gate_conv * gate_div * gate_vert * gate_tors
 
     dom_L = 1.0 - sensory_params.eye_dominant
@@ -254,7 +256,8 @@ def step(x_vis,
         sensory_params.v_max_target_vel)
 
     # ── Advance cascade ───────────────────────────────────────────────────────
-    tau_vis             = sensory_params.tau_vis
+    tau_vis           = sensory_params.tau_vis
+    tau_vis_disparity = sensory_params.tau_vis_disparity
     x_scene_angular     = x_vis[                            :  _N_PER_SIG               ]
     x_scene_linear      = x_vis[_OFF_SCENE_LINEAR           : _OFF_TARGET_POS           ]
     x_target_pos        = x_vis[_OFF_TARGET_POS             : _OFF_TARGET_VEL           ]
@@ -271,7 +274,7 @@ def step(x_vis,
         delay_cascade_step(x_scene_linear,     scene_linear_vel,      tau_vis),
         delay_cascade_step(x_target_pos,       target_pos,            tau_vis),
         delay_cascade_step(x_target_vel,       target_slip,           tau_vis),
-        delay_cascade_step(x_target_disp,      target_disparity,      tau_vis),
+        delay_cascade_step(x_target_disp,      target_disparity,      tau_vis_disparity),
         delay_cascade_step(x_scene_vis,        scene_visible,         tau_vis),
         delay_cascade_step(x_target_vis,       target_visible,        tau_vis),
         delay_cascade_step(x_target_motion,    target_motion_visible, tau_vis),

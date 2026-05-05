@@ -29,8 +29,8 @@ One efference copy cascade (120 states), two uses with different gates:
 Vergence (Schor 1986 dual integrator + Robinson direct phasic path):
     e_disp = pos_L − pos_R   (binocular disparity, deg)
     u_phasic = K_phasic_verg · e_disp                     (deg/s, no state)
-    dx_fast  = −x_fast / τ_verg_fast + K_verg_fast · e_disp
-    dx_slow  = −x_slow / τ_verg_slow + K_verg_slow · e_disp
+    dx_v       = −x_v / τ_verg + K_verg · e_disp                       (vergence integrator)
+    dx_v_tonic = −x_v_tonic / τ_verg_tonic + K_verg_tonic · e_disp     (tonic vergence integrator)
     u_verg   = tonic_verg + x_fast + x_slow + τ_vp · u_phasic
     motor_cmd_L = motor_cmd_version + ½ · u_verg   (L eye converges rightward)
     motor_cmd_R = motor_cmd_version − ½ · u_verg   (R eye converges leftward)
@@ -337,10 +337,12 @@ class BrainParams(NamedTuple):
     #   Kf (phasic) = 2.5, Ks (tonic) = 1.5  (Schor 1999 Table 1)
     #   Tf (phasic) = 5 s, Ts (tonic) = 20 s
     K_phasic_verg:         float        = 1.0             # Kb (direct path); set to NI unit gain
-    K_verg_fast:           float        = 2.5             # Kf (phasic gain)  [Schor 1999 Table 1]
-    K_verg_slow:           float        = 1.5             # Ks (tonic gain)   [Schor 1999 Table 1]
-    tau_verg_fast:         float        = 5.0             # phasic Tf (s)     [Schor 1999 Table 1]
-    tau_verg_slow:         float        = 20.0            # tonic  Ts (s)     [Schor 1999 Table 1]
+    K_verg:                float        = 1.25            # vergence integrator gain (was 2.5; halved to compensate
+                                                            # for the doubled disparity cascade delay so loop-gain·delay
+                                                            # product stays in a stable closed-loop range)
+    K_verg_tonic:          float        = 1.5             # tonic vergence integrator gain (was K_verg_slow / Ks in Schor 1999)
+    tau_verg:              float        = 5.0             # vergence integrator TC (s) (was tau_verg_fast / Tf in Schor 1999)
+    tau_verg_tonic:        float        = 20.0            # tonic vergence integrator TC (s) (was tau_verg_slow / Ts in Schor 1999)
     tau_vp:                float        = 0.15            # legacy alias of tau_p; va.step uses brain_params.tau_p directly
     tonic_verg:            float        = 3.67            # tonic (brainstem) vergence baseline (deg); resting dark vergence
                                                           # = 2·arctan(IPD/2 / 1 m); recomputed from IPD in default_params()
@@ -420,12 +422,12 @@ class BrainParams(NamedTuple):
                                           # At 40 cm (2.5 D): AC/A drive ≈ 5×0.573×2.5 ≈ 7.2°
                                           # At   6 m (0.17 D): drive ≈ 0.5° — explains why
                                           # IXT decompensates preferentially at distance.
-    CA_C:                  float = 0.0    # CA/C ratio (diopters / prism diopter). Literature value
-                                          # ≈ 0.08 D/pd (Schor & Kotulak 1986: 0.5 D/MA × 1 MA / 6.4 pd at
-                                          # IPD 64 mm; consistent with Schor 1992, Daum 1983).
-                                          # Set to 0 by default until the model gains a pinhole/DoG mechanism
-                                          # for open-loop accommodation — without one, the closed defocus loop
-                                          # clamps accommodation near optical demand and a literature-valued
+    CA_C:                  float = 0.08   # CA/C ratio (diopters / prism diopter). Literature value
+                                          # (Schor & Kotulak 1986: 0.5 D/MA × 1 MA / 6.4 pd at IPD 64 mm;
+                                          # consistent with Schor 1992, Daum 1983). Behavioral effect is
+                                          # small in our model because the closed defocus loop clamps
+                                          # accommodation near optical demand — without an open-loop
+                                          # mechanism (pinhole/DoG), measured CA/C is suppressed ~10×
                                           # CA/C only contributes a small, hard-to-measure perturbation.
                                           # When enabled (≈0.08): drives accommodation when vergence is
                                           # disparity-driven; AC_A·CA_C ≈ 0.4 D/D < 1 keeps the cross-loop stable.
@@ -569,7 +571,7 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
     # x_verg layout is [x_fast(3) | x_slow(3) | x_copy(3)]; x_slow now carries the
     # tonic_verg setpoint baseline directly (Schor 1999 adapter form), so absolute
     # vergence = x_slow[H] at SS.  At rest, x_slow[H] = tonic_verg ≈ 3.67° ≈ 1 m.
-    current_vergence_yaw = x_va[3]   # x_slow[H] = vergence H component
+    current_vergence_yaw = x_va[3]   # x_verg_tonic[H] = tonic vergence H component
     omega_tvor, verg_rate_tvor = tv.step(
         jnp.concatenate([v_lin,
                          a_lin_est,

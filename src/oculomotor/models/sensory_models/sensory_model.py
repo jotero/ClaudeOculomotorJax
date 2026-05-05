@@ -84,6 +84,11 @@ class SensoryParams(NamedTuple):
 
     # Visual pathway
     tau_vis:            float       = 0.08   # gamma-cascade mean delay (s); Lisberger & Movshon 1999
+    tau_vis_disparity:  float       = 0.16   # disparity-specific cascade delay (s). Disparity processing
+                                              # is slower than position/motion (V1 stereo correspondence
+                                              # + MT/MST → vergence pathway, ~150–200 ms vs ~80–100 ms for
+                                              # OKR/pursuit). Same number of cascade stages, just slower
+                                              # per-stage rate (k = N/τ).
     visual_field_limit: float       = 90.0   # retinal eccentricity limit (deg); ~90° monocular field
     k_visual_field:     float       = 1.0    # sigmoid steepness for visual field gate (1/deg)
 

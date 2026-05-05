@@ -649,40 +649,41 @@ brain.K_phasic_verg:
   references:
     - "Rashbass & Westheimer (1961) J Physiol 159:339"
 
-brain.K_verg_fast:
+brain.K_verg:
   group: vergence
   units: "1/s"
-  anatomy: "Fast vergence integrator (cerebellar/midbrain)"
+  anatomy: "Vergence integrator (cerebellar/midbrain)"
   description: |
-    Fast vergence integrator gain. Static gain G_fast = K·tau ≈ 8 matches
-    Read & Schor (2022) Table 1.
+    Vergence integrator gain. Static gain G = K·tau ≈ 8 matches
+    Read & Schor (2022) Table 1. (Was K_verg_fast / Schor's Kf.)
   references:
     - "Schor (1979) Vision Res 19:1359"
     - "Hung & Semmlow (1980)"
     - "Read & Schor (2022) J Vision 22(9):4"
 
-brain.tau_verg_fast:
+brain.tau_verg:
   group: vergence
   units: "s"
-  anatomy: "Fast vergence integrator (cerebellar/midbrain)"
+  anatomy: "Vergence integrator (cerebellar/midbrain)"
   description: |
-    Fast vergence integrator TC. Schor 1979 / Hung & Semmlow 1980: ≈ 5 s.
-    Sub-second to ~2 s tracking.
+    Vergence integrator TC. Schor 1979 / Hung & Semmlow 1980: ≈ 5 s.
+    Sub-second to ~2 s tracking. (Was tau_verg_fast / Schor's Tf.)
 
-brain.K_verg_slow:
+brain.K_verg_tonic:
   group: vergence
   units: "1/s"
-  anatomy: "Slow tonic vergence adapter"
+  anatomy: "Tonic vergence integrator (slow adapter)"
   description: |
-    Slow integrator gain. G_slow = K·tau ≈ 6 boosts DC gain so steady-state
-    fixation disparity stays small.
+    Tonic vergence integrator gain. G_tonic = K·tau ≈ 6 boosts DC gain so
+    steady-state fixation disparity stays small. (Was K_verg_slow / Schor's Ks.)
 
-brain.tau_verg_slow:
+brain.tau_verg_tonic:
   group: vergence
   units: "s"
-  anatomy: "Slow tonic vergence adapter"
+  anatomy: "Tonic vergence integrator (slow adapter)"
   description: |
-    Slow tonic adapter TC. Minutes-scale dark-vergence drift (Schor 1979).
+    Tonic vergence integrator TC. Minutes-scale dark-vergence drift (Schor 1979).
+    (Was tau_verg_slow / Schor's Ts.)
 
 brain.tau_vp:
   group: vergence

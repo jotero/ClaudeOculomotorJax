@@ -66,7 +66,7 @@ def _make_patients():
             # Clinical: exo at near, remote NPC, reduced PFV at near.
             'color': '#1f77b4',
             'params': with_brain(PARAMS_DEFAULT,
-                                 K_phasic_verg=1.5, K_verg_fast=0.5,
+                                 K_phasic_verg=1.5, K_verg=0.5,
                                  g_svbn_conv=25.0),
         },
         'Convergence excess (accomm. ET)': {
