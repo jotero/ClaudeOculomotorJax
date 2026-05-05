@@ -89,7 +89,7 @@ def _stim_twin(ax, t, pos, vel, pos_label, vel_label, pos_color, vel_color):
 
 def _ocr(show):
     """OCR for a sweep of tilt angles: time traces + SS torsion vs tilt scatter."""
-    TILTS_DEG = [5.0, 10.0, 20.0, 30.0, 45.0, 60.0, 75.0, 90.0]
+    TILTS_DEG = [15.0, 30.0, 45.0, 90.0]
     TILT_VEL  = 60.0
     HOLD_T    = 10.0
 
@@ -777,28 +777,25 @@ def _canal_vel_3d(states):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _ocr_cascade(show):
-    """OCR signal cascade — 30° left-ear-down tilt, 30 s hold.
+    """OCR signal cascade — 30° roll tilt, 15 s hold, 3 visual conditions.
 
-    4-column comparison: scene+target on / target only / scene only / dark.
-    Shows how visual conditions affect VS torsion and downstream cascade.
+    Compares OCR cascade across visual contexts (all same roll tilt stimulus):
+        1. Dark              — scene off, target off
+        2. Scene on          — scene visible, no fixation target
+        3. Scene + target on — scene visible, fixation target present
 
     Rows (top→bottom):
-        1.  Head roll velocity (stimulus — same all conditions)
-        2.  OCR = -g_ocr × g_est[0] (deg)
-        3.  VS net torsion (deg/s)
-        4.  −VS → NI input (deg/s)
-        5.  Total NI input (numerical: d/dt NI + (1/τ_i)·NI, deg/s)
-        6.  NI net torsion (deg)
-        7.  Motor cmd torsion = NI + OCR (deg)
-        8.  L eye torsion (deg)
-        9.  L eye yaw (deg)
-        10. L eye pitch (deg)
-        11. SG z_sac (saccade accumulator)
+        1. Head roll velocity (stimulus — same all conditions)
+        2. OCR = -g_ocr × g_est[0] (deg)
+        3. VS net torsion (deg/s) — read by NI as -VS
+        4. L (blue) vs R (orange) eye torsion (deg)
+        5. Eye SPV torsion (deg/s) with VS and -canal_ft overlay
     """
     TILT_DEG = 30.0
     TILT_VEL = 20.0
-    HOLD_T   = 30.0
+    HOLD_T   = 15.0
     tilt_dur = TILT_DEG / TILT_VEL
+    AXIS     = 2   # roll
 
     # Cascade trace — disable all sensory + accumulator noise so the curves are clean.
     from oculomotor.sim.simulator import with_sensory
@@ -812,50 +809,48 @@ def _ocr_cascade(show):
     hv_roll = np.where(t_np < tilt_dur, TILT_VEL, 0.0)
     head_km = km.build_kinematics(t_np, rot_vel=_pad3(hv_roll, 'roll'))
     t_rel   = t_np - tilt_dur
-    tau_i   = float(params.brain.tau_i)
 
+    # 3 visual condition columns; same roll tilt stimulus in all.
     COLUMNS = [
-        ('Roll (tilt)',   2, km.build_kinematics(t_np, rot_vel=_pad3(hv_roll, 'roll'))),
-        ('Yaw (horiz)',   0, km.build_kinematics(t_np, rot_vel=_pad3(hv_roll, 'yaw'))),
-        ('Pitch (vert)',  1, km.build_kinematics(t_np, rot_vel=_pad3(hv_roll, 'pitch'))),
+        ('Dark',              np.zeros(T), np.zeros(T)),
+        ('Scene on',          np.ones(T),  np.zeros(T)),
+        ('Scene + target on', np.ones(T),  np.ones(T)),
     ]
     COL_COLORS = ['#2166ac', '#e08214', '#c51b7d']
 
-    def _extract(st, axis):
+    def _extract(st):
         grav       = np.array(st.brain[:, _IDX_GRAV])
-        ocr_sig    = -G_OCR * grav[:, 0]              # always torsion (g_est x-component)
-        vs_a       = vs_net(st)[:, axis]
-        ni_a       = ni_net(st)[:, axis]
-        spv_a      = extract_spv_states(st, t_np)[:, axis]
+        ocr_sig    = -G_OCR * grav[:, 0]              # torsion (g_est x-component)
+        vs_a       = vs_net(st)[:, AXIS]
+        spv_a      = extract_spv_states(st, t_np)[:, AXIS]
         x2         = np.array(st.sensory[:, _IDX_C])[:, 6:12]
-        canal_ft_a = float(params.brain.g_vor) * (np.array(CANAL_PINV) @ x2.T)[axis, :]
-        plant_arr = np.array(st.plant)
+        canal_ft_a = float(params.brain.g_vor) * (np.array(CANAL_PINV) @ x2.T)[AXIS, :]
+        plant_arr  = np.array(st.plant)
         return dict(
-            ocr=ocr_sig, vs_neg=-vs_a, ni=ni_a,
-            eye_L=plant_arr[:, axis],
-            eye_R=plant_arr[:, 3 + axis],
+            ocr=ocr_sig, vs_neg=-vs_a,
+            eye_L=plant_arr[:, AXIS],
+            eye_R=plant_arr[:, 3 + AXIS],
             spv_tor=spv_a, canal_ft=canal_ft_a,
         )
 
     results = []
-    for _lbl, axis, head in COLUMNS:
+    for _lbl, scene_arr, tgt_arr in COLUMNS:
         st = simulate(params, t_np,
-                      head=head,
-                      scene_present_array=np.ones(T),
-                      target_present_array=np.ones(T),
+                      head=head_km,
+                      scene_present_array=scene_arr,
+                      target_present_array=tgt_arr,
                       sim_config=SimConfig(warmup_s=0.0),
                       return_states=True)
-        results.append(_extract(st, axis))
+        results.append(_extract(st))
 
-    ocr_ss = float(results[0]['ocr'][-1])
+    ocr_ss = float(results[-1]['ocr'][-1])   # SS OCR signal (same in all conds)
 
     PANELS = [
-        ('_hv',    'Head roll vel (deg/s)',             '#555555'),
-        ('ocr',    'OCR = -g_ocr×g_est[0] (deg)',       '#d6604d'),
-        ('vs_neg', '-VS → NI input (deg/s)',           '#92c5de'),
-        ('ni',     'NI net torsion (deg)',             '#4dac26'),
+        ('_hv',    'Head roll vel (deg/s)',              '#555555'),
+        ('ocr',    'OCR = -g_ocr×g_est[0] (deg)',        '#d6604d'),
+        ('vs_neg', '-VS → NI input (deg/s)',             '#92c5de'),
         ('eye_LR', 'L (blue) vs R (orange) eye torsion (deg)', '#1a9641'),
-        ('spv_tor','Eye SPV torsion (deg/s)',          '#e08214'),
+        ('spv_tor','Eye SPV torsion (deg/s)',            '#e08214'),
     ]
     N_ROWS = len(PANELS)
     N_COLS = len(COLUMNS)
@@ -864,30 +859,28 @@ def _ocr_cascade(show):
                              figsize=(4.5 * N_COLS, 2.1 * N_ROWS),
                              sharex=True, squeeze=False)
     fig.suptitle(
-        f'OCR cascade — {TILT_DEG:.0f}° tilt, {HOLD_T:.0f} s hold — roll vs. yaw vs. pitch\n'
-        f'LIT (scene + target on), noiseless cascade  |  '
-        f'g_ocr={G_OCR:.2f}  |  roll SS OCR ≈ {ocr_ss:.2f}°',
+        f'OCR cascade — {TILT_DEG:.0f}° roll tilt, {HOLD_T:.0f} s hold — visual-condition comparison\n'
+        f'Noiseless cascade  |  g_ocr={G_OCR:.2f}  |  expected SS OCR ≈ {ocr_ss:.2f}°',
         fontsize=11, fontweight='bold')
 
-    for col_idx, ((col_label, axis, _head), col_color, res) in enumerate(
+    for col_idx, ((col_label, _scene, _tgt), col_color, res) in enumerate(
             zip(COLUMNS, COL_COLORS, results)):
         axes[0, col_idx].set_title(col_label, fontsize=10, fontweight='bold', color=col_color)
 
         for row_idx, (key, ylabel, row_color) in enumerate(PANELS):
             ax = axes[row_idx, col_idx]
             if key == 'eye_LR':
-                # Plot L (blue) and R (orange) eye torsion to expose any vergence
-                ax.plot(t_rel, res['eye_L'], color='#1f77b4', lw=0.9, label='L' if col_idx == 0 else None)
-                ax.plot(t_rel, res['eye_R'], color='#ff7f0e', lw=0.9, label='R' if col_idx == 0 else None)
+                ax.plot(t_rel, res['eye_L'], color='#1f77b4', lw=0.9,
+                        label='L' if col_idx == 0 else None)
+                ax.plot(t_rel, res['eye_R'], color='#ff7f0e', lw=0.9,
+                        label='R' if col_idx == 0 else None)
                 if col_idx == 0:
                     ax.legend(fontsize=5, loc='upper right')
-                sig = res['eye_L']   # for the trailing annotation
+                sig = res['eye_L']
             else:
                 sig = hv_roll if key == '_hv' else res[key]
                 ax.plot(t_rel, sig, color=col_color, lw=0.9)
             if key == 'spv_tor':
-                # Flip VS sign only so VS and canal sit on opposite signs and can
-                # be visually compared (canal FT keeps its original −canal_ft form).
                 ax.plot(t_rel, -res['vs_neg'], color='#2166ac', lw=0.7, ls='--', alpha=0.8,
                         label='VS' if col_idx == 0 else None)
                 ax.plot(t_rel, -res['canal_ft'], color='#d6604d', lw=0.7, ls=':', alpha=0.8,
@@ -903,11 +896,12 @@ def _ocr_cascade(show):
             if col_idx == 0:
                 ax.set_ylabel(ylabel, fontsize=6.5, color=row_color)
 
-        # Mark OCR target on eye_L (row 4) for roll column only
+        # Mark expected OCR SS on eye_LR row across all columns
+        eye_row = next(i for i, (k, *_) in enumerate(PANELS) if k == 'eye_LR')
+        axes[eye_row, col_idx].axhline(ocr_ss, color='tomato', lw=0.7, ls=':', alpha=0.8,
+                                       label=f'{ocr_ss:.2f}°' if col_idx == 0 else None)
         if col_idx == 0:
-            axes[4, 0].axhline(ocr_ss, color='tomato', lw=0.7, ls=':', alpha=0.8,
-                               label=f'{ocr_ss:.2f}°')
-            axes[4, 0].legend(fontsize=5.5, loc='upper right')
+            axes[eye_row, 0].legend(fontsize=5.5, loc='upper right')
 
         axes[N_ROWS - 1, col_idx].set_xlabel('Time rel. hold onset (s)', fontsize=8)
 
@@ -919,16 +913,14 @@ def _ocr_cascade(show):
                 axes[row_idx, col_idx].set_ylim(-SPV_LIM, SPV_LIM)
 
     fig.tight_layout()
-    path, rp = utils.save_fig(fig, 'gravity_ocr_cascade', show=show, params=params,
-                              conditions='Dark, static head tilt — OCR cascade: otolith → g_est → torsion command (noiseless)')
+    path, rp = utils.save_fig(fig, 'gravity_ocr_cascade', show=show, params=params)
     return utils.fig_meta(
         path, rp,
-        title='OCR cascade (4-condition comparison)',
-        description=(f'{TILT_DEG}° tilt — VS, NI torsion cascade + SPV for '
-                     f'scene+target / target only / scene only / dark.'),
-        expected=(f'Torsion stabilises at ≈{ocr_ss:.2f}°. '
-                  f'SPV row: -VS (dashed) and -canal FT (dotted) should bracket the measured SPV. '
-                  f'Yaw/pitch near 0 (pure roll tilt).'),
+        title='OCR cascade (3 visual conditions)',
+        description=(f'{TILT_DEG}° roll tilt — OCR cascade across dark / scene-on / '
+                     f'scene+target-on conditions, {HOLD_T:.0f} s hold, noiseless.'),
+        expected=(f'Eye torsion stabilises at ≈{ocr_ss:.2f}° in all conditions. '
+                  f'SPV row: -VS (dashed) and -canal FT (dotted) should bracket the measured SPV.'),
         citation='Debug diagnostic',
         fig_type='cascade')
 

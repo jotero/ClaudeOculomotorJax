@@ -279,11 +279,11 @@ class BrainParams(NamedTuple):
                                           # tilt-percept commitment.
     K_lin:                 float = 0.1    # linear-acc adaptation gain — Laurens & Angelaki (2011) "ka".
                                           # Static value (canal-gating below modulates it state-dependently).
-    w_canal_gate:          float = 5.0    # canal-gating threshold (deg/s) — Laurens 2017 Bayesian
-                                          # disambiguation extension. Suppresses K_lin during head
-                                          # rotation (rotation hypothesis dominates over translation).
-                                          # Needed for clean tilt-suppression. Tested as orthogonal to
-                                          # OVAR modulation (gate vs no-gate gives same OVAR pattern).
+    w_canal_gate:          float = 2.0    # canal-gating threshold (deg/s) — Laurens 2017 Bayesian
+                                          # disambiguation extension. Used by the dynamic gate
+                                          # ρ = |ω × ĝ| / w_canal_gate; K_grav_eff = K_grav · √(1+ρ),
+                                          # K_lin_eff = K_lin / √(1+ρ). Lower threshold → gating
+                                          # engages at slower rotations.
                                           # Set to 1e6 to disable for pure Laurens-2011 testing.
     tau_a_lin:             float = 1.5    # translation-duration prior τ_a — Laurens, Meng & Angelaki (2013).
     K_gd:                  float = 2.86   # gravity dumping gain — Laurens & Angelaki (2011) 0.05 rad/s
