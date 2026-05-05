@@ -17,7 +17,7 @@ if '--show' not in sys.argv:
     matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
-from oculomotor.sim.simulator import PARAMS_DEFAULT, with_sensory, simulate
+from oculomotor.sim.simulator import PARAMS_DEFAULT, with_sensory, with_brain, simulate
 from oculomotor.sim import kinematics as km
 from oculomotor.analysis import ax_fmt, extract_burst, extract_spv_states
 
@@ -178,9 +178,8 @@ SECTION = dict(
 
 def _drift_quiver(show):
     """Mean slow-phase drift velocity at multiple fixation positions across the
-    visual field. 17 positions: origin + 8 directions × 2 eccentricities (5°, 10°).
-    Each fixation runs for 10 s with all default params (realistic noise on).
-    The quiver arrows show mean (vx, vy) of the SPV at the fixation location.
+    visual field. Two side-by-side panels: noise on (default) vs noise off.
+    17 positions: origin + 8 directions × 2 eccentricities (5°, 10°).
     """
     DEPTH    = 1.0     # m, screen distance
     DURATION = 5.0     # s
@@ -200,96 +199,109 @@ def _drift_quiver(show):
     T  = len(t)
     drop_n = int(DROP_S / DT)
 
-    drifts = []  # list of (px_deg, py_deg, vx_mean, vy_mean)
-    for k, (px_deg, py_deg) in enumerate(targets_deg):
-        # Convert visual-field angle (deg) to a Cartesian world point on a screen
-        # at DEPTH m. Small-angle approximation OK at ≤10°: x = D·tan(yaw), y = D·tan(pitch).
-        wx = DEPTH * np.tan(np.radians(px_deg))
-        wy = DEPTH * np.tan(np.radians(py_deg))
-        lin_pos = np.tile(np.array([wx, wy, DEPTH]), (T, 1))
-        target  = km.build_target(t, lin_pos=lin_pos)
-        states  = simulate(PARAMS_DEFAULT, t,
-                           target=target,
-                           scene_present_array=jnp.ones(T),
-                           target_present_array=jnp.ones(T),
-                           max_steps=int(DURATION / DT) + 2000,
-                           return_states=True,
-                           key=jax.random.PRNGKey(100 + k))
-        # SPV (deg/s) per axis using OPN gate; first axis = yaw (H), second = pitch (V)
-        spv = extract_spv_states(states, np.array(t), margin_s=0.05, eye='left')
-        spv_h = spv[drop_n:, 0]
-        spv_v = spv[drop_n:, 1]
-        drifts.append((px_deg, py_deg, float(np.nanmean(spv_h)), float(np.nanmean(spv_v))))
+    # Two conditions: noise on (default) vs noise off (all sigmas → 0)
+    params_noise_on  = PARAMS_DEFAULT
+    params_noise_off = with_brain(
+        with_sensory(PARAMS_DEFAULT,
+                     sigma_canal=0.0, sigma_slip=0.0,
+                     sigma_pos=0.0, sigma_vel=0.0),
+        sigma_acc=0.0,
+    )
 
-    drifts = np.array(drifts)
-    px = drifts[:, 0]
-    py = drifts[:, 1]
-    vx = drifts[:, 2]
-    vy = drifts[:, 3]
-    speed = np.hypot(vx, vy)
+    def _run_condition(params, strobed=False):
+        drifts = []
+        strobe_arr = jnp.ones(T) if strobed else jnp.zeros(T)
+        for k, (px_deg, py_deg) in enumerate(targets_deg):
+            wx = DEPTH * np.tan(np.radians(px_deg))
+            wy = DEPTH * np.tan(np.radians(py_deg))
+            lin_pos = np.tile(np.array([wx, wy, DEPTH]), (T, 1))
+            target  = km.build_target(t, lin_pos=lin_pos)
+            states  = simulate(params, t,
+                               target=target,
+                               scene_present_array=jnp.ones(T),
+                               target_present_array=jnp.ones(T),
+                               target_strobed_array=strobe_arr,
+                               max_steps=int(DURATION / DT) + 2000,
+                               return_states=True,
+                               key=jax.random.PRNGKey(100 + k))
+            spv = extract_spv_states(states, np.array(t), margin_s=0.05, eye='left')
+            spv_h = spv[drop_n:, 0]
+            spv_v = spv[drop_n:, 1]
+            drifts.append((px_deg, py_deg,
+                           float(np.nanmean(spv_h)), float(np.nanmean(spv_v))))
+        return np.array(drifts)
 
-    # ── Plot ────────────────────────────────────────────────────────────────
-    fig, ax = plt.subplots(1, 1, figsize=(8, 8))
+    drifts_on  = _run_condition(params_noise_on, strobed=True)
+    drifts_off = _run_condition(params_noise_off, strobed=False)
 
-    # Reference circles at 5° and 10°
-    for r in [5.0, 10.0]:
-        circle = plt.Circle((0, 0), r, fill=False, ls=':', lw=0.7, color='#bbbbbb')
-        ax.add_patch(circle)
-        ax.text(r * np.cos(np.radians(45)) + 0.3, r * np.sin(np.radians(45)) + 0.3,
-                f'{r:.0f}°', color='#888888', fontsize=8)
-
-    # Fixation points
-    ax.plot(px, py, 'o', color='black', ms=4, zorder=4)
-
-    # Quiver — autoscale so the largest arrow is ~3 deg in plot space.
-    max_speed = max(float(np.nanmax(speed)), 1e-6)
+    # Common color scale across both panels for fair comparison
+    speed_on  = np.hypot(drifts_on[:, 2],  drifts_on[:, 3])
+    speed_off = np.hypot(drifts_off[:, 2], drifts_off[:, 3])
+    max_speed = max(float(np.nanmax(speed_on)),
+                    float(np.nanmax(speed_off)), 1e-6)
     arrow_max_plot_deg = 3.0
-    QUIVER_SCALE = max_speed / arrow_max_plot_deg   # data deg/s per plot deg
-    q = ax.quiver(px, py, vx, vy, speed,
-                  cmap='viridis', angles='xy', scale_units='xy',
-                  scale=QUIVER_SCALE,
-                  width=0.005, headwidth=4, headlength=5, zorder=5)
-    cbar = fig.colorbar(q, ax=ax, fraction=0.04, pad=0.04)
-    cbar.set_label('|SPV| (deg/s)', fontsize=9)
+    QUIVER_SCALE = max_speed / arrow_max_plot_deg
 
-    # Reference arrow — round the max speed to a nice value, draw at bottom-right.
     if max_speed >= 0.5:    SCALE_VAL = 0.5
     elif max_speed >= 0.2:  SCALE_VAL = 0.2
     elif max_speed >= 0.1:  SCALE_VAL = 0.1
     else:                   SCALE_VAL = 0.05
-    sx, sy = 11.0, -11.5
-    ax.quiver([sx], [sy], [SCALE_VAL], [0.0], color='red',
-              angles='xy', scale_units='xy', scale=QUIVER_SCALE,
-              width=0.005, headwidth=4, headlength=5, zorder=5)
-    ax.text(sx + (SCALE_VAL / QUIVER_SCALE) / 2, sy - 0.7,
-            f'{SCALE_VAL:g} deg/s', color='red', ha='center', fontsize=9)
 
-    ax.set_xlim(-13, 14)
-    ax.set_ylim(-13, 13)
-    ax.set_aspect('equal')
-    ax.grid(True, alpha=0.2)
-    ax.axhline(0, color='#999999', lw=0.5)
-    ax.axvline(0, color='#999999', lw=0.5)
-    ax.set_xlabel('Horizontal eccentricity (deg)')
-    ax.set_ylabel('Vertical eccentricity (deg)')
-    ax.set_title(f'Fixation drift quiver — {DURATION:.0f} s per position, screen at {DEPTH:.1f} m\n'
-                 f'(arrow = mean slow-phase velocity; first {DROP_S:.0f} s discarded)',
-                 fontsize=10)
+    fig, axes = plt.subplots(1, 2, figsize=(15, 8))
+    fig.suptitle(f'Fixation drift quiver — noise on vs noise off  '
+                 f'({DURATION:.0f} s per fixation, screen at {DEPTH:.1f} m, '
+                 f'first {DROP_S:.0f} s dropped)',
+                 fontsize=11, fontweight='bold')
 
-    fig.tight_layout()
-    path, rp = utils.save_fig(fig, 'fixation_drift_quiver', show=show, params=PARAMS_DEFAULT,
-                              conditions=f'Lit, midline+eccentric foveal targets at {DEPTH:.1f} m '
-                                         f'(0°, 5°, 10° eccentricity × 8 directions); {DURATION:.0f} s/fixation')
+    for ax, drifts, label in [(axes[0], drifts_on,  'Noise on, target strobed'),
+                               (axes[1], drifts_off, 'Noise off, target steady')]:
+        px = drifts[:, 0]; py = drifts[:, 1]
+        vx = drifts[:, 2]; vy = drifts[:, 3]
+        speed = np.hypot(vx, vy)
+
+        for r in [5.0, 10.0]:
+            circle = plt.Circle((0, 0), r, fill=False, ls=':', lw=0.7, color='#bbbbbb')
+            ax.add_patch(circle)
+            ax.text(r * np.cos(np.radians(45)) + 0.3, r * np.sin(np.radians(45)) + 0.3,
+                    f'{r:.0f}°', color='#888888', fontsize=8)
+
+        ax.plot(px, py, 'o', color='black', ms=4, zorder=4)
+        q = ax.quiver(px, py, vx, vy, speed,
+                      cmap='viridis', angles='xy', scale_units='xy',
+                      scale=QUIVER_SCALE, clim=(0, max_speed),
+                      width=0.005, headwidth=4, headlength=5, zorder=5)
+
+        sx, sy = 11.0, -11.5
+        ax.quiver([sx], [sy], [SCALE_VAL], [0.0], color='red',
+                  angles='xy', scale_units='xy', scale=QUIVER_SCALE,
+                  width=0.005, headwidth=4, headlength=5, zorder=5)
+        ax.text(sx + (SCALE_VAL / QUIVER_SCALE) / 2, sy - 0.7,
+                f'{SCALE_VAL:g} deg/s', color='red', ha='center', fontsize=9)
+
+        ax.set_xlim(-13, 14)
+        ax.set_ylim(-13, 13)
+        ax.set_aspect('equal')
+        ax.grid(True, alpha=0.2)
+        ax.axhline(0, color='#999999', lw=0.5)
+        ax.axvline(0, color='#999999', lw=0.5)
+        ax.set_xlabel('Horizontal eccentricity (deg)')
+        ax.set_ylabel('Vertical eccentricity (deg)')
+        ax.set_title(f'{label} — max |SPV| = {float(speed.max()):.3f} deg/s', fontsize=10)
+
+    cbar = fig.colorbar(q, ax=axes, fraction=0.04, pad=0.04)
+    cbar.set_label('|SPV| (deg/s)', fontsize=9)
+
+    path, rp = utils.save_fig(fig, 'fixation_drift_quiver', show=show, params=PARAMS_DEFAULT)
     return utils.fig_meta(
         path, rp,
-        title='Fixation Drift Quiver',
-        description=f'Mean slow-phase drift at 17 fixation positions over {DURATION:.0f} s each. '
-                    'Default params (canal/pos/vel noise on). Origin + 8 directions × 5°/10° eccentricity. '
-                    'Arrows show drift direction + magnitude (color = |SPV|, red ref arrow = 1 deg/s).',
-        expected='Drift magnitudes typically <1 deg/s at all positions; with default '
-                 'noise levels and an OU position drift, traces drift slowly between '
-                 'occasional microsaccades.  Direction roughly random / centripetal '
-                 'at eccentric positions (slight pull toward primary).',
+        title='Fixation Drift Quiver — noise on vs off',
+        description=f'Mean slow-phase drift at 17 fixation positions over {DURATION:.0f} s each, '
+                    f'compared with default sensory noise vs all noise sigmas zeroed. '
+                    'Origin + 8 directions × 5°/10° eccentricity.',
+        expected='Noise-on: drift magnitudes typically <1 deg/s at all positions, slightly '
+                 'centripetal at eccentric positions. '
+                 'Noise-off: residual drift is from deterministic dynamics (NI leak, plant) '
+                 'and should be near zero at primary, with small centripetal pull at eccentricity.',
         citation='Cherici et al. (2012) J Vis 12(6):31; Martinez-Conde & Macknik 2017 Neuron.',
     )
 

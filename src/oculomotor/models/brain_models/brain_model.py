@@ -585,26 +585,28 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
     # Torsional VOR gain is ~half horizontal (Crawford 1991, Misslisch 1994); apply that
     # attenuation only at the VS→NI connection so w_est elsewhere keeps full magnitude.
     vor_torsion_gain = jnp.array([1.0, 1.0, 0.5])
-    # Active eye-movement velocity: burst + pursuit + T-VOR (no VOR).
-    # Listing's law applies to active gaze-shifts, not to vestibular reflexes —
-    # VOR counter-rotates head motion and should not drive Listing's correction.
-    u_ni_active = u_burst + u_pursuit + omega_tvor
-    u_ni_in     = -w_est * vor_torsion_gain + u_ni_active
+    u_ni_in = -w_est * vor_torsion_gain + u_burst + u_pursuit + omega_tvor
 
-    # ── Listing's law — single call returns BOTH cyclopean and L2 corrections ──
-    # Cyclopean torsion velocity → added to u_ni_in[2] (drives x_ni torsion
-    #   to satisfy the half-angle rule).
-    # L2 cyclo-vergence rate → added to verg_rate_tvor[2] (drives the per-eye
-    #   torsion difference that arises when each eye's Listing plane tilts
-    #   ±verg/2 around head-vertical and the eye moves vertically).
-    cyc_torsion_vel, cyclo_verg_rate = listing.listing_corrections(
-        x_ni_net, u_ni_active[:2], current_vergence_yaw,
+    # ── Listing's law — saccades aim at LL via SG's e_target (handled inside
+    # sg.step). The velocity-level correction below is for the SMOOTH pathways
+    # (pursuit + T-VOR) that need to STAY on Listing's plane during continuous
+    # tracking — fundamentally different from saccades, which need to MOVE TO
+    # the plane. Burst is excluded from vel_hv so the saccade's H/V command
+    # doesn't trigger a redundant velocity-level correction (the burst already
+    # ends on the plane via the LL-aware e_target).
+    smooth_vel_hv = (u_pursuit + omega_tvor)[:2]
+    cyc_torsion_vel, cyc_torsion_target, cyclo_verg_rate = listing.listing_corrections(
+        x_ni_net, smooth_vel_hv, current_vergence_yaw,
         brain_params.listing_primary, brain_params.listing_l2_frac,
     )
     u_ni_in        = u_ni_in.at[2].add(brain_params.listing_gain * cyc_torsion_vel)
     verg_rate_tvor = verg_rate_tvor.at[2].add(brain_params.listing_gain * cyclo_verg_rate)
 
-    dx_ni, motor_cmd_ni = ni.step(x_ni, u_ni_in, brain_params, u_tonic=ocr)
+    # NI tonic = OCR (gravity) + Listing's prescribed torsion (gaze-dependent).
+    # Both shift the NI's leak target so x_net leaks toward the correct torsion
+    # at SS without relying purely on velocity-level corrections to maintain it.
+    u_tonic = ocr.at[2].add(brain_params.listing_gain * cyc_torsion_target)
+    dx_ni, motor_cmd_ni = ni.step(x_ni, u_ni_in, brain_params, u_tonic=u_tonic)
 
     # ── Vergence + Accommodation — single unified step ────────────────────────
     # Internal sequencing (state-based AC/A & CA/C → vergence → accommodation)

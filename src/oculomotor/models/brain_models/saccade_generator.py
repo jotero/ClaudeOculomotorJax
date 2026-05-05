@@ -188,13 +188,20 @@ def step(x_sg, pos_delayed, target_visible, x_ni, ocr, w_est, p, noise_acc=0.0):
     x_ibn_L = x_sg[15:18]  # (3,) left  IBN membrane potentials
 
     # ── Target selection ──────────────────────────────────────────────────────
-    # In-field: clip (pos_delayed + OCR_delta) to oculomotor range so the saccade end
-    # state aligns the eye torsion with the head-tilt-driven OCR offset.
-    # OCR is an ABSOLUTE torsion setpoint (head-tilt-driven); pos_delayed[2] is always 0
-    # (Listing's compliance in retina). To make the saccade land AT ocr (not ocr more
-    # each saccade), convert to a delta: ocr_delta = ocr − x_ni_torsion. The H/V
-    # axes already work as deltas via pos_delayed and OCR is zero on those axes.
-    ocr_delta = ocr.at[2].add(-x_ni[2])
+    # In-field: saccade aims at the landed gaze (current x_ni + retinal error
+    # pos_delayed for H/V) with torsion set to OCR + Listing's-prescribed
+    # torsion at the landed (H, V). This way each saccade ENDS on Listing's
+    # plane, not just on OCR.
+    #
+    # OCR (gravity-driven) and T_LL(H_landed, V_landed) are both ABSOLUTE
+    # torsion targets in head frame. Convert to a delta from current x_ni[2]:
+    #   delta_T = OCR + T_LL(landed gaze) − x_ni[2]
+    H_landed = x_ni[0] + pos_delayed[0] - p.listing_primary[0]
+    V_landed = x_ni[1] + pos_delayed[1] - p.listing_primary[1]
+    T_LL_landed = -(jnp.pi / 360.0) * H_landed * V_landed
+    listing_target_delta = jnp.array([0.0, 0.0,
+                                       p.listing_gain * T_LL_landed - x_ni[2]])
+    ocr_delta = ocr + listing_target_delta
     e_target = jnp.clip(pos_delayed + ocr_delta, -p.orbital_limit - x_ni, p.orbital_limit - x_ni)
 
     tau_refractory = (p.threshold_acc - p.acc_burst_floor) * p.tau_acc
