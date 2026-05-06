@@ -82,13 +82,25 @@ class SensoryParams(NamedTuple):
     # Otolith — first-order LP adaptation (Fernandez & Goldberg 1976)
     tau_oto:            float       = 100.0  # otolith adaptation TC (s); large → near-DC pass
 
-    # Visual pathway
-    tau_vis:            float       = 0.08   # gamma-cascade mean delay (s); Lisberger & Movshon 1999
-    tau_vis_disparity:  float       = 0.16   # disparity-specific cascade delay (s). Disparity processing
-                                              # is slower than position/motion (V1 stereo correspondence
-                                              # + MT/MST → vergence pathway, ~150–200 ms vs ~80–100 ms for
-                                              # OKR/pursuit). Same number of cascade stages, just slower
-                                              # per-stage rate (k = N/τ).
+    # Visual pathway — two-tier transmission per signal:
+    #   tau_vis            — sharp cascade mean delay for target_pos (legacy 40-stage cascade)
+    #   tau_vis_sharp      — sharp cascade mean delay for all OTHER signals (Pugh-Lamb 6-stage
+    #                        photo-transduction model, common across motion/disparity/defocus/etc.)
+    #   tau_vis_smooth_*   — per-channel 1-pole LP smoothing applied AFTER the sharp cascade,
+    #                        modelling channel-specific neural integration windows.
+    tau_vis:                     float = 0.08   # target_pos cascade delay (s); Lisberger & Movshon 1999
+    tau_vis_sharp:               float = 0.05   # sharp cascade mean delay (s) — photo-transduction +
+                                                  # axonal/synaptic transport (Pugh & Lamb 1993,
+                                                  # Dunn & Rieke 2006). Shared across non-position signals.
+    tau_vis_smooth_motion:       float = 0.05   # LP TC for scene_angular_vel, scene_linear_vel,
+                                                  # target_vel — MT/MST motion integration window.
+    tau_vis_smooth_disparity:    float = 0.10   # LP TC for target_disparity — V1 stereo correspondence
+                                                  # + binocular fusion (~100 ms processing window).
+    tau_vis_smooth_defocus:      float = 0.08   # LP TC for defocus — accommodation neural circuit
+                                                  # (Heron 2002, Schor & Bharadwaj 2006). 80 ms → -3dB at ~2 Hz.
+    tau_vis_smooth_visibility:   float = 0.01   # LP TC for visibility / fusion gate signals — fast
+                                                  # (just enough to avoid sharp transitions causing
+                                                  # numerical issues with the gating).
     visual_field_limit: float       = 90.0   # retinal eccentricity limit (deg); ~90° monocular field
     k_visual_field:     float       = 1.0    # sigmoid steepness for visual field gate (1/deg)
 
@@ -147,7 +159,6 @@ C_vel              = _retina.C_vel                # (3, 800)  delayed target vel
 C_target_disp      = _retina.C_target_disp        # (3, 800)  delayed target disparity (deg)
 C_scene_visible    = _retina.C_scene_visible      # (1, 800)  delayed scene_present
 C_target_visible   = _retina.C_target_visible     # (1, 800)  delayed target_present × target_in_vf
-C_target_motion_visible = _retina.C_target_motion_visible  # (1, 800)  delayed pursuit gate
 C_defocus          = _retina.C_defocus            # (1, 800)  delayed defocus (D)
 delay_cascade_step = _retina.delay_cascade_step
 delay_cascade_read = _retina.delay_cascade_read
@@ -202,7 +213,6 @@ class SensoryOutput(NamedTuple):
     target_disparity: jnp.ndarray  # (3,)
     scene_visible:   jnp.ndarray   # scalar
     target_visible:  jnp.ndarray   # scalar
-    target_motion_visible: jnp.ndarray  # scalar
     defocus:         float = 0.0   # delayed cyclopean defocus (diopters)
 
 
@@ -246,7 +256,6 @@ def read_outputs(x_sensory, sensory_params, q_head, a_head):
         target_disparity = _retina.C_target_disp      @ x_vis,
         scene_visible    = (_retina.C_scene_visible    @ x_vis)[0],
         target_visible   = (_retina.C_target_visible   @ x_vis)[0],
-        target_motion_visible = (_retina.C_target_motion_visible @ x_vis)[0],
         defocus          = (_retina.C_defocus          @ x_vis)[0],
     )
 

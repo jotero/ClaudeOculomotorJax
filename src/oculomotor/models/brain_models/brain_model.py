@@ -99,8 +99,20 @@ from oculomotor.models.brain_models.final_common_pathway import G_NUCLEUS_DEFAUL
 # T-VOR is stateless (tv.N_STATES == 0) — no slice.
 # acc_plant (1 state) is in SimState.acc_plant — not part of x_brain.
 
-N_STATES = sm.N_STATES + ni.N_STATES + sg.N_STATES + pu.N_STATES + va.N_STATES
-#        = 21 + 9 + 18 + 3 + 11 = 62
+_TARGET_MEM_N = 4   # 3 position + 1 trust scalar
+
+# Target working memory time constants — local hacks, not exposed in BrainParams.
+# These shape FEF/dlPFC-style gaze evidence accumulation so brief flashes can
+# accumulate enough trust to fire a saccade, then the saccade burst consumes
+# the memory so it doesn't re-trigger.
+_TAU_TARGET_MEM_UPDATE       = 0.05    # memory lock TC when target is visible (s)
+_TAU_TARGET_MEM_TRUST_RISE   = 0.10    # trust rise TC when target is seen (s)
+_TAU_TARGET_MEM_TRUST_DECAY  = 5.0     # trust decay TC when target is unseen (s)
+_TAU_TARGET_MEM_CONSUME      = 0.020   # memory + trust drain TC during saccade burst (s)
+_TARGET_MEM_TRUST_THRESHOLD  = 0.2     # trust level above which SG commits to saccade mode
+
+N_STATES = sm.N_STATES + ni.N_STATES + sg.N_STATES + pu.N_STATES + va.N_STATES + _TARGET_MEM_N
+#        = 21 + 9 + 18 + 3 + 11 + 4 = 66
 
 # ── Top-level offsets ─────────────────────────────────────────────────────────
 _o_sm = 0
@@ -108,12 +120,14 @@ _o_ni = _o_sm + sm.N_STATES    # 21
 _o_sg = _o_ni + ni.N_STATES    # 30
 _o_pu = _o_sg + sg.N_STATES    # 48
 _o_va = _o_pu + pu.N_STATES    # 51
+_o_tm = _o_va + va.N_STATES    # 62
 
 _IDX_SELF_MOTION = slice(_o_sm, _o_sm + sm.N_STATES)   # (21,) [0:21]  — VS|GRAV|HEAD
 _IDX_NI          = slice(_o_ni, _o_ni + ni.N_STATES)   #  (9,) [21:30]
 _IDX_SG          = slice(_o_sg, _o_sg + sg.N_STATES)   # (18,) [30:48]
 _IDX_PURSUIT     = slice(_o_pu, _o_pu + pu.N_STATES)   #  (3,) [48:51]
 _IDX_VA          = slice(_o_va, _o_va + va.N_STATES)   # (11,) [51:62] — VERG|ACC
+_IDX_TARGET_MEM  = slice(_o_tm, _o_tm + _TARGET_MEM_N) #  (4,) [62:66] — x_mem_pos(3) | trust(1)
 
 # ── Backward-compat aliases for sub-states ────────────────────────────────────
 # External code (benches, llm_pipeline) still references the per-module slices.
@@ -325,6 +339,7 @@ class BrainParams(NamedTuple):
                                            # Lisberger & Westbrook 1985 J Neurosci). MT tuned 10–64 deg/s
                                            # (Newsome et al. 1988 J Neurosci); 40 deg/s is conservative.
 
+
     # Vergence — Schor (1986) dual integrator + Robinson (1975) direct phasic path
     # Structure: disparity → fast int + slow int + direct path (τ_vp·K_phasic) → plant
     # Step 1 of rebuild — Zee saccade burst (Step 2) parameters added later.
@@ -535,6 +550,7 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
     x_sg          = x_brain[_IDX_SG]
     x_pursuit     = x_brain[_IDX_PURSUIT]
     x_va          = x_brain[_IDX_VA]              # (11,) vergence + accommodation
+    x_target_mem  = x_brain[_IDX_TARGET_MEM]      # (4,)  x_mem_pos(3) | trust(1)
 
     # ── Self-motion observer (VS + GE + HE) — single unified step ────────────
     # sensory_out.scene_slip is already EC-corrected (pre-delay EC in cyclopean_vision).
@@ -561,8 +577,50 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
                                       jnp.concatenate([sensory_out.target_slip, x_ni_net]),
                                      brain_params)
 
+    # ── Target working memory (cognitive layer; FEF/dlPFC-like) ─────────────
+    # Memory is the LAST-SEEN cyclopean retinal target error (deg). The SG
+    # uses this to fire one saccade toward the remembered location after the
+    # flash ends; the next flash overwrites the memory based on the new
+    # retinal error. No efference copy: if a saccade lands accurately, the
+    # next flash will reset the memory to ~0, otherwise the residual error
+    # drives a corrective saccade.
+    x_mem      = x_target_mem[0:3]
+    trust      = x_target_mem[3]
+    tgt_pos_d  = sensory_out.target_pos
+    tgt_vis_d  = sensory_out.target_visible
+
+    # Saccade-burst gate (z_act ≈ 1 while OPN is paused, ≈ 0 between saccades).
+    # During a burst, drain x_mem only — keep trust high. This way the SG
+    # stays in saccade mode (mem_active≈1, threshold_sac=0.5°, e_target=0),
+    # which suppresses centripetal quick phases (SWJs) that would otherwise
+    # fire as soon as trust dropped. Trust decays naturally with τ_trust_decay
+    # when no flashes arrive — that's the "give up and look home" timescale.
+    z_act = 1.0 - jnp.clip(x_sg[3], 0.0, 100.0) / 100.0
+    inv_consume = z_act / _TAU_TARGET_MEM_CONSUME
+
+    # Lock memory fast when visible; hold (no update) when not; drain during burst.
+    dx_mem = tgt_vis_d * (tgt_pos_d - x_mem) / _TAU_TARGET_MEM_UPDATE \
+             - inv_consume * x_mem
+
+    # Trust dynamics: rises with TC tau_trust_rise when seen, decays with TC
+    # tau_trust_decay when unseen. NOT drained by the saccade burst (see above).
+    inv_rise   = 1.0 / _TAU_TARGET_MEM_TRUST_RISE
+    inv_decay  = 1.0 / _TAU_TARGET_MEM_TRUST_DECAY
+    gain_trust = tgt_vis_d * inv_rise + (1.0 - tgt_vis_d) * inv_decay
+    dx_trust   = gain_trust * (tgt_vis_d - trust)
+    dx_target_mem = jnp.concatenate([dx_mem, jnp.array([dx_trust])])
+
+    # Memory commits to "saccade mode" once trust crosses a small threshold —
+    # otherwise the SG's blended threshold (target_visible · 0.5° + (1 − tv) · 2°)
+    # rises faster than the trust-scaled error grows, and gate_err never opens
+    # for long enough to fill the 180-ms accumulator. Binarizing once trust > 0.2
+    # lets brief flashes accumulate evidence and fire one saccade.
+    mem_active   = jax.nn.sigmoid(50.0 * (trust - _TARGET_MEM_TRUST_THRESHOLD))
+    tgt_pos_eff  = tgt_vis_d * tgt_pos_d + (1.0 - tgt_vis_d) * mem_active * x_mem
+    tgt_vis_eff  = jnp.maximum(tgt_vis_d, mem_active)
+
     # ── Saccade generator (target selection + Listing's corrections handled internally) ──
-    dx_sg, u_burst = sg.step(x_sg, sensory_out.target_pos, sensory_out.target_visible, x_ni_net, ocr, w_est, brain_params, noise_acc)
+    dx_sg, u_burst = sg.step(x_sg, tgt_pos_eff, tgt_vis_eff, x_ni_net, ocr, w_est, brain_params, noise_acc)
 
     # ── Translational VOR (T-VOR): vestibular + visual fusion, distance-scaled ───
     # Uses heading_estimator's v_lin (already gravity-corrected, τ_head ≈ 2 s) as the
@@ -638,6 +696,6 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
     ec_verg = x_va[_IDX_VERG.start - _o_va : _IDX_VERG.stop - _o_va]   # vergence efference (9,) [H,V,T,...]
 
     # ── Pack state derivative ─────────────────────────────────────────────────
-    dx_brain = jnp.concatenate([dx_self_motion, dx_ni, dx_sg, dx_pursuit, dx_va])
+    dx_brain = jnp.concatenate([dx_self_motion, dx_ni, dx_sg, dx_pursuit, dx_va, dx_target_mem])
 
     return dx_brain, nerves, ec_vel, ec_pos, ec_verg, u_acc

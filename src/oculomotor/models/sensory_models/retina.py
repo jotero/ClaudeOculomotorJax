@@ -52,44 +52,112 @@ from oculomotor.models.plant_models.readout import rotation_matrix
 
 
 # ── Cascade parameters ──────────────────────────────────────────────────────────
+#
+# Two-tier transmission model per signal:
+#   - SHARP cascade: high-N (or moderate-N) gamma cascade modelling photo-
+#     transduction + axonal/synaptic transport delay (Pugh & Lamb 1993, Dunn &
+#     Rieke 2006). Produces a near-pure transport delay of mean = tau_sharp.
+#   - SMOOTH LP: optional 1-pole leaky integrator after the cascade modelling
+#     channel-specific neural integration (MT/MST motion window, V1 stereo
+#     correspondence, accommodation circuit). Adds smoothness without changing
+#     the dead-zone character.
+#
+# target_pos KEEPS the legacy 40-stage cascade (no LP) — saccade targeting needs
+# a sharp transport delay with no extra smoothing.
 
-N_STAGES      = 40    # cascade depth (stages per signal)
-_N_SIG        = 5     # 3-D signals: scene_angular_vel, scene_linear_vel, target_pos,
-                      #              target_vel, target_disparity
-                      # (scene_disp_rate dropped — it was redundant with scene_linear_vel.)
-_N_PER_SIG    = N_STAGES * 3     # 120  states per 3-D signal
-_N_SCALAR     = N_STAGES         # 40   states per scalar signal
-N_STATES      = _N_SIG * _N_PER_SIG + 5 * _N_SCALAR  # 5*120 + 5*40 = 800
+# Legacy stage count for target_pos
+N_STAGES      = 40
 
-# ── State offsets ───────────────────────────────────────────────────────────────
-# State layout: [scene_angular_vel(120) | scene_linear_vel(120) | target_pos(120)
-#                | target_vel(120) | target_disparity(120)
-#                | scene_visible(40) | target_visible(40) | target_motion_visible(40)
-#                | target_fusable(40) | defocus(40)]
+# Sharp-cascade stage count for all OTHER signals (Pugh-Lamb photo-transduction:
+# 4-6 stage biochemical cascade gives the right rise shape).
+_N_STAGES_OTHER = 6
 
-_OFF_SCENE_LINEAR    = _N_PER_SIG                            # 120
-_OFF_TARGET_POS      = 2 * _N_PER_SIG                        # 240
-_OFF_TARGET_VEL      = 3 * _N_PER_SIG                        # 360
-_OFF_TARGET_DISP     = 4 * _N_PER_SIG                        # 480
-_OFF_SCENE_VIS       = 5 * _N_PER_SIG                        # 600
-_OFF_TARGET_VIS      = _OFF_SCENE_VIS    + _N_SCALAR          # 640
-_OFF_STROBED         = _OFF_TARGET_VIS   + _N_SCALAR          # 680
-_OFF_TARGET_FUSABLE  = _OFF_STROBED      + _N_SCALAR          # 720
-_OFF_DEFOCUS         = _OFF_TARGET_FUSABLE + _N_SCALAR        # 760
+# Per-signal layout: (N_sharp, N_lp, n_axes)  in declaration order.
+# N_lp = 0 → no smoothing stage; N_lp = 1 → single 1-pole LP; N_lp ≥ 2 → gamma
+# cascade (N_lp poles, total mean delay = tau_smooth) — sharper rolloff than a
+# single LP, less exponential tail.  n_axes=3 → 3-D signal; n_axes=1 → scalar.
+_SIG_LAYOUT = [
+    ('scene_angular_vel',    _N_STAGES_OTHER, 1, 3),
+    ('scene_linear_vel',     _N_STAGES_OTHER, 1, 3),
+    ('target_pos',           N_STAGES,        0, 3),   # legacy 40-stage, no LP — sharp targeting
+    ('target_vel',           _N_STAGES_OTHER, 1, 3),
+    ('target_disparity',     _N_STAGES_OTHER, 4, 3),   # 4-pole smoothing — sharper than 1-pole;
+                                                       # less residual disparity after eye closure
+    # Visibility flags consumed by brain (HE, SG): full 40-stage cascade (no LP)
+    # so brief target pulses propagate without amplitude loss. target_motion_visible
+    # and target_fusable are NOT cascaded — they're used inline inside cyclopean_vision
+    # to gate target_slip and target_disparity before those go through the cascade.
+    ('scene_visible',        N_STAGES,        0, 1),
+    ('target_visible',       N_STAGES,        0, 1),
+    ('defocus',              _N_STAGES_OTHER, 4, 1),   # 4-pole smoothing — sharper than 1-pole
+]
+
+def _sig_size(N, N_lp, n_axes):
+    """States = (cascade + LP) × n_axes."""
+    return (N + N_lp) * n_axes
+
+# Compute per-signal sizes and offsets at module load time
+_SIG_SIZES   = {name: _sig_size(N, lp, n) for name, N, lp, n in _SIG_LAYOUT}
+_SIG_OFFSETS = {}
+_offset = 0
+for name, N, lp, n in _SIG_LAYOUT:
+    _SIG_OFFSETS[name] = _offset
+    _offset += _SIG_SIZES[name]
+N_STATES = _offset    # total cascade-substate count
+
+# Convenience module-level offset constants used by cyclopean_vision.step().
+# Each `_OFF_<SIGNAL>` is the start index of the signal's block in x_vis;
+# the *block* contains [cascade (N×n) | LP (n if has_lp)].
+_OFF_SCENE_ANGULAR_VEL    = _SIG_OFFSETS['scene_angular_vel']
+_OFF_SCENE_LINEAR         = _SIG_OFFSETS['scene_linear_vel']
+_OFF_TARGET_POS           = _SIG_OFFSETS['target_pos']
+_OFF_TARGET_VEL           = _SIG_OFFSETS['target_vel']
+_OFF_TARGET_DISP          = _SIG_OFFSETS['target_disparity']
+_OFF_SCENE_VIS            = _SIG_OFFSETS['scene_visible']
+_OFF_TARGET_VIS           = _SIG_OFFSETS['target_visible']
+_OFF_DEFOCUS              = _SIG_OFFSETS['defocus']
+
+# Block-end indices (= offset + size) for slicing each signal's block.
+_END_SCENE_ANGULAR_VEL    = _OFF_SCENE_ANGULAR_VEL    + _SIG_SIZES['scene_angular_vel']
+_END_SCENE_LINEAR         = _OFF_SCENE_LINEAR         + _SIG_SIZES['scene_linear_vel']
+_END_TARGET_POS           = _OFF_TARGET_POS           + _SIG_SIZES['target_pos']
+_END_TARGET_VEL           = _OFF_TARGET_VEL           + _SIG_SIZES['target_vel']
+_END_TARGET_DISP          = _OFF_TARGET_DISP          + _SIG_SIZES['target_disparity']
+_END_SCENE_VIS            = _OFF_SCENE_VIS            + _SIG_SIZES['scene_visible']
+_END_TARGET_VIS           = _OFF_TARGET_VIS           + _SIG_SIZES['target_visible']
+_END_DEFOCUS              = _OFF_DEFOCUS              + _SIG_SIZES['defocus']
+
+# Legacy alias for code that still references the old "120 states per 3-D signal"
+# constant — only target_pos still has this size.
+_N_PER_SIG    = N_STAGES * 3        # 120 (target_pos block size)
+_N_SCALAR     = _N_STAGES_OTHER     # used in retina geometry below for scaling — keeps
+                                    # the visual-field gate sigmoid the same as before
+
+
+def _make_C_last_n(end_idx, n_axes):
+    """Read-off matrix that selects the LAST n_axes elements of a signal block.
+
+    For signals with LP: last n_axes states = LP states (the smoothed output).
+    For signals without LP (target_pos): last n_axes states = last cascade stage.
+    Either way, this is the channel's "current observed value".
+    """
+    C = jnp.zeros((n_axes, N_STATES))
+    for i in range(n_axes):
+        C = C.at[i, end_idx - n_axes + i].set(1.0)
+    return C
+
 
 # ── Readout matrices ────────────────────────────────────────────────────────────
 # Exported so sensory_model / efference_copy can read cascade outputs directly.
 
-C_slip             = jnp.zeros((3, N_STATES)).at[:, _N_PER_SIG-3         : _N_PER_SIG        ].set(jnp.eye(3))
-C_scene_linear_vel = jnp.zeros((3, N_STATES)).at[:, 2*_N_PER_SIG-3      : 2*_N_PER_SIG      ].set(jnp.eye(3))
-C_pos              = jnp.zeros((3, N_STATES)).at[:, 3*_N_PER_SIG-3      : 3*_N_PER_SIG      ].set(jnp.eye(3))
-C_vel              = jnp.zeros((3, N_STATES)).at[:, 4*_N_PER_SIG-3      : 4*_N_PER_SIG      ].set(jnp.eye(3))
-C_target_disp      = jnp.zeros((3, N_STATES)).at[:, 5*_N_PER_SIG-3      : 5*_N_PER_SIG      ].set(jnp.eye(3))
-C_scene_visible    = jnp.zeros((1, N_STATES)).at[0, _OFF_SCENE_VIS     + _N_SCALAR - 1].set(1.0)
-C_target_visible   = jnp.zeros((1, N_STATES)).at[0, _OFF_TARGET_VIS    + _N_SCALAR - 1].set(1.0)
-C_target_motion_visible = jnp.zeros((1, N_STATES)).at[0, _OFF_STROBED   + _N_SCALAR - 1].set(1.0)
-C_target_fusable   = jnp.zeros((1, N_STATES)).at[0, _OFF_TARGET_FUSABLE + _N_SCALAR - 1].set(1.0)
-C_defocus          = jnp.zeros((1, N_STATES)).at[0, _OFF_DEFOCUS        + _N_SCALAR - 1].set(1.0)
+C_slip             = _make_C_last_n(_END_SCENE_ANGULAR_VEL, 3)
+C_scene_linear_vel = _make_C_last_n(_END_SCENE_LINEAR,      3)
+C_pos              = _make_C_last_n(_END_TARGET_POS,        3)
+C_vel              = _make_C_last_n(_END_TARGET_VEL,        3)
+C_target_disp      = _make_C_last_n(_END_TARGET_DISP,       3)
+C_scene_visible    = _make_C_last_n(_END_SCENE_VIS,         1)
+C_target_visible   = _make_C_last_n(_END_TARGET_VIS,        1)
+C_defocus          = _make_C_last_n(_END_DEFOCUS,           1)
 
 
 # ── Coordinate helpers ──────────────────────────────────────────────────────────
@@ -306,5 +374,45 @@ def delay_cascade_read(x_cascade):
         delayed: (3,)  signal delayed by tau_vis seconds
     """
     return x_cascade[_N_PER_SIG - 3 : _N_PER_SIG]
+
+
+def cascade_lp_step(x_block, u, tau_sharp, tau_smooth, N, n_axes, N_lp):
+    """Sharp gamma cascade + optional multi-stage smoothing.
+
+    Block layout (concatenated cascade then LP):
+        [sharp cascade (N · n_axes) | smoothing cascade (N_lp · n_axes)]
+
+    The smoothing stage is itself a gamma cascade of N_lp poles with total mean
+    delay tau_smooth (so per-stage TC = tau_smooth/N_lp). N_lp = 1 reduces to a
+    single 1-pole LP (exponential rise/fall, long tail). N_lp ≥ 2 gives a
+    sharper rolloff and a more concentrated impulse response — the right
+    choice when residual signal after the input goes to zero must drain quickly
+    (e.g. binocular disparity after one eye closes).
+
+    Args:
+        x_block:    block state ((N + N_lp)·n_axes,)
+        u:          (n_axes,) or scalar  current input
+        tau_sharp:  total sharp-cascade mean delay (s)
+        tau_smooth: total smoothing-cascade mean delay (s); ignored if N_lp=0
+        N:          sharp-cascade stage count
+        n_axes:     1 (scalar) or 3 (3-vector)
+        N_lp:       smoothing-cascade stage count; 0 = no smoothing,
+                    1 = single 1-pole LP, ≥2 = multi-pole gamma smoothing
+
+    Returns:
+        dx_block:   state derivative, same shape as x_block
+    """
+    n_cascade = N * n_axes
+    x_cascade = x_block[:n_cascade]
+    dx_cascade = delay_cascade_step(x_cascade, u, tau_sharp, N=N)
+
+    if N_lp == 0:
+        return dx_cascade
+
+    # Smoothing stage: feed the sharp-cascade output into another gamma cascade.
+    cascade_out = x_cascade[n_cascade - n_axes : n_cascade]
+    x_lp = x_block[n_cascade : n_cascade + N_lp * n_axes]
+    dx_lp = delay_cascade_step(x_lp, cascade_out, tau_smooth, N=N_lp)
+    return jnp.concatenate([dx_cascade, dx_lp])
 
 

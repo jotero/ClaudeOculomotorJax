@@ -18,10 +18,16 @@ import jax
 import jax.numpy as jnp
 
 from oculomotor.models.sensory_models.retina import (
-    delay_cascade_step, ypr_to_xyz, xyz_to_ypr,
-    _N_PER_SIG,
-    _OFF_SCENE_LINEAR, _OFF_TARGET_POS, _OFF_TARGET_VEL, _OFF_TARGET_DISP,
-    _OFF_SCENE_VIS, _OFF_TARGET_VIS, _OFF_STROBED, _OFF_TARGET_FUSABLE, _OFF_DEFOCUS,
+    delay_cascade_step, cascade_lp_step, ypr_to_xyz, xyz_to_ypr,
+    N_STAGES, _N_STAGES_OTHER,
+    _OFF_SCENE_ANGULAR_VEL, _END_SCENE_ANGULAR_VEL,
+    _OFF_SCENE_LINEAR,      _END_SCENE_LINEAR,
+    _OFF_TARGET_POS,        _END_TARGET_POS,
+    _OFF_TARGET_VEL,        _END_TARGET_VEL,
+    _OFF_TARGET_DISP,       _END_TARGET_DISP,
+    _OFF_SCENE_VIS,         _END_SCENE_VIS,
+    _OFF_TARGET_VIS,        _END_TARGET_VIS,
+    _OFF_DEFOCUS,           _END_DEFOCUS,
 )
 from oculomotor.models.plant_models.readout import rotation_matrix
 
@@ -263,28 +269,37 @@ def step(x_vis,
         sensory_params.v_max_target_vel)
 
     # ── Advance cascade ───────────────────────────────────────────────────────
-    tau_vis           = sensory_params.tau_vis
-    tau_vis_disparity = sensory_params.tau_vis_disparity
-    x_scene_angular     = x_vis[                            :  _N_PER_SIG               ]
-    x_scene_linear      = x_vis[_OFF_SCENE_LINEAR           : _OFF_TARGET_POS           ]
-    x_target_pos        = x_vis[_OFF_TARGET_POS             : _OFF_TARGET_VEL           ]
-    x_target_vel        = x_vis[_OFF_TARGET_VEL             : _OFF_TARGET_DISP          ]
-    x_target_disp       = x_vis[_OFF_TARGET_DISP            : _OFF_SCENE_VIS            ]
-    x_scene_vis         = x_vis[_OFF_SCENE_VIS              : _OFF_TARGET_VIS           ]
-    x_target_vis        = x_vis[_OFF_TARGET_VIS             : _OFF_STROBED              ]
-    x_target_motion     = x_vis[_OFF_STROBED                : _OFF_TARGET_FUSABLE       ]
-    x_target_fusable    = x_vis[_OFF_TARGET_FUSABLE         : _OFF_DEFOCUS              ]
-    x_defocus           = x_vis[_OFF_DEFOCUS                :                           ]
+    # target_pos uses the legacy 40-stage cascade (no LP) — saccade targeting
+    # needs a sharp transport delay. All other signals use a short sharp cascade
+    # (Pugh-Lamb photo-transduction model) plus a per-channel 1-pole LP for
+    # neural-integration smoothing.
+    tau_vis     = sensory_params.tau_vis
+    tau_sharp   = sensory_params.tau_vis_sharp
+    tau_motion  = sensory_params.tau_vis_smooth_motion
+    tau_disp    = sensory_params.tau_vis_smooth_disparity
+    tau_defocus = sensory_params.tau_vis_smooth_defocus
+    N_OTHER     = _N_STAGES_OTHER
+
+    x_scene_angular  = x_vis[_OFF_SCENE_ANGULAR_VEL : _END_SCENE_ANGULAR_VEL]
+    x_scene_linear   = x_vis[_OFF_SCENE_LINEAR      : _END_SCENE_LINEAR]
+    x_target_pos     = x_vis[_OFF_TARGET_POS        : _END_TARGET_POS]
+    x_target_vel     = x_vis[_OFF_TARGET_VEL        : _END_TARGET_VEL]
+    x_target_disp    = x_vis[_OFF_TARGET_DISP       : _END_TARGET_DISP]
+    x_scene_vis_b    = x_vis[_OFF_SCENE_VIS         : _END_SCENE_VIS]
+    x_target_vis_b   = x_vis[_OFF_TARGET_VIS        : _END_TARGET_VIS]
+    x_defocus        = x_vis[_OFF_DEFOCUS           : _END_DEFOCUS]
 
     return jnp.concatenate([
-        delay_cascade_step(x_scene_angular,    scene_angular_vel,     tau_vis),
-        delay_cascade_step(x_scene_linear,     scene_linear_vel,      tau_vis),
-        delay_cascade_step(x_target_pos,       target_pos,            tau_vis),
-        delay_cascade_step(x_target_vel,       target_slip,           tau_vis),
-        delay_cascade_step(x_target_disp,      target_disparity,      tau_vis_disparity),
-        delay_cascade_step(x_scene_vis,        scene_visible,         tau_vis),
-        delay_cascade_step(x_target_vis,       target_visible,        tau_vis),
-        delay_cascade_step(x_target_motion,    target_motion_visible, tau_vis),
-        delay_cascade_step(x_target_fusable,   target_fusable,        tau_vis),
-        delay_cascade_step(x_defocus,          defocus_cyc,           tau_vis),
+        cascade_lp_step(x_scene_angular,  scene_angular_vel,     tau_sharp, tau_motion,  N_OTHER, 3, 1),
+        cascade_lp_step(x_scene_linear,   scene_linear_vel,      tau_sharp, tau_motion,  N_OTHER, 3, 1),
+        delay_cascade_step(x_target_pos,  target_pos,            tau_vis,                N=N_STAGES),
+        cascade_lp_step(x_target_vel,     target_slip,           tau_sharp, tau_motion,  N_OTHER, 3, 1),
+        # Disparity uses a 4-pole smoothing cascade (sharper than 1-pole LP) so
+        # residual disparity drains quickly when one eye closes — see _SIG_LAYOUT.
+        cascade_lp_step(x_target_disp,    target_disparity,      tau_sharp, tau_disp,    N_OTHER, 3, 4),
+        # Visibility flags consumed by brain: 40-stage sharp cascade (no LP) —
+        # preserves brief target-flash pulses without amplitude loss.
+        delay_cascade_step(x_scene_vis_b,    scene_visible,         tau_vis, N=N_STAGES),
+        delay_cascade_step(x_target_vis_b,   target_visible,        tau_vis, N=N_STAGES),
+        cascade_lp_step(x_defocus,        defocus_cyc,           tau_sharp, tau_defocus, N_OTHER, 1, 4),
     ])

@@ -23,19 +23,25 @@ import matplotlib.pyplot as plt
 
 from oculomotor.sim.simulator import (
     PARAMS_DEFAULT, SimConfig, simulate, with_brain, with_sensory,
-    _IDX_PURSUIT,
+    _IDX_ACC, _IDX_NI_L, _IDX_NI_R,
 )
 from oculomotor.sim import kinematics as km
 from oculomotor.sim.kinematics import build_target
-from oculomotor.analysis import extract_burst, extract_spv_states
+from oculomotor.analysis import extract_spv_states
 
 SHOW  = '--show' in sys.argv
 DT    = 0.001
 THETA = with_brain(
     with_sensory(PARAMS_DEFAULT, sigma_canal=0.0, sigma_pos=0.0, sigma_vel=0.0),
     sigma_acc=0.0,
-    tonic_verg=-4.0,   # tonic (resting) vergence baseline (deg); negative = divergent dark vergence
+    tonic_verg=-10.0,  # tonic (resting) vergence baseline (deg); negative = divergent dark vergence
 )  # noiseless — deterministic
+
+# +3 D plus (converging) lens in front of both eyes — accommodation demand for
+# the 15 cm target drops from 6.67 D to 3.67 D (apparent distance ~27 cm),
+# while vergence demand stays geometric. Model sign convention is opposite to
+# clinical: lens<0 = plus lens (see bench_clinical.py).
+_LENS_D = -3.0
 
 
 # ── Monocular occlusion ────────────────────────────────────────────────────────
@@ -57,18 +63,29 @@ def _make_flags(t_np, cond, occ_eye):
     T    = len(t_np)
     ones = np.ones(T,  dtype=np.float32)
     off  = np.where(t_np >= _T_FIX, 0.0, 1.0).astype(np.float32)
-    ts   = np.where(t_np >= _T_FIX, 1.0, 0.0).astype(np.float32)
+    no_strobe = np.zeros(T, dtype=np.float32)
 
     if cond == 'dark':
-        return off, off, np.zeros(T, dtype=np.float32)
+        return off, off, no_strobe
+
+    if cond == 'pulsed':
+        # 80 ms target ON, 900 ms target OFF (period 980 ms) after T_FIX.
+        # Before T_FIX target is continuously on. Implemented via target_present
+        # pulsing — no strobe-flag mechanism (target_strobed stays 0).
+        T_ON     = 0.080
+        T_PERIOD = 0.980
+        rel_t  = t_np - _T_FIX
+        phase  = np.mod(np.maximum(rel_t, 0.0), T_PERIOD)
+        viewing = np.where(rel_t < 0, 1.0, (phase < T_ON).astype(np.float32)).astype(np.float32)
+    else:   # 'continuous'
+        viewing = ones
 
     if occ_eye == 'left':
-        tL, tR = off, ones
+        tL, tR = off, viewing
     else:
-        tL, tR = ones, off
+        tL, tR = viewing, off
 
-    strobed = ts if cond == 'strobed' else np.zeros(T, dtype=np.float32)
-    return tL, tR, strobed
+    return tL, tR, no_strobe
 
 
 def _run_cond(t_np, cond, occ_eye):
@@ -76,6 +93,7 @@ def _run_cond(t_np, cond, occ_eye):
     T  = len(t_np)
     pt = jnp.tile(jnp.array([0.0, 0.0, _DIST_M]), (T, 1))
     tL, tR, ts = _make_flags(t_np, cond, occ_eye)
+    lens_arr = jnp.full((T,), _LENS_D, dtype=jnp.float32)
     return simulate(
         THETA, t,
         target                 = build_target(t, lin_pos=pt),
@@ -83,6 +101,8 @@ def _run_cond(t_np, cond, occ_eye):
         target_present_L_array = jnp.array(tL),
         target_present_R_array = jnp.array(tR),
         target_strobed_array   = jnp.array(ts),
+        lens_L_array           = lens_arr,
+        lens_R_array           = lens_arr,
         return_states          = True,
         sim_config             = _CFG,
     )
@@ -98,17 +118,19 @@ def _occlusion(show):
     #     cond='continuous' → solid target  ;  cond='strobed' → flashing target
     #     cond='dark'       → both eyes occluded
     columns = [
-        ('R eye viewing — continuous',  'continuous', 'left'),
-        ('R eye viewing — strobed',     'strobed',    'left'),
-        ('L eye viewing — continuous',  'continuous', 'right'),
-        ('L eye viewing — strobed',     'strobed',    'right'),
-        ('Dark (both occluded)',        'dark',       'left'),
+        ('R eye viewing — continuous',            'continuous', 'left'),
+        ('R eye viewing — 80 ms on / 900 ms off', 'pulsed',     'left'),
+        ('L eye viewing — continuous',            'continuous', 'right'),
+        ('L eye viewing — 80 ms on / 900 ms off', 'pulsed',     'right'),
+        ('Dark (both occluded)',                  'dark',       'left'),
     ]
     sims = [_run_cond(t_np, c, o) for _, c, o in columns]
+    # Recover the per-column visibility flags for the top row of the figure.
+    flag_arrays = [_make_flags(t_np, c, o) for _, c, o in columns]
 
     N_COLS = len(columns)
-    N_ROWS = 5
-    fig, axes = plt.subplots(N_ROWS, N_COLS, figsize=(4 * N_COLS, 14), sharex=True)
+    N_ROWS = 8
+    fig, axes = plt.subplots(N_ROWS, N_COLS, figsize=(4 * N_COLS, 20), sharex=True)
     fig.suptitle(
         f'Monocular occlusion — binocular fixation at 15 cm, dark room\n'
         f'Vertical line = occlusion onset (t = {_T_FIX:.0f} s)',
@@ -116,11 +138,14 @@ def _occlusion(show):
     )
 
     row_labels = [
+        'Target visibility L / R',
         'Eye yaw L+R (deg)',
+        'Vergence (eye_L − eye_R) (deg)',
         'Slow-phase velocity L+R (deg/s)',
         'Version slow-phase velocity (deg/s)',
         'Vergence velocity (deg/s)',
-        'Eye velocity L+R (deg/s)',
+        'Accommodation (D)',
+        'ACA drive (deg)',
     ]
     for r, lbl in enumerate(row_labels):
         axes[r, 0].set_ylabel(lbl, fontsize=8.5)
@@ -140,26 +165,62 @@ def _occlusion(show):
         spv_L_yaw    = extract_spv_states(st, np.array(t_np), eye='left')[:, 0]
         spv_R_yaw    = extract_spv_states(st, np.array(t_np), eye='right')[:, 0]
         vers_spv_yaw = extract_spv_states(st, np.array(t_np), eye='version')[:, 0]
+        # Accommodation: lens optical power (D) + phasic/tonic neural states
+        acc_lens  = np.array(st.acc_plant[:, 0])                     # lens (D)
+        acc_brain = np.array(st.brain[:, _IDX_ACC])                  # (T, 2) — fast, slow
+        acc_fast  = acc_brain[:, 0]
+        acc_slow  = acc_brain[:, 1]
+        # ACA drive in deg: AC_A (pd/D) × 0.5729 (deg/pd) × x_acc_fast (D)
+        aca_drive = float(THETA.brain.AC_A) * 0.5729 * acc_fast
 
-        # Row 0: per-eye position
-        axes[0, ci].plot(t_np, eye_L, color=C_L, lw=1.3, label='L eye')
-        axes[0, ci].plot(t_np, eye_R, color=C_R, lw=1.3, label='R eye')
+        # Row 0: target visibility per eye as colored patches (L on top, R on bottom)
+        tL_flag, tR_flag, _ts = flag_arrays[ci]
+        ax_vis = axes[0, ci]
+        ax_vis.fill_between(t_np, 0.55, 1.0, where=tL_flag > 0.5,
+                            color=C_L, alpha=0.7, step='post', label='L eye target on')
+        ax_vis.fill_between(t_np, 0.0, 0.45, where=tR_flag > 0.5,
+                            color=C_R, alpha=0.7, step='post', label='R eye target on')
+        ax_vis.axhline(0.5, color='gray', lw=0.5, alpha=0.5)
+        ax_vis.text(t_np[0] + 0.05, 0.78, 'L', fontsize=7, va='center')
+        ax_vis.text(t_np[0] + 0.05, 0.22, 'R', fontsize=7, va='center')
+        ax_vis.set_ylim(-0.1, 1.1)
+        ax_vis.set_yticks([])
 
-        # Row 1: per-eye slow-phase velocity
-        axes[1, ci].plot(t_np, spv_L_yaw, color=C_L, lw=1.0, label='L eye SPV')
-        axes[1, ci].plot(t_np, spv_R_yaw, color=C_R, lw=1.0, label='R eye SPV')
+        # Row 1: per-eye position
+        axes[1, ci].plot(t_np, eye_L, color=C_L, lw=1.3, label='L eye')
+        axes[1, ci].plot(t_np, eye_R, color=C_R, lw=1.3, label='R eye')
 
-        # Row 2: version slow-phase velocity
-        axes[2, ci].plot(t_np, vers_spv_yaw, color=utils.C.get('ni', '#4dac26'),
+        # Row 2: vergence angle (eye_L − eye_R)
+        verg_angle = eye_L - eye_R
+        axes[2, ci].plot(t_np, verg_angle, color=utils.C.get('vs', '#8B4513'),
+                         lw=1.2, label='vergence (L−R)')
+        axes[2, ci].axhline(0, color='gray', lw=0.5, alpha=0.5)
+        axes[2, ci].axhline(THETA.brain.tonic_verg, color='red', lw=0.6, ls=':',
+                             alpha=0.5, label=f'tonic={THETA.brain.tonic_verg:.1f}°')
+
+        # Row 3: per-eye slow-phase velocity
+        axes[3, ci].plot(t_np, spv_L_yaw, color=C_L, lw=1.0, label='L eye SPV')
+        axes[3, ci].plot(t_np, spv_R_yaw, color=C_R, lw=1.0, label='R eye SPV')
+
+        # Row 4: version slow-phase velocity
+        axes[4, ci].plot(t_np, vers_spv_yaw, color=utils.C.get('ni', '#4dac26'),
                          lw=1.0, label='Version SPV')
 
-        # Row 3: vergence velocity
-        axes[3, ci].plot(t_np, verg_vel, color=utils.C.get('vs', '#8B4513'),
+        # Row 5: vergence velocity
+        axes[5, ci].plot(t_np, verg_vel, color=utils.C.get('vs', '#8B4513'),
                          lw=1.0, label='Vergence vel')
 
-        # Row 4: per-eye raw velocities
-        axes[4, ci].plot(t_np, vel_L, color=C_L, lw=1.0, label='L eye vel')
-        axes[4, ci].plot(t_np, vel_R, color=C_R, lw=1.0, label='R eye vel')
+        # Row 6: accommodation — lens (D) + phasic/tonic neural states
+        axes[6, ci].plot(t_np, acc_lens, color='#8B4513', lw=1.3, label='lens (D)')
+        axes[6, ci].plot(t_np, acc_fast, color='#2166ac', lw=1.0, ls='--',
+                         label='x_acc_fast')
+        axes[6, ci].plot(t_np, acc_slow, color='#762a83', lw=1.0, ls=':',
+                         label='x_acc_slow')
+
+        # Row 7: ACA drive (deg) — AC_A · 0.5729 · x_acc_fast
+        axes[7, ci].plot(t_np, aca_drive, color='#cc6622', lw=1.2,
+                          label=f'ACA drive (AC_A={THETA.brain.AC_A:.1f})')
+        axes[7, ci].axhline(0, color='gray', lw=0.6, ls=':', alpha=0.5)
 
         for row in range(N_ROWS):
             ax = axes[row, ci]
@@ -168,8 +229,8 @@ def _occlusion(show):
             if ci == 0:
                 ax.legend(fontsize=6)
 
-    # Sync y-limits across columns per row
-    for row in range(N_ROWS):
+    # Sync y-limits across columns per row (skip row 0 — visibility patches use a fixed range)
+    for row in range(1, N_ROWS):
         lo_row =  np.inf
         hi_row = -np.inf
         for ci in range(N_COLS):
