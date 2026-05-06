@@ -119,7 +119,7 @@ def binocular_fusion_policy(target_pos_L, target_vel_L, target_vis_L,
     total_demand_v = raw_disp[1] + ec_verg[1]
     total_demand_t = raw_disp[2] + ec_verg[2]
     gate_conv = jax.nn.sigmoid(100.0 * (sensory_params.npc      - total_demand_h))
-    gate_div  = jax.nn.sigmoid(100.0 * (sensory_params.div_max  - total_demand_h))
+    gate_div  = jax.nn.sigmoid(100.0 * (sensory_params.div_max  + total_demand_h ))
     gate_vert = jax.nn.sigmoid(100.0 * (sensory_params.vert_max - jnp.abs(total_demand_v)))
     gate_tors = jax.nn.sigmoid(100.0 * (sensory_params.tors_max - jnp.abs(total_demand_t)))
     target_fusable = gate_conv * gate_div * gate_vert * gate_tors
@@ -243,7 +243,14 @@ def step(x_vis,
     # accommodation from relaxing to infinity during brief occlusions of the target
     # (e.g. during blinks) when the background is still visible.
     defocus_visible = 1.0 - (1.0 - scene_visible) * (1.0 - target_visible)
-    defocus_cyc = (w_L * defocus_L + w_R * defocus_R) * defocus_visible
+    # Defocus weighting uses RAW per-eye target visibility (not the fusion-gated
+    # w_L, w_R). This way a monocularly-visible target still drives accommodation
+    # via the seeing eye's defocus, even when binocular fusion is disabled (e.g.
+    # demand exceeds NPC) and w_L/w_R could otherwise collapse to zero.
+    def_norm = target_vis_L + target_vis_R + 1e-6
+    w_def_L  = target_vis_L / def_norm
+    w_def_R  = target_vis_R / def_norm
+    defocus_cyc = (w_def_L * defocus_L + w_def_R * defocus_R) * defocus_visible
 
     # ── Target velocity (pursuit) ──────────────────────────────────────────────
     # Strobe gate: target_motion_vis = target_vis × (1−strobe), already zero when strobed.

@@ -2,6 +2,7 @@
 
 Currently contains:
     1. Monocular occlusion — binocular fixation maintenance under three viewing conditions.
+    2. Fixation drift quiver — slow-phase drift across visual field, noise on/off comparison.
 
 Usage:
     python -X utf8 scripts/bench_experiments.py
@@ -13,6 +14,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import bench_utils as utils
 
 import numpy as np
+import jax
 import jax.numpy as jnp
 import matplotlib
 if '--show' not in sys.argv:
@@ -23,18 +25,23 @@ from oculomotor.sim.simulator import (
     PARAMS_DEFAULT, SimConfig, simulate, with_brain, with_sensory,
     _IDX_PURSUIT,
 )
+from oculomotor.sim import kinematics as km
 from oculomotor.sim.kinematics import build_target
-from oculomotor.analysis import extract_burst
+from oculomotor.analysis import extract_burst, extract_spv_states
 
 SHOW  = '--show' in sys.argv
 DT    = 0.001
-THETA = with_brain(with_sensory(PARAMS_DEFAULT, sigma_canal=0.0, sigma_pos=0.0, sigma_vel=0.0), sigma_acc=0.0)  # noiseless — deterministic
+THETA = with_brain(
+    with_sensory(PARAMS_DEFAULT, sigma_canal=0.0, sigma_pos=0.0, sigma_vel=0.0),
+    sigma_acc=0.0,
+    tonic_verg=-4.0,   # tonic (resting) vergence baseline (deg); negative = divergent dark vergence
+)  # noiseless — deterministic
 
 
 # ── Monocular occlusion ────────────────────────────────────────────────────────
 
 _T_END  = 15.0
-_T_FIX  = 5.0       # binocular fixation period before occlusion onset (s)
+_T_FIX  = 2.0       # binocular fixation period before occlusion onset (s)
 _DIST_M = 0.15      # target distance (m) — straight ahead, 15 cm
 
 _CFG = SimConfig(warmup_s=30.0)   # 5 × tau_verg → vergence fully settled
@@ -83,82 +90,96 @@ def _run_cond(t_np, cond, occ_eye):
 
 def _occlusion(show):
     t_np = np.arange(0.0, _T_END, DT, dtype=np.float32)
-    conditions = ['dark', 'strobed', 'continuous']
 
-    results = {}
-    s = _run_cond(t_np, 'dark', 'left')
-    results[('dark', 'left')]  = s
-    results[('dark', 'right')] = s   # symmetric
+    # Five columns by viewing-eye + condition.
+    #   _run_cond(cond, occ_eye):
+    #     occ_eye='left'  → L eye occluded → R eye is the viewing eye
+    #     occ_eye='right' → R eye occluded → L eye is the viewing eye
+    #     cond='continuous' → solid target  ;  cond='strobed' → flashing target
+    #     cond='dark'       → both eyes occluded
+    columns = [
+        ('R eye viewing — continuous',  'continuous', 'left'),
+        ('R eye viewing — strobed',     'strobed',    'left'),
+        ('L eye viewing — continuous',  'continuous', 'right'),
+        ('L eye viewing — strobed',     'strobed',    'right'),
+        ('Dark (both occluded)',        'dark',       'left'),
+    ]
+    sims = [_run_cond(t_np, c, o) for _, c, o in columns]
 
-    for cond in ['strobed', 'continuous']:
-        for occ in ['left', 'right']:
-            results[(cond, occ)] = _run_cond(t_np, cond, occ)
-
+    N_COLS = len(columns)
     N_ROWS = 5
-    fig, axes = plt.subplots(N_ROWS, 3, figsize=(13, 14), sharex=True)
+    fig, axes = plt.subplots(N_ROWS, N_COLS, figsize=(4 * N_COLS, 14), sharex=True)
     fig.suptitle(
-        'Monocular occlusion — binocular fixation at 15 cm, dark room\n'
-        'Vertical line = occlusion onset (t = 5 s)',
+        f'Monocular occlusion — binocular fixation at 15 cm, dark room\n'
+        f'Vertical line = occlusion onset (t = {_T_FIX:.0f} s)',
         fontsize=10,
     )
 
     row_labels = [
-        'Left eye yaw (deg)',
-        'Right eye yaw (deg)',
-        'Vergence  L−R (deg)',
-        'Pursuit cmd (deg/s)',
-        'Saccade burst (deg/s)',
+        'Eye yaw L+R (deg)',
+        'Slow-phase velocity L+R (deg/s)',
+        'Version slow-phase velocity (deg/s)',
+        'Vergence velocity (deg/s)',
+        'Eye velocity L+R (deg/s)',
     ]
     for r, lbl in enumerate(row_labels):
         axes[r, 0].set_ylabel(lbl, fontsize=8.5)
 
-    for ci, cond in enumerate(conditions):
-        axes[0, ci].set_title(_COND_LABELS[cond], fontsize=9)
+    C_L = utils.C['eye']
+    C_R = utils.C['target']
+
+    for ci, ((title, _cond, _occ), st) in enumerate(zip(columns, sims)):
+        axes[0, ci].set_title(title, fontsize=9)
         axes[N_ROWS - 1, ci].set_xlabel('Time (s)', fontsize=8)
 
-        for occ in ['left', 'right']:
-            st = results[(cond, occ)]
+        eye_L    = np.array(st.plant[:, 0])
+        eye_R    = np.array(st.plant[:, 3])
+        vel_L    = np.gradient(eye_L, DT)
+        vel_R    = np.gradient(eye_R, DT)
+        verg_vel = vel_L - vel_R
+        spv_L_yaw    = extract_spv_states(st, np.array(t_np), eye='left')[:, 0]
+        spv_R_yaw    = extract_spv_states(st, np.array(t_np), eye='right')[:, 0]
+        vers_spv_yaw = extract_spv_states(st, np.array(t_np), eye='version')[:, 0]
 
-            eye_L    = np.array(st.plant[:, 0])
-            eye_R    = np.array(st.plant[:, 3])
-            vergence = eye_L - eye_R
-            pursuit  = np.array(st.brain[:, _IDX_PURSUIT])[:, 0]
-            burst    = np.array(extract_burst(st, THETA))[:, 0]
+        # Row 0: per-eye position
+        axes[0, ci].plot(t_np, eye_L, color=C_L, lw=1.3, label='L eye')
+        axes[0, ci].plot(t_np, eye_R, color=C_R, lw=1.3, label='R eye')
 
-            if cond == 'dark':
-                color, ls, lbl = utils.C['dark'],   '-',  'both occluded'
-            elif occ == 'left':
-                color, ls, lbl = utils.C['eye'],    '-',  'L eye occluded'
-            else:
-                color, ls, lbl = utils.C['target'], '--', 'R eye occluded'
+        # Row 1: per-eye slow-phase velocity
+        axes[1, ci].plot(t_np, spv_L_yaw, color=C_L, lw=1.0, label='L eye SPV')
+        axes[1, ci].plot(t_np, spv_R_yaw, color=C_R, lw=1.0, label='R eye SPV')
 
-            kw = dict(color=color, lw=1.5, ls=ls, label=lbl)
-            axes[0, ci].plot(t_np, eye_L,    **kw)
-            axes[1, ci].plot(t_np, eye_R,    **kw)
-            axes[2, ci].plot(t_np, vergence, **kw)
-            axes[3, ci].plot(t_np, pursuit,  **kw)
-            axes[4, ci].plot(t_np, burst,    **kw)
+        # Row 2: version slow-phase velocity
+        axes[2, ci].plot(t_np, vers_spv_yaw, color=utils.C.get('ni', '#4dac26'),
+                         lw=1.0, label='Version SPV')
 
-            if cond == 'dark':
-                break
+        # Row 3: vergence velocity
+        axes[3, ci].plot(t_np, verg_vel, color=utils.C.get('vs', '#8B4513'),
+                         lw=1.0, label='Vergence vel')
+
+        # Row 4: per-eye raw velocities
+        axes[4, ci].plot(t_np, vel_L, color=C_L, lw=1.0, label='L eye vel')
+        axes[4, ci].plot(t_np, vel_R, color=C_R, lw=1.0, label='R eye vel')
 
         for row in range(N_ROWS):
             ax = axes[row, ci]
             ax.axvline(_T_FIX, color='gray', lw=0.8, ls='--', alpha=0.5)
             ax.grid(True, alpha=0.15)
-            ylo, yhi = ax.get_ylim()
-            span = max(yhi - ylo, 3.0)
-            mid  = 0.5 * (ylo + yhi)
-            ax.set_ylim(mid - span / 2, mid + span / 2)
             if ci == 0:
-                ax.legend(fontsize=7)
+                ax.legend(fontsize=6)
 
-        for ci2 in range(3):
-            ax = axes[4, ci2]
-            ylo, yhi = ax.get_ylim()
-            span = max(yhi - ylo, 20.0)
-            mid  = 0.5 * (ylo + yhi)
-            axes[4, ci2].set_ylim(mid - span / 2, mid + span / 2)
+    # Sync y-limits across columns per row
+    for row in range(N_ROWS):
+        lo_row =  np.inf
+        hi_row = -np.inf
+        for ci in range(N_COLS):
+            ylo, yhi = axes[row, ci].get_ylim()
+            lo_row = min(lo_row, ylo)
+            hi_row = max(hi_row, yhi)
+        span = max(hi_row - lo_row, 3.0)
+        mid  = 0.5 * (lo_row + hi_row)
+        for ci in range(N_COLS):
+            axes[row, ci].set_ylim(mid - span / 2, mid + span / 2)
 
     fig.tight_layout()
     path, rp = utils.save_fig(fig, 'occlusion', show=show,
@@ -174,19 +195,155 @@ def _occlusion(show):
     )
 
 
+# ── Fixation drift quiver ──────────────────────────────────────────────────────
+
+
+def _drift_quiver(show):
+    """Mean slow-phase drift velocity at multiple fixation positions across the
+    visual field. Two side-by-side panels: noise on (default) vs noise off.
+    17 positions: origin + 8 directions × 2 eccentricities (5°, 10°).
+    """
+    DEPTH    = 1.0     # m, screen distance
+    DURATION = 5.0     # s
+    DROP_S   = 1.0     # discard the first 1 s (initial transients) when averaging
+    NDIR     = 8       # cardinal + 45° = 8 directions
+
+    # Build the position grid (degrees on the visual field)
+    angs = np.linspace(0, 360, NDIR, endpoint=False)
+    targets_deg = [(0.0, 0.0)]                   # origin: only one entry
+    for ecc in [5.0, 10.0]:
+        for a in angs:
+            x = ecc * np.cos(np.radians(a))
+            y = ecc * np.sin(np.radians(a))
+            targets_deg.append((x, y))
+
+    t  = jnp.arange(0.0, DURATION, DT)
+    T  = len(t)
+    drop_n = int(DROP_S / DT)
+
+    # Two conditions: noise on (default) vs noise off (all sigmas → 0)
+    params_noise_on  = PARAMS_DEFAULT
+    params_noise_off = with_brain(
+        with_sensory(PARAMS_DEFAULT,
+                     sigma_canal=0.0, sigma_slip=0.0,
+                     sigma_pos=0.0, sigma_vel=0.0),
+        sigma_acc=0.0,
+    )
+
+    def _run_condition(params, strobed=False):
+        drifts = []
+        strobe_arr = jnp.ones(T) if strobed else jnp.zeros(T)
+        for k, (px_deg, py_deg) in enumerate(targets_deg):
+            wx = DEPTH * np.tan(np.radians(px_deg))
+            wy = DEPTH * np.tan(np.radians(py_deg))
+            lin_pos = np.tile(np.array([wx, wy, DEPTH]), (T, 1))
+            target  = km.build_target(t, lin_pos=lin_pos)
+            states  = simulate(params, t,
+                               target=target,
+                               scene_present_array=jnp.ones(T),
+                               target_present_array=jnp.ones(T),
+                               target_strobed_array=strobe_arr,
+                               max_steps=int(DURATION / DT) + 2000,
+                               return_states=True,
+                               key=jax.random.PRNGKey(100 + k))
+            spv = extract_spv_states(states, np.array(t), margin_s=0.05, eye='left')
+            spv_h = spv[drop_n:, 0]
+            spv_v = spv[drop_n:, 1]
+            drifts.append((px_deg, py_deg,
+                           float(np.nanmean(spv_h)), float(np.nanmean(spv_v))))
+        return np.array(drifts)
+
+    drifts_on  = _run_condition(params_noise_on, strobed=True)
+    drifts_off = _run_condition(params_noise_off, strobed=False)
+
+    # Common color scale across both panels for fair comparison
+    speed_on  = np.hypot(drifts_on[:, 2],  drifts_on[:, 3])
+    speed_off = np.hypot(drifts_off[:, 2], drifts_off[:, 3])
+    max_speed = max(float(np.nanmax(speed_on)),
+                    float(np.nanmax(speed_off)), 1e-6)
+    arrow_max_plot_deg = 3.0
+    QUIVER_SCALE = max_speed / arrow_max_plot_deg
+
+    if max_speed >= 0.5:    SCALE_VAL = 0.5
+    elif max_speed >= 0.2:  SCALE_VAL = 0.2
+    elif max_speed >= 0.1:  SCALE_VAL = 0.1
+    else:                   SCALE_VAL = 0.05
+
+    fig, axes = plt.subplots(1, 2, figsize=(15, 8))
+    fig.suptitle(f'Fixation drift quiver — noise on vs noise off  '
+                 f'({DURATION:.0f} s per fixation, screen at {DEPTH:.1f} m, '
+                 f'first {DROP_S:.0f} s dropped)',
+                 fontsize=11, fontweight='bold')
+
+    for ax, drifts, label in [(axes[0], drifts_on,  'Noise on, target strobed'),
+                               (axes[1], drifts_off, 'Noise off, target steady')]:
+        px = drifts[:, 0]; py = drifts[:, 1]
+        vx = drifts[:, 2]; vy = drifts[:, 3]
+        speed = np.hypot(vx, vy)
+
+        for r in [5.0, 10.0]:
+            circle = plt.Circle((0, 0), r, fill=False, ls=':', lw=0.7, color='#bbbbbb')
+            ax.add_patch(circle)
+            ax.text(r * np.cos(np.radians(45)) + 0.3, r * np.sin(np.radians(45)) + 0.3,
+                    f'{r:.0f}°', color='#888888', fontsize=8)
+
+        ax.plot(px, py, 'o', color='black', ms=4, zorder=4)
+        q = ax.quiver(px, py, vx, vy, speed,
+                      cmap='viridis', angles='xy', scale_units='xy',
+                      scale=QUIVER_SCALE, clim=(0, max_speed),
+                      width=0.005, headwidth=4, headlength=5, zorder=5)
+
+        sx, sy = 11.0, -11.5
+        ax.quiver([sx], [sy], [SCALE_VAL], [0.0], color='red',
+                  angles='xy', scale_units='xy', scale=QUIVER_SCALE,
+                  width=0.005, headwidth=4, headlength=5, zorder=5)
+        ax.text(sx + (SCALE_VAL / QUIVER_SCALE) / 2, sy - 0.7,
+                f'{SCALE_VAL:g} deg/s', color='red', ha='center', fontsize=9)
+
+        ax.set_xlim(-13, 14)
+        ax.set_ylim(-13, 13)
+        ax.set_aspect('equal')
+        ax.grid(True, alpha=0.2)
+        ax.axhline(0, color='#999999', lw=0.5)
+        ax.axvline(0, color='#999999', lw=0.5)
+        ax.set_xlabel('Horizontal eccentricity (deg)')
+        ax.set_ylabel('Vertical eccentricity (deg)')
+        ax.set_title(f'{label} — max |SPV| = {float(speed.max()):.3f} deg/s', fontsize=10)
+
+    cbar = fig.colorbar(q, ax=axes, fraction=0.04, pad=0.04)
+    cbar.set_label('|SPV| (deg/s)', fontsize=9)
+
+    path, rp = utils.save_fig(fig, 'fixation_drift_quiver', show=show, params=PARAMS_DEFAULT)
+    return utils.fig_meta(
+        path, rp,
+        title='Fixation Drift Quiver — noise on vs off',
+        description=f'Mean slow-phase drift at 17 fixation positions over {DURATION:.0f} s each, '
+                    f'compared with default sensory noise vs all noise sigmas zeroed. '
+                    'Origin + 8 directions × 5°/10° eccentricity.',
+        expected='Noise-on: drift magnitudes typically <1 deg/s at all positions, slightly '
+                 'centripetal at eccentric positions. '
+                 'Noise-off: residual drift is from deterministic dynamics (NI leak, plant) '
+                 'and should be near zero at primary, with small centripetal pull at eccentricity.',
+        citation='Cherici et al. (2012) J Vis 12(6):31; Martinez-Conde & Macknik 2017 Neuron.',
+    )
+
+
 # ── Section entry point ────────────────────────────────────────────────────────
 
 SECTION = dict(
     id='experiments', title='Experimental',
-    description='Exploratory paradigms: monocular occlusion, binocular fixation maintenance.',
+    description='Exploratory paradigms: monocular occlusion, binocular fixation maintenance, '
+                'fixation drift quiver across visual field.',
 )
 
 
 def run(show=False):
     print('\n=== Experiments ===')
     figs = []
-    print('  1/1  monocular occlusion …')
+    print('  1/2  monocular occlusion …')
     figs.append(_occlusion(show))
+    print('  2/2  fixation drift quiver across visual field …')
+    figs.append(_drift_quiver(show))
     return figs
 
 

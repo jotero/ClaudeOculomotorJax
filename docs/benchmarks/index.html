@@ -41,6 +41,17 @@ h1   { font-size: 22px; margin-bottom: 4px; }
               text-transform: uppercase; margin-top: 8px; }
 .badge.behavior { background: #d4edda; color: #155724; }
 .badge.cascade  { background: #cce5ff; color: #004085; }
+.fig-pair       { display: grid; grid-template-columns: 1fr 1fr; gap: 6px;
+                  align-items: start; }
+.fig-pair .lbl  { font-size: 10px; color: #888; text-transform: uppercase;
+                  letter-spacing: 0.04em; margin: 0 0 2px 2px; }
+.diff-badge     { display: inline-block; padding: 2px 8px; border-radius: 12px;
+                  font-size: 10px; font-weight: 700; letter-spacing: 0.04em;
+                  text-transform: uppercase; margin-bottom: 6px; margin-right: 6px; }
+.diff-match     { background: #d4edda; color: #155724; }
+.diff-changed   { background: #f8d7da; color: #721c24; }
+.diff-shape     { background: #fff3cd; color: #856404; }
+.diff-noref     { background: #e2e3e5; color: #383d41; }
 </style>
 </head>
 <body>
@@ -66,8 +77,8 @@ h1   { font-size: 22px; margin-bottom: 4px; }
   <main>
     <h1>OculomotorJax — Benchmark Report</h1>
     <p class="meta">
-      Generated: <strong>2026-05-03 22:21</strong> &nbsp;|&nbsp;
-      Version: <strong>c03bcf3-dirty</strong> &nbsp;|&nbsp;
+      Generated: <strong>2026-05-05 16:27</strong> &nbsp;|&nbsp;
+      Version: <strong>37fd6fc-dirty</strong> &nbsp;|&nbsp;
       <a href="../BENCHMARKS.md">BENCHMARKS.md</a>
     </p>
 
@@ -77,6 +88,7 @@ h1   { font-size: 22px; margin-bottom: 4px; }
     <div class="fig-grid">
       
     <div class="fig-card">
+      <span class="diff-badge diff-noref">no reference</span>
       <a href="figures/saccade_main_sequence.png" target="_blank"><img src="figures/saccade_main_sequence.png" alt="Saccade Main Sequence"></a>
       <h3>Saccade Main Sequence</h3>
       <p class="desc">Peak velocity vs amplitude scatter (left) and aligned eye traces (right) for amplitudes 0.5–20°.</p>
@@ -89,6 +101,7 @@ h1   { font-size: 22px; margin-bottom: 4px; }
     </div>
 
     <div class="fig-card">
+      <span class="diff-badge diff-noref">no reference</span>
       <a href="figures/saccade_oblique.png" target="_blank"><img src="figures/saccade_oblique.png" alt="Oblique Saccades"></a>
       <h3>Oblique Saccades</h3>
       <p class="desc">Sequence of saccades to 5 oblique targets. Left: 2D trajectory. Center/right: H and V components.</p>
@@ -101,6 +114,7 @@ h1   { font-size: 22px; margin-bottom: 4px; }
     </div>
 
     <div class="fig-card">
+      <span class="diff-badge diff-noref">no reference</span>
       <a href="figures/saccade_refractoriness.png" target="_blank"><img src="figures/saccade_refractoriness.png" alt="Saccade Double-Step Refractoriness"></a>
       <h3>Saccade Double-Step Refractoriness</h3>
       <p class="desc">Double-step paradigm: target jumps 0→A/2 then A/2→A for A=10,20,30,40° after variable ISI (20–500 ms). Target shown dashed in same colour as eye trace. Short ISIs produce one amended saccade; longer ISIs produce two.</p>
@@ -113,6 +127,7 @@ h1   { font-size: 22px; margin-bottom: 4px; }
     </div>
 
     <div class="fig-card">
+      <span class="diff-badge diff-noref">no reference</span>
       <a href="figures/saccade_cascade_noisy.png" target="_blank"><img src="figures/saccade_cascade_noisy.png" alt="Saccade Signal Cascade (with noise)"></a>
       <h3>Saccade Signal Cascade (with noise)</h3>
       <p class="desc">Row-by-row signal flow for 1°, 5°, 20°, 40° saccades: position, visual cascade + hold, accumulator/latch, residual error, burst, eye velocity, refractory state.</p>
@@ -132,6 +147,7 @@ h1   { font-size: 22px; margin-bottom: 4px; }
     <div class="fig-grid">
       
     <div class="fig-card">
+      <span class="diff-badge diff-noref">no reference</span>
       <a href="figures/vor_raphan_fig9.png" target="_blank"><img src="figures/vor_raphan_fig9.png" alt="Raphan 1979 Fig. 9 Replication"></a>
       <h3>Raphan 1979 Fig. 9 Replication</h3>
       <p class="desc">Panels A–F matching Raphan et al. (1979) Fig.9. Left col: SPV only. Right col: CUP (canal estimate), INT (velocity storage), SPV overlaid. A/B: VOR in dark. C/D: OKN+OKAN. E/F: VVOR (light→dark).</p>
@@ -144,6 +160,7 @@ h1   { font-size: 22px; margin-bottom: 4px; }
     </div>
 
     <div class="fig-card">
+      <span class="diff-badge diff-noref">no reference</span>
       <a href="figures/vor_okr_cascade.png" target="_blank"><img src="figures/vor_okr_cascade.png" alt="VOR / OKR Signal Cascade (Internal)"></a>
       <h3>VOR / OKR Signal Cascade (Internal)</h3>
       <p class="desc">Left column (VOR in dark): head velocity → canal afferents → VS state → NI state → eye velocity. Right column (OKN): scene velocity → delayed retinal slip → VS → NI → eye velocity.</p>
@@ -159,13 +176,14 @@ h1   { font-size: 22px; margin-bottom: 4px; }
 
   <section class="section" id="gravity">
     <h2>3. Gravity Estimator</h2>
-    <p>Canal-otolith interaction: OCR, OVAR, VOR tilt suppression, OCR vs tilt angle, somatogravic OCR frequency dependence. Parameters: tau_grav=5.0, K_gd=2.86, g_ocr=1.019 (Laurens & Angelaki 2011).</p>
+    <p>Canal-otolith interaction: OCR, OVAR, VOR tilt suppression, OCR vs tilt angle, somatogravic OCR frequency dependence. Parameters: tau_grav=1.6666666666666667, K_gd=2.86, g_ocr=1.019 (Laurens & Angelaki 2011).</p>
     <div class="fig-grid">
       
     <div class="fig-card">
+      <span class="diff-badge diff-noref">no reference</span>
       <a href="figures/gravity_ocr.png" target="_blank"><img src="figures/gravity_ocr.png" alt="Ocular Counterroll (OCR)"></a>
       <h3>Ocular Counterroll (OCR)</h3>
-      <p class="desc">Counter-roll traces for tilts [5.0, 10.0, 20.0, 30.0, 45.0, 60.0, 75.0, 90.0]° + SS scatter. g_ocr=1.02.</p>
+      <p class="desc">Counter-roll traces for tilts [15.0, 30.0, 45.0, 90.0]° + SS scatter. g_ocr=1.02.</p>
       <div class="expected">
         <strong>Expected behavior</strong>
         Torsion ≈ −G_OCR×G0×sin(θ). 30° → ≈−5.0°. g_est holds flat after tilt (no drift).
@@ -175,18 +193,20 @@ h1   { font-size: 22px; margin-bottom: 4px; }
     </div>
 
     <div class="fig-card">
-      <a href="figures/gravity_ocr_cascade.png" target="_blank"><img src="figures/gravity_ocr_cascade.png" alt="OCR cascade (4-condition comparison)"></a>
-      <h3>OCR cascade (4-condition comparison)</h3>
-      <p class="desc">30.0° tilt — VS, NI torsion cascade + SPV for scene+target / target only / scene only / dark.</p>
+      <span class="diff-badge diff-noref">no reference</span>
+      <a href="figures/gravity_ocr_cascade.png" target="_blank"><img src="figures/gravity_ocr_cascade.png" alt="OCR cascade (3 visual conditions)"></a>
+      <h3>OCR cascade (3 visual conditions)</h3>
+      <p class="desc">30.0° roll tilt — OCR cascade across dark / scene-on / scene+target-on conditions, 15 s hold, noiseless.</p>
       <div class="expected">
         <strong>Expected behavior</strong>
-        Torsion stabilises at ≈-5.01°. SPV row: -VS (dashed) and -canal FT (dotted) should bracket the measured SPV. Yaw/pitch near 0 (pure roll tilt).
+        Eye torsion stabilises at ≈-4.97° in all conditions. SPV row: -VS (dashed) and -canal FT (dotted) should bracket the measured SPV.
       </div>
       <p class="citation">&#128214; Debug diagnostic</p>
       <span class="badge cascade">cascade</span>
     </div>
 
     <div class="fig-card">
+      <span class="diff-badge diff-noref">no reference</span>
       <a href="figures/gravity_ovar.png" target="_blank"><img src="figures/gravity_ovar.png" alt="OVAR — Off-Vertical Axis Rotation"></a>
       <h3>OVAR — Off-Vertical Axis Rotation</h3>
       <p class="desc">60°/s rotation, tilt angles [10.0, 30.0, 60.0, 90.0]°. Replicates Laurens & Angelaki (2011) Fig 5.</p>
@@ -199,6 +219,7 @@ h1   { font-size: 22px; margin-bottom: 4px; }
     </div>
 
     <div class="fig-card">
+      <span class="diff-badge diff-noref">no reference</span>
       <a href="figures/gravity_tilt_suppression.png" target="_blank"><img src="figures/gravity_tilt_suppression.png" alt="VOR Tilt Suppression"></a>
       <h3>VOR Tilt Suppression</h3>
       <p class="desc">Upright 60°/s yaw; tilt [0.0, 30.0, 60.0, 90.0]° applied after stop. Replicates Laurens & Angelaki (2011) Fig 6.</p>
@@ -211,6 +232,7 @@ h1   { font-size: 22px; margin-bottom: 4px; }
     </div>
 
     <div class="fig-card">
+      <span class="diff-badge diff-noref">no reference</span>
       <a href="figures/gravity_somatogravic_freq.png" target="_blank"><img src="figures/gravity_somatogravic_freq.png" alt="Somatogravic OCR — Frequency Dependence"></a>
       <h3>Somatogravic OCR — Frequency Dependence</h3>
       <p class="desc">Sinusoidal lateral translation at [0.03, 0.07, 0.15, 0.3, 0.7, 1.5] Hz, 2.0 m/s² peak. OCR via gravity estimator LP filter.</p>
@@ -230,6 +252,7 @@ h1   { font-size: 22px; margin-bottom: 4px; }
     <div class="fig-grid">
       
     <div class="fig-card">
+      <span class="diff-badge diff-noref">no reference</span>
       <a href="figures/pursuit_velocity_range.png" target="_blank"><img src="figures/pursuit_velocity_range.png" alt="Smooth Pursuit — Velocity Range"></a>
       <h3>Smooth Pursuit — Velocity Range</h3>
       <p class="desc">Step-ramp target at 5, 10, 20, 40 deg/s. Blue: smooth pursuit enabled. Gray: saccades only (pursuit off). Rows: position, velocity, pursuit drive (total + integrator + phasic).</p>
@@ -242,6 +265,7 @@ h1   { font-size: 22px; margin-bottom: 4px; }
     </div>
 
     <div class="fig-card">
+      <span class="diff-badge diff-noref">no reference</span>
       <a href="figures/pursuit_sinusoidal.png" target="_blank"><img src="figures/pursuit_sinusoidal.png" alt="Sinusoidal Pursuit (H + V)"></a>
       <h3>Sinusoidal Pursuit (H + V)</h3>
       <p class="desc">Horizontal sinusoidal target at 0.2, 0.5, 1.0 Hz (peak 15 deg/s). Vertical at 2× horizontal frequency for Lissajous trajectory. Rows: H position, V position, 2D trajectory.</p>
@@ -254,6 +278,7 @@ h1   { font-size: 22px; margin-bottom: 4px; }
     </div>
 
     <div class="fig-card">
+      <span class="diff-badge diff-noref">no reference</span>
       <a href="figures/pursuit_cascade.png" target="_blank"><img src="figures/pursuit_cascade.png" alt="Smooth Pursuit Signal Cascade (Internal)"></a>
       <h3>Smooth Pursuit Signal Cascade (Internal)</h3>
       <p class="desc">Full signal chain for 20 deg/s pursuit: target ramps 0.2–2.0 s then holds. Pursuit integrator persists after target stop (τ ≈ 40 s). Rows: position, velocity, pursuit drive (total/integrator/phasic), visual error, saccade accumulator, burst, refractory state.</p>
@@ -273,6 +298,7 @@ h1   { font-size: 22px; margin-bottom: 4px; }
     <div class="fig-grid">
       
     <div class="fig-card">
+      <span class="diff-badge diff-noref">no reference</span>
       <a href="figures/vergence_bidir.png" target="_blank"><img src="figures/vergence_bidir.png" alt="Vergence: Symmetric + Asymmetric, Both Directions"></a>
       <h3>Vergence: Symmetric + Asymmetric, Both Directions</h3>
       <p class="desc">3 rows × 4 cols. Cols: symmetric conv, symmetric div, asymmetric right+conv, asymmetric left+div. Row 0: L/R eye yaw. Row 1: vergence (L−R). Row 2: version (L+R)/2.</p>
@@ -285,6 +311,7 @@ h1   { font-size: 22px; margin-bottom: 4px; }
     </div>
 
     <div class="fig-card">
+      <span class="diff-badge diff-noref">no reference</span>
       <a href="figures/vergence_fixation_distance.png" target="_blank"><img src="figures/vergence_fixation_distance.png" alt="Fixation Disparity vs. Distance"></a>
       <h3>Fixation Disparity vs. Distance</h3>
       <p class="desc">Steady-state vergence residual error at eight target distances (0.2–3 m). Left: vergence time-courses (near = warm colours). Right: fixation disparity in arcmin — the residual after fusion settles. Positive = under-convergence (exo FD). Green band = normal ±6 arcmin.</p>
@@ -297,6 +324,7 @@ h1   { font-size: 22px; margin-bottom: 4px; }
     </div>
 
     <div class="fig-card">
+      <span class="diff-badge diff-noref">no reference</span>
       <a href="figures/vergence_diplopia.png" target="_blank"><img src="figures/vergence_diplopia.png" alt="Diplopia: Fusion Gate and Vergence Limits"></a>
       <h3>Diplopia: Fusion Gate and Vergence Limits</h3>
       <p class="desc">3 rows × 2 cols. Col 0: fused (3→0.3 m midline). Col 1: diplopic (3→0.05 m midline). Both columns use default params (saccades on). Row 0: L/R eye yaw; fused shows geometric target lines (±geo/2), diplopic shows NPC motor-limit lines (±NPC/2) with off-scale annotation. Row 1: vergence (L−R) with geometric target and NPC limit. Row 2: version (L+R)/2 — auto-scaled; diplopic case shows version shift from monocular fixation saccade driven by dominant eye retinal error.</p>
@@ -309,18 +337,20 @@ h1   { font-size: 22px; margin-bottom: 4px; }
     </div>
 
     <div class="fig-card">
-      <a href="figures/vergence_asym_debug.png" target="_blank"><img src="figures/vergence_asym_debug.png" alt="Asymmetric Vergence Debug Cascade"></a>
-      <h3>Asymmetric Vergence Debug Cascade</h3>
-      <p class="desc">7 rows × 2 cols. Left: asym right+conv (2→0.5 m, +10°). Right: asym left+div (0.5→2 m, −10°). Rows: eye position, vergence (L−R), version (L+R)/2, vergence velocity, OPN gate z_act, internal states e_held/x_copy/x_verg [H], Zee burst [H].</p>
+      <span class="diff-badge diff-noref">no reference</span>
+      <a href="figures/vergence_cascade.png" target="_blank"><img src="figures/vergence_cascade.png" alt="Vergence Cascade (4 conditions)"></a>
+      <h3>Vergence Cascade (4 conditions)</h3>
+      <p class="desc">8 rows × 4 cols. Cols: sym conv (3→0.3 m), sym div (0.3→3 m), asym R+conv (2→0.5 m, +10°), asym L+div (0.5→2 m, −10°). Rows: eye position, vergence, version, vergence velocity, OPN gate, integrators (x_verg + x_verg_tonic [H]), x_verg_copy, Zee SVBN burst.</p>
       <div class="expected">
         <strong>Expected behavior</strong>
-        OPN gate: pulses during version saccade; Zee burst fires during the same window and exhausts as x_copy reaches e_held. Vergence velocity: overshoot appears as negative region after peak. x_verg[H] settles at geometric vergence target.
+        Symmetric cols: version stays near 0; asymmetric: version follows target. Vergence settles at geometric target. SVBN fires only during saccades.
       </div>
-      <p class="citation">&#128214; Zee et al. (1992) J Neurophysiol; Collewijn et al. (1988) J Physiol</p>
+      <p class="citation">&#128214; Zee et al. (1992) J Neurophysiol; Collewijn et al. (1988) J Physiol; Schor (1979) Vision Res</p>
       <span class="badge behavior">behavior</span>
     </div>
 
     <div class="fig-card">
+      <span class="diff-badge diff-noref">no reference</span>
       <a href="figures/vergence_main_sequence.png" target="_blank"><img src="figures/vergence_main_sequence.png" alt="Vergence Main Sequence (peak velocity vs. amplitude)"></a>
       <h3>Vergence Main Sequence (peak velocity vs. amplitude)</h3>
       <p class="desc">Peak vergence velocity for amplitudes 2–16°, both directions, with and without a concurrent version saccade. Left: symmetric (slow vergence only). Right: asymmetric (Zee SVBN burst active).</p>
@@ -340,6 +370,7 @@ h1   { font-size: 22px; margin-bottom: 4px; }
     <div class="fig-grid">
       
     <div class="fig-card">
+      <span class="diff-badge diff-noref">no reference</span>
       <a href="figures/accommodation_isolated_step.png" target="_blank"><img src="figures/accommodation_isolated_step.png" alt="Isolated accommodation step response (no AC/A, no CA/C)"></a>
       <h3>Isolated accommodation step response (no AC/A, no CA/C)</h3>
       <p class="desc">Defocus step 0.17 D → 2.5 D → 0.17 D with cross-coupling disabled. Top: demand vs. accommodation. Bottom: defocus error.</p>
@@ -352,6 +383,7 @@ h1   { font-size: 22px; margin-bottom: 4px; }
     </div>
 
     <div class="fig-card">
+      <span class="diff-badge diff-noref">no reference</span>
       <a href="figures/accommodation_isolated_amplitudes.png" target="_blank"><img src="figures/accommodation_isolated_amplitudes.png" alt="Isolated accommodation amplitude scaling"></a>
       <h3>Isolated accommodation amplitude scaling</h3>
       <p class="desc">Step responses at 0.5, 1, 2, 3, 4 D demand with cross-coupling disabled. Left: time-courses. Right: SS gain vs demand.</p>
@@ -364,6 +396,7 @@ h1   { font-size: 22px; margin-bottom: 4px; }
     </div>
 
     <div class="fig-card">
+      <span class="diff-badge diff-noref">no reference</span>
       <a href="figures/accommodation_isolated_dark_focus.png" target="_blank"><img src="figures/accommodation_isolated_dark_focus.png" alt="Dark-focus drift after sustained near work"></a>
       <h3>Dark-focus drift after sustained near work</h3>
       <p class="desc">10 s of sustained 4 D near work followed by darkness (scene + target removed). Accommodation drifts back to tonic_acc.</p>
@@ -376,6 +409,7 @@ h1   { font-size: 22px; margin-bottom: 4px; }
     </div>
 
     <div class="fig-card">
+      <span class="diff-badge diff-noref">no reference</span>
       <a href="figures/accommodation_near_step.png" target="_blank"><img src="figures/accommodation_near_step.png" alt="Near-step: binocular vergence + accommodation tracking"></a>
       <h3>Near-step: binocular vergence + accommodation tracking</h3>
       <p class="desc">Target steps 3 m → 0.4 m at t=1 s. Top: L/R eye yaw. Middle: vergence (L−R). Bottom: lens accommodation x_plant.</p>
@@ -388,6 +422,7 @@ h1   { font-size: 22px; margin-bottom: 4px; }
     </div>
 
     <div class="fig-card">
+      <span class="diff-badge diff-noref">no reference</span>
       <a href="figures/accommodation_lens_aca.png" target="_blank"><img src="figures/accommodation_lens_aca.png" alt="Lens-driven AC/A: monocular plus lens converges eyes"></a>
       <h3>Lens-driven AC/A: monocular plus lens converges eyes</h3>
       <p class="desc">+2.0 D right eye lens added at t=1.0 s; target at 3.0 m. Top: accommodation (with vs without AC/A). Bottom: vergence.</p>
@@ -400,6 +435,7 @@ h1   { font-size: 22px; margin-bottom: 4px; }
     </div>
 
     <div class="fig-card">
+      <span class="diff-badge diff-noref">no reference</span>
       <a href="figures/accommodation_prism_cac.png" target="_blank"><img src="figures/accommodation_prism_cac.png" alt="Prism-driven CA/C: base-out prism increases accommodation"></a>
       <h3>Prism-driven CA/C: base-out prism increases accommodation</h3>
       <p class="desc">4.0° base-out R prism at t=1.0 s; target at 0.5 m. Top: vergence vs demand. Bottom: accommodation (with vs without CA/C).</p>
@@ -412,18 +448,20 @@ h1   { font-size: 22px; margin-bottom: 4px; }
     </div>
 
     <div class="fig-card">
+      <span class="diff-badge diff-noref">no reference</span>
       <a href="figures/accommodation_plant_step.png" target="_blank"><img src="figures/accommodation_plant_step.png" alt="Accommodation plant step response (τ_plant ≈ 0.156 s)"></a>
       <h3>Accommodation plant step response (τ_plant ≈ 0.156 s)</h3>
       <p class="desc">Bilateral +2.0 D lens step at t=0.5 s; target at 3.0 m. Neural command vs actual lens accommodation x_plant.</p>
       <div class="expected">
         <strong>Expected behavior</strong>
-        x_plant lags neural command by ~τ_plant. 50% rise time ≈ 0.51 s (τ_plant·ln2 ≈ 0.11 s). Both converge toward 2.33 D.
+        x_plant lags neural command by ~τ_plant. 50% rise time ≈ 0.57 s (τ_plant·ln2 ≈ 0.11 s). Both converge toward 2.33 D.
       </div>
       <p class="citation">&#128214; Schor & Bharadwaj (2006) J Neurophysiol; Read et al. (2022) J Vision</p>
       <span class="badge behavior">behavior</span>
     </div>
 
     <div class="fig-card">
+      <span class="diff-badge diff-noref">no reference</span>
       <a href="figures/accommodation_fixation_disparity.png" target="_blank"><img src="figures/accommodation_fixation_disparity.png" alt="Fixation disparity curves: prism sweep and lens sweep"></a>
       <h3>Fixation disparity curves: prism sweep and lens sweep</h3>
       <p class="desc">Fixation disparity (demand − achieved vergence, arcmin) vs. bilateral prism (left) and bilateral lens (right) at 0.5 m target.</p>
@@ -436,6 +474,7 @@ h1   { font-size: 22px; margin-bottom: 4px; }
     </div>
 
     <div class="fig-card">
+      <span class="diff-badge diff-noref">no reference</span>
       <a href="figures/accommodation_refractive_error.png" target="_blank"><img src="figures/accommodation_refractive_error.png" alt="Refractive error: accommodation and vergence for myope/hyperope"></a>
       <h3>Refractive error: accommodation and vergence for myope/hyperope</h3>
       <p class="desc">Near step 3.0→0.4 m. Three groups: emmetrope, +2D hyperope, −2D myope. Top: vergence. Bottom: lens accommodation. No spectacle correction.</p>
@@ -444,6 +483,19 @@ h1   { font-size: 22px; margin-bottom: 4px; }
         Hyperope accommodates more (must compensate RE); vergence slightly higher via AC/A. Myope accommodates less (RE reduces effective demand); vergence slightly lower. All groups converge vergence toward geometric value; myope may show under-accommodation.
       </div>
       <p class="citation">&#128214; Duke-Elder & Abrams (1970) System of Ophthalmology; Saw et al. (2005) Invest Ophthalmol Vis Sci</p>
+      <span class="badge behavior">behavior</span>
+    </div>
+
+    <div class="fig-card">
+      <span class="diff-badge diff-noref">no reference</span>
+      <a href="figures/accommodation_gradient_aca_cac.png" target="_blank"><img src="figures/accommodation_gradient_aca_cac.png" alt="Gradient AC/A and CA/C — behavioral measurements vs parameters"></a>
+      <h3>Gradient AC/A and CA/C — behavioral measurements vs parameters</h3>
+      <p class="desc">Top row (AC/A): binocular lens sweep at 0.40 m, L-eye-only target. Bottom row (CA/C): bilateral mirrored prism sweep at 0.40 m, full binocular fusion. Both cross-links left at defaults — measures realistic closed-loop behavioral gains. Behavioral CA/C is reduced by closed defocus loop (model lacks true pinhole/DoG mechanism for open-loop accommodation).</p>
+      <div class="expected">
+        <strong>Expected behavior</strong>
+        Behavioral AC/A < parameter AC_A (5.0 pd/D): phasic decays into tonic in closed loop, expect ~2.5–4.0 pd/D. Behavioral CA/C < parameter CA_C (0.08 D/pd): closed defocus loop suppresses additional, expect monotone positive but small slope.
+      </div>
+      <p class="citation">&#128214; Hofstetter (1948); Schor & Kotulak (1986); Sheedy & Saladin (1983); Schor (1992, 1999); Daum (1983).</p>
       <span class="badge behavior">behavior</span>
     </div>
     </div>
@@ -455,6 +507,7 @@ h1   { font-size: 22px; margin-bottom: 4px; }
     <div class="fig-grid">
       
     <div class="fig-card">
+      <span class="diff-badge diff-noref">no reference</span>
       <a href="figures/clinical_npc_cover.png" target="_blank"><img src="figures/clinical_npc_cover.png" alt="NPC pull-in and Cover Test (phorias at distance + near)"></a>
       <h3>NPC pull-in and Cover Test (phorias at distance + near)</h3>
       <p class="desc">Top: vergence vs. target distance during NPC pull-in (1 m → 5 cm over 10 s); red line marks break point (vergence err > 5° from geometric). Middle/bottom: cover test at 3 m and 0.4 m — R eye covered at t=2 s; covered eye drifts to dissociated phoria position. Phoria sign labelled.</p>
@@ -467,6 +520,7 @@ h1   { font-size: 22px; margin-bottom: 4px; }
     </div>
 
     <div class="fig-card">
+      <span class="diff-badge diff-noref">no reference</span>
       <a href="figures/clinical_fusional_ranges.png" target="_blank"><img src="figures/clinical_fusional_ranges.png" alt="Fusional vergence ranges (BI + BO ramps at distance and near)"></a>
       <h3>Fusional vergence ranges (BI + BO ramps at distance and near)</h3>
       <p class="desc">Slow prism ramp (0 → 30° over 10 s) on R eye. Top two rows: distance (3 m) BO then BI; bottom two: near (0.4 m). Red line marks vergence break (error > 5°).</p>
@@ -479,6 +533,7 @@ h1   { font-size: 22px; margin-bottom: 4px; }
     </div>
 
     <div class="fig-card">
+      <span class="diff-badge diff-noref">no reference</span>
       <a href="figures/clinical_accom_amp_facility.png" target="_blank"><img src="figures/clinical_accom_amp_facility.png" alt="Amplitude of accommodation + accommodative facility"></a>
       <h3>Amplitude of accommodation + accommodative facility</h3>
       <p class="desc">Top: push-up to 4 cm; peak accommodation = amplitude. Bottom: ±2 D flipper at 40 cm, 1 s alternation; cycles per minute counted when accommodation reaches within 0.75 D of demand within each phase.</p>
@@ -491,6 +546,7 @@ h1   { font-size: 22px; margin-bottom: 4px; }
     </div>
 
     <div class="fig-card">
+      <span class="diff-badge diff-noref">no reference</span>
       <a href="figures/clinical_aca_measurement.png" target="_blank"><img src="figures/clinical_aca_measurement.png" alt="AC/A measurement (gradient + heterophoria)"></a>
       <h3>AC/A measurement (gradient + heterophoria)</h3>
       <p class="desc">Top: gradient AC/A — vergence change for ±1 D lens at 0.4 m, slope = AC/A. Bottom: heterophoria AC/A — distance vs near phoria difference / Δdemand.</p>
@@ -510,6 +566,7 @@ h1   { font-size: 22px; margin-bottom: 4px; }
     <div class="fig-grid">
       
     <div class="fig-card">
+      <span class="diff-badge diff-noref">no reference</span>
       <a href="figures/tvor_cascade.png" target="_blank"><img src="figures/tvor_cascade.png" alt="T-VOR cascade — sway / heave / surge × LIT (scene only) / DARK"></a>
       <h3>T-VOR cascade — sway / heave / surge × LIT (scene only) / DARK</h3>
       <p class="desc">Trapezoid head velocity (peak 20 cm/s, 200 ms ramps, 1.6 s plateau) along x (sway), y (heave), z (surge); target at 40 cm. Rows: stimulus, g_est, v_lin, eye position, eye SPV.</p>
@@ -529,6 +586,7 @@ h1   { font-size: 22px; margin-bottom: 4px; }
     <div class="fig-grid">
       
     <div class="fig-card">
+      <span class="diff-badge diff-noref">no reference</span>
       <a href="figures/fixation_noise_comparison.png" target="_blank"><img src="figures/fixation_noise_comparison.png" alt="Fixational Eye Movements — Noise Source Comparison"></a>
       <h3>Fixational Eye Movements — Noise Source Comparison</h3>
       <p class="desc">5-column comparison: noiseless, canal noise only, retinal position OU drift, retinal velocity noise, and all three combined. Rows: eye position, velocity, saccade burst, noise signal.</p>
@@ -548,6 +606,7 @@ h1   { font-size: 22px; margin-bottom: 4px; }
     <div class="fig-grid">
       
     <div class="fig-card">
+      <span class="diff-badge diff-noref">no reference</span>
       <a href="figures/listing_plane.png" target="_blank"><img src="figures/listing_plane.png" alt="Listing's Plane"></a>
       <h3>Listing's Plane</h3>
       <p class="desc">Saccades to a (H, V) grid; torsion measured at steady state. g_ocr=0 so OCR=0 and T_required = −H·V·π/360.</p>
@@ -560,6 +619,7 @@ h1   { font-size: 22px; margin-bottom: 4px; }
     </div>
 
     <div class="fig-card">
+      <span class="diff-badge diff-noref">no reference</span>
       <a href="figures/listing_ocr_saccade.png" target="_blank"><img src="figures/listing_ocr_saccade.png" alt="OCR Torsional Correction Saccade"></a>
       <h3>OCR Torsional Correction Saccade</h3>
       <p class="desc">Head tilt 30°; g_ocr=1.02. Torsional listing error drives a corrective saccade.</p>
@@ -572,6 +632,7 @@ h1   { font-size: 22px; margin-bottom: 4px; }
     </div>
 
     <div class="fig-card">
+      <span class="diff-badge diff-noref">no reference</span>
       <a href="figures/listing_pursuit.png" target="_blank"><img src="figures/listing_pursuit.png" alt="Listing's Plane During Smooth Pursuit"></a>
       <h3>Listing's Plane During Smooth Pursuit</h3>
       <p class="desc">Sinusoidal H pursuit (15° at 0.5 Hz) at V=20°. vel_torsion demand added to NI keeps torsion on Listing's plane continuously.</p>
