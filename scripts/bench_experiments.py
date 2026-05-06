@@ -31,24 +31,14 @@ from oculomotor.analysis import extract_spv_states
 
 SHOW  = '--show' in sys.argv
 DT    = 0.001
-THETA = with_brain(
-    with_sensory(PARAMS_DEFAULT, sigma_canal=0.0, sigma_pos=0.0, sigma_vel=0.0),
-    sigma_acc=0.0,
-    tonic_verg=-10.0,  # tonic (resting) vergence baseline (deg); negative = divergent dark vergence
-)  # noiseless — deterministic
-
-# +3 D plus (converging) lens in front of both eyes — accommodation demand for
-# the 15 cm target drops from 6.67 D to 3.67 D (apparent distance ~27 cm),
-# while vergence demand stays geometric. Model sign convention is opposite to
-# clinical: lens<0 = plus lens (see bench_clinical.py).
-_LENS_D = -3.0
+_THETA_BASE = with_sensory(PARAMS_DEFAULT, sigma_canal=0.0, sigma_pos=0.0, sigma_vel=0.0)
+_THETA_BASE = with_brain(_THETA_BASE, sigma_acc=0.0)   # noiseless — deterministic
 
 
 # ── Monocular occlusion ────────────────────────────────────────────────────────
 
 _T_END  = 15.0
 _T_FIX  = 2.0       # binocular fixation period before occlusion onset (s)
-_DIST_M = 0.15      # target distance (m) — straight ahead, 15 cm
 
 _CFG = SimConfig(warmup_s=30.0)   # 5 × tau_verg → vergence fully settled
 
@@ -88,14 +78,17 @@ def _make_flags(t_np, cond, occ_eye):
     return tL, tR, no_strobe
 
 
-def _run_cond(t_np, cond, occ_eye):
+def _run_cond(t_np, cond, occ_eye, *, theta_base, dist_m, lens_d, dark_tonic_verg):
     t  = jnp.array(t_np)
     T  = len(t_np)
-    pt = jnp.tile(jnp.array([0.0, 0.0, _DIST_M]), (T, 1))
+    pt = jnp.tile(jnp.array([0.0, 0.0, dist_m]), (T, 1))
     tL, tR, ts = _make_flags(t_np, cond, occ_eye)
-    lens_arr = jnp.full((T,), _LENS_D, dtype=jnp.float32)
+    lens_arr = jnp.full((T,), lens_d, dtype=jnp.float32)
+    # Dark condition: per-experiment override of tonic vergence to test how far
+    # the eyes drift when nothing constrains them.
+    theta = with_brain(theta_base, tonic_verg=dark_tonic_verg) if cond == 'dark' else theta_base
     return simulate(
-        THETA, t,
+        theta, t,
         target                 = build_target(t, lin_pos=pt),
         scene_present_array    = jnp.zeros(T),
         target_present_L_array = jnp.array(tL),
@@ -108,7 +101,8 @@ def _run_cond(t_np, cond, occ_eye):
     )
 
 
-def _occlusion(show):
+def _occlusion(show, *, save_name, plot_title, dist_m, lens_d, theta_base, dark_tonic_verg,
+               description, expected):
     t_np = np.arange(0.0, _T_END, DT, dtype=np.float32)
 
     # Five columns by viewing-eye + condition.
@@ -124,15 +118,24 @@ def _occlusion(show):
         ('L eye viewing — 80 ms on / 900 ms off', 'pulsed',     'right'),
         ('Dark (both occluded)',                  'dark',       'left'),
     ]
-    sims = [_run_cond(t_np, c, o) for _, c, o in columns]
+    sims = [_run_cond(t_np, c, o, theta_base=theta_base, dist_m=dist_m,
+                      lens_d=lens_d, dark_tonic_verg=dark_tonic_verg)
+            for _, c, o in columns]
     # Recover the per-column visibility flags for the top row of the figure.
     flag_arrays = [_make_flags(t_np, c, o) for _, c, o in columns]
+
+    # Pretty distance label: cm for near targets, m for far ones.
+    dist_label = f'{dist_m*100:.0f} cm' if dist_m < 1.0 else f'{dist_m:.0f} m'
+    lens_clinical = -lens_d   # model sign opposite to clinical
+    lens_label = f'{lens_clinical:+.1f} D'
 
     N_COLS = len(columns)
     N_ROWS = 8
     fig, axes = plt.subplots(N_ROWS, N_COLS, figsize=(4 * N_COLS, 20), sharex=True)
     fig.suptitle(
-        f'Monocular occlusion — binocular fixation at 15 cm, dark room\n'
+        f'{plot_title} — fixation at {dist_label}, {lens_label} lens, '
+        f'tonic vergence {theta_base.brain.tonic_verg:+.0f}°  '
+        f'(dark: {dark_tonic_verg:+.0f}°)\n'
         f'Vertical line = occlusion onset (t = {_T_FIX:.0f} s)',
         fontsize=10,
     )
@@ -171,7 +174,7 @@ def _occlusion(show):
         acc_fast  = acc_brain[:, 0]
         acc_slow  = acc_brain[:, 1]
         # ACA drive in deg: AC_A (pd/D) × 0.5729 (deg/pd) × x_acc_fast (D)
-        aca_drive = float(THETA.brain.AC_A) * 0.5729 * acc_fast
+        aca_drive = float(theta_base.brain.AC_A) * 0.5729 * acc_fast
 
         # Row 0: target visibility per eye as colored patches (L on top, R on bottom)
         tL_flag, tR_flag, _ts = flag_arrays[ci]
@@ -195,8 +198,10 @@ def _occlusion(show):
         axes[2, ci].plot(t_np, verg_angle, color=utils.C.get('vs', '#8B4513'),
                          lw=1.2, label='vergence (L−R)')
         axes[2, ci].axhline(0, color='gray', lw=0.5, alpha=0.5)
-        axes[2, ci].axhline(THETA.brain.tonic_verg, color='red', lw=0.6, ls=':',
-                             alpha=0.5, label=f'tonic={THETA.brain.tonic_verg:.1f}°')
+        # tonic_verg is per-column: dark uses dark_tonic_verg, others use theta_base's
+        col_tonic = dark_tonic_verg if _cond == 'dark' else float(theta_base.brain.tonic_verg)
+        axes[2, ci].axhline(col_tonic, color='red', lw=0.6, ls=':',
+                             alpha=0.5, label=f'tonic={col_tonic:.1f}°')
 
         # Row 3: per-eye slow-phase velocity
         axes[3, ci].plot(t_np, spv_L_yaw, color=C_L, lw=1.0, label='L eye SPV')
@@ -219,7 +224,7 @@ def _occlusion(show):
 
         # Row 7: ACA drive (deg) — AC_A · 0.5729 · x_acc_fast
         axes[7, ci].plot(t_np, aca_drive, color='#cc6622', lw=1.2,
-                          label=f'ACA drive (AC_A={THETA.brain.AC_A:.1f})')
+                          label=f'ACA drive (AC_A={theta_base.brain.AC_A:.1f})')
         axes[7, ci].axhline(0, color='gray', lw=0.6, ls=':', alpha=0.5)
 
         for row in range(N_ROWS):
@@ -243,16 +248,50 @@ def _occlusion(show):
             axes[row, ci].set_ylim(mid - span / 2, mid + span / 2)
 
     fig.tight_layout()
-    path, rp = utils.save_fig(fig, 'occlusion', show=show,
+    path, rp = utils.save_fig(fig, save_name, show=show,
                               figs_dir=utils.EXPT_FIGS_DIR, base_dir=utils.EXPT_DIR)
     return utils.fig_meta(
         path, rp,
-        title='Monocular occlusion',
-        description='Binocular fixation at 15 cm under dark, strobed, and continuous monocular viewing.',
-        expected='Both eyes maintain stable vergence during binocular phase. '
-                 'After occlusion: dark → slow drift, strobed → position hold without velocity, '
-                 'continuous → stable monocular fixation.',
+        title=plot_title,
+        description=description,
+        expected=expected,
         citation='Typical clinical dissociated nystagmus / monocular occlusion paradigm',
+    )
+
+
+# Two flavours: divergent vs convergent resting posture.
+
+def _occlusion_divergence(show):
+    theta = with_brain(_THETA_BASE, tonic_verg=-10.0)
+    return _occlusion(
+        show,
+        save_name='occlusion_from_divergence',
+        plot_title='Monocular occlusion — from divergence',
+        dist_m=0.15,        # 15 cm near target
+        lens_d=-3.0,        # +3 D plus lens (model sign convention is opposite)
+        theta_base=theta,
+        dark_tonic_verg=-30.0,
+        description='Near binocular fixation (15 cm) with +3 D plus lens; resting tonic '
+                    'vergence -10° (divergent), dark drift to -30°.',
+        expected='Resting posture is divergent. Continuous monocular viewing holds vergence '
+                 'near 0; flashing → drift toward tonic; dark → eyes diverge to ~-30°.',
+    )
+
+
+def _occlusion_convergence(show):
+    theta = with_brain(_THETA_BASE, tonic_verg=15.0)
+    return _occlusion(
+        show,
+        save_name='occlusion_from_convergence',
+        plot_title='Monocular occlusion — from convergence',
+        dist_m=10.0,        # 10 m far target
+        lens_d=2.0,         # -2 D minus lens (model sign convention is opposite)
+        theta_base=theta,
+        dark_tonic_verg=25.0,
+        description='Far binocular fixation (10 m) with -2 D minus lens; resting tonic '
+                    'vergence +15° (convergent), dark drift to +25°.',
+        expected='Resting posture is convergent. Continuous monocular viewing holds vergence '
+                 'near 0; flashing → drift toward tonic; dark → eyes converge to ~+25°.',
     )
 
 
@@ -401,9 +440,11 @@ SECTION = dict(
 def run(show=False):
     print('\n=== Experiments ===')
     figs = []
-    print('  1/2  monocular occlusion …')
-    figs.append(_occlusion(show))
-    print('  2/2  fixation drift quiver across visual field …')
+    print('  1/3  monocular occlusion — from divergence …')
+    figs.append(_occlusion_divergence(show))
+    print('  2/3  monocular occlusion — from convergence …')
+    figs.append(_occlusion_convergence(show))
+    print('  3/3  fixation drift quiver across visual field …')
     figs.append(_drift_quiver(show))
     return figs
 

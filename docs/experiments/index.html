@@ -52,14 +52,15 @@ h1   { font-size: 22px; margin-bottom: 4px; }
     <a href="../parameters.html">Parameters</a>
     <div style="border-top:1px solid #2a2a4e;margin:10px 0 8px;"></div>
     <h2>Experiments</h2>
-    <a href="#monocular_occlusion">Monocular occlusion</a>
+    <a href="#monocular_occlusion_—_from_divergence">Monocular occlusion — from divergence</a>
+    <a href="#monocular_occlusion_—_from_convergence">Monocular occlusion — from convergence</a>
     <a href="#fixation_drift_quiver_—_noise_on_vs_off">Fixation Drift Quiver — noise on vs off</a>
   </nav>
   <main>
     <h1>OculomotorJax — Experiments</h1>
     <p class="meta">
-      Generated: <strong>2026-05-05 22:37</strong> &nbsp;|&nbsp;
-      Version: <strong>7ca87f7-dirty</strong>
+      Generated: <strong>2026-05-05 22:57</strong> &nbsp;|&nbsp;
+      Version: <strong>1d064b1-dirty</strong>
     </p>
     <section class="section">
       <h2>Experimental</h2>
@@ -67,10 +68,19 @@ h1   { font-size: 22px; margin-bottom: 4px; }
       <div class="fig-grid">
         
     <div class="fig-card">
-      <a href="figures/occlusion.png" target="_blank"><img src="figures/occlusion.png" alt="Monocular occlusion"></a>
-      <h3>Monocular occlusion</h3>
-      <p class="desc">Binocular fixation at 15 cm under dark, strobed, and continuous monocular viewing.</p>
-      <div class="expected"><strong>Expected behavior</strong>Both eyes maintain stable vergence during binocular phase. After occlusion: dark → slow drift, strobed → position hold without velocity, continuous → stable monocular fixation.</div>
+      <a href="figures/occlusion_from_divergence.png" target="_blank"><img src="figures/occlusion_from_divergence.png" alt="Monocular occlusion — from divergence"></a>
+      <h3>Monocular occlusion — from divergence</h3>
+      <p class="desc">Near binocular fixation (15 cm) with +3 D plus lens; resting tonic vergence -10° (divergent), dark drift to -30°.</p>
+      <div class="expected"><strong>Expected behavior</strong>Resting posture is divergent. Continuous monocular viewing holds vergence near 0; flashing → drift toward tonic; dark → eyes diverge to ~-30°.</div>
+      <p class="citation">&#128214; Typical clinical dissociated nystagmus / monocular occlusion paradigm</p>
+      <span class="badge behavior">behavior</span>
+    </div>
+
+    <div class="fig-card">
+      <a href="figures/occlusion_from_convergence.png" target="_blank"><img src="figures/occlusion_from_convergence.png" alt="Monocular occlusion — from convergence"></a>
+      <h3>Monocular occlusion — from convergence</h3>
+      <p class="desc">Far binocular fixation (10 m) with -2 D minus lens; resting tonic vergence +15° (convergent), dark drift to +25°.</p>
+      <div class="expected"><strong>Expected behavior</strong>Resting posture is convergent. Continuous monocular viewing holds vergence near 0; flashing → drift toward tonic; dark → eyes converge to ~+25°.</div>
       <p class="citation">&#128214; Typical clinical dissociated nystagmus / monocular occlusion paradigm</p>
       <span class="badge behavior">behavior</span>
     </div>
