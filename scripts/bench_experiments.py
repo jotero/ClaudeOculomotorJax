@@ -250,48 +250,55 @@ def _occlusion(show, *, save_name, plot_title, dist_m, lens_d, theta_base, dark_
     fig.tight_layout()
     path, rp = utils.save_fig(fig, save_name, show=show,
                               figs_dir=utils.EXPT_FIGS_DIR, base_dir=utils.EXPT_DIR)
-    return utils.fig_meta(
+    meta = utils.fig_meta(
         path, rp,
         title=plot_title,
         description=description,
         expected=expected,
         citation='Typical clinical dissociated nystagmus / monocular occlusion paradigm',
     )
+    # Return the per-column sims alongside the meta so the summary plot can
+    # reuse them without re-running the simulations.
+    return meta, list(zip(columns, sims)), t_np
 
 
-# Two flavours: divergent vs convergent resting posture.
+# Two flavours: convergent vs divergent initial fixation state.
+# "From convergence" = eyes start converged on the near target, drift toward
+#   divergent tonic during occlusion.
+# "From divergence" = eyes start near-parallel on the far target, drift toward
+#   convergent tonic during occlusion.
 
-def _occlusion_divergence(show):
-    theta = with_brain(_THETA_BASE, tonic_verg=-10.0)
-    return _occlusion(
-        show,
-        save_name='occlusion_from_divergence',
-        plot_title='Monocular occlusion — from divergence',
-        dist_m=0.15,        # 15 cm near target
-        lens_d=-3.0,        # +3 D plus lens (model sign convention is opposite)
-        theta_base=theta,
-        dark_tonic_verg=-30.0,
-        description='Near binocular fixation (15 cm) with +3 D plus lens; resting tonic '
-                    'vergence -10° (divergent), dark drift to -30°.',
-        expected='Resting posture is divergent. Continuous monocular viewing holds vergence '
-                 'near 0; flashing → drift toward tonic; dark → eyes diverge to ~-30°.',
-    )
-
-
-def _occlusion_convergence(show):
-    theta = with_brain(_THETA_BASE, tonic_verg=15.0)
+def _occlusion_from_convergence(show):
+    theta = with_brain(_THETA_BASE, tonic_verg=15.0, AC_A=2.0)
     return _occlusion(
         show,
         save_name='occlusion_from_convergence',
         plot_title='Monocular occlusion — from convergence',
-        dist_m=10.0,        # 10 m far target
-        lens_d=2.0,         # -2 D minus lens (model sign convention is opposite)
+        dist_m=0.25,        # 25 cm near target — eyes converged ~14.6°
+        lens_d=-3.0,        # +3 D plus lens (model sign convention is opposite)
         theta_base=theta,
         dark_tonic_verg=25.0,
-        description='Far binocular fixation (10 m) with -2 D minus lens; resting tonic '
+        description='Near binocular fixation (25 cm) with +3 D plus lens; resting tonic '
                     'vergence +15° (convergent), dark drift to +25°.',
-        expected='Resting posture is convergent. Continuous monocular viewing holds vergence '
-                 'near 0; flashing → drift toward tonic; dark → eyes converge to ~+25°.',
+        expected='Eyes converged on near target during binocular phase; tonic is also '
+                 'convergent so drift during occlusion is small; dark → drift to ~+25°.',
+    )
+
+
+def _occlusion_from_divergence(show):
+    theta = with_brain(_THETA_BASE, tonic_verg=15.0, AC_A=2.0)
+    return _occlusion(
+        show,
+        save_name='occlusion_from_divergence',
+        plot_title='Monocular occlusion — from divergence',
+        dist_m=10.0,        # 10 m far target — eyes near-parallel
+        lens_d=1.0,         # -1 D minus lens (model sign convention is opposite)
+        theta_base=theta,
+        dark_tonic_verg=25.0,
+        description='Far binocular fixation (10 m) with -1 D minus lens; resting tonic '
+                    'vergence +15° (convergent), dark drift to +25°.',
+        expected='Eyes near-parallel on far target during binocular phase, then drift '
+                 'toward convergent tonic when one eye is occluded; dark → drift to ~+25°.',
     )
 
 
@@ -437,14 +444,93 @@ SECTION = dict(
 )
 
 
+def _occlusion_summary(show, conv_columns, div_columns, t_np):
+    """Average vergence + vergence velocity across L/R viewing eyes per condition.
+
+    Six lines per panel:
+        from convergence — continuous   (avg of L+R viewing)
+        from convergence — flashing     (avg of L+R viewing)
+        from convergence — dark         (single column)
+        from divergence — continuous    (avg of L+R viewing)
+        from divergence — flashing      (avg of L+R viewing)
+        from divergence — dark          (single column)
+    """
+
+    def collect(columns_data):
+        # columns_data is list of ((title, cond, occ), sim) tuples in the order
+        # ['cont/L-occ', 'pulsed/L-occ', 'cont/R-occ', 'pulsed/R-occ', 'dark'].
+        by_cond = {'continuous': [], 'pulsed': [], 'dark': []}
+        for (title, cond, occ), st in columns_data:
+            eye_L = np.array(st.plant[:, 0])
+            eye_R = np.array(st.plant[:, 3])
+            verg  = eye_L - eye_R
+            vverg = np.gradient(eye_L, DT) - np.gradient(eye_R, DT)
+            by_cond[cond].append((verg, vverg))
+        # Average across viewing-eye repetitions for cont/pulsed; dark is single.
+        out = {}
+        for cond, runs in by_cond.items():
+            verg_stack  = np.stack([r[0] for r in runs], axis=0)
+            vverg_stack = np.stack([r[1] for r in runs], axis=0)
+            out[cond] = (verg_stack.mean(axis=0), vverg_stack.mean(axis=0))
+        return out
+
+    conv = collect(conv_columns)
+    div  = collect(div_columns)
+
+    fig, axes = plt.subplots(2, 1, figsize=(11, 7), sharex=True)
+    fig.suptitle('Occlusion summary — vergence and vergence velocity averaged across L/R viewing',
+                 fontsize=11)
+
+    palette = {
+        ('conv', 'continuous'): ('#1b7837', '-',  'from conv — continuous'),
+        ('conv', 'pulsed'):     ('#5aae61', '--', 'from conv — flashing'),
+        ('conv', 'dark'):       ('#a6dba0', ':',  'from conv — dark'),
+        ('div',  'continuous'): ('#762a83', '-',  'from div — continuous'),
+        ('div',  'pulsed'):     ('#9970ab', '--', 'from div — flashing'),
+        ('div',  'dark'):       ('#c2a5cf', ':',  'from div — dark'),
+    }
+
+    for tag, data in (('conv', conv), ('div', div)):
+        for cond in ('continuous', 'pulsed', 'dark'):
+            color, ls, lbl = palette[(tag, cond)]
+            verg, vverg = data[cond]
+            axes[0].plot(t_np, verg,  color=color, ls=ls, lw=1.2, label=lbl)
+            axes[1].plot(t_np, vverg, color=color, ls=ls, lw=1.0, label=lbl)
+
+    for ax, ylab in zip(axes, ['Vergence (deg)', 'Vergence velocity (deg/s)']):
+        ax.axvline(_T_FIX, color='gray', lw=0.8, ls='--', alpha=0.5)
+        ax.axhline(0, color='gray', lw=0.5, alpha=0.4)
+        ax.set_ylabel(ylab, fontsize=9)
+        ax.grid(True, alpha=0.2)
+        ax.legend(fontsize=7, ncol=2, loc='best')
+    axes[1].set_xlabel('Time (s)', fontsize=9)
+
+    fig.tight_layout()
+    path, rp = utils.save_fig(fig, 'occlusion_summary', show=show,
+                              figs_dir=utils.EXPT_FIGS_DIR, base_dir=utils.EXPT_DIR)
+    return utils.fig_meta(
+        path, rp,
+        title='Occlusion summary — vergence + vergence velocity',
+        description='Averaged vergence across L/R viewing eyes per occlusion condition.',
+        expected='From-convergence runs sit near tonic with small drift; '
+                 'from-divergence runs show larger drift toward convergent tonic '
+                 'when fusion fails (dark) or weakens (flashing).',
+        citation='Composite of from-convergence and from-divergence occlusion paradigms',
+    )
+
+
 def run(show=False):
     print('\n=== Experiments ===')
     figs = []
-    print('  1/3  monocular occlusion — from divergence …')
-    figs.append(_occlusion_divergence(show))
-    print('  2/3  monocular occlusion — from convergence …')
-    figs.append(_occlusion_convergence(show))
-    print('  3/3  fixation drift quiver across visual field …')
+    print('  1/4  monocular occlusion — from convergence …')
+    meta_conv, conv_cols, t_np = _occlusion_from_convergence(show)
+    figs.append(meta_conv)
+    print('  2/4  monocular occlusion — from divergence …')
+    meta_div, div_cols, _ = _occlusion_from_divergence(show)
+    figs.append(meta_div)
+    print('  3/4  occlusion summary — averaged vergence …')
+    figs.append(_occlusion_summary(show, conv_cols, div_cols, t_np))
+    print('  4/4  fixation drift quiver across visual field …')
     figs.append(_drift_quiver(show))
     return figs
 

@@ -625,11 +625,15 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
     # ── Translational VOR (T-VOR): vestibular + visual fusion, distance-scaled ───
     # Uses heading_estimator's v_lin (already gravity-corrected, τ_head ≈ 2 s) as the
     # vestibular linear-velocity estimate.
-    # Distance proxy: the absolute vergence command from the slow integrator.
-    # x_verg layout is [x_fast(3) | x_slow(3) | x_copy(3)]; x_slow now carries the
-    # tonic_verg setpoint baseline directly (Schor 1999 adapter form), so absolute
-    # vergence = x_slow[H] at SS.  At rest, x_slow[H] = tonic_verg ≈ 3.67° ≈ 1 m.
-    current_vergence_yaw = x_va[3]   # x_verg_tonic[H] = tonic vergence H component
+    # Distance proxy: actual current vergence ≈ u_verg[0] computed from state:
+    #   x_v[H] (fast integrator) + x_tonic[H] (tonic adapter) + AC/A·acc_fast (cross-link).
+    # Using only x_tonic[H] missed the fast-integrator and ACA contributions, so during
+    # a transient the inferred distance was wrong (e.g. eyes fused on a 10 m target but
+    # x_tonic still near +15° tonic → T-VOR thought distance was 24 cm).
+    # Direct phasic path (τ_p·disp) is dropped — small and not state-computable.
+    _DEG_PER_PD = 0.5729
+    aca_term = brain_params.AC_A * _DEG_PER_PD * x_va[9]   # AC_A · 0.5729 · x_acc_fast
+    current_vergence_yaw = x_va[0] + x_va[3] + aca_term
     omega_tvor, verg_rate_tvor = tv.step(
         jnp.concatenate([v_lin,
                          a_lin_est,
@@ -693,7 +697,12 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
     ec_vel  = u_burst + u_pursuit + omega_tvor   # version velocity efference (deg/s)
     ec_pos  = x_ni_net               # eye position efference (head frame, [yaw,pitch,roll] deg)
                                      # OCR flows through NI's set-point path → already in x_ni_net.
-    ec_verg = x_va[_IDX_VERG.start - _o_va : _IDX_VERG.stop - _o_va]   # vergence efference (9,) [H,V,T,...]
+    # Pass the FULL vergence position command (3,) — not just the fast-integrator
+    # state — so the binocular-fusion gate in cyclopean_vision sees the WORLD
+    # vergence demand of the target (raw_disp + actual_vergence ≈ V_target).
+    # Using only x_v missed x_tonic, so when x_v dipped during a transient the
+    # gate would slam shut and prevent the closed loop from completing.
+    ec_verg = u_verg   # (3,) [H, V, T] — actual vergence command, includes tonic
 
     # ── Pack state derivative ─────────────────────────────────────────────────
     dx_brain = jnp.concatenate([dx_self_motion, dx_ni, dx_sg, dx_pursuit, dx_va, dx_target_mem])
