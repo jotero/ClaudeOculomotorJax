@@ -147,16 +147,15 @@ def step(x_va, u, brain_params):
     # converges, so the integrator doesn't need its own residual.
     burst_residual_disparity = target_disparity - x_verg_copy
 
-    # ── Cross-couplings (Schor 1999: PHASIC-only, no tonic contribution) ────
-    # Schor 1999 p.3: "tonic accommodation and tonic convergence have been shown
-    # not to stimulate accommodative vergence and vergence accommodation under
-    # open-loop conditions". So both cross-links read only the phasic state
-    # (vergence integrator, accommodation fast) — once the response transfers
-    # to the tonic, the cross-link drops out.
-    # AC/A: accommodation phasic (D above dark focus) → vergence drive (deg)
-    aca_drive = brain_params.AC_A * _DEG_PER_PD * x_acc_fast
-    # CA/C: vergence phasic (deg above tonic, H only) → lens-plant feedforward (D)
-    cac_drive = brain_params.CA_C * (x_verg_v[_AXIS_H] / _DEG_PER_PD)
+    # ── Cross-couplings ─────────────────────────────────────────────────────
+    # Both cross-links use TOTAL state (fast + slow / fast + tonic), not just
+    # the phasic component. Clinically AC/A and CA/C ratios are measured
+    # against sustained responses; using the total state lets dark conditions
+    # (where each subsystem settles near its motor tonic) drive a sustained
+    # cross-link contribution, separating them from monocular/binocular
+    # conditions where the totals track stimulus demand.
+    aca_drive = brain_params.AC_A * _DEG_PER_PD * (x_acc_fast + x_acc_slow)
+    cac_drive = brain_params.CA_C * ((x_verg_v[_AXIS_H] + x_verg_tonic[_AXIS_H]) / _DEG_PER_PD)
 
     # ── Vergence ────────────────────────────────────────────────────────────
     # SVBN — saccade-gated saturating burst, applied per-axis (H, V, T).

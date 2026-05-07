@@ -97,10 +97,11 @@ class SensoryParams(NamedTuple):
     tau_vis_smooth_disparity:    float = 0.15   # LP TC for target_disparity — V1 stereo correspondence
                                                   # is genuinely slow (~150 ms; Cumming & DeAngelis 2001),
                                                   # so this is the sloppy channel (1-pole gives long tail).
-    tau_vis_smooth_defocus:      float = 0.05   # LP TC for defocus — blur detection itself is FAST
-                                                  # (Stark & Atchison 1997 ~50 ms). Observed sloppiness in
-                                                  # accommodation comes from the lens PLANT (tau_acc_plant
-                                                  # ~150 ms), not the sensory channel — keep this sharp.
+    tau_vis_smooth_defocus:      float = 0.20   # LP TC for defocus (s). 200 ms 1-pole gives a long
+                                                  # exponential tail — sloppy accommodation channel,
+                                                  # consistent with the observed sluggish open-loop
+                                                  # accommodation responses (combined with the lens
+                                                  # plant tau_acc_plant ~150 ms downstream).
     tau_vis_smooth_visibility:   float = 0.01   # LP TC for visibility / fusion gate signals — fast
                                                   # (just enough to avoid sharp transitions causing
                                                   # numerical issues with the gating).
@@ -121,24 +122,6 @@ class SensoryParams(NamedTuple):
 
     # Binocular geometry
     ipd:                float       = 0.064  # inter-pupillary distance (m); ~64 mm adult
-
-    # Proximal (perceptual) prior — fills the defocus and disparity channels
-    # when the visual signal is absent (no eye sees the scene/target).
-    # Units: diopters (= 1/distance_m). Default 0 = no proximal cue.
-    # Examples: HMD/goggles awareness ≈ 0.3–0.8 D (eyes pulled to ~125–300 cm
-    # equivalent), instrument-myopia ≈ 1.0–1.5 D. Distinct from the motor
-    # priors `tonic_verg` and `tonic_acc` (which are integrator setpoints):
-    # proximal is a top-down PERCEPTUAL prior driving the same input channels
-    # that visual disparity and defocus normally feed. With AC/A × CA/C ≈ 0.4
-    # loop gain, proximal injection in both channels gets amplified ~1.7× at
-    # steady state — so 0.3 D produces ~5° additional dark vergence.
-    proximal:           float       = 0.0
-    # Time constant (s) for the proximal-gate LP. Hung & Semmlow (1980),
-    # Wick (1985), Heuer & Hofmann (1991): proximal vergence/accommodation
-    # ramp over 1–3 s when visual input vanishes. The gate (1 − defocus_visible)
-    # is filtered through a 1-pole LP with this τ before being used to inject
-    # proximal into disparity and defocus.
-    tau_proximal:       float       = 2.0
 
     # Binocular fusion and motor limits (used by pre_delay_fusion for diplopia suppression)
     # ── Motor limits (absolute vergence angle — eye position space) ─────────────────────────
@@ -300,7 +283,7 @@ def step(x_sensory,
          scene_present_L, scene_present_R,
          target_present_L, target_present_R, target_strobed,
          # ── Efference copy (from brain) ───────────────────────────────────────
-         ec_vel, ec_pos, ec_verg, ec_acc,
+         ec_vel, ec_pos, ec_verg,
          # ── Parameters ───────────────────────────────────────────────────────
          sensory_params):
     """Single ODE step for the sensory subsystem (canal + otolith + visual delay).
@@ -354,7 +337,7 @@ def step(x_sensory,
         x_vis,
         scene_angular_vel_L, scene_linear_vel_L, target_pos_L, target_vel_L, scene_vis_L, target_vis_L, target_motion_vis_L,
         scene_angular_vel_R, scene_linear_vel_R, target_pos_R, target_vel_R, scene_vis_R, target_vis_R, target_motion_vis_R,
-        sensory_params, ec_vel, ec_pos, ec_verg, ec_acc,
+        sensory_params, ec_vel, ec_pos, ec_verg,
         defocus_L, defocus_R)
 
     return jnp.concatenate([dx_c, dx_oto, dx_vis])

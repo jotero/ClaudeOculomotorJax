@@ -54,14 +54,14 @@ h1   { font-size: 22px; margin-bottom: 4px; }
     <h2>Experiments</h2>
     <a href="#monocular_occlusion_—_from_convergence">Monocular occlusion — from convergence</a>
     <a href="#monocular_occlusion_—_from_divergence">Monocular occlusion — from divergence</a>
-    <a href="#occlusion_summary_—_vergence_+_vergence_velocity">Occlusion summary — vergence + vergence velocity</a>
+    <a href="#occlusion_summary_—_vergence_and_version_spv">Occlusion summary — vergence and version SPV</a>
     <a href="#fixation_drift_quiver_—_noise_on_vs_off">Fixation Drift Quiver — noise on vs off</a>
   </nav>
   <main>
     <h1>OculomotorJax — Experiments</h1>
     <p class="meta">
-      Generated: <strong>2026-05-06 19:24</strong> &nbsp;|&nbsp;
-      Version: <strong>8faf2f7-dirty</strong>
+      Generated: <strong>2026-05-07 16:41</strong> &nbsp;|&nbsp;
+      Version: <strong>d1becc1-dirty</strong>
     </p>
     <section class="section">
       <h2>Experimental</h2>
@@ -87,10 +87,10 @@ h1   { font-size: 22px; margin-bottom: 4px; }
     </div>
 
     <div class="fig-card">
-      <a href="figures/occlusion_summary.png" target="_blank"><img src="figures/occlusion_summary.png" alt="Occlusion summary — vergence + vergence velocity"></a>
-      <h3>Occlusion summary — vergence + vergence velocity</h3>
-      <p class="desc">Averaged vergence across L/R viewing eyes per occlusion condition.</p>
-      <div class="expected"><strong>Expected behavior</strong>From-convergence runs sit near tonic with small drift; from-divergence runs show larger drift toward convergent tonic when fusion fails (dark) or weakens (flashing).</div>
+      <a href="figures/occlusion_summary.png" target="_blank"><img src="figures/occlusion_summary.png" alt="Occlusion summary — vergence and version SPV"></a>
+      <h3>Occlusion summary — vergence and version SPV</h3>
+      <p class="desc">Vergence SPV (conv-flipped, averaged with div) and version SPV (averaged) across L/R viewing eyes per occlusion condition. Time origin = occlusion onset.</p>
+      <div class="expected"><strong>Expected behavior</strong>Vergence SPV: dark > flashing > continuous (drift toward tonic). Version SPV: small, mostly symmetric — non-zero drift indicates monocular bias residual after averaging.</div>
       <p class="citation">&#128214; Composite of from-convergence and from-divergence occlusion paradigms</p>
       <span class="badge behavior">behavior</span>
     </div>

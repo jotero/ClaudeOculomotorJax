@@ -89,14 +89,8 @@ _SIG_LAYOUT = [
     # to gate target_slip and target_disparity before those go through the cascade.
     ('scene_visible',        N_STAGES,        0, 1),
     ('target_visible',       N_STAGES,        0, 1),
-    ('defocus',              _N_STAGES_OTHER, 4, 1),   # 4-pole gamma — fast & sharp; sloppy
-                                                       # accommodation comes from the lens plant, not here
-    # Proximal-vergence / proximal-accommodation gate. Single 1-pole LP that
-    # ramps the "no visual input" indicator over τ_proximal (~2 s), so the
-    # proximal substitution into disparity / defocus channels enters the
-    # system on a tonic-vergence-like timescale (Hung & Semmlow 1980, Wick
-    # 1985, Heuer & Hofmann 1991: proximal vergence ramps over 1–3 s).
-    ('proximal_gate',        1,               0, 1),
+    ('defocus',              _N_STAGES_OTHER, 1, 1),   # 1-pole LP — long exponential tail;
+                                                       # sloppy sensory channel for accommodation
 ]
 
 def _sig_size(N, N_lp, n_axes):
@@ -123,7 +117,6 @@ _OFF_TARGET_DISP          = _SIG_OFFSETS['target_disparity']
 _OFF_SCENE_VIS            = _SIG_OFFSETS['scene_visible']
 _OFF_TARGET_VIS           = _SIG_OFFSETS['target_visible']
 _OFF_DEFOCUS              = _SIG_OFFSETS['defocus']
-_OFF_PROXIMAL_GATE        = _SIG_OFFSETS['proximal_gate']
 
 # Block-end indices (= offset + size) for slicing each signal's block.
 _END_SCENE_ANGULAR_VEL    = _OFF_SCENE_ANGULAR_VEL    + _SIG_SIZES['scene_angular_vel']
@@ -134,7 +127,6 @@ _END_TARGET_DISP          = _OFF_TARGET_DISP          + _SIG_SIZES['target_dispa
 _END_SCENE_VIS            = _OFF_SCENE_VIS            + _SIG_SIZES['scene_visible']
 _END_TARGET_VIS           = _OFF_TARGET_VIS           + _SIG_SIZES['target_visible']
 _END_DEFOCUS              = _OFF_DEFOCUS              + _SIG_SIZES['defocus']
-_END_PROXIMAL_GATE        = _OFF_PROXIMAL_GATE        + _SIG_SIZES['proximal_gate']
 
 # Legacy alias for code that still references the old "120 states per 3-D signal"
 # constant — only target_pos still has this size.

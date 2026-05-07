@@ -34,8 +34,7 @@ from oculomotor.analysis import extract_spv_states
 
 SHOW  = '--show' in sys.argv
 DT    = 0.001
-_THETA_BASE = with_sensory(PARAMS_DEFAULT, sigma_canal=0.0, sigma_pos=0.0, sigma_vel=0.0,
-                             proximal=2.0)   # 2 D HMD-equivalent proximal cue
+_THETA_BASE = with_sensory(PARAMS_DEFAULT, sigma_canal=0.0, sigma_pos=0.0, sigma_vel=0.0)
 _THETA_BASE = with_brain(_THETA_BASE, sigma_acc=0.0)   # noiseless — deterministic
 
 
@@ -304,13 +303,13 @@ def _occlusion(show, *, save_name, plot_title, dist_m, lens_d, theta_base, dark_
 #   convergent tonic during occlusion.
 
 def _occlusion_from_convergence(show):
-    theta = with_brain(_THETA_BASE, tonic_verg=10.0, AC_A=2.0)
+    theta = with_brain(_THETA_BASE, tonic_verg=10.0, tonic_acc=2.0, AC_A=3.0)
     return _occlusion(
         show,
         save_name='occlusion_from_convergence',
         plot_title='Monocular occlusion — from convergence',
-        dist_m=0.25,        # 25 cm near target — eyes converged ~14.6°
-        lens_d=-3.0,        # +3 D plus lens (model sign convention is opposite)
+        dist_m=0.15,        # 15 cm near target — eyes converged ~24°
+        lens_d=-5.6,        # +5.6 D plus lens (model sign convention is opposite)
         theta_base=theta,
         dark_tonic_verg=10.0,
         description='Near binocular fixation (25 cm) with +3 D plus lens; resting tonic '
@@ -321,7 +320,7 @@ def _occlusion_from_convergence(show):
 
 
 def _occlusion_from_divergence(show):
-    theta = with_brain(_THETA_BASE, tonic_verg=10.0, AC_A=2.0)
+    theta = with_brain(_THETA_BASE, tonic_verg=10.0, tonic_acc=2.0, AC_A=3.0)
     return _occlusion(
         show,
         save_name='occlusion_from_divergence',
@@ -482,45 +481,68 @@ SECTION = dict(
 
 
 def _occlusion_summary(show, conv_columns, div_columns, t_np):
-    """Average vergence + vergence velocity across L/R viewing eyes per condition.
-
-    Six lines per panel:
-        from convergence — continuous   (avg of L+R viewing)
-        from convergence — flashing     (avg of L+R viewing)
-        from convergence — dark         (single column)
-        from divergence — continuous    (avg of L+R viewing)
-        from divergence — flashing      (avg of L+R viewing)
-        from divergence — dark          (single column)
+    """Three-panel summary, side by side:
+        1) Vergence position — 6 traces (3 conditions × 2 configs)
+        2) Vergence SPV     — 3 traces (averaged across configs, conv flipped)
+        3) Version SPV      — 6 traces (3 conditions × 2 configs)
+    Time axis re-centred so t = 0 is occlusion onset; range −2 to +10 s.
     """
 
     def collect(columns_data):
-        # columns_data is list of ((title, cond, occ), sim) tuples in the order
-        # ['cont/L-occ', 'pulsed/L-occ', 'cont/R-occ', 'pulsed/R-occ', 'dark'].
+        # Version SPV is asymmetric across L/R viewing — the seeing eye drives
+        # the cyclopean drift, so L-viewing and R-viewing produce
+        # mirror-image directions. Flip the L-occluded (= R-viewing) trace
+        # before averaging within a config so the versional drift adds rather
+        # than cancels. Vergence and vergence-SPV are symmetric across L/R
+        # viewing so they're averaged without a flip.
         by_cond = {'continuous': [], 'pulsed': [], 'dark': []}
-        for (title, cond, occ), st in columns_data:
+        for (_title, cond, occ), st in columns_data:
             eye_L = np.array(st.plant[:, 0])
             eye_R = np.array(st.plant[:, 3])
-            verg  = eye_L - eye_R
+            verg = eye_L - eye_R
             spv_L = extract_spv_states(st, np.array(t_np), eye='left')[:, 0]
             spv_R = extract_spv_states(st, np.array(t_np), eye='right')[:, 0]
             verg_spv = spv_L - spv_R
-            by_cond[cond].append((verg, verg_spv))
-        # Average across viewing-eye repetitions for cont/pulsed; dark is single.
+            vers_spv = extract_spv_states(st, np.array(t_np), eye='version')[:, 0]
+            # Flip version SPV when the LEFT eye is occluded (= R-viewing) so
+            # both occlusion variants contribute the same sign to the average.
+            vers_spv_signed = -vers_spv if occ == 'left' else vers_spv
+            by_cond[cond].append((verg, verg_spv, vers_spv_signed))
         out = {}
         for cond, runs in by_cond.items():
             verg_stack     = np.stack([r[0] for r in runs], axis=0)
             verg_spv_stack = np.stack([r[1] for r in runs], axis=0)
-            out[cond] = (verg_stack.mean(axis=0), verg_spv_stack.mean(axis=0))
+            vers_spv_stack = np.stack([r[2] for r in runs], axis=0)
+            out[cond] = (verg_stack.mean(axis=0),
+                         verg_spv_stack.mean(axis=0),
+                         vers_spv_stack.mean(axis=0))
         return out
 
     conv = collect(conv_columns)
     div  = collect(div_columns)
 
-    fig, axes = plt.subplots(2, 1, figsize=(11, 7), sharex=True)
-    fig.suptitle('Occlusion summary — vergence and vergence velocity averaged across L/R viewing',
-                 fontsize=11)
+    # Re-centre time at occlusion onset, crop to [-2, +10] s
+    t_centred = np.array(t_np) - _T_FIX
+    keep = (t_centred >= -2.0) & (t_centred <= 10.0)
+    t_plot = t_centred[keep]
 
-    palette = {
+    # Vergence-SPV averaged across configs (conv flipped) — 3 lines
+    verg_spv_avg = {}
+    vers_spv_avg = {}
+    for cond in ('continuous', 'pulsed', 'dark'):
+        _, vsv_conv, vesv_conv = conv[cond]
+        _, vsv_div,  vesv_div  = div[cond]
+        verg_spv_avg[cond] = (0.5 * (-vsv_conv  + vsv_div))[keep]
+        # Version SPV: also flip conv before averaging (same as vergence).
+        # The within-config L/R-viewing flip already happened inside collect().
+        vers_spv_avg[cond] = (0.5 * (-vesv_conv + vesv_div))[keep]
+
+    fig, axes = plt.subplots(1, 3, figsize=(18, 5), sharex=True)
+    fig.suptitle('Occlusion summary — vergence position (6 lines) | '
+                 'vergence SPV (3 lines, avg) | version SPV (3 lines, avg)',
+                 fontsize=10)
+
+    palette_6 = {
         ('conv', 'continuous'): ('#1b7837', '-',  'from conv — continuous'),
         ('conv', 'pulsed'):     ('#5aae61', '--', 'from conv — flashing'),
         ('conv', 'dark'):       ('#a6dba0', ':',  'from conv — dark'),
@@ -528,32 +550,56 @@ def _occlusion_summary(show, conv_columns, div_columns, t_np):
         ('div',  'pulsed'):     ('#9970ab', '--', 'from div — flashing'),
         ('div',  'dark'):       ('#c2a5cf', ':',  'from div — dark'),
     }
+    palette_3 = {
+        'continuous': ('#1b7837', '-',  'continuous'),
+        'pulsed':     ('#dd8452', '--', 'flashing'),
+        'dark':       ('#762a83', ':',  'dark'),
+    }
 
+    # Panel 1: vergence position, 6 traces
     for tag, data in (('conv', conv), ('div', div)):
         for cond in ('continuous', 'pulsed', 'dark'):
-            color, ls, lbl = palette[(tag, cond)]
-            verg, vverg = data[cond]
-            axes[0].plot(t_np, verg,  color=color, ls=ls, lw=1.2, label=lbl)
-            axes[1].plot(t_np, vverg, color=color, ls=ls, lw=1.0, label=lbl)
+            color, ls, lbl = palette_6[(tag, cond)]
+            verg, _, _ = data[cond]
+            axes[0].plot(t_plot, verg[keep], color=color, ls=ls, lw=1.2, label=lbl)
 
-    for ax, ylab in zip(axes, ['Vergence (deg)', 'Vergence slow-phase velocity (deg/s)']):
-        ax.axvline(_T_FIX, color='gray', lw=0.8, ls='--', alpha=0.5)
-        ax.axhline(0, color='gray', lw=0.5, alpha=0.4)
+    # Panel 2: vergence SPV, 3 traces (averaged with conv flipped)
+    for cond in ('continuous', 'pulsed', 'dark'):
+        color, ls, lbl = palette_3[cond]
+        axes[1].plot(t_plot, verg_spv_avg[cond], color=color, ls=ls, lw=1.4, label=lbl)
+
+    # Panel 3: version SPV, 3 traces (averaged with within-config L/R flip
+    # AND conv-vs-div flip)
+    for cond in ('continuous', 'pulsed', 'dark'):
+        color, ls, lbl = palette_3[cond]
+        axes[2].plot(t_plot, vers_spv_avg[cond], color=color, ls=ls, lw=1.4, label=lbl)
+
+    titles = ['Vergence position (deg)',
+              'Vergence SPV — avg (deg/s)',
+              'Version SPV — avg (deg/s)']
+    for ax, ylab in zip(axes, titles):
+        ax.axvline(0.0, color='gray', lw=0.8, ls='--', alpha=0.5)
+        ax.axhline(0,   color='gray', lw=0.5, alpha=0.4)
+        ax.set_xlabel('Time after occlusion (s)', fontsize=9)
         ax.set_ylabel(ylab, fontsize=9)
+        ax.set_xlim(-2.0, 10.0)
         ax.grid(True, alpha=0.2)
-        ax.legend(fontsize=7, ncol=2, loc='best')
-    axes[1].set_xlabel('Time (s)', fontsize=9)
+    axes[0].legend(fontsize=7, ncol=2, loc='best')
+    axes[1].legend(fontsize=8, loc='best')
+    axes[2].legend(fontsize=8, loc='best')
 
     fig.tight_layout()
     path, rp = utils.save_fig(fig, 'occlusion_summary', show=show,
                               figs_dir=utils.EXPT_FIGS_DIR, base_dir=utils.EXPT_DIR)
     return utils.fig_meta(
         path, rp,
-        title='Occlusion summary — vergence + vergence velocity',
-        description='Averaged vergence across L/R viewing eyes per occlusion condition.',
-        expected='From-convergence runs sit near tonic with small drift; '
-                 'from-divergence runs show larger drift toward convergent tonic '
-                 'when fusion fails (dark) or weakens (flashing).',
+        title='Occlusion summary — vergence and version SPV',
+        description='Vergence SPV (conv-flipped, averaged with div) and version SPV '
+                    '(averaged) across L/R viewing eyes per occlusion condition. '
+                    'Time origin = occlusion onset.',
+        expected='Vergence SPV: dark > flashing > continuous (drift toward tonic). '
+                 'Version SPV: small, mostly symmetric — non-zero drift indicates '
+                 'monocular bias residual after averaging.',
         citation='Composite of from-convergence and from-divergence occlusion paradigms',
     )
 
