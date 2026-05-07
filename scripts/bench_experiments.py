@@ -23,7 +23,10 @@ import matplotlib.pyplot as plt
 
 from oculomotor.sim.simulator import (
     PARAMS_DEFAULT, SimConfig, simulate, with_brain, with_sensory,
-    _IDX_ACC, _IDX_NI_L, _IDX_NI_R,
+    _IDX_ACC, _IDX_NI_L, _IDX_NI_R, _IDX_VERG, _IDX_VIS,
+)
+from oculomotor.models.sensory_models.sensory_model import (
+    C_vel as _C_vel, C_target_disp as _C_disp, C_defocus as _C_defocus,
 )
 from oculomotor.sim import kinematics as km
 from oculomotor.sim.kinematics import build_target
@@ -31,7 +34,8 @@ from oculomotor.analysis import extract_spv_states
 
 SHOW  = '--show' in sys.argv
 DT    = 0.001
-_THETA_BASE = with_sensory(PARAMS_DEFAULT, sigma_canal=0.0, sigma_pos=0.0, sigma_vel=0.0)
+_THETA_BASE = with_sensory(PARAMS_DEFAULT, sigma_canal=0.0, sigma_pos=0.0, sigma_vel=0.0,
+                             proximal=2.0)   # 2 D HMD-equivalent proximal cue
 _THETA_BASE = with_brain(_THETA_BASE, sigma_acc=0.0)   # noiseless — deterministic
 
 
@@ -62,7 +66,7 @@ def _make_flags(t_np, cond, occ_eye):
         # 80 ms target ON, 900 ms target OFF (period 980 ms) after T_FIX.
         # Before T_FIX target is continuously on. Implemented via target_present
         # pulsing — no strobe-flag mechanism (target_strobed stays 0).
-        T_ON     = 0.080
+        T_ON     = 0.050
         T_PERIOD = 0.980
         rel_t  = t_np - _T_FIX
         phase  = np.mod(np.maximum(rel_t, 0.0), T_PERIOD)
@@ -130,8 +134,8 @@ def _occlusion(show, *, save_name, plot_title, dist_m, lens_d, theta_base, dark_
     lens_label = f'{lens_clinical:+.1f} D'
 
     N_COLS = len(columns)
-    N_ROWS = 8
-    fig, axes = plt.subplots(N_ROWS, N_COLS, figsize=(4 * N_COLS, 20), sharex=True)
+    N_ROWS = 12
+    fig, axes = plt.subplots(N_ROWS, N_COLS, figsize=(4 * N_COLS, 28), sharex=True)
     fig.suptitle(
         f'{plot_title} — fixation at {dist_label}, {lens_label} lens, '
         f'tonic vergence {theta_base.brain.tonic_verg:+.0f}°  '
@@ -146,9 +150,13 @@ def _occlusion(show, *, save_name, plot_title, dist_m, lens_d, theta_base, dark_
         'Vergence (eye_L − eye_R) (deg)',
         'Slow-phase velocity L+R (deg/s)',
         'Version slow-phase velocity (deg/s)',
-        'Vergence velocity (deg/s)',
+        'Vergence slow-phase velocity (deg/s)',
         'Accommodation (D)',
         'ACA drive (deg)',
+        'CAC drive (D)',
+        'Cyclopean target motion[H] (deg/s)',
+        'Cyclopean target disparity[H] (deg)',
+        'Cyclopean defocus (D)',
     ]
     for r, lbl in enumerate(row_labels):
         axes[r, 0].set_ylabel(lbl, fontsize=8.5)
@@ -162,12 +170,10 @@ def _occlusion(show, *, save_name, plot_title, dist_m, lens_d, theta_base, dark_
 
         eye_L    = np.array(st.plant[:, 0])
         eye_R    = np.array(st.plant[:, 3])
-        vel_L    = np.gradient(eye_L, DT)
-        vel_R    = np.gradient(eye_R, DT)
-        verg_vel = vel_L - vel_R
         spv_L_yaw    = extract_spv_states(st, np.array(t_np), eye='left')[:, 0]
         spv_R_yaw    = extract_spv_states(st, np.array(t_np), eye='right')[:, 0]
         vers_spv_yaw = extract_spv_states(st, np.array(t_np), eye='version')[:, 0]
+        verg_spv_yaw = spv_L_yaw - spv_R_yaw   # vergence slow-phase velocity
         # Accommodation: lens optical power (D) + phasic/tonic neural states
         acc_lens  = np.array(st.acc_plant[:, 0])                     # lens (D)
         acc_brain = np.array(st.brain[:, _IDX_ACC])                  # (T, 2) — fast, slow
@@ -175,6 +181,15 @@ def _occlusion(show, *, save_name, plot_title, dist_m, lens_d, theta_base, dark_
         acc_slow  = acc_brain[:, 1]
         # ACA drive in deg: AC_A (pd/D) × 0.5729 (deg/pd) × x_acc_fast (D)
         aca_drive = float(theta_base.brain.AC_A) * 0.5729 * acc_fast
+        # CAC drive in D: CA_C (D/pd) × (x_verg_fast[H] / 0.5729 deg/pd)
+        # x_verg layout = [x_fast(3) | x_slow(3) | x_copy(3)]; [H] component is index 0.
+        x_verg_v_h = np.array(st.brain[:, _IDX_VERG])[:, 0]
+        cac_drive  = float(theta_base.brain.CA_C) * (x_verg_v_h / 0.5729)
+        # Cyclopean cascade outputs (what the brain receives after the visual delay)
+        x_vis_np  = np.array(st.sensory[:, _IDX_VIS])
+        cyc_motion = (x_vis_np @ np.array(_C_vel).T)[:, 0]      # H component (deg/s)
+        cyc_disp   = (x_vis_np @ np.array(_C_disp).T)[:, 0]     # H component (deg)
+        cyc_defocus = (x_vis_np @ np.array(_C_defocus).T)[:, 0] # scalar (D)
 
         # Row 0: target visibility per eye as colored patches (L on top, R on bottom)
         tL_flag, tR_flag, _ts = flag_arrays[ci]
@@ -211,9 +226,9 @@ def _occlusion(show, *, save_name, plot_title, dist_m, lens_d, theta_base, dark_
         axes[4, ci].plot(t_np, vers_spv_yaw, color=utils.C.get('ni', '#4dac26'),
                          lw=1.0, label='Version SPV')
 
-        # Row 5: vergence velocity
-        axes[5, ci].plot(t_np, verg_vel, color=utils.C.get('vs', '#8B4513'),
-                         lw=1.0, label='Vergence vel')
+        # Row 5: vergence slow-phase velocity (saccades excluded)
+        axes[5, ci].plot(t_np, verg_spv_yaw, color=utils.C.get('vs', '#8B4513'),
+                         lw=1.0, label='Vergence SPV')
 
         # Row 6: accommodation — lens (D) + phasic/tonic neural states
         axes[6, ci].plot(t_np, acc_lens, color='#8B4513', lw=1.3, label='lens (D)')
@@ -226,6 +241,26 @@ def _occlusion(show, *, save_name, plot_title, dist_m, lens_d, theta_base, dark_
         axes[7, ci].plot(t_np, aca_drive, color='#cc6622', lw=1.2,
                           label=f'ACA drive (AC_A={theta_base.brain.AC_A:.1f})')
         axes[7, ci].axhline(0, color='gray', lw=0.6, ls=':', alpha=0.5)
+
+        # Row 8: CAC drive (D) — CA_C × x_verg_fast[H] / 0.5729 deg/pd
+        axes[8, ci].plot(t_np, cac_drive, color='#1f78b4', lw=1.2,
+                          label=f'CAC drive (CA_C={theta_base.brain.CA_C:.2f})')
+        axes[8, ci].axhline(0, color='gray', lw=0.6, ls=':', alpha=0.5)
+
+        # Row 9: cyclopean target motion (post-cascade, what the brain sees)
+        axes[9, ci].plot(t_np, cyc_motion, color='#1f77b4', lw=1.0,
+                          label='cyc target motion[H]')
+        axes[9, ci].axhline(0, color='gray', lw=0.5, alpha=0.5)
+
+        # Row 10: cyclopean disparity (post-cascade, what vergence sees)
+        axes[10, ci].plot(t_np, cyc_disp, color='#762a83', lw=1.0,
+                           label='cyc disparity[H]')
+        axes[10, ci].axhline(0, color='gray', lw=0.5, alpha=0.5)
+
+        # Row 11: cyclopean defocus (post-cascade, what accommodation sees)
+        axes[11, ci].plot(t_np, cyc_defocus, color='#cc6622', lw=1.0,
+                           label='cyc defocus')
+        axes[11, ci].axhline(0, color='gray', lw=0.5, alpha=0.5)
 
         for row in range(N_ROWS):
             ax = axes[row, ci]
@@ -269,7 +304,7 @@ def _occlusion(show, *, save_name, plot_title, dist_m, lens_d, theta_base, dark_
 #   convergent tonic during occlusion.
 
 def _occlusion_from_convergence(show):
-    theta = with_brain(_THETA_BASE, tonic_verg=15.0, AC_A=2.0)
+    theta = with_brain(_THETA_BASE, tonic_verg=10.0, AC_A=2.0)
     return _occlusion(
         show,
         save_name='occlusion_from_convergence',
@@ -277,7 +312,7 @@ def _occlusion_from_convergence(show):
         dist_m=0.25,        # 25 cm near target — eyes converged ~14.6°
         lens_d=-3.0,        # +3 D plus lens (model sign convention is opposite)
         theta_base=theta,
-        dark_tonic_verg=25.0,
+        dark_tonic_verg=10.0,
         description='Near binocular fixation (25 cm) with +3 D plus lens; resting tonic '
                     'vergence +15° (convergent), dark drift to +25°.',
         expected='Eyes converged on near target during binocular phase; tonic is also '
@@ -286,7 +321,7 @@ def _occlusion_from_convergence(show):
 
 
 def _occlusion_from_divergence(show):
-    theta = with_brain(_THETA_BASE, tonic_verg=15.0, AC_A=2.0)
+    theta = with_brain(_THETA_BASE, tonic_verg=10.0, AC_A=2.0)
     return _occlusion(
         show,
         save_name='occlusion_from_divergence',
@@ -294,11 +329,13 @@ def _occlusion_from_divergence(show):
         dist_m=10.0,        # 10 m far target — eyes near-parallel
         lens_d=1.0,         # -1 D minus lens (model sign convention is opposite)
         theta_base=theta,
-        dark_tonic_verg=25.0,
-        description='Far binocular fixation (10 m) with -1 D minus lens; resting tonic '
-                    'vergence +15° (convergent), dark drift to +25°.',
-        expected='Eyes near-parallel on far target during binocular phase, then drift '
-                 'toward convergent tonic when one eye is occluded; dark → drift to ~+25°.',
+        dark_tonic_verg=10.0,
+        description='Far binocular fixation (10 m) with -1 D minus lens; tonic vergence '
+                    'fixed at +20° in all conditions (no light/dark shift).',
+        expected='Eyes near-parallel during binocular phase; after occlusion all three '
+                 'conditions drift toward the same tonic +20°. Difference between '
+                 'continuous/flashing/dark is purely from how strongly visual input '
+                 'pulls the slow integrator off its setpoint.',
     )
 
 
@@ -464,14 +501,16 @@ def _occlusion_summary(show, conv_columns, div_columns, t_np):
             eye_L = np.array(st.plant[:, 0])
             eye_R = np.array(st.plant[:, 3])
             verg  = eye_L - eye_R
-            vverg = np.gradient(eye_L, DT) - np.gradient(eye_R, DT)
-            by_cond[cond].append((verg, vverg))
+            spv_L = extract_spv_states(st, np.array(t_np), eye='left')[:, 0]
+            spv_R = extract_spv_states(st, np.array(t_np), eye='right')[:, 0]
+            verg_spv = spv_L - spv_R
+            by_cond[cond].append((verg, verg_spv))
         # Average across viewing-eye repetitions for cont/pulsed; dark is single.
         out = {}
         for cond, runs in by_cond.items():
-            verg_stack  = np.stack([r[0] for r in runs], axis=0)
-            vverg_stack = np.stack([r[1] for r in runs], axis=0)
-            out[cond] = (verg_stack.mean(axis=0), vverg_stack.mean(axis=0))
+            verg_stack     = np.stack([r[0] for r in runs], axis=0)
+            verg_spv_stack = np.stack([r[1] for r in runs], axis=0)
+            out[cond] = (verg_stack.mean(axis=0), verg_spv_stack.mean(axis=0))
         return out
 
     conv = collect(conv_columns)
@@ -497,7 +536,7 @@ def _occlusion_summary(show, conv_columns, div_columns, t_np):
             axes[0].plot(t_np, verg,  color=color, ls=ls, lw=1.2, label=lbl)
             axes[1].plot(t_np, vverg, color=color, ls=ls, lw=1.0, label=lbl)
 
-    for ax, ylab in zip(axes, ['Vergence (deg)', 'Vergence velocity (deg/s)']):
+    for ax, ylab in zip(axes, ['Vergence (deg)', 'Vergence slow-phase velocity (deg/s)']):
         ax.axvline(_T_FIX, color='gray', lw=0.8, ls='--', alpha=0.5)
         ax.axhline(0, color='gray', lw=0.5, alpha=0.4)
         ax.set_ylabel(ylab, fontsize=9)

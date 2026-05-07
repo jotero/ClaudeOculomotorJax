@@ -248,14 +248,15 @@ All defaults match the healthy model. Only specify parameters that differ from h
 | K_pursuit (1/s) | 4.0 | Pursuit integration gain. 0.1–0.5 = severe deficit (cerebellar, MT/MST) |
 | K_phasic_pursuit | 5.0 | Pursuit direct feedthrough. Controls fast onset |
 | tau_pursuit (s) | 40.0 | 5–15 s = poor pursuit maintenance |
-| tau_grav (s) | 5.0 | Gravity estimate TC. Relevant for tilt / OVAR |
+| K_grav | 0.6 | Somatogravic gain (Laurens & Angelaki 2011 'go'). Sets tilt-percept corner ~0.095 Hz |
+| K_lin | 0.1 | Linear-acceleration adaptation gain (Laurens & Angelaki 2011 'ka'). Static value; canal-gating modulates dynamically |
 | tau_vs_adapt (s) | 600.0 | VS null adaptation. Reduce to 30–60 s for PAN (periodic alternating nystagmus) |
 | tau_ni_adapt (s) | 20.0 | NI null adaptation. Controls rebound nystagmus amplitude after eccentric gaze |
-| K_phasic_verg (1/s) | 1.0 | Vergence direct phasic gain. Plant-canceling pulse |
-| K_verg_fast (1/s) | 10.0 | Vergence fast-integrator gain. Reduce for convergence insufficiency |
-| tau_verg_fast (s) | 2.0 | Vergence fast-integrator TC. Short → fast onset, long → slow but stable |
-| K_verg_slow (1/s) | 0.5 | Vergence slow tonic-adapter gain. Long-term integration |
-| tau_verg_slow (s) | 60.0 | Vergence slow tonic-adapter TC. Minutes-scale dark-vergence drift |
+| K_phasic_verg | 1.0 | Vergence direct phasic gain. Plant-canceling pulse |
+| K_verg | 1.25 | Vergence (fast) integrator gain. Reduce for convergence insufficiency |
+| tau_verg (s) | 5.0 | Vergence (fast) integrator TC. Sub-second onset, settles ~5 s |
+| K_verg_tonic | 1.5 | Tonic vergence (slow adapter) gain |
+| tau_verg_tonic (s) | 20.0 | Tonic vergence (slow adapter) TC. Minutes-scale dark-vergence drift |
 | tonic_verg (deg) | 3.67 | Tonic (brainstem) vergence baseline. 3.67° ≈ 1 m dark vergence. Increase for esophoric patients |
 
 ### Cranial nerve and MLF lesions — use ONLY the parameters below, not VN/cerebellar params

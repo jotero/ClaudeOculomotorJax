@@ -253,7 +253,8 @@ class Patient(BaseModel):
         ))
     K_phasic_pursuit: float = Field(default=5.0,  description="Pursuit direct feedthrough gain. Healthy 5.0. Controls fast pursuit onset velocity step.")
     tau_pursuit:      float = Field(default=40.0, description="Pursuit leak TC (s). Healthy 40 s → ~97% gain at 1 Hz. Short (5–15 s) → poor pursuit maintenance.")
-    tau_grav: float = Field(default=5.0, description="Gravity estimate TC (s). Healthy 5 s (somatogravic BW ≈ 0.032 Hz). Relevant for tilt / OVAR / off-vertical axis rotation.")
+    K_grav: float = Field(default=0.6, description="Somatogravic gain (Laurens & Angelaki 2011 'go'). Sets corner frequency f_c ≈ 0.095 Hz for tilt-percept commitment. Relevant for tilt / OVAR / off-vertical axis rotation.")
+    K_lin:  float = Field(default=0.1, description="Linear-acceleration adaptation gain (Laurens & Angelaki 2011 'ka'). Decreases for chronic vestibular loss.")
 
     # Adaptation time constants
     tau_vs_adapt: float = Field(
@@ -274,14 +275,14 @@ class Patient(BaseModel):
     # Vergence — Schor (1986) dual integrator + Robinson (1975) direct phasic path
     K_phasic_verg: float              = Field(default=1.0,
         description="Vergence direct phasic gain (1/s). τ_vp·K_phasic·e_disp gives plant-canceling pulse.")
-    K_verg_fast:   float              = Field(default=10.0,
-        description="Vergence fast-integrator gain (1/s). G_fast = K_verg_fast·τ_verg_fast.")
-    tau_verg_fast: float              = Field(default=2.0,
-        description="Vergence fast-integrator TC (s). Sub-second to ~2 s tracking.")
-    K_verg_slow:   float              = Field(default=0.5,
-        description="Vergence slow-integrator gain (1/s). Tonic adapter; G_slow = K_verg_slow·τ_verg_slow.")
-    tau_verg_slow: float              = Field(default=60.0,
-        description="Vergence slow-integrator TC (s). Minutes-scale dark-vergence drift.")
+    K_verg:        float              = Field(default=1.25,
+        description="Vergence (fast) integrator gain. Couples binocular disparity to vergence.")
+    tau_verg:      float              = Field(default=5.0,
+        description="Vergence (fast) integrator TC (s). Sub-second to ~2 s onset, settles in ~5 s.")
+    K_verg_tonic:  float              = Field(default=1.5,
+        description="Tonic-vergence (slow) integrator gain. Schor adapter coupling fast → slow.")
+    tau_verg_tonic:float              = Field(default=20.0,
+        description="Tonic-vergence (slow) integrator TC (s). 20–60 s adaptation; minutes-scale dark drift.")
     tonic_verg:    float              = Field(default=3.67,
         description=(
             "Tonic (brainstem) vergence baseline (deg). Resting dark-vergence position. "
@@ -389,7 +390,7 @@ class Patient(BaseModel):
             raise ValueError(f'{info.field_name}={v} out of range [0, 1]')
         return v
 
-    @field_validator('tau_vs', 'tau_i', 'tau_pursuit', 'tau_verg_fast', 'tau_verg_slow', 'tau_vs_adapt', 'tau_ni_adapt')
+    @field_validator('tau_vs', 'tau_i', 'tau_pursuit', 'tau_verg', 'tau_verg_tonic', 'tau_vs_adapt', 'tau_ni_adapt')
     @classmethod
     def _check_positive_tc(cls, v, info):
         if v <= 0:
@@ -405,8 +406,8 @@ class Patient(BaseModel):
             raise ValueError(f'g_burst={v} is physiologically unrealistic (max ~700)')
         return v
 
-    @field_validator('g_vor', 'K_vs', 'K_vis', 'K_pursuit', 'K_phasic_pursuit', 'tau_grav',
-                     'K_phasic_verg', 'K_verg_fast', 'K_verg_slow')
+    @field_validator('g_vor', 'K_vs', 'K_vis', 'K_pursuit', 'K_phasic_pursuit',
+                     'K_grav', 'K_lin', 'K_phasic_verg', 'K_verg', 'K_verg_tonic')
     @classmethod
     def _check_nonneg_gains(cls, v, info):
         if v < 0:

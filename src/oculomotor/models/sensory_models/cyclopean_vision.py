@@ -28,6 +28,7 @@ from oculomotor.models.sensory_models.retina import (
     _OFF_SCENE_VIS,         _END_SCENE_VIS,
     _OFF_TARGET_VIS,        _END_TARGET_VIS,
     _OFF_DEFOCUS,           _END_DEFOCUS,
+    _OFF_PROXIMAL_GATE,     _END_PROXIMAL_GATE,
 )
 from oculomotor.models.plant_models.readout import rotation_matrix
 
@@ -128,16 +129,33 @@ def binocular_fusion_policy(target_pos_L, target_vel_L, target_vis_L,
     gate_div  = jax.nn.sigmoid(100.0 * (sensory_params.div_max  + total_demand_h ))
     gate_vert = jax.nn.sigmoid(100.0 * (sensory_params.vert_max - jnp.abs(total_demand_v)))
     gate_tors = jax.nn.sigmoid(100.0 * (sensory_params.tors_max - jnp.abs(total_demand_t)))
-    target_fusable = gate_conv * gate_div * gate_vert * gate_tors
+    # Fusion requires both eyes to see the target — with one eye occluded there
+    # is nothing to fuse. Keep two related signals:
+    #   target_fusable    — true fusion (both see AND within range); 0 in monocular
+    #                       case. Used downstream (perception, disparity gating).
+    #   _equal_weight     — 1 if EITHER fused (binocular within limits) OR monocular
+    #                       (only one eye sees). Used for the per-eye blend so that
+    #                       dominance only kicks in for true diplopia (binocular but
+    #                       outside fusion range), not when only one eye sees.
+    bino_fusable    = gate_conv * gate_div * gate_vert * gate_tors
+    target_fusable  = bino_raw * bino_fusable
+    _equal_weight   = jnp.maximum(target_fusable, 1.0 - bino_raw)
 
     dom_L = 1.0 - sensory_params.eye_dominant
     dom_R = sensory_params.eye_dominant
-    w_L = target_vis_L * (target_fusable + (1.0 - target_fusable) * dom_L)
-    w_R = target_vis_R * (target_fusable + (1.0 - target_fusable) * dom_R)
+    w_L = target_vis_L * (_equal_weight + (1.0 - _equal_weight) * dom_L)
+    w_R = target_vis_R * (_equal_weight + (1.0 - _equal_weight) * dom_R)
 
     target_visible = jnp.clip(w_L + w_R, 0.0, 1.0)
     norm = jnp.maximum(w_L + w_R, 1e-6)
-    return w_L / norm, w_R / norm, target_fusable * raw_disp, target_fusable, target_visible
+    # Disparity drive: gated only by both eyes seeing the target (bino_raw),
+    # NOT by the fusion-limit gate. Even when eyes are out of fusion range,
+    # the disparity is still the correct error signal driving vergence back
+    # into range — zeroing it out here would leave vergence without any drive
+    # exactly when it most needs one.  target_fusable is returned separately
+    # for downstream consumers (perception, FEF) but no longer multiplies the
+    # vergence drive itself.
+    return w_L / norm, w_R / norm, raw_disp, target_fusable, target_visible
 
 
 def binocular_okr_policy(scene_angular_vel_L, scene_linear_vel_L,
@@ -172,7 +190,7 @@ def step(x_vis,
          scene_angular_vel_L, scene_linear_vel_L, target_pos_L, target_vel_L, scene_vis_L, target_vis_L, target_motion_vis_L,
          scene_angular_vel_R, scene_linear_vel_R, target_pos_R, target_vel_R, scene_vis_R, target_vis_R, target_motion_vis_R,
          sensory_params,
-         ec_vel, ec_pos, ec_verg,
+         ec_vel, ec_pos, ec_verg, ec_acc,
          defocus_L=0.0, defocus_R=0.0):
     """Fuse per-eye retinal signals, apply EC correction, then advance the cyclopean cascade.
 
@@ -238,9 +256,30 @@ def step(x_vis,
         target_pos_R, target_vel_R, target_vis_R,
         ec_pos, ec_verg, sensory_params)
 
-    # Disparity suppressed when one eye strongly dominates (large |w_L - w_R|):
-    # vergence drive is meaningful only when both eyes see the target.
-    target_disparity = target_disparity * (1.0 - jnp.abs(w_L - w_R))
+    # Disparity is a meaningful drive only when both eyes contribute AND the
+    # target is within fusion range. If either condition fails (one-eye view
+    # OR demand exceeds fusion limits), the proximal channel takes over below.
+    disp_visibility  = target_fusable * (1.0 - jnp.abs(w_L - w_R))
+    target_disparity = target_disparity * disp_visibility
+
+    # Proximal (perceptual) prior — fills disparity and defocus channels with
+    # a top-down "this depth" cue ONLY when there is no visual input at all
+    # (scene AND target both invisible). Both channels see ERROR signals
+    # relative to current state (so the closed loop converges to the proximal
+    # depth):
+    #     proximal_disp_error = (V_proximal − V_current)        (deg)
+    #     proximal_acc_error  = (proximal − accommodation_now)  (D)
+    # When one eye sees the target, defocus drives accommodation directly and
+    # ACA bridges to vergence — no need to inject a proximal disparity drive.
+    # The unified gate (proximal_active) is set further below using
+    # defocus_visible. Distinct from the motor priors tonic_verg / tonic_acc
+    # (slow-integrator setpoints): proximal is a perceptual top-down fill-in.
+    _DEG_PER_RAD  = 57.2957795
+    proximal_acc  = sensory_params.proximal                                 # D
+    proximal_verg = sensory_params.proximal * sensory_params.ipd * _DEG_PER_RAD   # deg
+    verg_error    = proximal_verg - ec_verg[0]                              # deg
+    # The disparity proximal injection is applied below alongside defocus
+    # because both share the same activation gate (1 - defocus_visible).
 
     target_pos = w_L * target_pos_L + w_R * target_pos_R
 
@@ -256,7 +295,22 @@ def step(x_vis,
     def_norm = target_vis_L + target_vis_R + 1e-6
     w_def_L  = target_vis_L / def_norm
     w_def_R  = target_vis_R / def_norm
-    defocus_cyc = (w_def_L * defocus_L + w_def_R * defocus_R) * defocus_visible
+    # Slow proximal gate: 1-pole LP of (1 − defocus_visible) with τ_proximal,
+    # so the proximal substitution ramps in over seconds (matches Hung &
+    # Semmlow / Wick / Heuer & Hofmann reports of 1–3 s buildup) instead of
+    # stepping abruptly at the moment the visual signal cuts out.
+    x_proximal_gate = x_vis[_OFF_PROXIMAL_GATE : _END_PROXIMAL_GATE]
+    proximal_active = x_proximal_gate[0]   # CURRENT smoothed gate value
+
+    defocus_cyc = defocus_visible * (w_def_L * defocus_L + w_def_R * defocus_R) \
+                  + proximal_active * (proximal_acc - ec_acc)
+
+    # Apply the disparity proximal here, gated by the slow proximal_active
+    # signal — same physiological logic as the defocus side: when neither
+    # scene nor target is seen, perceived nearness eventually (~τ_proximal)
+    # drives vergence toward proximal_verg.
+    target_disparity = target_disparity \
+        + proximal_active * jnp.array([verg_error, 0.0, 0.0])
 
     # ── Target velocity (pursuit) ──────────────────────────────────────────────
     # Strobe gate: target_motion_vis = target_vis × (1−strobe), already zero when strobed.
@@ -288,18 +342,24 @@ def step(x_vis,
     x_scene_vis_b    = x_vis[_OFF_SCENE_VIS         : _END_SCENE_VIS]
     x_target_vis_b   = x_vis[_OFF_TARGET_VIS        : _END_TARGET_VIS]
     x_defocus        = x_vis[_OFF_DEFOCUS           : _END_DEFOCUS]
+    # x_proximal_gate already read above; advance it as a 1-pole LP toward
+    # the instantaneous (1 − defocus_visible) signal.
+    proximal_gate_input = jnp.array([1.0 - defocus_visible])
+    tau_proximal = sensory_params.tau_proximal
 
     return jnp.concatenate([
         cascade_lp_step(x_scene_angular,  scene_angular_vel,     tau_sharp, tau_motion,  N_OTHER, 3, 1),
         cascade_lp_step(x_scene_linear,   scene_linear_vel,      tau_sharp, tau_motion,  N_OTHER, 3, 1),
         delay_cascade_step(x_target_pos,  target_pos,            tau_vis,                N=N_STAGES),
         cascade_lp_step(x_target_vel,     target_slip,           tau_sharp, tau_motion,  N_OTHER, 3, 1),
-        # Disparity uses a 4-pole smoothing cascade (sharper than 1-pole LP) so
-        # residual disparity drains quickly when one eye closes — see _SIG_LAYOUT.
-        cascade_lp_step(x_target_disp,    target_disparity,      tau_sharp, tau_disp,    N_OTHER, 3, 4),
+        # Disparity uses a 1-pole LP — V1 stereo matching is the genuinely slow
+        # computation; the long exponential tail of a 1-pole captures that.
+        cascade_lp_step(x_target_disp,    target_disparity,      tau_sharp, tau_disp,    N_OTHER, 3, 1),
         # Visibility flags consumed by brain: 40-stage sharp cascade (no LP) —
         # preserves brief target-flash pulses without amplitude loss.
         delay_cascade_step(x_scene_vis_b,    scene_visible,         tau_vis, N=N_STAGES),
         delay_cascade_step(x_target_vis_b,   target_visible,        tau_vis, N=N_STAGES),
         cascade_lp_step(x_defocus,        defocus_cyc,           tau_sharp, tau_defocus, N_OTHER, 1, 4),
+        # Proximal gate: 1-pole LP — single state, slow ramp over τ_proximal.
+        delay_cascade_step(x_proximal_gate, proximal_gate_input, tau_proximal, N=1),
     ])

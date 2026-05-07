@@ -397,7 +397,7 @@ def ODE_ocular_motor(t, state, args):
         defocus_L, defocus_R,
         scene_present_L, scene_present_R,
         target_present_L, target_present_R, target_strobed,
-        ec_vel, ec_pos, ec_verg,
+        ec_vel, ec_pos, ec_verg, x_plant_now,
         theta.sensory)
 
     return SimState(

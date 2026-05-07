@@ -93,11 +93,12 @@ jax.tree_util.register_pytree_node(
 # ── Configuration mirroring bench_experiments.py ───────────────────────────────
 
 DT       = 0.001
-T_END    = 15.0
+T_END    = 12.0    # was 15 — fitting only needs the post-occlusion drift window
 T_FIX    = 2.0
 T_ON     = 0.080
 T_PERIOD = 0.980
-WARMUP_S = 30.0
+WARMUP_S = 8.0     # was 30 — short warmup OK because we re-fit tonic anyway;
+                   # 8 s ≈ 1.6 × τ_verg_tonic gets vergence to within ~80 % of SS
 
 # Two experimental configs — initial fixation distance + lens — held FIXED at fit time.
 # Only the 7 dynamics parameters are fitted; the geometry of the experiment is given.
@@ -108,13 +109,15 @@ _DIV_LENS_D  = 1.0
 
 # Six conditions in the order they appear in the data:
 #   (config_tag, cond_label, list-of-(occlusion-eye, weight) for averaging)
-# Continuous and flashing average L+R viewing; dark is single-run.
+# For fitting we run a SINGLE occlusion eye per condition (not the L+R average).
+# The model is L/R symmetric so a single run is statistically equivalent for
+# vergence/version means; this halves runtime per gradient step.
 _CONDITIONS = [
-    ('conv', 'continuous', [('left', 0.5), ('right', 0.5)]),
-    ('conv', 'pulsed',     [('left', 0.5), ('right', 0.5)]),
+    ('conv', 'continuous', [('left', 1.0)]),
+    ('conv', 'pulsed',     [('left', 1.0)]),
     ('conv', 'dark',       [('left', 1.0)]),
-    ('div',  'continuous', [('left', 0.5), ('right', 0.5)]),
-    ('div',  'pulsed',     [('left', 0.5), ('right', 0.5)]),
+    ('div',  'continuous', [('left', 1.0)]),
+    ('div',  'pulsed',     [('left', 1.0)]),
     ('div',  'dark',       [('left', 1.0)]),
 ]
 
@@ -208,16 +211,18 @@ def _simulate_column(theta, t_jnp, target, tL_jnp, tR_jnp, ts_jnp, lens_jnp):
 
 
 def forward(p: dict, stim_arrays: dict):
-    """Compute the 6 averaged (vergence, vergence_velocity) traces.
+    """Compute the 6 averaged (vergence_velocity, version_velocity) traces.
 
     Args:
         p:           fitted-parameter dict (values are jax-friendly scalars)
         stim_arrays: precomputed (t_jnp, condition→inputs) bundle from `prepare_stim`
     Returns:
-        (verg, vverg): each (6, T) — rows match _CONDITIONS order.
+        (verg_vel, vers_vel): each (6, T) — rows match _CONDITIONS order.
+            verg_vel = d/dt (eye_L - eye_R)             (vergence velocity, deg/s)
+            vers_vel = d/dt (eye_L + eye_R) / 2          (version velocity,  deg/s)
     """
     t_jnp = stim_arrays['t']
-    rows_v, rows_vv = [], []
+    rows_verg_vel, rows_vers_vel = [], []
     for tag, cond, weights in _CONDITIONS:
         dist_m = _CONV_DIST_M if tag == 'conv' else _DIV_DIST_M
         lens_d = _CONV_LENS_D if tag == 'conv' else _DIV_LENS_D
@@ -231,11 +236,11 @@ def forward(p: dict, stim_arrays: dict):
             eye_L, eye_R = _simulate_column(theta, t_jnp, *inputs)
             eye_L_avg = eye_L_avg + w * eye_L
             eye_R_avg = eye_R_avg + w * eye_R
-        verg  = eye_L_avg - eye_R_avg
-        vverg = jnp.gradient(eye_L_avg, DT) - jnp.gradient(eye_R_avg, DT)
-        rows_v.append(verg)
-        rows_vv.append(vverg)
-    return jnp.stack(rows_v), jnp.stack(rows_vv)
+        d_L = jnp.gradient(eye_L_avg, DT)
+        d_R = jnp.gradient(eye_R_avg, DT)
+        rows_verg_vel.append(d_L - d_R)
+        rows_vers_vel.append(0.5 * (d_L + d_R))
+    return jnp.stack(rows_verg_vel), jnp.stack(rows_vers_vel)
 
 
 def prepare_stim(t_np: np.ndarray) -> dict:
@@ -288,15 +293,32 @@ def _smooth(traces: jnp.ndarray) -> jnp.ndarray:
     return jax.vmap(lambda x: jnp.convolve(x, _SMOOTH_KERNEL, mode='valid'))(padded)
 
 
-def loss_fn(p: dict, stim_arrays: dict, data_v: jnp.ndarray, data_vv: jnp.ndarray):
-    pred_v, pred_vv = forward(p, stim_arrays)
+def _resample_to_data_grid(pred_traces: jnp.ndarray, t_data: jnp.ndarray) -> jnp.ndarray:
+    """Linearly resample (6, T_model) traces onto the data time grid.
+
+    The data time origin (t_data = 0) is defined as the moment of occlusion
+    onset, which corresponds to model time T_FIX. So model_t = t_data + T_FIX.
+    """
+    t_model = jnp.arange(pred_traces.shape[1]) * DT       # model time grid (s)
+    target_t = t_data + T_FIX                              # data time → model time
+    return jax.vmap(lambda x: jnp.interp(target_t, t_model, x))(pred_traces)
+
+
+def loss_fn(p: dict, stim_arrays: dict, data_verg: jnp.ndarray,
+            data_vers: jnp.ndarray, mask: jnp.ndarray, t_data: jnp.ndarray):
+    pred_verg, pred_vers = forward(p, stim_arrays)
     # Match the smoothing applied to the experimental averages so the model
     # isn't penalised for high-frequency content the data has already lost.
-    pred_v  = _smooth(pred_v)
-    pred_vv = _smooth(pred_vv)
-    err_v  = jnp.mean((pred_v  - data_v ) ** 2)
-    err_vv = jnp.mean((pred_vv - data_vv) ** 2)
-    return err_v + LAMBDA_VEL * err_vv
+    pred_verg = _smooth(pred_verg)
+    pred_vers = _smooth(pred_vers)
+    # Resample model output onto the data time grid (data t = 0 ≡ model T_FIX).
+    pred_verg = _resample_to_data_grid(pred_verg, t_data)
+    pred_vers = _resample_to_data_grid(pred_vers, t_data)
+    # Masked MSE — NaNs in data become False in mask.
+    n_eff = jnp.maximum(mask.sum(), 1).astype(jnp.float32)
+    err_verg = jnp.where(mask, (pred_verg - data_verg) ** 2, 0.0).sum() / n_eff
+    err_vers = jnp.where(mask, (pred_vers - data_vers) ** 2, 0.0).sum() / n_eff
+    return err_verg + err_vers
 
 
 # ── Initial parameter dict ─────────────────────────────────────────────────────
@@ -338,7 +360,8 @@ def readable_params(p: dict) -> dict:
 
 # ── Training loop ──────────────────────────────────────────────────────────────
 
-def fit(p_init: dict, stim_arrays: dict, data_v: jnp.ndarray, data_vv: jnp.ndarray,
+def fit(p_init: dict, stim_arrays: dict, data_verg: jnp.ndarray,
+        data_vers: jnp.ndarray, mask: jnp.ndarray, t_data: jnp.ndarray,
         steps: int = 300, lr: float = 3e-3, verbose: bool = True,
         grad_clip: float = 1.0) -> dict:
     """Run optax.adam for `steps` iterations and return the fitted params.
@@ -363,14 +386,22 @@ def fit(p_init: dict, stim_arrays: dict, data_v: jnp.ndarray, data_vv: jnp.ndarr
     def _replace_nan(g):
         return jax.tree_util.tree_map(lambda x: jnp.where(jnp.isfinite(x), x, 0.0), g)
 
+    import time as _time
     p = p_init
+    if verbose:
+        print('  step    0  starting (first call traces+compiles the simulator — '
+              'this takes 1–3 min on CPU; subsequent steps are much faster) ...',
+              flush=True)
+    t0 = _time.time()
     for step in range(steps):
-        loss_val, grads = grad_fn(p, stim_arrays, data_v, data_vv)
+        loss_val, grads = grad_fn(p, stim_arrays, data_verg, data_vers, mask, t_data)
         grads = _replace_nan(grads)
         updates, opt_state = optimizer.update(grads, opt_state, p)
         p = optax.apply_updates(p, updates)
-        if verbose and (step % 20 == 0 or step == steps - 1):
-            print(f'  step {step:4d}  loss = {float(loss_val):.4e}')
+        if verbose and (step % 5 == 0 or step == steps - 1):
+            elapsed = _time.time() - t0
+            print(f'  step {step:4d}  loss = {float(loss_val):.4e}  '
+                  f'(elapsed {elapsed:6.1f} s)', flush=True)
     return p
 
 
@@ -401,17 +432,20 @@ def synthetic_test(steps: int = 200):
     print('  Ground truth:', readable_params(p_true))
 
     print('  Generating synthetic data (with the same smoothing the model will see) ...')
-    data_v_raw, data_vv_raw = forward(p_true, stim)
-    data_v, data_vv = _smooth(data_v_raw), _smooth(data_vv_raw)
+    # Build a fake data grid covering [-T_FIX, +T_END - T_FIX] @ 5 ms
+    t_data = jnp.arange(-T_FIX, T_END - T_FIX, 0.005, dtype=jnp.float32)
+    pred_verg, pred_vers = forward(p_true, stim)
+    pred_verg = _resample_to_data_grid(_smooth(pred_verg), t_data)
+    pred_vers = _resample_to_data_grid(_smooth(pred_vers), t_data)
+    mask = jnp.ones_like(pred_verg, dtype=bool)
 
     p_init = _perturb_params(p_true, frac=0.6, key=jax.random.PRNGKey(0))
     print('  Perturbed init:', readable_params(p_init))
 
     print('  Fitting ...')
-    p_fit = fit(p_init, stim, data_v, data_vv, steps=steps)
+    p_fit = fit(p_init, stim, pred_verg, pred_vers, mask, t_data, steps=steps)
     print('  Recovered:    ', readable_params(p_fit))
 
-    # Compare key params
     truth = readable_params(p_true)
     fit_v = readable_params(p_fit)
     print('\n  Recovery summary:')
@@ -422,27 +456,86 @@ def synthetic_test(steps: int = 200):
 
 # ── Real data fit ──────────────────────────────────────────────────────────────
 
-_REQUIRED_KEYS_V  = [f'{tag}_{cond}_v'  for tag, cond, _ in _CONDITIONS]
-_REQUIRED_KEYS_VV = [f'{tag}_{cond}_vv' for tag, cond, _ in _CONDITIONS]
+# Map data column name (MATLAB-friendly) → (config_tag, condition_label)
+_COLUMN_MAP = {
+    'FromConvergenceNoFlashing': ('conv', 'continuous'),
+    'FromConvergenceFlashing':   ('conv', 'pulsed'),
+    'FromConvergenceNoTarget':   ('conv', 'dark'),
+    'FromDivergenceNoFlashing':  ('div',  'continuous'),
+    'FromDivergenceFlashing':    ('div',  'pulsed'),
+    'FromDivergenceNoTarget':    ('div',  'dark'),
+}
 
 
-def load_data(npz_path: str) -> tuple[np.ndarray, jnp.ndarray, jnp.ndarray]:
-    """Load averaged data from npz; return (t, vergence (6,T), vergence_vel (6,T))."""
-    z = np.load(npz_path)
-    t_np = z['t'].astype(np.float32)
-    rows_v  = [z[k].astype(np.float32) for k in _REQUIRED_KEYS_V]
-    rows_vv = [z[k].astype(np.float32) for k in _REQUIRED_KEYS_VV]
-    return t_np, jnp.stack(rows_v), jnp.stack(rows_vv)
+def _read_csv(path: str) -> tuple[list[str], np.ndarray]:
+    """Read a CSV with header and float entries (NaN-aware)."""
+    import csv
+    with open(path, 'r') as f:
+        rdr = csv.reader(f)
+        header = next(rdr)
+        rows = []
+        for r in rdr:
+            row = [float(x) if x.strip() and x.strip().lower() != 'nan' else np.nan
+                   for x in r]
+            rows.append(row)
+    return header, np.array(rows, dtype=np.float64)
 
 
-def fit_real(npz_path: str, steps: int = 500):
-    print(f'── Fitting averaged data from {npz_path} ───────────────────────')
-    t_np, data_v, data_vv = load_data(npz_path)
+def load_csv_pair(verg_csv: str, vers_csv: str, sign_flip: bool = True):
+    """Load matched vergence + version CSVs and align with model time.
+
+    Returns:
+        (data_verg, data_vers, mask, t_data) — first three are (6, N_data) JAX
+        arrays; t_data is (N_data,) numpy. Rows are in _CONDITIONS order.
+        Data is cropped to t_data ∈ [−T_FIX, T_END − T_FIX] (the simulation
+        window after the warmup) and sign-flipped if requested.
+    """
+    h_v,  a_v  = _read_csv(verg_csv)
+    h_vs, a_vs = _read_csv(vers_csv)
+
+    if 'Time' not in h_v or 'Time' not in h_vs:
+        raise ValueError('Both CSVs must have a "Time" column.')
+    t_v  = a_v[:,  h_v.index('Time')]
+    t_vs = a_vs[:, h_vs.index('Time')]
+    if not np.allclose(t_v, t_vs, atol=1e-6):
+        raise ValueError('Time columns differ between vergence.csv and version.csv.')
+
+    keep = (t_v >= -T_FIX) & (t_v < T_END - T_FIX)
+    t_kept = t_v[keep].astype(np.float32)
+
+    rows_verg, rows_vers = [], []
+    for tag, cond, _ in _CONDITIONS:
+        col_name = next(n for n, (t_, c_) in _COLUMN_MAP.items()
+                        if t_ == tag and c_ == cond)
+        if col_name not in h_v or col_name not in h_vs:
+            raise ValueError(f'Column {col_name!r} missing from one of the CSVs.')
+        rows_verg.append(a_v [keep, h_v .index(col_name)])
+        rows_vers.append(a_vs[keep, h_vs.index(col_name)])
+
+    verg = np.stack(rows_verg).astype(np.float32)
+    vers = np.stack(rows_vers).astype(np.float32)
+    if sign_flip:
+        verg, vers = -verg, -vers
+
+    mask = np.isfinite(verg) & np.isfinite(vers)
+    verg = np.where(mask, verg, 0.0)
+    vers = np.where(mask, vers, 0.0)
+
+    return jnp.array(verg), jnp.array(vers), jnp.array(mask), jnp.array(t_kept)
+
+
+def fit_csv(verg_csv: str, vers_csv: str, steps: int = 500, sign_flip: bool = True):
+    print(f'── Fitting from {verg_csv} + {vers_csv} ─────────────────────')
+    data_verg, data_vers, mask, t_data = load_csv_pair(verg_csv, vers_csv, sign_flip=sign_flip)
+    print(f'  data shape: {data_verg.shape}, valid samples: {int(mask.sum())} / {mask.size}')
+    print(f'  data t range: [{float(t_data.min()):+.2f}, {float(t_data.max()):+.2f}] s')
+
+    t_np = np.arange(0.0, T_END, DT, dtype=np.float32)
     stim = prepare_stim(t_np)
 
     p_init = initial_params()
     print('  Initial:', readable_params(p_init))
-    p_fit = fit(p_init, stim, data_v, data_vv, steps=steps)
+    p_fit = fit(p_init, stim, data_verg, data_vers, mask, t_data, steps=steps)
     print('  Final:  ', readable_params(p_fit))
     return p_fit
 
@@ -454,8 +547,14 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     ap.add_argument('--synthetic', action='store_true',
                     help='Run a synthetic-recovery test (no data file needed).')
-    ap.add_argument('--data', type=str, default=None,
-                    help='Path to averaged.npz with the 6 vergence + 6 velocity traces.')
+    ap.add_argument('--vergence-csv', type=str, default=None,
+                    help='Path to vergence-velocity CSV (rows = time samples, '
+                         'columns = condition names + Time).')
+    ap.add_argument('--version-csv', type=str, default=None,
+                    help='Path to version-velocity CSV (same structure / time as the vergence CSV).')
+    ap.add_argument('--no-sign-flip', action='store_true',
+                    help='By default the loader multiplies data by -1 to match the '
+                         'model sign convention. Pass this flag to disable.')
     ap.add_argument('--steps', type=int, default=300,
                     help='Number of Adam iterations (default 300).')
     ap.add_argument('--smooth-window-ms', type=float, default=SMOOTH_WINDOW_S * 1000.0,
@@ -469,10 +568,11 @@ def main():
 
     if args.synthetic:
         synthetic_test(steps=args.steps)
-    elif args.data is not None:
-        fit_real(args.data, steps=args.steps)
+    elif args.vergence_csv and args.version_csv:
+        fit_csv(args.vergence_csv, args.version_csv,
+                steps=args.steps, sign_flip=not args.no_sign_flip)
     else:
-        ap.error('Pass either --synthetic or --data <path>.')
+        ap.error('Pass --synthetic, or both --vergence-csv and --version-csv.')
 
 
 if __name__ == '__main__':
