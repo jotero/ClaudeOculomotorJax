@@ -132,8 +132,9 @@ def _vs_step(x_vs, canal, slip, rf, brain_params):
     x_null = x_vs[_VS_IDX_NULL]
     x_pop  = x_vs[_VS_IDX_POP]   # (6,) [x_A | x_B]
 
-    canal_in = jnp.clip(canal, -brain_params.v_max_vor, brain_params.v_max_vor)
-    u_lin    = jnp.concatenate([canal_in, slip])   # (9,) linear inputs
+    # Canal saturation now applied at the sensor side (canal.step + sensory_model.read_outputs);
+    # canal afferents arrive here already clipped at canal_v_max.
+    u_lin    = jnp.concatenate([canal, slip])      # (9,) linear inputs
 
     # Set point: per-population resting bias plus a slow null-adapted shift.
     SP    = brain_params.b_vs + jnp.concatenate([x_null / 2.0, -x_null / 2.0])

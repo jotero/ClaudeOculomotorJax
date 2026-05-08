@@ -124,4 +124,9 @@ def step(x_c, w_head, sensory_params):
 
     dx_c     = A @ x_c + B @ w_head
     y_canals = nonlinearity(x_c, sensory_params.canal_gains, sensory_params.canal_floor)
+    # Excitatory ceiling — sensor-side saturation. Symmetric clip; the lower
+    # bound is well below the firing-rate range (canals never fire negatively
+    # because of FLOOR / softplus rectification), so effectively this is a
+    # one-sided cap on the afferent rate.
+    y_canals = jnp.clip(y_canals, -sensory_params.canal_v_max, sensory_params.canal_v_max)
     return dx_c, y_canals

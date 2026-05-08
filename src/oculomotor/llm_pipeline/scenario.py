@@ -233,7 +233,7 @@ class Patient(BaseModel):
     )
     tau_vs: float = Field(default=20.0, description="Velocity storage TC (s). Healthy 20 s. Nodulus/uvula lesion → 1–3 s. OKN/OKAN decay TC.")
     g_vor:     float = Field(default=1.0,  description="VOR central gain (dim'less). Healthy 1.0. Reduce for hypofunction (e.g., 0.5 = 50% gain loss). Increase for gain-up adaptation. Distinct from canal_gains (peripheral transduction).")
-    v_max_vor: float = Field(default=400.0, description="Canal afferent saturation (deg/s). Healthy 400. Rarely needs changing — only for extreme rotational stimuli.")
+    canal_v_max: float = Field(default=400.0, description="Canal afferent saturation (deg/s, sensor-side). Healthy 400. Rarely needs changing — only for extreme rotational stimuli.")
     K_vs:      float = Field(default=0.1,  description="Canal→VS integration gain (1/s). Healthy 0.1. Reduce with tau_vs for nodulus lesions.")
     K_vis:  float = Field(default=0.1,  description="Visual→VS charging gain (1/s). Healthy 0.1. OKR/OKAN drive. 0 = no OKR.")
     g_vis:  float = Field(default=0.6,  description="Direct visual feedthrough gain (Raphan 1979). Healthy 0.6. Fast OKR onset component. OKR inner-loop stable when g_vis < 1.")

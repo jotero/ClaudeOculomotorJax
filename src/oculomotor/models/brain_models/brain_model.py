@@ -64,6 +64,8 @@ Index constants (relative to x_brain):
     _IDX_HEAD     — heading estimator states  (3,)
     _IDX_PURSUIT  — pursuit velocity memory   (3,)
     _IDX_VERG     — vergence position memory  (9,)
+    _IDX_EC_VEL_SCENE  — cascade_lp_step delay of ec_vel_eye matched to scene_angular_vel (21,)
+    _IDX_EC_VEL_TARGET — cascade_lp_step delay of ec_vel_eye matched to target_vel (21,)
 
 Outputs of step():
     dx_brain     (156,)  state derivative
@@ -87,6 +89,9 @@ from oculomotor.models.brain_models  import listing
 
 from oculomotor.models.sensory_models.sensory_model import SensoryOutput
 from oculomotor.models.brain_models.final_common_pathway import G_NUCLEUS_DEFAULT, G_NERVE_DEFAULT
+from oculomotor.models.plant_models.readout         import rotation_matrix
+from oculomotor.models.sensory_models.retina        import ypr_to_xyz, xyz_to_ypr, cascade_lp_step
+from oculomotor.models.sensory_models.cyclopean_vision import velocity_saturation
 
 
 # ── State layout ───────────────────────────────────────────────────────────────
@@ -100,6 +105,17 @@ from oculomotor.models.brain_models.final_common_pathway import G_NUCLEUS_DEFAUL
 # acc_plant (1 state) is in SimState.acc_plant — not part of x_brain.
 
 _TARGET_MEM_N = 4   # 3 position + 1 trust scalar
+# Post-delay EC: TWO separate cascade_lp_step delays for ec_vel_eye, one matched
+# to the scene_angular_vel slip cascade (tau_smooth_motion ~0.02 s) and one
+# matched to the target_vel slip cascade (tau_smooth_target_vel ~0.15 s). The
+# two slip paths use different LP TCs in cyclopean_vision (scene = tighter,
+# target = much smoother), so we need two separate ECs whose impulse responses
+# match each path's slip shape — otherwise post-delay subtraction can't cancel
+# them cleanly.
+_EC_VEL_N_SHARP   = 6                                       # sharp cascade stages (shared between paths)
+_EC_VEL_N_LP      = 1                                       # smoothing LP stages (shared)
+_EC_VEL_SCENE_N   = (_EC_VEL_N_SHARP + _EC_VEL_N_LP) * 3    # 21 states — scene path EC
+_EC_VEL_TARGET_N  = (_EC_VEL_N_SHARP + _EC_VEL_N_LP) * 3    # 21 states — target path EC
 
 # Target working memory time constants — local hacks, not exposed in BrainParams.
 # These shape FEF/dlPFC-style gaze evidence accumulation so brief flashes can
@@ -111,23 +127,27 @@ _TAU_TARGET_MEM_TRUST_DECAY  = 5.0     # trust decay TC when target is unseen (s
 _TAU_TARGET_MEM_CONSUME      = 0.020   # memory + trust drain TC during saccade burst (s)
 _TARGET_MEM_TRUST_THRESHOLD  = 0.2     # trust level above which SG commits to saccade mode
 
-N_STATES = sm.N_STATES + ni.N_STATES + sg.N_STATES + pu.N_STATES + va.N_STATES + _TARGET_MEM_N
-#        = 21 + 9 + 18 + 3 + 11 + 4 = 66
+N_STATES = sm.N_STATES + ni.N_STATES + sg.N_STATES + pu.N_STATES + va.N_STATES + _TARGET_MEM_N + _EC_VEL_SCENE_N + _EC_VEL_TARGET_N
+#        = 21 + 9 + 18 + 3 + 11 + 4 + 21 + 21 = 108
 
 # ── Top-level offsets ─────────────────────────────────────────────────────────
-_o_sm = 0
-_o_ni = _o_sm + sm.N_STATES    # 21
-_o_sg = _o_ni + ni.N_STATES    # 30
-_o_pu = _o_sg + sg.N_STATES    # 48
-_o_va = _o_pu + pu.N_STATES    # 51
-_o_tm = _o_va + va.N_STATES    # 62
+_o_sm    = 0
+_o_ni    = _o_sm + sm.N_STATES        # 21
+_o_sg    = _o_ni + ni.N_STATES        # 30
+_o_pu    = _o_sg + sg.N_STATES        # 48
+_o_va    = _o_pu + pu.N_STATES        # 51
+_o_tm    = _o_va + va.N_STATES        # 62
+_o_ec_s  = _o_tm  + _TARGET_MEM_N     # 66  (scene EC start)
+_o_ec_t  = _o_ec_s + _EC_VEL_SCENE_N  # 87  (target EC start)
 
-_IDX_SELF_MOTION = slice(_o_sm, _o_sm + sm.N_STATES)   # (21,) [0:21]  — VS|GRAV|HEAD
-_IDX_NI          = slice(_o_ni, _o_ni + ni.N_STATES)   #  (9,) [21:30]
-_IDX_SG          = slice(_o_sg, _o_sg + sg.N_STATES)   # (18,) [30:48]
-_IDX_PURSUIT     = slice(_o_pu, _o_pu + pu.N_STATES)   #  (3,) [48:51]
-_IDX_VA          = slice(_o_va, _o_va + va.N_STATES)   # (11,) [51:62] — VERG|ACC
-_IDX_TARGET_MEM  = slice(_o_tm, _o_tm + _TARGET_MEM_N) #  (4,) [62:66] — x_mem_pos(3) | trust(1)
+_IDX_SELF_MOTION   = slice(_o_sm,    _o_sm    + sm.N_STATES)      # (21,) [0:21]  — VS|GRAV|HEAD
+_IDX_NI            = slice(_o_ni,    _o_ni    + ni.N_STATES)      #  (9,) [21:30]
+_IDX_SG            = slice(_o_sg,    _o_sg    + sg.N_STATES)      # (18,) [30:48]
+_IDX_PURSUIT       = slice(_o_pu,    _o_pu    + pu.N_STATES)      #  (3,) [48:51]
+_IDX_VA            = slice(_o_va,    _o_va    + va.N_STATES)      # (11,) [51:62] — VERG|ACC
+_IDX_TARGET_MEM    = slice(_o_tm,    _o_tm    + _TARGET_MEM_N)    #  (4,) [62:66] — x_mem_pos(3) | trust(1)
+_IDX_EC_VEL_SCENE  = slice(_o_ec_s,  _o_ec_s  + _EC_VEL_SCENE_N)  # (21,) [66:87]  — scene EC cascade (matches scene_angular_vel)
+_IDX_EC_VEL_TARGET = slice(_o_ec_t,  _o_ec_t  + _EC_VEL_TARGET_N) # (21,) [87:108] — target EC cascade (matches target_vel)
 
 # ── Backward-compat aliases for sub-states ────────────────────────────────────
 # External code (benches, llm_pipeline) still references the per-module slices.
@@ -184,12 +204,8 @@ class BrainParams(NamedTuple):
                                           # 1.0 = healthy; <1 = hypofunction / adaptation down;
                                           # >1 = adaptation up. Distinct from peripheral canal_gains
                                           # (SensoryParams), which reflect transduction sensitivity.
-    v_max_vor:             float = 400.0  # excitatory canal afferent saturation (deg/s).
-                                          # Inhibitory saturation (~80 deg/s, Ewald's 2nd law) is already
-                                          # implemented as FLOOR in canal.nonlinearity() — not modelled here.
-                                          # Excitatory ceiling ~300–600 deg/s (Goldberg & Fernández 1971
-                                          # J Neurophysiol 34:635); 400 is conservative.
-                                          # At typical stimulus velocities (<200 deg/s) this clip is inert.
+    # Note: canal afferent saturation (was v_max_vor here) lives in
+    # SensoryParams.canal_v_max — sensor-side ceiling, applied in canal.step.
     K_vs:                  float = 0.1    # canal-to-VS integration gain (1/s); controls charging speed
                                           # Bilateral push-pull: effective net gain = 2·K_vs = 0.2.
 
@@ -209,6 +225,42 @@ class BrainParams(NamedTuple):
                                           # OKR gain ≈1 below 30 deg/s, half-max ~60 deg/s, near-zero ~100 deg/s
                                           # (Cohen, Matsuo & Raphan 1977 J Neurophysiol; Demer & Zee 1984 J Neurophysiol).
 
+    # Saccadic-suppression / Kalman gate on the post-delay slip — multiplicative
+    # gain K(|ec_vel_lp|) on scene_slip → VS and target_slip → pursuit. Down-weights
+    # retinal evidence during fast self-motion, when the EC residual would otherwise
+    # contaminate the integrators. Hill-n form: K = 1/(1+(|v|/v_crit)^n).
+    #   v_crit ~200 deg/s leaves pursuit/OKR/VOR (≤80 deg/s) untouched (K>0.97)
+    #     and clamps saccade-range velocities (≥400 deg/s) hard (K<0.07).
+    #   n=4 gives a flat plateau through smooth-eye-movement range and a sharp drop.
+    #   tau_ec_gate matches tau_vis so the gate signal is delay-aligned with
+    #     the post-delay slip arriving at VS / pursuit.
+    v_crit_ec_gate:        float = 50.0   # Hill threshold (deg/s); K=0.5 at this velocity.
+    n_ec_gate:             float = 6.0    # Hill exponent.
+    tau_ec_gate:           float = 0.07   # 1-pole LP TC for ec_vel_eye → mean delay = tau,
+                                          # peak of impulse response at t=0+ (anticipatory:
+                                          # fires immediately at saccade onset, ~50 ms earlier
+                                          # than the slip cascade's gamma peak at ≈40 ms).
+                                          # Tau matches slip cascade total mean delay (0.07 s).
+    alpha_ec_dir:          float = 0.4    # Directional gate sigmoid sharpness (1/(deg/s)).
+                                          # Sign-sensitive scalar gate on the EC-corrected slip,
+                                          # using the SIGNED projection of the *raw* delayed slip
+                                          # onto the ec_d direction. The intuition (per the saccade
+                                          # cascade plot): slip and EC are anti-parallel during
+                                          # self-motion, so a strongly *negative* projection means
+                                          # "slip and EC point opposite directions" — that's a
+                                          # self-motion case and the residual after EC sub should
+                                          # be suppressed harder.
+                                          #   slip_dot = dot(raw_slip, ec_d_hat)   (signed deg/s)
+                                          #   K = sigmoid((slip_dot + bias) · alpha)
+                                          # K large when slip_dot positive (same direction = real
+                                          # motion) or near zero (no slip → pass; matters for
+                                          # pursuit where raw target_slip ≈ 0).
+                                          # K small when slip_dot strongly negative (opposite to ec_d).
+    bias_ec_dir:           float = 15.0   # Sigmoid offset (deg/s); K=0.5 at slip_dot = -bias.
+                                          # K(0)≈0.998 (pursuit/quiescent slip), K(-15)=0.5,
+                                          # K(-25)≈0.018, K(-50)≈0. Larger bias = need more
+                                          # opposition before suppression triggers.
+
     # Neural integrator — bilateral push-pull + null adaptation (Robinson 1975; rebound: Zee et al. 1980)
     # Per-axis TCs via fractions of tau_i (matches the VS pattern). Yaw uses tau_i directly;
     # torsional NI in the INC is reported as substantially leakier (Crawford & Vilis 1991:
@@ -220,6 +272,21 @@ class BrainParams(NamedTuple):
     tau_vis:               float = 0.08   # visual delay copy — EC delay must match retinal delay
                                           # should match PlantParams.tau_p in healthy subjects;
                                           # may differ in pathology (imperfect internal model)
+    # Internal model copies of the sensory cascade shape used by the post-delay
+    # EC subtraction in brain_model.step. cascade_lp_step on ec_vel_eye must match
+    # cyclopean_vision's slip cascade for clean cancellation; defaults mirror
+    # SensoryParams.tau_vis_sharp / tau_vis_smooth_motion.
+    tau_vis_sharp:              float = 0.05   # sharp cascade mean delay (s); 6 stages × this/6
+                                                # Shared by both scene and target EC cascades.
+    tau_vis_smooth_motion:      float = 0.02   # smoothing LP TC (s) for SCENE EC cascade.
+                                                # Must match SensoryParams.tau_vis_smooth_motion so
+                                                # the EC and slip cascades have the same shape →
+                                                # clean post-delay subtraction in brain_model.step.
+    tau_vis_smooth_target_vel:  float = 0.15   # smoothing LP TC (s) for TARGET EC cascade.
+                                                # Must match SensoryParams.tau_vis_smooth_target_vel.
+                                                # Heavier smoothing than scene because the visual
+                                                # target-velocity pathway is intrinsically slower
+                                                # (Krauzlis & Lisberger 1994).
     b_ni:                  float = 0.0    # NPH intrinsic resting bias (deg); 0 = no net bias at centre gaze
                                           # future: set >0 for unilateral NPH lesion modelling
     tau_ni_adapt:          float = 20.0   # NI null adaptation TC (s); controls rebound nystagmus amplitude
@@ -559,18 +626,57 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
     x_pursuit     = x_brain[_IDX_PURSUIT]
     x_va          = x_brain[_IDX_VA]              # (11,) vergence + accommodation
     x_target_mem  = x_brain[_IDX_TARGET_MEM]      # (4,)  x_mem_pos(3) | trust(1)
+    x_ec_scene    = x_brain[_IDX_EC_VEL_SCENE]    # (21,) cascade_lp_step state for scene EC
+    x_ec_target   = x_brain[_IDX_EC_VEL_TARGET]   # (21,) cascade_lp_step state for target EC
+    # Last 3 elements = LP-stage output = delayed ec_vel_eye(t-τ_vis), matched
+    # in shape to the corresponding slip cascade → clean post-delay subtraction.
+    ec_d_scene    = x_ec_scene[-3:]
+    ec_d_target   = x_ec_target[-3:]
+
+    # ── Post-delay EC subtraction + saccadic-suppression gates ───────────────
+    # Two separate EC cascades, one matched to each slip cascade's LP TC:
+    #   - ec_d_scene  matches scene_angular_vel cascade (tau_smooth_motion)
+    #   - ec_d_target matches target_vel cascade   (tau_smooth_target_vel)
+    # Adding the matched ec_d to the corresponding raw slip recovers world motion.
+    # Visibility gating ensures EC contribution = 0 in the dark.
+    # Target slip has no torsion (retina is 2D); zero the torsion component.
+    scene_slip_corr   = sensory_out.scene_slip  + sensory_out.scene_visible  * ec_d_scene
+    target_slip_corr  = sensory_out.target_slip + sensory_out.target_visible * ec_d_target.at[2].set(0.0)
+
+    # Hill magnitude gate per path, using the corresponding ec_d magnitude.
+    K_mag_scene  = 1.0 / (1.0 + (jnp.linalg.norm(ec_d_scene)  / brain_params.v_crit_ec_gate) ** brain_params.n_ec_gate)
+    K_mag_target = 1.0 / (1.0 + (jnp.linalg.norm(ec_d_target) / brain_params.v_crit_ec_gate) ** brain_params.n_ec_gate)
+
+    # Sign-sensitive directional gate. Gate signal is the SIGNED projection of
+    # the raw delayed slip onto the corresponding ec_d direction. When slip and
+    # ec_d are OPPOSITE (negative dot — typical self-motion case), the gate
+    # closes harder. When aligned or slip ≈ 0 (pursuit), gate stays open. Bias
+    # keeps K ≈ 1 at slip_dot = 0 so pursuit drive is preserved.
+    ec_norm_s = jnp.linalg.norm(ec_d_scene)  + 1e-9
+    ec_norm_t = jnp.linalg.norm(ec_d_target) + 1e-9
+    ec_hat_s  = ec_d_scene  / ec_norm_s
+    ec_hat_t  = ec_d_target / ec_norm_t
+    slip_dot_s = jnp.dot(sensory_out.scene_slip,  ec_hat_s)
+    slip_dot_t = jnp.dot(sensory_out.target_slip, ec_hat_t)
+    K_dir_s   = jax.nn.sigmoid((slip_dot_s + brain_params.bias_ec_dir) * brain_params.alpha_ec_dir)
+    K_dir_t   = jax.nn.sigmoid((slip_dot_t + brain_params.bias_ec_dir) * brain_params.alpha_ec_dir)
+
+    scene_slip_corr  = K_mag_scene  * K_dir_s * scene_slip_corr
+    target_slip_corr = K_mag_target * K_dir_t * target_slip_corr
 
     # ── Self-motion observer (VS + GE + HE) — single unified step ────────────
-    # sensory_out.scene_slip is already EC-corrected (pre-delay EC in cyclopean_vision).
     # Internal sequencing (VS uses delayed rf_state → GE uses fresh w_est → HE
     # uses fresh a_lin) is owned by self_motion.step.
+    # scene_slip_corr is already EC-subtracted + magnitude/directional-gated.
+    # scene_linear_vel is translational flow — no angular EC sub, just gate by
+    # the scene-side Hill K_mag (which detects fast self-motion via |ec_d_scene|).
     dx_self_motion, w_est, g_est, v_lin, a_lin_est = sm.step(
         x_self_motion,
         jnp.concatenate([
             sensory_out.canal,
-            sensory_out.scene_slip,
+            scene_slip_corr,
             sensory_out.otolith,
-            sensory_out.scene_linear_vel,
+            K_mag_scene * sensory_out.scene_linear_vel,
             jnp.array([sensory_out.scene_visible]),
         ]),
         brain_params,
@@ -580,9 +686,10 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
     # Positive motor roll = left-ear-down (left-hand rule); negative = right-ear-down.
     ocr = jnp.array([0.0, 0.0, -brain_params.g_ocr * g_est[0]])
 
-    # ── Pursuit: sensory_out.target_slip already EC-corrected (pre-delay) ────
+    # ── Pursuit on EC-corrected, gated target slip ──────────────────────────
+    # target_slip_corr already includes magnitude+directional gates.
     dx_pursuit, u_pursuit = pu.step(x_pursuit,
-                                      jnp.concatenate([sensory_out.target_slip, x_ni_net]),
+                                      jnp.concatenate([target_slip_corr, x_ni_net]),
                                      brain_params)
 
     # ── Target working memory (cognitive layer; FEF/dlPFC-like) ─────────────
@@ -712,7 +819,25 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
     # gate would slam shut and prevent the closed loop from completing.
     ec_verg = u_verg   # (3,) [H, V, T] — actual vergence command, includes tonic
 
+    # ── Update post-delay EC state — two cascades in parallel ────────────────
+    # Same input (rotated + saturated ec_vel_eye), different LP smoothing TCs
+    # to match the corresponding slip cascades:
+    #   - x_ec_scene  uses tau_vis_smooth_motion       (matches scene_angular_vel)
+    #   - x_ec_target uses tau_vis_smooth_target_vel   (matches target_vel)
+    R_eye_ec       = rotation_matrix(ypr_to_xyz(ec_pos))
+    ec_vel_eye     = xyz_to_ypr(R_eye_ec.T @ ypr_to_xyz(ec_vel))
+    ec_vel_eye_in  = velocity_saturation(ec_vel_eye, brain_params.v_max_okr)
+    dx_ec_scene    = cascade_lp_step(x_ec_scene, ec_vel_eye_in,
+                                     brain_params.tau_vis_sharp,
+                                     brain_params.tau_vis_smooth_motion,
+                                     _EC_VEL_N_SHARP, 3, _EC_VEL_N_LP)
+    dx_ec_target   = cascade_lp_step(x_ec_target, ec_vel_eye_in,
+                                     brain_params.tau_vis_sharp,
+                                     brain_params.tau_vis_smooth_target_vel,
+                                     _EC_VEL_N_SHARP, 3, _EC_VEL_N_LP)
+
     # ── Pack state derivative ─────────────────────────────────────────────────
-    dx_brain = jnp.concatenate([dx_self_motion, dx_ni, dx_sg, dx_pursuit, dx_va, dx_target_mem])
+    dx_brain = jnp.concatenate([dx_self_motion, dx_ni, dx_sg, dx_pursuit, dx_va, dx_target_mem,
+                                dx_ec_scene, dx_ec_target])
 
     return dx_brain, nerves, ec_vel, ec_pos, ec_verg, u_acc

@@ -78,6 +78,12 @@ class SensoryParams(NamedTuple):
     canal_gains:        jnp.ndarray = jnp.ones(6)  # (6,) per-canal scale; 1=intact, 0=paresis
     canal_floor:        float       = 80.0   # resting discharge (deg/s); inhibitory saturation point
                                              # (Goldberg & Fernandez 1971 J Neurophysiol 34:635)
+    canal_v_max:        float       = 400.0  # excitatory canal afferent saturation (deg/s).
+                                             # Sensor-side ceiling — applied in canal.step output.
+                                             # Inhibitory saturation is the FLOOR (canal_floor); this is
+                                             # the symmetric upper clip on afferent firing rate.
+                                             # Goldberg & Fernandez 1971: ~300–600 deg/s; 400 conservative.
+                                             # At typical stimulus velocities (<200 deg/s) the clip is inert.
 
     # Otolith — first-order LP adaptation (Fernandez & Goldberg 1976)
     tau_oto:            float       = 100.0  # otolith adaptation TC (s); large → near-DC pass
@@ -97,8 +103,10 @@ class SensoryParams(NamedTuple):
                                                   # are attenuated below the pursuit threshold (matches
                                                   # the ~100 ms open-loop pursuit window observed
                                                   # empirically; Krauzlis & Lisberger 1994).
-    tau_vis_smooth_motion:       float = 0.05   # LP TC for scene_angular_vel, scene_linear_vel,
+    tau_vis_smooth_motion:       float = 0.02   # LP TC for scene_angular_vel, scene_linear_vel,
                                                   # target_vel — MT/MST motion integration window.
+                                                  # Tightened from 0.05 to sharpen EC cancellation
+                                                  # of brief saccade bursts (must match BrainParams).
     tau_vis_smooth_disparity:    float = 0.15   # LP TC for target_disparity — V1 stereo correspondence
                                                   # is genuinely slow (~150 ms; Cumming & DeAngelis 2001),
                                                   # so this is the sloppy channel (1-pole gives long tail).
@@ -245,6 +253,7 @@ def read_outputs(x_sensory, sensory_params, q_head, a_head):
     x_vis = x_sensory[_IDX_VIS]
 
     canal_out = _canal.nonlinearity(x_c, sensory_params.canal_gains, sensory_params.canal_floor)
+    canal_out = jnp.clip(canal_out, -sensory_params.canal_v_max, sensory_params.canal_v_max)
 
     # Instantaneous GIA in head frame — same formula as otolith.step().
     # x_oto (LP state, tau=100s) is NOT used here: it hasn't adapted after

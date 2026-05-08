@@ -19,6 +19,7 @@ import matplotlib.pyplot as plt
 
 from oculomotor.sim.simulator import PARAMS_DEFAULT, with_brain, with_sensory, simulate
 from oculomotor.sim.simulator import _IDX_VIS, _IDX_PURSUIT
+from oculomotor.models.brain_models.brain_model import _IDX_EC_VEL_SCENE, _IDX_EC_VEL_TARGET
 _IDX_VIS_L = _IDX_VIS   # backward-compat alias for local use in this script
 from oculomotor.sim import kinematics as km
 from oculomotor.analysis import ax_fmt, extract_burst, extract_sg, ni_net, vs_net
@@ -318,7 +319,7 @@ def _cascade(show, noisy=False):
     row_labels = ['Eye + target pos (deg)', 'Cascade output + hold (deg)',
                   'Residual error (deg)', 'Accum / latch + refractory',
                   'Burst (deg/s) + eye velocity', 'Tgt vel + scene slip (deg/s)',
-                  'EC-corrected + sat (deg/s)', 'u_pursuit + VS/OKR (deg/s)']
+                  'Slips + EC (deg/s)', 'u_pursuit + VS/OKR (deg/s)']
     for r, lbl in enumerate(row_labels):
         axes[r, 0].set_ylabel(lbl, fontsize=8)
 
@@ -376,11 +377,18 @@ def _cascade(show, noisy=False):
         ax_fmt(axes[5, ci])
         if ci == 0: axes[5, ci].legend(fontsize=7)
 
-        # Row 6: saturated — EC correction is pre-delay so cascade outputs already include it
+        # Row 6: raw delayed slips + the corresponding post-delay EC cascade
+        # outputs that brain_model adds back during EC subtraction. Two ECs
+        # now: scene EC matches the scene_angular_vel cascade shape, target EC
+        # matches target_vel cascade shape (heavier smoothing).
         tgt_ec_sat   = _vel_sat_np(vel_del,  params.sensory.v_max_target_vel)
         scene_ec_sat = _vel_sat_np(slip_del, params.sensory.v_max_scene_vel)
-        axes[6, ci].plot(t_np, tgt_ec_sat[:, 0],   color='#7b2d8b', lw=1.2, label='tgt (sat)')
-        axes[6, ci].plot(t_np, scene_ec_sat[:, 0],  color='#1a7a4a', lw=1.2, label='scene (sat)')
+        ec_scene     = np.array(st.brain[:, _IDX_EC_VEL_SCENE])[:, -3:]   # last 3 = LP output
+        ec_target    = np.array(st.brain[:, _IDX_EC_VEL_TARGET])[:, -3:]
+        axes[6, ci].plot(t_np, tgt_ec_sat[:, 0],   color='#7b2d8b', lw=1.2, label='tgt slip')
+        axes[6, ci].plot(t_np, scene_ec_sat[:, 0], color='#1a7a4a', lw=1.2, label='scene slip')
+        axes[6, ci].plot(t_np, ec_scene[:, 0],     color='#1f4dab', lw=1.0, ls='--', label='EC scene')
+        axes[6, ci].plot(t_np, ec_target[:, 0],    color='#d62728', lw=1.0, ls=':',  label='EC target')
         ax_fmt(axes[6, ci])
         if ci == 0: axes[6, ci].legend(fontsize=7)
 

@@ -18,7 +18,7 @@ import jax
 import jax.numpy as jnp
 
 from oculomotor.models.sensory_models.retina import (
-    delay_cascade_step, cascade_lp_step, ypr_to_xyz, xyz_to_ypr,
+    delay_cascade_step, cascade_lp_step,
     N_STAGES, _N_STAGES_OTHER,
     _OFF_SCENE_ANGULAR_VEL, _END_SCENE_ANGULAR_VEL,
     _OFF_SCENE_LINEAR,      _END_SCENE_LINEAR,
@@ -29,7 +29,6 @@ from oculomotor.models.sensory_models.retina import (
     _OFF_TARGET_VIS,        _END_TARGET_VIS,
     _OFF_DEFOCUS,           _END_DEFOCUS,
 )
-from oculomotor.models.plant_models.readout import rotation_matrix
 
 
 # ── Velocity saturation ─────────────────────────────────────────────────────────
@@ -191,12 +190,12 @@ def step(x_vis,
          sensory_params,
          ec_vel, ec_pos, ec_verg,
          defocus_L=0.0, defocus_R=0.0):
-    """Fuse per-eye retinal signals, apply EC correction, then advance the cyclopean cascade.
+    """Fuse per-eye retinal signals and advance the cyclopean cascade.
 
-    EC subtraction happens pre-delay: ec_vel_eye (the version motor command rotated into eye
-    frame) is added to the instantaneous retinal slip before the cascade.  This is
-    mathematically equivalent to the old post-delay approach (delay is linear) but saves
-    the two 120-state EC delay cascades entirely.
+    EC subtraction is now done POST-delay in brain_model.step() — cyclopean_vision
+    only does binocular fusion + sensor saturation + visual delay. The brain
+    receives the raw delayed slip and subtracts a delayed copy of ec_vel_eye
+    before applying the saccadic-suppression Kalman gate.
 
     All visibility inputs are pre-gated — this function only receives _vis signals:
         scene_vis_L/R        = scene_present            (from retina)
@@ -219,7 +218,8 @@ def step(x_vis,
         sensory_params:          SensoryParams — reads npc, div_max, vert_max, tors_max,
                                  eye_dominant, v_max_scene_vel, v_max_target_vel, tau_vis
         ec_vel:                  (3,) version velocity efference [yaw,pitch,roll] (deg/s)
-                                 rotated head→eye frame internally via rotation_matrix(ypr_to_xyz(ec_pos))
+                                 — kept in signature for backward compat, no longer used here
+                                 (EC subtraction moved to brain_model post-delay)
         ec_pos:                  (3,) eye position efference [yaw,pitch,roll] (deg) = x_ni_net
         ec_verg:                 (3,) vergence efference [H,V,T] (deg); [0] used for NPC gate
         defocus_L/R:             scalar per-eye defocus (D) = acc_demand + RE − x_plant
@@ -227,14 +227,6 @@ def step(x_vis,
     Returns:
         dx_vis: (800,)  cascade state derivative (defocus delayed signal read via C_defocus)
     """
-    # Rotate version velocity efference from head frame to eye frame.
-    # ec_vel is in YPR space; angular velocity must be converted to XYZ before
-    # applying the rotation matrix (which operates in XYZ), then converted back.
-    # Skipping ypr_to_xyz / xyz_to_ypr introduces a spurious roll component that
-    # grows with gaze angle (same class of bug as the VVOR frame fix in retina.py).
-    R_eye_ec   = rotation_matrix(ypr_to_xyz(ec_pos))
-    ec_vel_eye = xyz_to_ypr(R_eye_ec.T @ ypr_to_xyz(ec_vel))
-
     # ── Scene (OKR) ───────────────────────────────────────────────────────────
     w_s_L, w_s_R, scene_visible = binocular_okr_policy(
         scene_angular_vel_L, scene_linear_vel_L,
@@ -243,9 +235,12 @@ def step(x_vis,
     scene_angular_cyc = w_s_L * scene_angular_vel_L + w_s_R * scene_angular_vel_R
     scene_linear_cyc  = w_s_L * scene_linear_vel_L  + w_s_R * scene_linear_vel_R
 
-    # EC correction pre-delay: add motor command to instantaneous slip before cascade.
-    # delay(slip + u_motor) = delay(slip) + delay(u_motor) — same as old post-delay formulation.
-    scene_angular_vel = velocity_saturation((scene_angular_cyc + ec_vel_eye) * scene_visible, sensory_params.v_max_scene_vel)
+    # Sensor-side saturation: NOT/AOS firing rate ceiling on the raw retinal slip.
+    # Real physical sensor limit — kept here. The brain applies *matched* saturation
+    # (same v_max) to the EC before subtracting, so during fast eye motion both
+    # rails clip together and the EC-corrected residual stays bounded (the matched-
+    # clip Kalman recipe). The Kalman gate then cleans up whatever's left.
+    scene_angular_vel = velocity_saturation(scene_angular_cyc * scene_visible, sensory_params.v_max_scene_vel)
     scene_linear_vel  = scene_linear_cyc * scene_visible
 
 
@@ -281,11 +276,12 @@ def step(x_vis,
     # ── Target velocity (pursuit) ──────────────────────────────────────────────
     # Strobe gate: target_motion_vis = target_vis × (1−strobe), already zero when strobed.
     # Apply same w_L/w_R weights; strobe zeroes the motion-visible blend.
+    # Sensor-side saturation here; brain applies matched saturation to the EC
+    # before post-delay subtraction (see scene block above).
     target_motion_visible = w_L * target_motion_vis_L + w_R * target_motion_vis_R
-    ec_vel_eye_notors = ec_vel_eye.at[2].set(0.0)   # torsion zeroed — retina is 2D
-    target_vel_cyc    = w_L * target_vel_L + w_R * target_vel_R
+    target_vel_cyc        = w_L * target_vel_L + w_R * target_vel_R
     target_slip = velocity_saturation(
-        (target_vel_cyc + ec_vel_eye_notors) * target_motion_visible,
+        target_vel_cyc * target_motion_visible,
         sensory_params.v_max_target_vel)
 
     # ── Advance cascade ───────────────────────────────────────────────────────

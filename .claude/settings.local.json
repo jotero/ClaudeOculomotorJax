@@ -71,7 +71,9 @@
       "Bash(\"d:/OneDrive/UC Berkeley/OMlab - JOM/Code/ClaudeOculomotorJax/.venv/Scripts/python.exe\" -X utf8 scripts/diag_vor_tc.py)",
       "Bash(\"d:/OneDrive/UC Berkeley/OMlab - JOM/Code/ClaudeOculomotorJax/.venv/Scripts/python.exe\" -X utf8 scripts/diag_ovar.py)",
       "Bash(\"d:/OneDrive/UC Berkeley/OMlab - JOM/Code/ClaudeOculomotorJax/.venv/Scripts/python.exe\" -X utf8 scripts/sweep_occlusion.py)",
-      "Bash(\"d:/OneDrive/UC Berkeley/OMlab - JOM/Code/ClaudeOculomotorJax/.venv/Scripts/python.exe\" -X utf8 scripts/bench_compare_unified.py)"
+      "Bash(\"d:/OneDrive/UC Berkeley/OMlab - JOM/Code/ClaudeOculomotorJax/.venv/Scripts/python.exe\" -X utf8 scripts/bench_compare_unified.py)",
+      "Bash(./.venv/Scripts/python.exe -X utf8 scripts/bench_saccades.py)",
+      "Bash(./.venv/Scripts/python.exe -X utf8 scripts/bench_pursuit.py)"
     ],
     "additionalDirectories": [
       "d:\\OneDrive\\UC Berkeley\\OMlab - JOM\\Code\\ClaudeOculomotorJax\\outputs"
