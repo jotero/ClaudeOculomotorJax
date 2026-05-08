@@ -18,7 +18,7 @@ import jax
 import jax.numpy as jnp
 
 from oculomotor.models.sensory_models.retina import (
-    delay_cascade_step, cascade_lp_step,
+    delay_cascade_step,
     N_STAGES, _N_STAGES_OTHER,
     _OFF_SCENE_ANGULAR_VEL, _END_SCENE_ANGULAR_VEL,
     _OFF_SCENE_LINEAR,      _END_SCENE_LINEAR,
@@ -289,13 +289,22 @@ def step(x_vis,
     # needs a sharp transport delay. All other signals use a short sharp cascade
     # (Pugh-Lamb photo-transduction model) plus a per-channel 1-pole LP for
     # neural-integration smoothing.
+    #
+    # Cascade is split into TWO PHASES (matching the planned move of the LP
+    # smoothing into the brain):
+    #
+    #   Phase 1 (RETINA): sharp gamma cascades — photoreceptor / RGC / LGN delay
+    #   Phase 2 (BRAIN):  smooth 1-pole LPs    — MT/MST integration window
+    #
+    # Per-signal state block layout is preserved as [sharp | LP] so downstream
+    # readers (C_slip etc.) keep working unchanged.
     tau_vis        = sensory_params.tau_vis
     tau_sharp      = sensory_params.tau_vis_sharp
     tau_motion     = sensory_params.tau_vis_smooth_motion
     tau_target_vel = sensory_params.tau_vis_smooth_target_vel
     tau_disp       = sensory_params.tau_vis_smooth_disparity
     tau_defocus    = sensory_params.tau_vis_smooth_defocus
-    N_OTHER        = _N_STAGES_OTHER
+    N              = _N_STAGES_OTHER          # sharp cascade stages (per signal)
 
     x_scene_angular  = x_vis[_OFF_SCENE_ANGULAR_VEL : _END_SCENE_ANGULAR_VEL]
     x_scene_linear   = x_vis[_OFF_SCENE_LINEAR      : _END_SCENE_LINEAR]
@@ -306,17 +315,47 @@ def step(x_vis,
     x_target_vis_b   = x_vis[_OFF_TARGET_VIS        : _END_TARGET_VIS]
     x_defocus        = x_vis[_OFF_DEFOCUS           : _END_DEFOCUS]
 
+    # ── Phase 1: retina sharp gamma cascades ─────────────────────────────────
+    # Vector signals (3 axes): split block as [sharp(N·3) | LP(3)]
+    n3 = N * 3
+    dx_scene_ang_sharp   = delay_cascade_step(x_scene_angular[:n3], scene_angular_vel, tau_sharp, N=N)
+    dx_scene_lin_sharp   = delay_cascade_step(x_scene_linear[:n3],  scene_linear_vel,  tau_sharp, N=N)
+    dx_target_vel_sharp  = delay_cascade_step(x_target_vel[:n3],    target_slip,       tau_sharp, N=N)
+    dx_target_disp_sharp = delay_cascade_step(x_target_disp[:n3],   target_disparity,  tau_sharp, N=N)
+    # Defocus is scalar (1 axis): split block as [sharp(N) | LP(1)]
+    dx_defocus_sharp     = delay_cascade_step(x_defocus[:N],        defocus_cyc,       tau_sharp, N=N)
+    # Long sharp-only cascades (no LP smoothing): saccade-target transport delay
+    # and visibility flags must preserve sharp transients.
+    dx_target_pos        = delay_cascade_step(x_target_pos,    target_pos,     tau_vis, N=N_STAGES)
+    dx_scene_vis_b       = delay_cascade_step(x_scene_vis_b,   scene_visible,  tau_vis, N=N_STAGES)
+    dx_target_vis_b      = delay_cascade_step(x_target_vis_b,  target_visible, tau_vis, N=N_STAGES)
+
+    # ── Phase 2: brain 1-pole LP smoothing — driven by sharp-cascade outputs ──
+    # The output of each sharp cascade is its last n_axes elements. The LP
+    # block stores N_lp·n_axes states; with N_lp=1 these are just the n_axes
+    # smoothed values. Disparity uses a long τ (V1 stereo matching is genuinely
+    # slow); defocus uses an even longer τ (lens/ciliary muscle dynamics).
+    sharp_out_scene_ang   = x_scene_angular[n3 - 3 : n3]
+    sharp_out_scene_lin   = x_scene_linear[n3 - 3 : n3]
+    sharp_out_target_vel  = x_target_vel[n3 - 3 : n3]
+    sharp_out_target_disp = x_target_disp[n3 - 3 : n3]
+    sharp_out_defocus     = x_defocus[N - 1 : N]
+
+    dx_scene_ang_lp   = delay_cascade_step(x_scene_angular[n3:], sharp_out_scene_ang,   tau_motion,     N=1)
+    dx_scene_lin_lp   = delay_cascade_step(x_scene_linear[n3:],  sharp_out_scene_lin,   tau_motion,     N=1)
+    dx_target_vel_lp  = delay_cascade_step(x_target_vel[n3:],    sharp_out_target_vel,  tau_target_vel, N=1)
+    dx_target_disp_lp = delay_cascade_step(x_target_disp[n3:],   sharp_out_target_disp, tau_disp,       N=1)
+    dx_defocus_lp     = delay_cascade_step(x_defocus[N:],        sharp_out_defocus,     tau_defocus,    N=1)
+
+    # Concatenate per-signal blocks in original layout: each velocity/disparity
+    # block is [sharp | LP], position/visibility blocks are sharp-only.
     return jnp.concatenate([
-        cascade_lp_step(x_scene_angular,  scene_angular_vel,     tau_sharp, tau_motion,  N_OTHER, 3, 1),
-        cascade_lp_step(x_scene_linear,   scene_linear_vel,      tau_sharp, tau_motion,  N_OTHER, 3, 1),
-        delay_cascade_step(x_target_pos,  target_pos,            tau_vis,                N=N_STAGES),
-        cascade_lp_step(x_target_vel,     target_slip,           tau_sharp, tau_target_vel, N_OTHER, 3, 1),
-        # Disparity uses a 1-pole LP — V1 stereo matching is the genuinely slow
-        # computation; the long exponential tail of a 1-pole captures that.
-        cascade_lp_step(x_target_disp,    target_disparity,      tau_sharp, tau_disp,    N_OTHER, 3, 1),
-        # Visibility flags consumed by brain: 40-stage sharp cascade (no LP) —
-        # preserves brief target-flash pulses without amplitude loss.
-        delay_cascade_step(x_scene_vis_b,    scene_visible,         tau_vis, N=N_STAGES),
-        delay_cascade_step(x_target_vis_b,   target_visible,        tau_vis, N=N_STAGES),
-        cascade_lp_step(x_defocus,        defocus_cyc,           tau_sharp, tau_defocus, N_OTHER, 1, 1),
+        jnp.concatenate([dx_scene_ang_sharp,   dx_scene_ang_lp]),
+        jnp.concatenate([dx_scene_lin_sharp,   dx_scene_lin_lp]),
+        dx_target_pos,
+        jnp.concatenate([dx_target_vel_sharp,  dx_target_vel_lp]),
+        jnp.concatenate([dx_target_disp_sharp, dx_target_disp_lp]),
+        dx_scene_vis_b,
+        dx_target_vis_b,
+        jnp.concatenate([dx_defocus_sharp,     dx_defocus_lp]),
     ])

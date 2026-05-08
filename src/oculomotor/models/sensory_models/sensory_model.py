@@ -59,7 +59,7 @@ import jax.numpy as jnp
 from oculomotor.models.sensory_models import canal            as _canal
 from oculomotor.models.sensory_models import otolith          as _otolith
 from oculomotor.models.sensory_models import retina           as _retina
-from oculomotor.models.sensory_models import cyclopean_vision as _cv
+from oculomotor.models.sensory_models import perception_cyclopean as _cv
 from oculomotor.models.plant_models.readout import rotation_matrix as _rotation_matrix
 
 

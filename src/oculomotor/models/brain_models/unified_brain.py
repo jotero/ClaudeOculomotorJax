@@ -55,7 +55,7 @@ from oculomotor.models.brain_models import (
     final_common_pathway as fcp,
 )
 from oculomotor.models.brain_models.saccade_generator import burst_velocity as _burst_velocity
-from oculomotor.models.brain_models.self_motion import (
+from oculomotor.models.brain_models.perception_self_motion import (
     G0, _B_NOMINAL, _TAU_RF_STATE,
 )
 from oculomotor.models.brain_models.tvor import (

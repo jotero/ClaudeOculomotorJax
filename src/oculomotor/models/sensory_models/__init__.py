@@ -1,9 +1,9 @@
-"""Peripheral sensor submodules — canal, otolith, retina, cyclopean vision.
+"""Peripheral sensor submodules — canal, otolith, retina, perception_cyclopean.
 
 Direct submodule imports:
 
     from oculomotor.models.sensory_models import (
-        canal, otolith, retina, cyclopean_vision, sensory_model,
+        canal, otolith, retina, perception_cyclopean, sensory_model,
     )
 
 The connector ``sensory_model`` wires them together and owns SensoryParams.
@@ -13,8 +13,8 @@ from oculomotor.models.sensory_models import (
     canal,
     otolith,
     retina,
-    cyclopean_vision,
+    perception_cyclopean,
     sensory_model,
 )
 
-__all__ = ["canal", "otolith", "retina", "cyclopean_vision", "sensory_model"]
+__all__ = ["canal", "otolith", "retina", "perception_cyclopean", "sensory_model"]

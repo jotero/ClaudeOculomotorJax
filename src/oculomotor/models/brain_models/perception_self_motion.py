@@ -44,6 +44,7 @@ References:
     Paige & Tomko (1991) JN       — empirical T-VOR dark gain.
 """
 
+import jax
 import jax.numpy as jnp
 
 from oculomotor.models.sensory_models.sensory_model import PINV_SENS, N_CANALS
@@ -95,15 +96,18 @@ _IDX_VS   = slice(0, 9)
 _IDX_GRAV = slice(9, 18)
 _IDX_HEAD = slice(18, 21)
 
-# Bundled-input layout (length 16)
-N_INPUTS  = 6 + 3 + 3 + 3 + 1
+# Bundled-input layout (length 19) — RAW sensory inputs + ec_d_scene; gating
+# (post-delay EC subtraction + magnitude/directional gate on scene slip and
+# scene_linear_vel) is now done INSIDE step() using ec_d_scene.
+N_INPUTS  = 6 + 3 + 3 + 3 + 1 + 3
 N_OUTPUTS = 3   # primary output for SSM convention is w_est; auxiliaries via tuple
 
 _IDX_INPUT_CANAL         = slice(0, 6)
-_IDX_INPUT_SLIP          = slice(6, 9)
+_IDX_INPUT_SLIP          = slice(6, 9)     # RAW delayed scene slip (eye frame)
 _IDX_INPUT_GIA           = slice(9, 12)
-_IDX_INPUT_SCENE_LIN_VEL = slice(12, 15)
+_IDX_INPUT_SCENE_LIN_VEL = slice(12, 15)   # RAW delayed scene linear velocity
 _IDX_INPUT_SCENE_VISIBLE = 15
+_IDX_INPUT_EC_D_SCENE    = slice(16, 19)   # delayed EC (cascade-matched to scene slip)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -280,6 +284,8 @@ def step(x_self_motion, u, brain_params):
     """Single ODE step for the unified self-motion observer.
 
     Internal sequencing (matches Laurens & Angelaki 2017):
+      0. Post-delay EC subtraction + magnitude / directional gates on the
+         RAW delayed scene slip (and on scene_linear_vel by Hill K_mag).
       1. VS uses rf_state from the (1-step delayed) ODE state — breaks the
          VS↔GE algebraic loop with negligible lag (τ_rf_state ≈ 5 ms).
       2. GE then runs with the freshly-computed w_est from VS.
@@ -288,8 +294,11 @@ def step(x_self_motion, u, brain_params):
 
     Args:
         x_self_motion: (21,) bundled state — see _IDX_VS / _IDX_GRAV / _IDX_HEAD
-        u:             (16,) bundled input  — see _IDX_INPUT_* above
-        brain_params:  BrainParams
+        u:             (19,) bundled input  — see _IDX_INPUT_* above
+                              [canal | scene_slip(raw) | gia | scene_lin_vel(raw)
+                               | scene_visible | ec_d_scene]
+        brain_params:  BrainParams — reads VS/GE/HE params + v_crit_ec_gate,
+                                      n_ec_gate, alpha_ec_dir, bias_ec_dir
 
     Returns:
         dx_self_motion : (21,) state derivative
@@ -307,22 +316,35 @@ def step(x_self_motion, u, brain_params):
     rf_state  = x_grav[_GE_IDX_RF]
     a_lin_est = x_grav[_GE_IDX_A]
 
-    # Input split
+    # Input split — RAW sensory + delayed EC
     canal         = u[_IDX_INPUT_CANAL]
-    slip          = u[_IDX_INPUT_SLIP]
+    scene_slip    = u[_IDX_INPUT_SLIP]
     gia           = u[_IDX_INPUT_GIA]
     scene_lin_vel = u[_IDX_INPUT_SCENE_LIN_VEL]
     scene_visible = u[_IDX_INPUT_SCENE_VISIBLE]
+    ec_d_scene    = u[_IDX_INPUT_EC_D_SCENE]
+
+    # 0. Post-delay EC subtraction + saccadic-suppression gates on scene path.
+    #    Visibility-gating ensures EC contribution = 0 when scene was invisible.
+    scene_slip_corr = scene_slip + scene_visible * ec_d_scene
+    K_mag_scene     = 1.0 / (1.0 + (jnp.linalg.norm(ec_d_scene) / brain_params.v_crit_ec_gate)
+                              ** brain_params.n_ec_gate)
+    ec_norm_s       = jnp.linalg.norm(ec_d_scene) + 1e-9
+    slip_dot_s      = jnp.dot(scene_slip, ec_d_scene / ec_norm_s)
+    K_dir_s         = jax.nn.sigmoid((slip_dot_s + brain_params.bias_ec_dir)
+                                      * brain_params.alpha_ec_dir)
+    slip_gated      = K_mag_scene * K_dir_s * scene_slip_corr
+    scene_lin_gated = K_mag_scene * scene_lin_vel
 
     # 1. VS — angular velocity estimate
-    dx_vs, w_est = _vs_step(x_vs, canal, slip, rf_state, brain_params)
+    dx_vs, w_est = _vs_step(x_vs, canal, slip_gated, rf_state, brain_params)
 
     # 2. GE — gravity + linear-acc estimates (rf updated for next step)
     dx_grav, g_est = _ge_step(x_grav, w_est, gia, brain_params)
 
     # 3. HE — head linear velocity (consumes the prior step's a_lin to avoid
     #         needing the freshly-computed â here)
-    dx_head, v_lin = _he_step(x_head, a_lin_est, scene_lin_vel, scene_visible, brain_params)
+    dx_head, v_lin = _he_step(x_head, a_lin_est, scene_lin_gated, scene_visible, brain_params)
 
     dx_self_motion = jnp.concatenate([dx_vs, dx_grav, dx_head])
     return dx_self_motion, w_est, g_est, v_lin, a_lin_est

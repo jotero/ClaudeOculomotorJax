@@ -2,7 +2,7 @@
 
 Subpackages group physiologically-coupled modules:
 
-  self_motion              — VS, gravity_estimator, heading_estimator
+  perception_self_motion   — VS, gravity_estimator, heading_estimator
                              (Laurens & Angelaki self-motion observer)
   vergence_accommodation   — vergence + accommodation (AC/A and CA/C cross-links)
 
@@ -16,7 +16,7 @@ combined state layout, BrainParams, and per-step ODE evaluation order.
 """
 
 from oculomotor.models.brain_models import (
-    self_motion,
+    perception_self_motion,
     vergence_accommodation,
     neural_integrator,
     saccade_generator,
@@ -29,7 +29,7 @@ from oculomotor.models.brain_models import (
 )
 
 __all__ = [
-    "self_motion",
+    "perception_self_motion",
     "vergence_accommodation",
     "neural_integrator",
     "saccade_generator",
