@@ -213,6 +213,20 @@ def step(x_va, u, brain_params):
 
     u_acc = direct_path_pos_acc + x_acc_fast + x_acc_slow + cac_drive
 
+    # ── Proximal-vergence and proximal-accommodation constant injection ─────
+    # Single perceived-distance parameter `proximal_d` (D). Injected as a
+    # state-INDEPENDENT drive (Hung & Semmlow 1980 style — proximal vergence is
+    # a constant additive contribution, not a target-attractor). This pushes
+    # vergence and accommodation in the same direction regardless of current
+    # state, preserving symmetric phase between conv-fixation and div-fixation
+    # configurations, matching the empirical phenomenology.
+    _DEG_PER_RAD = 57.295779
+    proximal_d              = brain_params.proximal_d
+    proximal_verg_target_H  = proximal_d * brain_params.ipd_brain * _DEG_PER_RAD
+    proximal_acc_target     = proximal_d
+    dx_v       = dx_v.at[_AXIS_H].add(proximal_verg_target_H / brain_params.tau_verg)
+    dx_a_fast  = dx_a_fast + proximal_acc_target / brain_params.tau_acc_fast
+
     # ── Pack ────────────────────────────────────────────────────────────────
     dx_va = jnp.concatenate([
         dx_v, dx_v_tonic, dx_v_copy,

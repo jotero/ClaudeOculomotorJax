@@ -293,12 +293,13 @@ def step(x_vis,
     # needs a sharp transport delay. All other signals use a short sharp cascade
     # (Pugh-Lamb photo-transduction model) plus a per-channel 1-pole LP for
     # neural-integration smoothing.
-    tau_vis     = sensory_params.tau_vis
-    tau_sharp   = sensory_params.tau_vis_sharp
-    tau_motion  = sensory_params.tau_vis_smooth_motion
-    tau_disp    = sensory_params.tau_vis_smooth_disparity
-    tau_defocus = sensory_params.tau_vis_smooth_defocus
-    N_OTHER     = _N_STAGES_OTHER
+    tau_vis        = sensory_params.tau_vis
+    tau_sharp      = sensory_params.tau_vis_sharp
+    tau_motion     = sensory_params.tau_vis_smooth_motion
+    tau_target_vel = sensory_params.tau_vis_smooth_target_vel
+    tau_disp       = sensory_params.tau_vis_smooth_disparity
+    tau_defocus    = sensory_params.tau_vis_smooth_defocus
+    N_OTHER        = _N_STAGES_OTHER
 
     x_scene_angular  = x_vis[_OFF_SCENE_ANGULAR_VEL : _END_SCENE_ANGULAR_VEL]
     x_scene_linear   = x_vis[_OFF_SCENE_LINEAR      : _END_SCENE_LINEAR]
@@ -313,7 +314,7 @@ def step(x_vis,
         cascade_lp_step(x_scene_angular,  scene_angular_vel,     tau_sharp, tau_motion,  N_OTHER, 3, 1),
         cascade_lp_step(x_scene_linear,   scene_linear_vel,      tau_sharp, tau_motion,  N_OTHER, 3, 1),
         delay_cascade_step(x_target_pos,  target_pos,            tau_vis,                N=N_STAGES),
-        cascade_lp_step(x_target_vel,     target_slip,           tau_sharp, tau_motion,  N_OTHER, 3, 1),
+        cascade_lp_step(x_target_vel,     target_slip,           tau_sharp, tau_target_vel, N_OTHER, 3, 1),
         # Disparity uses a 1-pole LP — V1 stereo matching is the genuinely slow
         # computation; the long exponential tail of a 1-pole captures that.
         cascade_lp_step(x_target_disp,    target_disparity,      tau_sharp, tau_disp,    N_OTHER, 3, 1),

@@ -92,6 +92,11 @@ class SensoryParams(NamedTuple):
     tau_vis_sharp:               float = 0.05   # sharp cascade mean delay (s) — photo-transduction +
                                                   # axonal/synaptic transport (Pugh & Lamb 1993,
                                                   # Dunn & Rieke 2006). Shared across non-position signals.
+    tau_vis_smooth_target_vel:   float = 0.15   # LP TC for target_vel cascade — slower than scene
+                                                  # motion so that brief target-velocity pulses (<100 ms)
+                                                  # are attenuated below the pursuit threshold (matches
+                                                  # the ~100 ms open-loop pursuit window observed
+                                                  # empirically; Krauzlis & Lisberger 1994).
     tau_vis_smooth_motion:       float = 0.05   # LP TC for scene_angular_vel, scene_linear_vel,
                                                   # target_vel — MT/MST motion integration window.
     tau_vis_smooth_disparity:    float = 0.15   # LP TC for target_disparity — V1 stereo correspondence

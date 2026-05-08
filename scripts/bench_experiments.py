@@ -303,7 +303,8 @@ def _occlusion(show, *, save_name, plot_title, dist_m, lens_d, theta_base, dark_
 #   convergent tonic during occlusion.
 
 def _occlusion_from_convergence(show):
-    theta = with_brain(_THETA_BASE, tonic_verg=10.0, tonic_acc=2.0, AC_A=3.0)
+    theta = with_brain(_THETA_BASE, tonic_verg=5.0, tonic_acc=1.0,
+                                       proximal_d=1.0, AC_A=2.0)
     return _occlusion(
         show,
         save_name='occlusion_from_convergence',
@@ -311,7 +312,7 @@ def _occlusion_from_convergence(show):
         dist_m=0.15,        # 15 cm near target — eyes converged ~24°
         lens_d=-5.6,        # +5.6 D plus lens (model sign convention is opposite)
         theta_base=theta,
-        dark_tonic_verg=10.0,
+        dark_tonic_verg=5.0,
         description='Near binocular fixation (25 cm) with +3 D plus lens; resting tonic '
                     'vergence +15° (convergent), dark drift to +25°.',
         expected='Eyes converged on near target during binocular phase; tonic is also '
@@ -320,7 +321,8 @@ def _occlusion_from_convergence(show):
 
 
 def _occlusion_from_divergence(show):
-    theta = with_brain(_THETA_BASE, tonic_verg=10.0, tonic_acc=2.0, AC_A=3.0)
+    theta = with_brain(_THETA_BASE, tonic_verg=5.0, tonic_acc=1.0,
+                                       proximal_d=1.0, AC_A=2.0)
     return _occlusion(
         show,
         save_name='occlusion_from_divergence',
@@ -328,7 +330,7 @@ def _occlusion_from_divergence(show):
         dist_m=10.0,        # 10 m far target — eyes near-parallel
         lens_d=1.0,         # -1 D minus lens (model sign convention is opposite)
         theta_base=theta,
-        dark_tonic_verg=10.0,
+        dark_tonic_verg=5.0,
         description='Far binocular fixation (10 m) with -1 D minus lens; tonic vergence '
                     'fixed at +20° in all conditions (no light/dark shift).',
         expected='Eyes near-parallel during binocular phase; after occlusion all three '

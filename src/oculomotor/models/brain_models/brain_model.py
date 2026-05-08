@@ -364,6 +364,14 @@ class BrainParams(NamedTuple):
                                                           # Riggs & Niehl 1960, Morgan 1944: dark vergence ≈ 1 m
                                                           # NOTE: phoria is a *measurement* (cover test outcome), not a model param;
                                                           # it emerges from the balance of tonic, AC/A, and fusional drives
+    proximal_d:            float        = 0.0             # perceived-distance prior (D = 1/m). Drives BOTH
+                                                          # vergence (residual = proximal·IPD·180/π − u_verg[H])
+                                                          # and accommodation (residual = proximal − u_acc) toward
+                                                          # a perceived-near target. The fast integrators absorb
+                                                          # the residual; vision wins when present (closed-loop).
+                                                          # Distinct from motor priors tonic_verg / tonic_acc:
+                                                          # proximal_d is a perceptual-cue parameter (HMD, instrument
+                                                          # myopia, awareness-of-near). 0 = no proximal effect.
     # Zee (1992) SVBN saccadic vergence burst — asymmetric saturating gain
     # y = sign(disp) · g · (1 − exp(−|disp|/X))     (deg/s); fires while OPN pauses (z_act≈1)
     # Convergence much stronger than divergence (Zee Table 1: ~50°/s vs ~12°/s peaks).

@@ -85,6 +85,25 @@ from oculomotor.models.plant_models   import plant_model_first_order as plant_mo
 from oculomotor.models.plant_models   import accommodation_plant     as acc_plant_mod
 
 
+# ── Swappable brain step ────────────────────────────────────────────────────
+# Default: brain_model.step. Set via set_brain_step() to test alternatives
+# (e.g. unified_brain.step). Must have the same I/O signature.
+_BRAIN_STEP = brain_model.step
+
+
+def set_brain_step(fn):
+    """Swap the brain step function used by simulate().
+
+    Pass any callable with the same signature as brain_model.step:
+        fn(x_brain, sensory_out, brain_params, noise_acc) ->
+            (dx_brain, nerves, ec_vel, ec_pos, ec_verg, u_acc)
+
+    Call set_brain_step(brain_model.step) to restore the default.
+    """
+    global _BRAIN_STEP
+    _BRAIN_STEP = fn
+
+
 # ── Prism helper ───────────────────────────────────────────────────────────────
 
 def _apply_prism(q_eye_ypr, prism_ypr):
@@ -356,7 +375,7 @@ def ODE_ocular_motor(t, state, args):
 
     # ── Brain: VS + NI + SG + pursuit + vergence + accommodation ─────────────
     # x_acc_plant from SimState.acc_plant: current lens accommodation (D).
-    dx_brain, nerves, ec_vel, ec_pos, ec_verg, u_acc = brain_model.step(
+    dx_brain, nerves, ec_vel, ec_pos, ec_verg, u_acc = _BRAIN_STEP(
         state.brain, sensory_out, theta.brain, noise_acc_interp.evaluate(t))
 
     # ── Plant ─────────────────────────────────────────────────────────────────

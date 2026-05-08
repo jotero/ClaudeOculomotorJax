@@ -1,0 +1,904 @@
+"""Unified brain model — state-space replacement for brain_model.step.
+
+Drop-in replacement: same I/O signature as brain_model.step. Implements the
+unified continuous-control template developed in
+manuscript/unified_oculomotor_template.md.
+
+Architecture:
+
+    [g] Bayesian-MAP preprocessing of raw sensory input (incl. canal saturation)
+    [unified template]        the matrix-form core (pursuit, bilateral NI,
+                              vergence, accommodation, AC/A, CA/C, velocity
+                              storage, gravity estimator, heading estimator)
+                              is one set of matrices A, B, C, D, E, F, G, M_fs,
+                              M_ss, T plus the bilinear correction f(x, u):
+
+            dx_fast/dt = A·x_fast + G_fs·x_slow + B·u' + b_prox + f(x, u')
+            dx_slow/dt = C·(x_slow - T) + M_ss·x_slow + D·x_fast + B_s·u'
+            y_motor    = E·x_fast + G·x_slow + F·u'
+
+    [delegated]               saccade generator, T-VOR, target memory,
+                              Listing's law, FCP — still wrapped as external
+                              calls; their outputs feed into u_proc as
+                              "delegated drives".
+
+State partitioning (within the 41-state unified subset):
+
+    x_fast (34) = [ x_pu (3) | x_ni_L (3) | x_ni_R (3) | x_v (3)
+                   | x_v_copy (3) | x_a_fast (1)
+                   | x_vs_A (3) | x_vs_B (3)
+                   | x_g (3) | x_a_lin (3) | x_rf (3)
+                   | x_v_lin (3) ]
+    x_slow (10) = [ x_ni_null (3) | x_v_tonic (3) | x_a_slow (1)
+                   | x_vs_null (3) ]
+
+Setpoint T (slow):
+    T = [ 0_NI (3) | tonic_setpoint_V (3) | tonic_acc (1) | 0_VS (3) ]
+"""
+
+from typing import NamedTuple
+
+import jax
+import jax.numpy as jnp
+
+from oculomotor.models.brain_models.brain_model import (
+    N_STATES,
+    _IDX_PURSUIT, _IDX_NI, _IDX_NI_L, _IDX_NI_R, _IDX_NI_NULL,
+    _IDX_VERG, _IDX_ACC, _IDX_VA, _IDX_SG, _IDX_SELF_MOTION,
+    _IDX_VS, _IDX_VS_L, _IDX_VS_R, _IDX_VS_NULL, _IDX_GRAV, _IDX_HEAD,
+    _IDX_TARGET_MEM,
+    _TAU_TARGET_MEM_UPDATE, _TAU_TARGET_MEM_TRUST_RISE,
+    _TAU_TARGET_MEM_TRUST_DECAY, _TAU_TARGET_MEM_CONSUME,
+    _TARGET_MEM_TRUST_THRESHOLD,
+)
+from oculomotor.models.brain_models import (
+    final_common_pathway as fcp,
+)
+from oculomotor.models.brain_models.saccade_generator import burst_velocity as _burst_velocity
+from oculomotor.models.brain_models.self_motion import (
+    G0, _B_NOMINAL, _TAU_RF_STATE,
+)
+from oculomotor.models.brain_models.tvor import (
+    _NPC_GATE_CENTER_FRAC, _NPC_GATE_SHARPNESS_FRAC, _DISTANCE_EPSILON,
+)
+from oculomotor.models.sensory_models.sensory_model import PINV_SENS
+from oculomotor.models.sensory_models.retina        import ypr_to_xyz, xyz_to_ypr
+from oculomotor.models.plant_models.readout         import gaze_unit_vector
+
+
+# ─── Constants ─────────────────────────────────────────────────────────────
+_DEG_PER_PD  = 0.5729
+_DEG_PER_RAD = 57.295779
+_AXIS_H = 0
+_TAU_COPY_RESET = 0.02
+
+
+# ─── State-vector layout (62-state unified subset) ─────────────────────────
+N_FAST          = 52
+_F_PU           = slice( 0,  3)   # pursuit
+_F_NI_L         = slice( 3,  6)   # NI left  pop
+_F_NI_R         = slice( 6,  9)   # NI right pop
+_F_V            = slice( 9, 12)   # vergence fast
+_F_V_COPY       = slice(12, 15)   # vergence copy
+_F_A_FAST       = 15              # accommodation fast (scalar)
+_F_VS_A         = slice(16, 19)   # VS population A
+_F_VS_B         = slice(19, 22)   # VS population B
+_F_GRAV_G       = slice(22, 25)   # gravity estimate
+_F_GRAV_A       = slice(25, 28)   # linear-acc estimate
+_F_GRAV_RF      = slice(28, 31)   # rotational feedback (Laurens)
+_F_HEAD         = slice(31, 34)   # head linear velocity v_lin
+# Saccade generator (18 states) — predominantly bilinear/sigmoid-gated dynamics in f
+_F_SG_E_HELD    = slice(34, 37)   # Robinson resettable integrator (held retinal error)
+_F_SG_Z_OPN     = 37              # OPN membrane potential (100 = tonic, ~0 = paused)
+_F_SG_Z_ACC     = 38              # rise-to-bound accumulator
+_F_SG_Z_TRIG    = 39              # intermediate trigger (sigmoid-charged from z_acc)
+_F_SG_X_EBN_R   = slice(40, 43)   # right EBN membrane potentials
+_F_SG_X_EBN_L   = slice(43, 46)   # left  EBN membrane potentials
+_F_SG_X_IBN_R   = slice(46, 49)   # right IBN membrane potentials
+_F_SG_X_IBN_L   = slice(49, 52)   # left  IBN membrane potentials
+
+N_SLOW          = 10
+_S_NI_NULL      = slice( 0,  3)
+_S_V_TONIC      = slice( 3,  6)
+_S_A_SLOW       = 6
+_S_VS_NULL      = slice( 7, 10)
+
+# u_proc: bundled output of g(theta, sensory_out, delegated)
+N_U             = 32
+_U_SLIP         = slice( 0,  3)   # target slip → pursuit
+_U_DISP         = slice( 3,  6)   # raw target disparity + SVBN → vergence
+_U_DEFOC        = 6               # defocus → accommodation
+_U_VEL_BRAIN    = slice( 7, 10)   # NI velocity drive (u_burst + omega_tvor + listing_corr)
+_U_TONIC_NI     = slice(10, 13)   # NI tonic position offset (Listing's torsion target)
+_U_VRATE_TVOR   = slice(13, 16)   # T-VOR vergence-rate drive into vergence
+_U_CANAL        = slice(16, 22)   # canal afferents (clipped) → VS
+_U_SCENE_SLIP   = slice(22, 25)   # scene retinal slip → VS (push-pull)
+_U_GIA          = slice(25, 28)   # GIA / otolith → GE
+_U_SCENE_LIN_VEL = slice(28, 31)  # scene translational flow → HE
+_U_SCENE_VIS    = 31              # scene visibility (gates HE visual fusion)
+
+# y_motor (10): u_pu (3) | motor_cmd_ni (3) | u_verg (3) | u_acc (1)
+N_Y             = 10
+_Y_U_PU         = slice( 0,  3)
+_Y_NI           = slice( 3,  6)
+_Y_U_VERG       = slice( 6,  9)
+_Y_U_ACC        = 9
+
+
+# ─── Matrix bundle ─────────────────────────────────────────────────────────
+class UnifiedMatrices(NamedTuple):
+    """Unified-template matrices for the unified subset (continuous + self-motion)."""
+    A:        jnp.ndarray   # (52, 52) fast state coupling (incl. fast→fast cross-couplings)
+    B:        jnp.ndarray   # (52, 32) fast input gain
+    G_fs:     jnp.ndarray   # (52, 10) slow→fast direct coupling (no multiplication by A)
+    C:        jnp.ndarray   # (10, 10) slow diagonal leak (only diagonal entries used in C·(x-T))
+    M_ss:     jnp.ndarray   # (10, 10) slow→slow cross-couplings (NOT through (x-T))
+    D:        jnp.ndarray   # (10, 52) slow driven by fast
+    B_slow:   jnp.ndarray   # (10, 32) slow input gain
+    T:        jnp.ndarray   # (10,)    slow setpoint
+    E:        jnp.ndarray   # (10, 52) motor readout from fast
+    G:        jnp.ndarray   # (10, 10) motor readout from slow
+    F:        jnp.ndarray   # (10, 32) direct sensor feedthrough to motor
+    b_prox:   jnp.ndarray   # (52,)    constant fast drive (proximal + VS resting bias + SG tonic)
+
+
+# ─── Matrix builder ────────────────────────────────────────────────────────
+
+def matrices(theta) -> UnifiedMatrices:
+    """Build the unified-template matrices from BrainParams.
+
+    Each subsystem's contribution is described inline. The matrices encode:
+      A   : leak rates of fast integrators + fast→fast cross-couplings
+            (pursuit→NI, VS_pop→net via -w_est into NI velocity input).
+      B   : sensor / supplementary input gain into fast integrators.
+      M_fs: fast leaks toward slow-state-derived target (NI and VS null shifts).
+      C   : diagonal slow leak rates.
+      M_ss: slow→slow cross-couplings (AC/A and CA/C).
+      D   : slow integrators driven by fast states.
+      B_s : direct sensor drive into slow integrators.
+      T   : slow setpoint vector (motor priors).
+      E,G : motor readout from fast / slow.
+      F   : direct sensor feedthrough to motor (Robinson pulse).
+      b_prox : constant fast drive (proximal-cue + VS resting bias).
+    """
+    # ── Pre-computations ────────────────────────────────────────────────────
+    K_phi_p          = theta.K_phasic_pursuit
+    pu_state_to_u_pu = 1.0 / (1.0 + K_phi_p)
+    pu_slip_to_u_pu  = K_phi_p / (1.0 + K_phi_p)
+
+    inv_tau_pu_eff = 1.0/theta.tau_pursuit + theta.K_pursuit/(1.0 + K_phi_p)
+
+    inv_tau_i = 1.0 / (theta.tau_i * jnp.array(
+        [1.0, theta.tau_i_pitch_frac, theta.tau_i_roll_frac]))
+
+    inv_tau_v       = 1.0 / theta.tau_verg
+    inv_tau_v_tonic = 1.0 / theta.tau_verg_tonic
+    inv_tau_v_copy  = 1.0 / _TAU_COPY_RESET
+    inv_tau_a_fast  = 1.0 / theta.tau_acc_fast
+    inv_tau_a_slow  = 1.0 / theta.tau_acc_slow
+    inv_tau_adapt   = 1.0 / theta.tau_ni_adapt
+
+    inv_tau_vs = 1.0 / (theta.tau_vs * jnp.array(
+        [1.0, theta.tau_vs_pitch_frac, theta.tau_vs_roll_frac]))
+    inv_tau_vs_adapt = 1.0 / theta.tau_vs_adapt
+    inv_tau_a_lin    = 1.0 / theta.tau_a_lin
+    inv_tau_head     = 1.0 / theta.tau_head
+    inv_tau_rf       = 1.0 / _TAU_RF_STATE
+
+    K_v   = theta.K_verg
+    K_t   = theta.K_verg_tonic
+    K_af  = theta.K_acc_fast
+    K_as  = theta.K_acc_slow
+    tau_p = theta.tau_p
+    tau_acc_plant = theta.tau_acc_plant
+
+    K_vs_canal = theta.K_vs
+    K_vs_vis   = theta.K_vis
+    g_vor      = theta.g_vor
+    g_vis      = theta.g_vis
+    K_gd       = theta.K_gd
+    K_grav_b   = theta.K_grav     # baseline (gating handled in f)
+    K_lin_b    = theta.K_lin
+    K_he_vis_b = theta.K_he_vis   # multiplier on scene_visible
+
+    alpha = theta.AC_A * _DEG_PER_PD
+    beta  = theta.CA_C / _DEG_PER_PD
+
+    I3  = jnp.eye(3)
+    DI3 = jnp.diag(inv_tau_i)
+    half_inv_tau_i = 0.5 * inv_tau_i
+    DI_VS = jnp.diag(inv_tau_vs)
+
+    # VS per-population health gain: g_pop = b_vs / B_NOMINAL  (6,)
+    g_pop  = jnp.asarray(theta.b_vs) / _B_NOMINAL
+    g_pop_A, g_pop_B = g_pop[:3], g_pop[3:]
+
+    vor_torsion_gain = jnp.array([1.0, 1.0, 0.5])
+
+    # ── A : (34, 34) fast leak + within-fast cross-couplings ───────────────
+    A = jnp.zeros((N_FAST, N_FAST))
+    A = A.at[_F_PU,     _F_PU    ].set(-inv_tau_pu_eff * I3)
+    A = A.at[_F_NI_L,   _F_NI_L  ].set(-DI3)
+    A = A.at[_F_NI_R,   _F_NI_R  ].set(-DI3)
+    A = A.at[_F_NI_L,   _F_PU    ].set( 0.5 * pu_state_to_u_pu * I3)
+    A = A.at[_F_NI_R,   _F_PU    ].set(-0.5 * pu_state_to_u_pu * I3)
+    A = A.at[_F_V,      _F_V     ].set(-inv_tau_v * I3)
+    A = A.at[_F_V_COPY, _F_V_COPY].set(-inv_tau_v_copy * I3)
+    A = A.at[_F_A_FAST, _F_A_FAST].set(-inv_tau_a_fast)
+
+    # VS populations: -inv_tau_vs · x_pop (per-axis leak)
+    A = A.at[_F_VS_A, _F_VS_A].set(-DI_VS)
+    A = A.at[_F_VS_B, _F_VS_B].set(-DI_VS)
+
+    # SG burst-neuron BASELINE leak (the "1" of opn_gain = 1 + g_opn_bn·act_opn).
+    # The cerebellar gain modulation (g_opn_bn·act_opn·x_bn) lives in the inline
+    # f-style correction below — same factoring as the Kalman gain baseline +
+    # sqrt(1+ρ)-1 correction for gravity.
+    inv_tau_bn = 1.0 / theta.tau_bn
+    A = A.at[_F_SG_X_EBN_R, _F_SG_X_EBN_R].set(-inv_tau_bn * I3)
+    A = A.at[_F_SG_X_EBN_L, _F_SG_X_EBN_L].set(-inv_tau_bn * I3)
+    A = A.at[_F_SG_X_IBN_R, _F_SG_X_IBN_R].set(-inv_tau_bn * I3)
+    A = A.at[_F_SG_X_IBN_L, _F_SG_X_IBN_L].set(-inv_tau_bn * I3)
+
+    # NI driven by -w_est · vor_torsion_gain (where w_est = x_VS_A - x_VS_B + D_VS·u)
+    # Velocity drive into NI L is +0.5·u_vel; for u_vel = -w_est·gain, this gives:
+    #   dx_NI_L  +=  -0.5·g · (x_VS_A - x_VS_B)  ; dx_NI_R  +=  +0.5·g · (...)
+    Tg = jnp.diag(0.5 * vor_torsion_gain)
+    A = A.at[_F_NI_L, _F_VS_A].set(-Tg)
+    A = A.at[_F_NI_L, _F_VS_B].set( Tg)
+    A = A.at[_F_NI_R, _F_VS_A].set( Tg)
+    A = A.at[_F_NI_R, _F_VS_B].set(-Tg)
+
+    # GE linear core (baseline gain): residual = gia - g_est - a_lin
+    A = A.at[_F_GRAV_G, _F_GRAV_G].set(-K_grav_b * I3)
+    A = A.at[_F_GRAV_G, _F_GRAV_A].set(-K_grav_b * I3)
+    A = A.at[_F_GRAV_A, _F_GRAV_A].set((-K_lin_b - inv_tau_a_lin) * I3)
+    A = A.at[_F_GRAV_A, _F_GRAV_G].set(-K_lin_b * I3)
+    # rf state: -rf/tau_rf (linear part); bilinear cross(gia, -g_est)/G0² in f
+    A = A.at[_F_GRAV_RF, _F_GRAV_RF].set(-inv_tau_rf * I3)
+
+    # HE linear core: dx_v_lin = a_lin - v_lin/tau_head + (visual gating in f)
+    A = A.at[_F_HEAD, _F_HEAD  ].set(-inv_tau_head * I3)
+    A = A.at[_F_HEAD, _F_GRAV_A].set(I3)
+
+    # ── B : (34, 32) fast input gain ────────────────────────────────────────
+    B = jnp.zeros((N_FAST, N_U))
+
+    # Pursuit driven by slip
+    B = B.at[_F_PU, _U_SLIP].set((theta.K_pursuit / (1.0 + K_phi_p)) * I3)
+
+    # NI driven by direct slip→u_pu pulse path
+    B = B.at[_F_NI_L, _U_SLIP].set( 0.5 * pu_slip_to_u_pu * I3)
+    B = B.at[_F_NI_R, _U_SLIP].set(-0.5 * pu_slip_to_u_pu * I3)
+
+    # NI driven by -w_est_feedthrough (D_VS @ canal/slip) via vor_torsion_gain
+    # w_est feedthrough on canal: g_vor · PINV_SENS · canal
+    # NI gets -0.5·g · w_est_feedthrough, so:
+    B = B.at[_F_NI_L, _U_CANAL].set(-0.5 * (vor_torsion_gain[:, None] * g_vor * PINV_SENS))
+    B = B.at[_F_NI_R, _U_CANAL].set( 0.5 * (vor_torsion_gain[:, None] * g_vor * PINV_SENS))
+    # w_est feedthrough on scene_slip: -g_vis · I (note negative sign!)
+    B = B.at[_F_NI_L, _U_SCENE_SLIP].set( 0.5 * jnp.diag(vor_torsion_gain) * g_vis)
+    B = B.at[_F_NI_R, _U_SCENE_SLIP].set(-0.5 * jnp.diag(vor_torsion_gain) * g_vis)
+
+    # NI driven by extra delegated velocity drives (u_burst + omega_tvor + listing_vel)
+    B = B.at[_F_NI_L, _U_VEL_BRAIN].set( 0.5 * I3)
+    B = B.at[_F_NI_R, _U_VEL_BRAIN].set(-0.5 * I3)
+
+    # NI driven by tonic position shift (OCR + Listing's torsion target)
+    B = B.at[_F_NI_L, _U_TONIC_NI].set( jnp.diag(half_inv_tau_i))
+    B = B.at[_F_NI_R, _U_TONIC_NI].set(-jnp.diag(half_inv_tau_i))
+
+    # Vergence fast: K_v · (disparity + SVBN) + K_v · verg_rate_tvor
+    B = B.at[_F_V, _U_DISP       ].set(K_v * I3)
+    B = B.at[_F_V, _U_VRATE_TVOR ].set(K_v * I3)
+
+    # Accommodation fast driven by defocus
+    B = B.at[_F_A_FAST, _U_DEFOC].set(K_af)
+
+    # VS population A: g_pop_A · K_vs · PINV_SENS · canal  - K_vis · scene_slip
+    B = B.at[_F_VS_A, _U_CANAL     ].set(g_pop_A[:, None] * K_vs_canal * PINV_SENS)
+    B = B.at[_F_VS_A, _U_SCENE_SLIP].set(-K_vs_vis * I3)
+    # VS population B: -g_pop_B · K_vs · PINV_SENS · canal  + K_vis · scene_slip
+    B = B.at[_F_VS_B, _U_CANAL     ].set(-g_pop_B[:, None] * K_vs_canal * PINV_SENS)
+    B = B.at[_F_VS_B, _U_SCENE_SLIP].set( K_vs_vis * I3)
+
+    # GE driven by GIA: K_grav (baseline) · gia → g_est ; K_lin · gia → a_lin
+    B = B.at[_F_GRAV_G, _U_GIA].set(K_grav_b * I3)
+    B = B.at[_F_GRAV_A, _U_GIA].set(K_lin_b  * I3)
+
+    # HE: vestibular path (a_lin -> v_lin) is in A; visual path is bilinear in f.
+
+    # ── G_fs : (34, 10) slow → fast direct coupling ────────────────────────
+    # Direct coefficient of x_slow[j] in dx_fast[i]. Encodes "leak toward
+    # slow-state-derived target" via its diagonal-block entries:
+    #   NI_L → +1/(2 tau_i) · x_NI_NULL  (NI_L leaks toward +x_null/2)
+    #   VS_A → +1/(2 tau_vs) · x_VS_NULL (VS_A leaks toward +x_vs_null/2)
+    G_fs = jnp.zeros((N_FAST, N_SLOW))
+    G_fs = G_fs.at[_F_NI_L, _S_NI_NULL].set( 0.5 * jnp.diag(inv_tau_i))
+    G_fs = G_fs.at[_F_NI_R, _S_NI_NULL].set(-0.5 * jnp.diag(inv_tau_i))
+    G_fs = G_fs.at[_F_VS_A, _S_VS_NULL].set( 0.5 * jnp.diag(inv_tau_vs))
+    G_fs = G_fs.at[_F_VS_B, _S_VS_NULL].set(-0.5 * jnp.diag(inv_tau_vs))
+
+    # ── C : (10, 10) slow DIAGONAL leak ────────────────────────────────────
+    C = jnp.zeros((N_SLOW, N_SLOW))
+    C = C.at[_S_NI_NULL, _S_NI_NULL].set(-inv_tau_adapt   * I3)
+    C = C.at[_S_V_TONIC, _S_V_TONIC].set(-inv_tau_v_tonic * I3)
+    C = C.at[_S_A_SLOW,  _S_A_SLOW ].set(-inv_tau_a_slow)
+    C = C.at[_S_VS_NULL, _S_VS_NULL].set(-inv_tau_vs_adapt * I3)
+
+    # ── M_ss : (10, 10) slow→slow cross-couplings (NOT through (x-T)) ──────
+    M_ss = jnp.zeros((N_SLOW, N_SLOW))
+    M_ss = M_ss.at[_S_V_TONIC.start + _AXIS_H, _S_A_SLOW].set(
+        K_t * alpha * inv_tau_v_tonic)
+    M_ss = M_ss.at[_S_A_SLOW, _S_V_TONIC.start + _AXIS_H].set(
+        K_as * beta * inv_tau_a_slow)
+
+    # ── D : (10, 34) slow driven by fast ───────────────────────────────────
+    D = jnp.zeros((N_SLOW, N_FAST))
+    D = D.at[_S_NI_NULL, _F_NI_L].set( inv_tau_adapt * I3)
+    D = D.at[_S_NI_NULL, _F_NI_R].set(-inv_tau_adapt * I3)
+    D = D.at[_S_V_TONIC, _F_V].set((K_t * inv_tau_v_tonic) * I3)
+    D = D.at[_S_V_TONIC.start + _AXIS_H, _F_A_FAST].set(K_t * alpha * inv_tau_v_tonic)
+    D = D.at[_S_A_SLOW, _F_A_FAST].set(K_as * inv_tau_a_slow)
+    D = D.at[_S_A_SLOW, _F_V.start + _AXIS_H].set(K_as * beta * inv_tau_a_slow)
+    # VS null tracks w_est = x_A - x_B  (with feedthrough in B_slow on inputs)
+    D = D.at[_S_VS_NULL, _F_VS_A].set( inv_tau_vs_adapt * I3)
+    D = D.at[_S_VS_NULL, _F_VS_B].set(-inv_tau_vs_adapt * I3)
+
+    # ── B_slow : (10, 32) slow input gain ───────────────────────────────────
+    B_slow = jnp.zeros((N_SLOW, N_U))
+    B_slow = B_slow.at[_S_NI_NULL, _U_TONIC_NI].set(-inv_tau_adapt * I3)
+    B_slow = B_slow.at[_S_V_TONIC, _U_DISP      ].set((K_t * tau_p * inv_tau_v_tonic) * I3)
+    B_slow = B_slow.at[_S_V_TONIC, _U_VRATE_TVOR].set((K_t * tau_p * inv_tau_v_tonic) * I3)
+    B_slow = B_slow.at[_S_A_SLOW, _U_DEFOC].set(K_as * tau_acc_plant * inv_tau_a_slow)
+    # VS null tracks w_est which has D_VS feedthrough on canal/slip
+    B_slow = B_slow.at[_S_VS_NULL, _U_CANAL     ].set(inv_tau_vs_adapt * g_vor * PINV_SENS)
+    B_slow = B_slow.at[_S_VS_NULL, _U_SCENE_SLIP].set(-inv_tau_vs_adapt * g_vis * I3)
+
+    # ── T : (10,) slow setpoint ────────────────────────────────────────────
+    T = jnp.zeros(N_SLOW)
+    T = T.at[_S_V_TONIC.start + _AXIS_H].set(theta.tonic_verg)
+    T = T.at[_S_A_SLOW].set(theta.tonic_acc)
+
+    # ── b_prox : (34,) constant fast drive ─────────────────────────────────
+    b_prox = jnp.zeros(N_FAST)
+    proximal_verg_H = theta.proximal_d * theta.ipd_brain * _DEG_PER_RAD
+    b_prox = b_prox.at[_F_V.start + _AXIS_H].set(proximal_verg_H * inv_tau_v)
+    b_prox = b_prox.at[_F_A_FAST].set(theta.proximal_d * inv_tau_a_fast)
+    # VS resting bias: x_pop_A leaks toward b_vs[A] + x_null/2  →  +b_vs[A]/tau_vs
+    b_vs = jnp.asarray(theta.b_vs)
+    b_prox = b_prox.at[_F_VS_A].set(inv_tau_vs * b_vs[:3])
+    b_prox = b_prox.at[_F_VS_B].set(inv_tau_vs * b_vs[3:])
+
+    # ── E : (10, 34) motor readout from fast ────────────────────────────────
+    E = jnp.zeros((N_Y, N_FAST))
+    E = E.at[_Y_U_PU, _F_PU  ].set(pu_state_to_u_pu * I3)
+    E = E.at[_Y_NI,   _F_NI_L].set(I3)
+    E = E.at[_Y_NI,   _F_NI_R].set(-I3)
+    E = E.at[_Y_NI,   _F_PU  ].set(tau_p * pu_state_to_u_pu * I3)
+    # NI pulse-step: tau_p · u_vel = tau_p · (-w_est·g + u_brain + ...)
+    # -w_est·g state contribution: -tau_p·g · (x_VS_A - x_VS_B)
+    Tg_full = tau_p * jnp.diag(vor_torsion_gain)
+    E = E.at[_Y_NI, _F_VS_A].set(-Tg_full)
+    E = E.at[_Y_NI, _F_VS_B].set( Tg_full)
+    E = E.at[_Y_U_VERG, _F_V    ].set(I3)
+    E = E.at[_Y_U_VERG.start + _AXIS_H, _F_A_FAST].set(alpha)
+    E = E.at[_Y_U_ACC, _F_A_FAST].set(1.0)
+    E = E.at[_Y_U_ACC, _F_V.start + _AXIS_H].set(beta)
+
+    # ── G : (10, 10) motor readout from slow ────────────────────────────────
+    G = jnp.zeros((N_Y, N_SLOW))
+    G = G.at[_Y_U_VERG, _S_V_TONIC].set(I3)
+    G = G.at[_Y_U_VERG.start + _AXIS_H, _S_A_SLOW].set(alpha)
+    G = G.at[_Y_U_ACC, _S_A_SLOW].set(1.0)
+    G = G.at[_Y_U_ACC, _S_V_TONIC.start + _AXIS_H].set(beta)
+
+    # ── F : (10, 32) direct sensor feedthrough ─────────────────────────────
+    F = jnp.zeros((N_Y, N_U))
+    F = F.at[_Y_U_PU, _U_SLIP].set(pu_slip_to_u_pu * I3)
+    F = F.at[_Y_NI, _U_SLIP    ].set(tau_p * pu_slip_to_u_pu * I3)
+    F = F.at[_Y_NI, _U_VEL_BRAIN].set(tau_p * I3)
+    # NI pulse-step from -w_est_feedthrough on canal/slip
+    F = F.at[_Y_NI, _U_CANAL     ].set(-tau_p * (vor_torsion_gain[:, None] * g_vor * PINV_SENS))
+    F = F.at[_Y_NI, _U_SCENE_SLIP].set( tau_p * jnp.diag(vor_torsion_gain) * g_vis)
+    F = F.at[_Y_U_VERG, _U_DISP      ].set(tau_p * I3)
+    F = F.at[_Y_U_VERG, _U_VRATE_TVOR].set(tau_p * I3)
+    F = F.at[_Y_U_ACC, _U_DEFOC].set(tau_acc_plant)
+
+    return UnifiedMatrices(A=A, B=B, G_fs=G_fs, C=C, M_ss=M_ss, D=D,
+                            B_slow=B_slow, T=T, E=E, G=G, F=F, b_prox=b_prox)
+
+
+# ─── g : Bayesian-MAP input preprocessing ──────────────────────────────────
+
+def g(sensory_out, theta, u_vel_brain, u_tonic_ni, verg_rate_tvor, u_svbn):
+    """Stage-1 preprocessing: bundle sensors and delegated drives into u_proc.
+
+    Implements the canal-afferent saturation clip (`v_max_vor`) — a static
+    rectification at the sensor interface. Soft-threshold dead-zones and
+    variance-stabilising transforms belong here once their priors are
+    calibrated.
+    """
+    canal_clipped = jnp.clip(sensory_out.canal,
+                              -theta.v_max_vor, theta.v_max_vor)
+    disp_total = sensory_out.target_disparity + u_svbn
+    return jnp.concatenate([
+        sensory_out.target_slip,             # _U_SLIP
+        disp_total,                          # _U_DISP (raw + SVBN)
+        jnp.array([sensory_out.defocus]),    # _U_DEFOC
+        u_vel_brain,                         # _U_VEL_BRAIN  (u_burst + omega_tvor + listing_vel)
+        u_tonic_ni,                          # _U_TONIC_NI   (Listing's torsion target only;
+                                              #               OCR is folded into f via x_grav_g)
+        verg_rate_tvor,                      # _U_VRATE_TVOR
+        canal_clipped,                       # _U_CANAL  (saturation-clipped)
+        sensory_out.scene_slip,              # _U_SCENE_SLIP
+        sensory_out.otolith,                 # _U_GIA
+        sensory_out.scene_linear_vel,        # _U_SCENE_LIN_VEL
+        jnp.array([sensory_out.scene_visible]),  # _U_SCENE_VIS
+    ])
+
+
+# ─── f : bilinear corrections (state × state, state × input) ───────────────
+
+def f(x_fast, x_slow, u_proc, theta, z_act):
+    """Bilinear corrections beyond the linear matrix dynamics.
+
+    Active terms:
+      - Gravity transport:  -ω × g_est  (state×state, SO(3) Lie bracket)
+      - rf bilinear:         cross(gia, -g_est) / G0² / tau_rf  (state×input)
+      - Kalman gain modulation on residual:
+            (K_grav_eff - K_grav) · (gia - g_est - a_lin)  in g_est
+            (K_lin_eff  - K_lin ) · (gia - g_est - a_lin)  in a_lin
+        where K_eff = K · sqrt(1 + |ω × g_hat|/w_canal_gate)
+      - HE visual gating: K_he_vis · scene_visible · (-scene_lin_vel - v_lin)
+      - OCR coupling: NI null leaks toward -g_ocr·g_est[0] on roll axis
+            → bilinear shift on dx_NI_L/R via half_inv_tau_i.
+    """
+    del x_slow, z_act  # not used in current f terms
+
+    g_est    = x_fast[_F_GRAV_G]
+    a_lin    = x_fast[_F_GRAV_A]
+    rf_state = x_fast[_F_GRAV_RF]
+    v_lin    = x_fast[_F_HEAD]
+    x_VS_A   = x_fast[_F_VS_A]
+    x_VS_B   = x_fast[_F_VS_B]
+
+    canal_clipped = u_proc[_U_CANAL]
+    scene_slip    = u_proc[_U_SCENE_SLIP]
+    gia           = u_proc[_U_GIA]
+    scene_lin_vel = u_proc[_U_SCENE_LIN_VEL]
+    scene_visible = u_proc[_U_SCENE_VIS]
+
+    # ── w_est from VS state + feedthrough ───────────────────────────────────
+    # (mirrors _vs_step output: net = x_A - x_B + D · u, with D = [g_vor·PINV_SENS, -g_vis·I])
+    w_est_state    = x_VS_A - x_VS_B
+    w_est_canal_FT = theta.g_vor * (PINV_SENS @ canal_clipped)
+    w_est_slip_FT  = -theta.g_vis * scene_slip
+    w_est = w_est_state + w_est_canal_FT + w_est_slip_FT
+
+    # ── Inverse VS time constants for population (per-axis) ─────────────────
+    inv_tau_vs = 1.0 / (theta.tau_vs * jnp.array(
+        [1.0, theta.tau_vs_pitch_frac, theta.tau_vs_roll_frac]))
+
+    # ── Gravity transport: -ω × g_est  ─────────────────────────────────────
+    # ω in head-frame xyz (from ypr); cross product; result in head-frame xyz.
+    # Both g_est and the result already live in xyz frame (head frame).
+    w_rad_xyz = jnp.radians(ypr_to_xyz(w_est))
+    transport = -jnp.cross(w_rad_xyz, g_est)
+
+    # ── Kalman gain modulation: K_grav_eff = K_grav · sqrt(1 + ρ); ρ = |ω × g_hat|/w_gate ──
+    g_hat   = g_est / (jnp.linalg.norm(g_est) + 1e-9)
+    w_xyz   = ypr_to_xyz(w_est)
+    rho     = jnp.linalg.norm(jnp.cross(w_xyz, g_hat)) / theta.w_canal_gate
+    gate_factor = jnp.sqrt(1.0 + rho)
+
+    K_grav_eff_minus_b = theta.K_grav * (gate_factor - 1.0)
+    K_lin_eff_minus_b  = theta.K_lin  * (1.0 / gate_factor - 1.0)
+    residual = gia - g_est - a_lin
+
+    # ── rf bilinear: rf_new = cross(gia, -g_est)/G0²; the linear -rf/tau_rf is in A
+    rf_new = xyz_to_ypr(jnp.cross(gia, -g_est)) / (G0 ** 2)
+    drf_bilinear = rf_new / _TAU_RF_STATE
+
+    # ── HE visual gating: K_he_vis · scene_visible · (-scene_lin_vel - v_lin)
+    K_vis_eff = theta.K_he_vis * scene_visible
+    he_visual = K_vis_eff * (-scene_lin_vel - v_lin)
+
+    # ── VS rotational feedback (Laurens): rf-coupled back into VS pops ─────
+    # Original code: -K_gd · concat([rf, -rf]) added to dx_pop
+    rf6 = theta.K_gd * jnp.concatenate([rf_state, -rf_state])
+
+    # ── OCR coupling: u_tonic_ni[2] = -g_ocr · g_est[0]   ──────────────────
+    # NI null leaks toward (x_null + u_tonic), and dx_NI_L includes
+    # +half_inv_tau_i · u_tonic. Express the OCR contribution as state×state:
+    half_inv_tau_i = 0.5 / (theta.tau_i * jnp.array(
+        [1.0, theta.tau_i_pitch_frac, theta.tau_i_roll_frac]))
+    inv_tau_adapt = 1.0 / theta.tau_ni_adapt
+
+    ocr_z = -theta.g_ocr * g_est[0]
+    ocr_vec = jnp.zeros(3).at[2].set(ocr_z)
+
+    # ── Assemble f vector ───────────────────────────────────────────────────
+    f_vec = jnp.zeros(N_FAST)
+
+    # GE: gravity transport + Kalman gain correction
+    f_vec = f_vec.at[_F_GRAV_G].set(transport + K_grav_eff_minus_b * residual)
+    # GE: a_lin gain modulation
+    f_vec = f_vec.at[_F_GRAV_A].set(K_lin_eff_minus_b * residual)
+    # GE: rf bilinear
+    f_vec = f_vec.at[_F_GRAV_RF].set(drf_bilinear)
+
+    # HE: visual gate
+    f_vec = f_vec.at[_F_HEAD].set(he_visual)
+
+    # VS: rotational feedback from rf_state
+    f_vec = f_vec.at[_F_VS_A].add(-rf6[:3])
+    f_vec = f_vec.at[_F_VS_B].add(-rf6[3:])
+
+    # NI: OCR contribution to leak target via half_inv_tau_i · ocr_vec (signed)
+    f_vec = f_vec.at[_F_NI_L].add( half_inv_tau_i * ocr_vec)
+    f_vec = f_vec.at[_F_NI_R].add(-half_inv_tau_i * ocr_vec)
+
+    return f_vec
+
+
+def f_slow(x_fast, x_slow, u_proc, theta, z_act):
+    """Bilinear corrections on the slow-state derivative.
+
+    Currently only the OCR contribution to NI null leak.
+    """
+    del x_slow, z_act, u_proc
+    inv_tau_adapt = 1.0 / theta.tau_ni_adapt
+    g_est = x_fast[_F_GRAV_G]
+    ocr_z = -theta.g_ocr * g_est[0]
+    ocr_vec = jnp.zeros(3).at[2].set(ocr_z)
+    f_s = jnp.zeros(N_SLOW)
+    # NI null tracks (x_net - x_null - u_tonic)/tau_adapt; -u_tonic adds
+    # -ocr_vec/tau_adapt to dx_null
+    f_s = f_s.at[_S_NI_NULL].set(-inv_tau_adapt * ocr_vec)
+    return f_s
+
+
+def f_motor(x_fast, x_slow, u_proc, theta):
+    """Bilinear corrections on the motor readout.
+
+    OCR enters the NI dynamics by shifting the leak target (handled in f and
+    f_slow), NOT by direct feedthrough to motor_cmd_ni. The motor readout is
+    purely linear in (x_fast, x_slow, u_proc) for the unified subset.
+    """
+    del x_fast, x_slow, u_proc, theta
+    return jnp.zeros(N_Y)
+
+
+# ─── State packing helpers ─────────────────────────────────────────────────
+
+def _pack_subset(x_brain):
+    """Map 66-dim brain layout → (x_fast, x_slow) for the unified subset."""
+    x_fast = jnp.zeros(N_FAST)
+    x_fast = x_fast.at[_F_PU      ].set(x_brain[_IDX_PURSUIT])
+    x_fast = x_fast.at[_F_NI_L    ].set(x_brain[_IDX_NI_L])
+    x_fast = x_fast.at[_F_NI_R    ].set(x_brain[_IDX_NI_R])
+    x_fast = x_fast.at[_F_V       ].set(x_brain[_IDX_VERG.start    : _IDX_VERG.start + 3])
+    x_fast = x_fast.at[_F_V_COPY  ].set(x_brain[_IDX_VERG.start + 6: _IDX_VERG.start + 9])
+    x_fast = x_fast.at[_F_A_FAST  ].set(x_brain[_IDX_ACC.start])
+    # Self-motion fast states: VS_A, VS_B, GE (g, a_lin, rf), HE
+    x_fast = x_fast.at[_F_VS_A    ].set(x_brain[_IDX_VS_L])
+    x_fast = x_fast.at[_F_VS_B    ].set(x_brain[_IDX_VS_R])
+    x_fast = x_fast.at[_F_GRAV_G  ].set(x_brain[_IDX_GRAV.start    : _IDX_GRAV.start + 3])
+    x_fast = x_fast.at[_F_GRAV_A  ].set(x_brain[_IDX_GRAV.start + 3: _IDX_GRAV.start + 6])
+    x_fast = x_fast.at[_F_GRAV_RF ].set(x_brain[_IDX_GRAV.start + 6: _IDX_GRAV.start + 9])
+    x_fast = x_fast.at[_F_HEAD    ].set(x_brain[_IDX_HEAD])
+    # Saccade-generator states (laid out per saccade_generator.step docstring)
+    sg_base = _IDX_SG.start
+    x_fast = x_fast.at[_F_SG_E_HELD ].set(x_brain[sg_base     : sg_base +  3])
+    x_fast = x_fast.at[_F_SG_Z_OPN  ].set(x_brain[sg_base +  3])
+    x_fast = x_fast.at[_F_SG_Z_ACC  ].set(x_brain[sg_base +  4])
+    x_fast = x_fast.at[_F_SG_Z_TRIG ].set(x_brain[sg_base +  5])
+    x_fast = x_fast.at[_F_SG_X_EBN_R].set(x_brain[sg_base +  6: sg_base +  9])
+    x_fast = x_fast.at[_F_SG_X_EBN_L].set(x_brain[sg_base +  9: sg_base + 12])
+    x_fast = x_fast.at[_F_SG_X_IBN_R].set(x_brain[sg_base + 12: sg_base + 15])
+    x_fast = x_fast.at[_F_SG_X_IBN_L].set(x_brain[sg_base + 15: sg_base + 18])
+
+    x_slow = jnp.zeros(N_SLOW)
+    x_slow = x_slow.at[_S_NI_NULL ].set(x_brain[_IDX_NI_NULL])
+    x_slow = x_slow.at[_S_V_TONIC ].set(x_brain[_IDX_VERG.start + 3: _IDX_VERG.start + 6])
+    x_slow = x_slow.at[_S_A_SLOW  ].set(x_brain[_IDX_ACC.start + 1])
+    x_slow = x_slow.at[_S_VS_NULL ].set(x_brain[_IDX_VS_NULL])
+    return x_fast, x_slow
+
+
+def _scatter_subset(dx_brain, dx_fast, dx_slow):
+    """Map (dx_fast, dx_slow) → 66-dim brain derivative slots."""
+    dx_brain = dx_brain.at[_IDX_PURSUIT].set(dx_fast[_F_PU])
+    dx_brain = dx_brain.at[_IDX_NI_L   ].set(dx_fast[_F_NI_L])
+    dx_brain = dx_brain.at[_IDX_NI_R   ].set(dx_fast[_F_NI_R])
+    dx_brain = dx_brain.at[_IDX_NI_NULL].set(dx_slow[_S_NI_NULL])
+    dx_brain = dx_brain.at[_IDX_VERG.start    : _IDX_VERG.start + 3].set(dx_fast[_F_V])
+    dx_brain = dx_brain.at[_IDX_VERG.start + 3: _IDX_VERG.start + 6].set(dx_slow[_S_V_TONIC])
+    dx_brain = dx_brain.at[_IDX_VERG.start + 6: _IDX_VERG.start + 9].set(dx_fast[_F_V_COPY])
+    dx_brain = dx_brain.at[_IDX_ACC.start    ].set(dx_fast[_F_A_FAST])
+    dx_brain = dx_brain.at[_IDX_ACC.start + 1].set(dx_slow[_S_A_SLOW])
+    dx_brain = dx_brain.at[_IDX_VS_L   ].set(dx_fast[_F_VS_A])
+    dx_brain = dx_brain.at[_IDX_VS_R   ].set(dx_fast[_F_VS_B])
+    dx_brain = dx_brain.at[_IDX_VS_NULL].set(dx_slow[_S_VS_NULL])
+    dx_brain = dx_brain.at[_IDX_GRAV.start    : _IDX_GRAV.start + 3].set(dx_fast[_F_GRAV_G])
+    dx_brain = dx_brain.at[_IDX_GRAV.start + 3: _IDX_GRAV.start + 6].set(dx_fast[_F_GRAV_A])
+    dx_brain = dx_brain.at[_IDX_GRAV.start + 6: _IDX_GRAV.start + 9].set(dx_fast[_F_GRAV_RF])
+    dx_brain = dx_brain.at[_IDX_HEAD   ].set(dx_fast[_F_HEAD])
+    sg_base = _IDX_SG.start
+    dx_brain = dx_brain.at[sg_base     : sg_base +  3].set(dx_fast[_F_SG_E_HELD])
+    dx_brain = dx_brain.at[sg_base +  3].set(dx_fast[_F_SG_Z_OPN])
+    dx_brain = dx_brain.at[sg_base +  4].set(dx_fast[_F_SG_Z_ACC])
+    dx_brain = dx_brain.at[sg_base +  5].set(dx_fast[_F_SG_Z_TRIG])
+    dx_brain = dx_brain.at[sg_base +  6: sg_base +  9].set(dx_fast[_F_SG_X_EBN_R])
+    dx_brain = dx_brain.at[sg_base +  9: sg_base + 12].set(dx_fast[_F_SG_X_EBN_L])
+    dx_brain = dx_brain.at[sg_base + 12: sg_base + 15].set(dx_fast[_F_SG_X_IBN_R])
+    dx_brain = dx_brain.at[sg_base + 15: sg_base + 18].set(dx_fast[_F_SG_X_IBN_L])
+    return dx_brain
+
+
+# ─── Step function — drop-in replacement for brain_model.step ──────────────
+
+def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
+    """Single ODE step in the unified state-space form.
+
+    Continuous loops + self-motion (VS + gravity + heading) are now handled
+    by the unified matrices + bilinear f. Saccade generator, T-VOR, target
+    memory, Listing's law, and FCP remain delegated.
+    """
+    x_va         = x_brain[_IDX_VA]
+    # x_sg is now part of x_fast (slots _F_SG_*); no separate reference needed
+    x_target_mem = x_brain[_IDX_TARGET_MEM]
+    x_ni         = x_brain[_IDX_NI]
+    x_ni_net     = x_ni[:3] - x_ni[3:6]
+    x_v_copy     = x_va[6:9]
+    x_acc_fast   = x_va[9]
+
+    # Pack unified subset state
+    x_fast, x_slow = _pack_subset(x_brain)
+
+    # ── Compute w_est, g_est, a_lin_est, v_lin from unified state ──────────
+    # These were previously returned by sm.step; now they're state readouts.
+    canal_clipped = jnp.clip(sensory_out.canal,
+                              -brain_params.v_max_vor, brain_params.v_max_vor)
+    w_est = (x_fast[_F_VS_A] - x_fast[_F_VS_B]
+             + brain_params.g_vor * (PINV_SENS @ canal_clipped)
+             - brain_params.g_vis * sensory_out.scene_slip)
+    g_est     = x_fast[_F_GRAV_G]
+    a_lin_est = x_fast[_F_GRAV_A]
+    v_lin     = x_fast[_F_HEAD]
+
+    ocr = jnp.array([0.0, 0.0, -brain_params.g_ocr * g_est[0]])
+
+    # ── Target memory (inline) ──────────────────────────────────────────────
+    x_mem      = x_target_mem[0:3]
+    trust      = x_target_mem[3]
+    tgt_pos_d  = sensory_out.target_pos
+    tgt_vis_d  = sensory_out.target_visible
+
+    z_act_now = 1.0 - jnp.clip(x_fast[_F_SG_Z_OPN], 0.0, 100.0) / 100.0
+    inv_consume = z_act_now / _TAU_TARGET_MEM_CONSUME
+    dx_mem = (tgt_vis_d * (tgt_pos_d - x_mem) / _TAU_TARGET_MEM_UPDATE
+              - inv_consume * x_mem)
+    inv_rise   = 1.0 / _TAU_TARGET_MEM_TRUST_RISE
+    inv_decay  = 1.0 / _TAU_TARGET_MEM_TRUST_DECAY
+    gain_trust = tgt_vis_d * inv_rise + (1.0 - tgt_vis_d) * inv_decay
+    dx_trust   = gain_trust * (tgt_vis_d - trust)
+    dx_target_mem = jnp.concatenate([dx_mem, jnp.array([dx_trust])])
+
+    mem_active   = jax.nn.sigmoid(50.0 * (trust - _TARGET_MEM_TRUST_THRESHOLD))
+    tgt_pos_eff  = tgt_vis_d * tgt_pos_d + (1.0 - tgt_vis_d) * mem_active * x_mem
+    tgt_vis_eff  = jnp.maximum(tgt_vis_d, mem_active)
+
+    # ── Saccade generator (folded in: bilinear + sigmoid + ReLU dynamics) ───
+    # State extraction
+    e_held  = x_fast[_F_SG_E_HELD]
+    z_opn   = x_fast[_F_SG_Z_OPN]
+    z_acc   = x_fast[_F_SG_Z_ACC]
+    z_trig  = x_fast[_F_SG_Z_TRIG]
+    x_ebn_R = x_fast[_F_SG_X_EBN_R]
+    x_ebn_L = x_fast[_F_SG_X_EBN_L]
+    x_ibn_R = x_fast[_F_SG_X_IBN_R]
+    x_ibn_L = x_fast[_F_SG_X_IBN_L]
+
+    # Target selection (with Listing's & OCR landing torsion)
+    H_landed = x_ni_net[0] + tgt_pos_eff[0] - brain_params.listing_primary[0]
+    V_landed = x_ni_net[1] + tgt_pos_eff[1] - brain_params.listing_primary[1]
+    T_LL_landed = -(jnp.pi / 360.0) * H_landed * V_landed
+    listing_target_delta = jnp.array([0.0, 0.0,
+                                       brain_params.listing_gain * T_LL_landed - x_ni_net[2]])
+    ocr_delta = ocr + listing_target_delta
+    e_target = jnp.clip(tgt_pos_eff + ocr_delta,
+                         -brain_params.orbital_limit - x_ni_net,
+                          brain_params.orbital_limit - x_ni_net)
+    tau_refractory = (brain_params.threshold_acc - brain_params.acc_burst_floor) * brain_params.tau_acc
+    x_ni_pred = x_ni_net - brain_params.k_center_vel * tau_refractory * w_est
+    e_center  = -brain_params.alpha_reset * (x_ni_pred - ocr)
+    doing_saccade     = tgt_vis_eff
+    doing_quick_phase = 1.0 - tgt_vis_eff
+    e_cur     = doing_saccade * e_target + doing_quick_phase * e_center
+    e_cur_mag = jnp.linalg.norm(e_cur)
+
+    threshold_sac_eff = (doing_saccade     * brain_params.threshold_sac
+                         + doing_quick_phase * brain_params.threshold_sac_qp)
+    gate_err = jax.nn.sigmoid(brain_params.k_sac * (e_cur_mag - threshold_sac_eff))
+
+    # Activations (sigmoid / saturation / clip)
+    act_opn   = jnp.clip(z_opn, 0.0, 100.0)
+    act_ebn_R = _burst_velocity(x_ebn_R, brain_params)
+    act_ebn_L = _burst_velocity(x_ebn_L, brain_params)
+    act_ibn_R = _burst_velocity(x_ibn_R, brain_params)
+    act_ibn_L = _burst_velocity(x_ibn_L, brain_params)
+
+    u_burst = act_ebn_R - act_ebn_L
+
+    # BN bilinear-with-ReLU dynamics
+    inh_from_L = brain_params.g_ibn_bn * act_ibn_L
+    inh_from_R = brain_params.g_ibn_bn * act_ibn_R
+    opn_gain   = 1.0 + brain_params.g_opn_bn * act_opn      # state-dep multiplicative
+    opn_inh    = brain_params.g_opn_bn_hold * act_opn       # state-dep additive
+
+    dx_ebn_R = (jax.nn.relu( e_held) - inh_from_L - opn_inh - x_ebn_R * opn_gain) / brain_params.tau_bn
+    dx_ebn_L = (jax.nn.relu(-e_held) - inh_from_R - opn_inh - x_ebn_L * opn_gain) / brain_params.tau_bn
+    dx_ibn_R = (jax.nn.relu( e_held) - inh_from_L - opn_inh - x_ibn_R * opn_gain) / brain_params.tau_bn
+    dx_ibn_L = (jax.nn.relu(-e_held) - inh_from_R - opn_inh - x_ibn_L * opn_gain) / brain_params.tau_bn
+
+    # Robinson resettable integrator (sample-and-hold gated by OPN)
+    normalized_opn = act_opn / 100.0
+    de_held = -u_burst + normalized_opn**2 * (e_cur - e_held) / brain_params.tau_hold
+
+    # Trigger + accumulator (sigmoid/clip + bilinear)
+    charge_sac = jnp.clip(brain_params.k_acc * (z_acc - brain_params.threshold_acc), 0.0, 1.0)
+    ibn_total  = jnp.sum(act_ibn_R) + jnp.sum(act_ibn_L)
+    ibn_norm   = jnp.clip(ibn_total / (2.0 * brain_params.g_burst), 0.0, 1.0)
+    dz_trig = (charge_sac - z_trig * (1.0 + brain_params.g_ibn_trig * ibn_norm)) / brain_params.tau_trig
+    dz_acc = (gate_err * normalized_opn / brain_params.tau_acc
+              - brain_params.g_acc_drain * ibn_norm
+                * (z_acc - brain_params.acc_burst_floor) / brain_params.tau_burst_drain
+              - z_acc / brain_params.tau_acc_leak
+              + noise_acc)
+    dz_opn = (brain_params.k_tonic_opn * (100.0 - z_opn)
+              - (z_opn + brain_params.g_opn_pause) * z_trig
+              - brain_params.g_ibn_opn * ibn_total) / brain_params.tau_sac
+
+    # ── T-VOR (folded in: inline bilinear cross-product + depth scaling) ────
+    # ω_eye = -ĝ × v_lin / D · g_tvor   (state×state, with state-derived 1/D)
+    # verg_rate = ipd · (ĝ · v_lin) / D² · g_tvor_verg
+    # Distance from vergence yaw via ipd / (2·tan(yaw/2)); NPC gate disengages
+    # T-VOR scaling near the near-point of convergence.
+    aca_term = brain_params.AC_A * _DEG_PER_PD * x_acc_fast
+    current_vergence_yaw = x_va[0] + x_va[3] + aca_term
+    distance_raw = brain_params.ipd_brain / (
+        2.0 * jnp.tan(jnp.radians(current_vergence_yaw) * 0.5))
+    d_safe = jnp.maximum(distance_raw, _DISTANCE_EPSILON)
+    npc = brain_params.distance_npc
+    npc_gate = jax.nn.sigmoid(
+        (d_safe - _NPC_GATE_CENTER_FRAC * npc) / (_NPC_GATE_SHARPNESS_FRAC * npc))
+    inv_distance = npc_gate / d_safe
+    g_hat = gaze_unit_vector(x_ni_net)
+    DEG_PER_RAD = 180.0 / jnp.pi
+
+    # Integrating + direct paths combined.
+    omega_int_xyz_rad = -jnp.cross(g_hat, v_lin)     * inv_distance
+    omega_dir_xyz_rad = -jnp.cross(g_hat, a_lin_est) * inv_distance
+    omega_tvor = (brain_params.g_tvor      * DEG_PER_RAD * xyz_to_ypr(omega_int_xyz_rad)
+                  + brain_params.K_phasic_tvor * DEG_PER_RAD * xyz_to_ypr(omega_dir_xyz_rad))
+
+    dot_gv = jnp.dot(g_hat, v_lin)
+    verg_rate_rad_H = brain_params.ipd_brain * dot_gv * inv_distance * inv_distance
+    verg_rate_tvor = brain_params.g_tvor_verg * DEG_PER_RAD * jnp.array([
+        verg_rate_rad_H, 0.0, 0.0,
+    ])
+
+    # ── Pursuit output for Listing's smooth_vel input ──────────────────────
+    K_phi_p = brain_params.K_phasic_pursuit
+    pu_state_to_u_pu = 1.0 / (1.0 + K_phi_p)
+    pu_slip_to_u_pu  = K_phi_p / (1.0 + K_phi_p)
+    u_pursuit = (pu_state_to_u_pu * x_fast[_F_PU]
+                 + pu_slip_to_u_pu * sensory_out.target_slip)
+
+    # ── Listing's law (folded in: pure bilinear state×state) ────────────────
+    # T_LL(H, V) = -(H-H₀)·(V-V₀)·π/360       (torsion set-point — quadratic)
+    # T_LL_dot   = -π/360 · [(H-H₀)·V̇ + (V-V₀)·Ḣ]  (torsion velocity — bilinear)
+    # cyclo_verg_rate = -l2_frac · V̇ · radians(verg)  (bilinear velocity × state)
+    HALF_ANGLE = jnp.pi / 360.0
+    smooth_vel_hv = (u_pursuit + omega_tvor)[:2]
+    dH = x_ni_net[0] - brain_params.listing_primary[0]
+    dV = x_ni_net[1] - brain_params.listing_primary[1]
+    H_dot, V_dot = smooth_vel_hv[0], smooth_vel_hv[1]
+    cyc_torsion_vel    = -HALF_ANGLE * (dH * V_dot + dV * H_dot)
+    cyc_torsion_target = -HALF_ANGLE * dH * dV
+    cyclo_verg_rate    = (-brain_params.listing_l2_frac
+                          * V_dot * jnp.radians(current_vergence_yaw))
+
+    # ── SVBN burst ─────────────────────────────────────────────────────────
+    burst_residual = sensory_out.target_disparity - x_v_copy
+    u_svbn = (z_act_now
+              * jnp.sign(burst_residual)
+              * brain_params.g_svbn_conv
+              * (1.0 - jnp.exp(-jnp.abs(burst_residual) / brain_params.X_svbn_conv)))
+
+    # ── Aggregate inputs into NI ────────────────────────────────────────────
+    # u_vel_brain holds delegated drives only: u_burst + omega_tvor + listing's velocity
+    # (-w_est × vor_torsion_gain is folded into the matrices via VS state coupling)
+    u_vel_brain = u_burst + omega_tvor
+    u_vel_brain = u_vel_brain.at[2].add(brain_params.listing_gain * cyc_torsion_vel)
+    # u_tonic_ni: Listing's torsion target only (OCR is now folded into f via x_grav_g)
+    u_tonic_ni = jnp.zeros(3).at[2].set(brain_params.listing_gain * cyc_torsion_target)
+    verg_rate_tvor_eff = verg_rate_tvor.at[2].add(brain_params.listing_gain * cyclo_verg_rate)
+
+    # ── Stage 1: g(u) preprocessing ─────────────────────────────────────────
+    u_proc = g(sensory_out, brain_params, u_vel_brain, u_tonic_ni,
+                verg_rate_tvor_eff, u_svbn)
+
+    # ── Stage 2: build matrices ─────────────────────────────────────────────
+    M = matrices(brain_params)
+
+    # ── Stage 3: linear-affine + bilinear dynamics ──────────────────────────
+    dx_fast = (M.A @ x_fast
+               + M.G_fs @ x_slow
+               + M.B @ u_proc
+               + M.b_prox
+               + f(x_fast, x_slow, u_proc, brain_params, z_act_now))
+
+    dx_slow = (M.C @ (x_slow - M.T)
+               + M.M_ss @ x_slow
+               + M.D @ x_fast
+               + M.B_slow @ u_proc
+               + f_slow(x_fast, x_slow, u_proc, brain_params, z_act_now))
+
+    # ── Vergence copy: (1-z_act) gating override ────────────────────────────
+    dx_fast = dx_fast.at[_F_V_COPY].set(
+        u_svbn - (1.0 - z_act_now) * x_v_copy / _TAU_COPY_RESET)
+
+    # ── NI anti-windup: clip dx_net at ±orbital_limit (state-dep clip on dx)
+    # Applied to the bilateral net (x_L - x_R); common-mode passes unchanged.
+    L_lim = brain_params.orbital_limit
+    x_net_now  = x_fast[_F_NI_L] - x_fast[_F_NI_R]
+    dx_L_now   = dx_fast[_F_NI_L]
+    dx_R_now   = dx_fast[_F_NI_R]
+    dx_net_aw  = dx_L_now - dx_R_now
+    dx_sum_aw  = dx_L_now + dx_R_now
+    dx_net_aw  = jnp.where(x_net_now >=  L_lim, jnp.minimum(dx_net_aw, 0.0), dx_net_aw)
+    dx_net_aw  = jnp.where(x_net_now <= -L_lim, jnp.maximum(dx_net_aw, 0.0), dx_net_aw)
+    dx_fast = dx_fast.at[_F_NI_L].set((dx_net_aw + dx_sum_aw) / 2.0)
+    dx_fast = dx_fast.at[_F_NI_R].set((dx_sum_aw - dx_net_aw) / 2.0)
+
+    # ── Saccade-generator state derivatives (folded in via inline math above) ──
+    dx_fast = dx_fast.at[_F_SG_E_HELD ].set(de_held)
+    dx_fast = dx_fast.at[_F_SG_Z_OPN  ].set(dz_opn)
+    dx_fast = dx_fast.at[_F_SG_Z_ACC  ].set(dz_acc)
+    dx_fast = dx_fast.at[_F_SG_Z_TRIG ].set(dz_trig)
+    dx_fast = dx_fast.at[_F_SG_X_EBN_R].set(dx_ebn_R)
+    dx_fast = dx_fast.at[_F_SG_X_EBN_L].set(dx_ebn_L)
+    dx_fast = dx_fast.at[_F_SG_X_IBN_R].set(dx_ibn_R)
+    dx_fast = dx_fast.at[_F_SG_X_IBN_L].set(dx_ibn_L)
+
+    # ── Stage 4: motor readout ──────────────────────────────────────────────
+    y = (M.E @ x_fast + M.G @ x_slow + M.F @ u_proc
+         + f_motor(x_fast, x_slow, u_proc, brain_params))
+    u_pu_vec     = y[_Y_U_PU]
+    motor_cmd_ni = y[_Y_NI]
+    u_verg       = y[_Y_U_VERG]
+    u_acc        = y[_Y_U_ACC]
+
+    # ── Stage 5: pack derivative into 66-dim brain state ────────────────────
+    dx_brain = jnp.zeros(N_STATES)
+    dx_brain = dx_brain.at[_IDX_TARGET_MEM].set(dx_target_mem)
+    dx_brain = _scatter_subset(dx_brain, dx_fast, dx_slow)
+
+    # ── Stage 6: efference copies and FCP nerves ────────────────────────────
+    ec_vel = u_burst + u_pursuit + omega_tvor
+    ec_pos = x_ni_net
+    ec_verg = u_verg
+
+    nerves = fcp.step(jnp.concatenate([motor_cmd_ni, u_verg]), brain_params)
+
+    return dx_brain, nerves, ec_vel, ec_pos, ec_verg, u_acc
+
+
+__all__ = [
+    'step', 'matrices', 'g', 'f', 'f_slow', 'f_motor',
+    'UnifiedMatrices',
+    'N_FAST', 'N_SLOW', 'N_U', 'N_Y',
+]
