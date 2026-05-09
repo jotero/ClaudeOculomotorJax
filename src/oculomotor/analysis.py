@@ -57,8 +57,10 @@ from oculomotor.sim.simulator import (
     _IDX_SG, _IDX_VIS, _IDX_VIS_L,
 )
 from oculomotor.models.sensory_models.sensory_model import (
-    N_CANALS, FLOOR, _SOFTNESS, PINV_SENS, C_pos, C_target_visible,
+    N_CANALS, FLOOR, _SOFTNESS, PINV_SENS,
 )
+from oculomotor.models.brain_models.perception_cyclopean import C_pos, C_target_visible
+from oculomotor.models.brain_models.brain_model         import _IDX_CYC_BRAIN
 from oculomotor.models.brain_models import saccade_generator as sg_mod
 
 try:
@@ -133,7 +135,7 @@ def extract_burst(states, theta):
         Slice [:, 0] for yaw only.
     """
     def _at(state):
-        x_vis = state.sensory[_IDX_VIS]
+        x_vis = state.brain[_IDX_CYC_BRAIN]
         e_pd  = C_pos @ x_vis
         gate  = (C_target_visible @ x_vis)[0]
         x_ni_   = state.brain[_IDX_NI]
@@ -164,7 +166,7 @@ def extract_sg(states, theta):
             x_ni    (T, 3)  neural integrator state (eye-position proxy)
     """
     x_sg  = np.array(states.brain[:, _IDX_SG])
-    x_vis = np.array(states.sensory[:, _IDX_VIS])
+    x_vis = np.array(states.brain[:, _IDX_CYC_BRAIN])
     x_ni  = np.array(states.brain[:, _IDX_NI])
 
     e_held  = x_sg[:, 0:3]

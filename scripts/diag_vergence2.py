@@ -22,10 +22,9 @@ from oculomotor.sim.simulator import (
     with_brain, SimConfig
 )
 from oculomotor.sim import kinematics as km
-from oculomotor.models.sensory_models.sensory_model import C_target_disp, _IDX_VIS
-from oculomotor.models.sensory_models.retina import (
-    _OFF_TARGET_DISP, _N_PER_SIG, N_STAGES
-)
+from oculomotor.models.brain_models.perception_cyclopean import C_target_disp, _OFF_TARGET_DISP
+from oculomotor.models.brain_models.brain_model         import _IDX_CYC_BRAIN
+from oculomotor.models.sensory_models.retina import _N_PER_SIG, N_STAGES
 from oculomotor.models.sensory_models.retina import world_to_retina as _wtr
 
 IPD    = 0.064
@@ -33,11 +32,11 @@ DEMAND_M = 0.40
 VERG_DEMAND_DEG = 2.0 * np.degrees(np.arctan(IPD / 2.0 / DEMAND_M))
 print(f"Vergence demand: {VERG_DEMAND_DEG:.3f} deg")
 
-# Readout matrix for FIRST stage of target_disparity cascade (instantaneous input proxy)
-# target_disparity sub-cascade occupies x_vis[480:600] (120 states = 3 comp × 40 stages)
-# Stage 0 = x_vis[480:483]
-_OFF = _OFF_TARGET_DISP   # 480
-C_disp_stage0 = jnp.zeros((3, 800)).at[:, _OFF:_OFF+3].set(jnp.eye(3))
+# Readout matrix for FIRST stage of target_disparity cascade (instantaneous input proxy).
+# After the per-eye/cyclopean refactor, target_disparity is post-fusion and lives in
+# x_cyc_brain (43 states). _OFF_TARGET_DISP within that block points at its first stage.
+from oculomotor.models.brain_models import perception_cyclopean as _pc_mod
+C_disp_stage0 = jnp.zeros((3, _pc_mod.N_STATES)).at[:, _OFF_TARGET_DISP:_OFF_TARGET_DISP + 3].set(jnp.eye(3))
 
 t = np.arange(0.0, 4.0, 0.001)
 T = len(t)
@@ -56,13 +55,13 @@ eye_L    = np.array(st.plant[:, 0])   # left eye yaw (deg)
 eye_R    = np.array(st.plant[:, 3])   # right eye yaw (deg)
 vergence = eye_L - eye_R              # positive = converged
 
-x_vis = np.array(st.sensory[:, _IDX_VIS])   # (T, 800) cascade state
+x_cyc = np.array(st.brain[:, _IDX_CYC_BRAIN])   # (T, 43) cyclopean brain LP block
 
-# Cascade output (last stage, ~80ms delay)
-disp_del = (C_target_disp @ x_vis.T).T   # (T, 3)
+# Cascade output (LP, ~150ms delay)
+disp_del = (C_target_disp @ x_cyc.T).T   # (T, 3)
 
-# Cascade input proxy (first stage, ~2ms delay)
-disp_in = (C_disp_stage0 @ x_vis.T).T    # (T, 3)
+# Cascade input proxy (first LP stage, ~earliest delay in this block)
+disp_in = (C_disp_stage0 @ x_cyc.T).T    # (T, 3)
 
 # Geometric disparity: computed directly from actual plant positions
 # For target at [0, 0, DEMAND_M], no head rotation, IPD = 0.064m

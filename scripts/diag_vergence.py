@@ -56,11 +56,11 @@ vergence = eye_L - eye_R              # positive = converged
 x_verg0  = np.array(st.brain[:, _IDX_VERG.start])   # x_verg horizontal state
 acc_plant= np.array(st.acc_plant[:, 0])
 
-# Target disparity in brain state (delayed) — not directly stored, derive from sens
-# Use the cyclopean cascade: C_target_disp @ x_vis
-from oculomotor.models.sensory_models.sensory_model import C_target_disp, _IDX_VIS
-x_vis    = np.array(st.sensory[:, _IDX_VIS])
-disp_del = (C_target_disp @ x_vis.T).T   # (T, 3) — delayed disparity
+# Cyclopean delayed disparity now lives in brain state at _IDX_CYC_BRAIN.
+from oculomotor.models.brain_models.perception_cyclopean import C_target_disp
+from oculomotor.models.brain_models.brain_model         import _IDX_CYC_BRAIN
+x_cyc    = np.array(st.brain[:, _IDX_CYC_BRAIN])
+disp_del = (C_target_disp @ x_cyc.T).T   # (T, 3) — delayed disparity
 
 print()
 print(f"{'t':>6} | {'vergence':>9} | {'x_verg[0]':>10} | {'disp_del[0]':>12} | {'eye_L':>7} | {'eye_R':>7} | {'acc':>7}")

@@ -32,7 +32,8 @@ from oculomotor.sim.simulator import (
     _IDX_VERG,
 )
 from oculomotor.models.brain_models import saccade_generator as sg_mod
-from oculomotor.models.sensory_models.sensory_model import C_slip, C_pos, C_vel, C_target_visible
+from oculomotor.models.brain_models.perception_cyclopean import C_slip, C_pos, C_vel, C_target_visible
+from oculomotor.models.brain_models.brain_model           import _IDX_CYC_BRAIN
 
 
 # ── Stimulus builder ──────────────────────────────────────────────────────────
@@ -198,7 +199,7 @@ def _extract_signals(states, params, t_np: np.ndarray) -> dict:
     x_sg      = np.array(states.brain[:, _IDX_SG])
     x_pursuit = np.array(states.brain[:, _IDX_PURSUIT])
     x_verg    = np.array(states.brain[:, _IDX_VERG])   # (T, 3) vergence integrator state
-    x_vis     = np.array(states.sensory[:, _IDX_VIS])  # (T, 720) cyclopean cascade
+    x_vis     = np.array(states.brain[:, _IDX_CYC_BRAIN])  # (T, 43) cyclopean brain LP block
 
     # Eye velocity (version derivative — same as L eye vel when version ≈ L)
     w_eye = np.gradient(version, dt, axis=0)
@@ -212,7 +213,7 @@ def _extract_signals(states, params, t_np: np.ndarray) -> dict:
 
     # Saccade burst (re-compute from SG state + cyclopean delayed retinal signals)
     def _burst_at(state):
-        x_vis_ = state.sensory[_IDX_VIS]
+        x_vis_ = state.brain[_IDX_CYC_BRAIN]
         e_pd   = C_pos @ x_vis_
         gate   = jnp.clip((C_target_visible @ x_vis_)[0], 0.0, 1.0)
         x_ni_     = state.brain[_IDX_NI]

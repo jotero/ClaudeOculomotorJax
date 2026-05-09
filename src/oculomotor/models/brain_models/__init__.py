@@ -17,6 +17,8 @@ combined state layout, BrainParams, and per-step ODE evaluation order.
 
 from oculomotor.models.brain_models import (
     perception_self_motion,
+    perception_target,
+    perception_cyclopean,
     vergence_accommodation,
     neural_integrator,
     saccade_generator,
@@ -30,6 +32,8 @@ from oculomotor.models.brain_models import (
 
 __all__ = [
     "perception_self_motion",
+    "perception_target",
+    "perception_cyclopean",
     "vergence_accommodation",
     "neural_integrator",
     "saccade_generator",

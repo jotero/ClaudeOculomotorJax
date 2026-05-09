@@ -19,11 +19,11 @@ import matplotlib.pyplot as plt
 
 from oculomotor.sim.simulator import PARAMS_DEFAULT, with_brain, with_sensory, simulate
 from oculomotor.sim.simulator import _IDX_VIS, _IDX_PURSUIT
-from oculomotor.models.brain_models.brain_model import _IDX_EC_VEL_SCENE, _IDX_EC_VEL_TARGET
+from oculomotor.models.brain_models.brain_model import _IDX_EC_VEL_SCENE, _IDX_EC_VEL_TARGET, _IDX_CYC_BRAIN
 _IDX_VIS_L = _IDX_VIS   # backward-compat alias for local use in this script
 from oculomotor.sim import kinematics as km
 from oculomotor.analysis import ax_fmt, extract_burst, extract_sg, ni_net, vs_net
-from oculomotor.models.sensory_models.sensory_model import C_vel as C_vel_sm, C_slip as C_slip_sm
+from oculomotor.models.brain_models.perception_cyclopean import C_vel as C_vel_sm, C_slip as C_slip_sm
 
 DT    = 0.001
 THETA = with_brain(PARAMS_DEFAULT, g_burst=700.0)
@@ -366,9 +366,9 @@ def _cascade(show, noisy=False):
         if ci == 0: axes[4, ci].legend(fontsize=7)
 
         # ── Pursuit / OKR signal chain (rows 5–7) ────────────────────────────
-        x_vis_L      = np.array(st.sensory[:, _IDX_VIS_L])          # (T, 760) cyclopean cascade
-        vel_del      = x_vis_L @ np.array(C_vel_sm).T                # (T, 3) delayed target vel (EC pre-applied)
-        slip_del     = x_vis_L @ np.array(C_slip_sm).T               # (T, 3) delayed scene slip (EC pre-applied)
+        x_cyc        = np.array(st.brain[:, _IDX_CYC_BRAIN])         # (T, 43) cyclopean brain LP block
+        vel_del      = x_cyc @ np.array(C_vel_sm).T                  # (T, 3) delayed target vel (cyclopean)
+        slip_del     = x_cyc @ np.array(C_slip_sm).T                 # (T, 3) delayed scene slip (cyclopean)
         x_purs       = np.array(st.brain[:, _IDX_PURSUIT])           # (T, 3) pursuit memory
 
         # Row 5: raw delayed velocities

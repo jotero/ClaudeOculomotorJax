@@ -366,11 +366,26 @@ def ODE_ocular_motor(t, state, args):
     sensory_out = sensory_model.read_outputs(state.sensory, theta.sensory, q_head, a_head)
 
     # ── Sensory noise ─────────────────────────────────────────────────────────
+    # Canal noise → afferent rates (cyclopean already at this stage).
+    # Visual noise is applied to BOTH eyes' retina outputs identically — this is
+    # a stand-in for cyclopean noise that occurs post-fusion in the brain. With
+    # equal noise on L and R, the binocular fusion policy averages it through
+    # cleanly to the cyclopean output.
+    nslip = noise_slip_interp.evaluate(t)
+    nvel  = noise_vel_interp.evaluate(t)
+    npos  = noise_pos_interp.evaluate(t)
     sensory_out = sensory_out._replace(
-        canal        = sensory_out.canal       + noise_canal_interp.evaluate(t),
-        scene_slip   = sensory_out.scene_slip  + noise_slip_interp.evaluate(t),
-        target_slip  = sensory_out.target_slip + noise_vel_interp.evaluate(t),
-        target_pos   = sensory_out.target_pos  + noise_pos_interp.evaluate(t),
+        canal    = sensory_out.canal + noise_canal_interp.evaluate(t),
+        retina_L = sensory_out.retina_L._replace(
+            scene_angular_vel = sensory_out.retina_L.scene_angular_vel + nslip,
+            target_vel        = sensory_out.retina_L.target_vel        + nvel,
+            target_pos        = sensory_out.retina_L.target_pos        + npos,
+        ),
+        retina_R = sensory_out.retina_R._replace(
+            scene_angular_vel = sensory_out.retina_R.scene_angular_vel + nslip,
+            target_vel        = sensory_out.retina_R.target_vel        + nvel,
+            target_pos        = sensory_out.retina_R.target_pos        + npos,
+        ),
     )
 
     # ── Brain: VS + NI + SG + pursuit + vergence + accommodation ─────────────

@@ -1,54 +1,28 @@
-"""Sensory model — thin connector wiring canal, otolith, and visual delay cascade.
+"""Sensory model — thin connector wiring canal, otolith, and per-eye retina.
 
-Imports the canal SSM (canal.py), otolith SSM (otolith.py), and visual delay
-cascade (retina.py / cyclopean_vision.py) and aggregates them into a single
-combined step + read_outputs interface.
+Imports the canal SSM (canal.py), otolith SSM (otolith.py), and per-eye retina
+(retina.py) and aggregates them into a single combined step + read_outputs.
+Binocular fusion + brain-LP smoothing live in the brain
+(``brain_models.perception_cyclopean``) — they operate on already-delayed
+per-eye signals and are cortical computations, not peripheral.
 
 Signal flow:
-    w_head    → [Canal array]    → y_canals (6,)   afferent firing rates
-    a_head,
-    q_head    → [Otolith array]  → f_gia (3,)      GIA estimate → gravity_estimator
-    Per-eye retinal geometry → cyclopean pre-delay fusion → single delay cascade (720 states):
-        scene_angular_vel  → delayed → scene_slip         (3,)  → VS / OKR
-        scene_linear_vel   → delayed → scene_linear_vel   (3,)  → looming
-        target_pos         → delayed → target_pos         (3,)  → SG after gating
-        target_vel         → delayed → target_slip        (3,)  → pursuit after gating
-        target_disparity   → delayed → target_disparity   (3,)  → vergence
-        scene_visible      → delayed → scene_visible      scalar
-        target_visible     → delayed → target_visible     scalar
-        target_motion_vis  → delayed → target_motion_visible  scalar
+    w_head            → [Canal array]    → y_canals (6,)   afferent firing rates
+    a_head, q_head    → [Otolith array]  → f_gia (3,)      GIA → gravity estimator
+    per-eye stimulus  → [retina.step] L  → RetinaOut_L (delayed per-eye signals)
+                      → [retina.step] R  → RetinaOut_R
+    SensoryOutput bundles canal + otolith + retina_L + retina_R for the brain.
 
-Binocular fusion happens BEFORE the delay cascade (cyclopean_vision.pre_delay_fusion).
-The brain receives fully cyclopean signals — no per-eye readouts needed.
-
-Single-cascade state layout:
-    x_sensory = [x_c (12) | x_oto (6) | x_vis (720)]  — N_STATES = 738
-
-    x_vis layout:
-        [scene_angular_vel(120) | scene_linear_vel(120) | target_pos(120)
-         | target_vel(120) | target_disparity(120)
-         | scene_visible(40) | target_visible(40) | strobed(40)]
+State layout (198 states):
+    x_sensory = [x_canal (12) | x_oto (6) | x_retina_L (90) | x_retina_R (90)]
 
 Index constants (relative to x_sensory):
-    _IDX_C     — canal states      (12,)
-    _IDX_OTO   — otolith states     (6,)
-    _IDX_VIS   — cyclopean visual delay cascade states (720,)
-    _IDX_VIS_L — alias for _IDX_VIS (backward compatibility)
-
-SensoryOutput fields:
-    Shared:
-        canal:            (6,)   canal afferent rates
-        otolith:          (3,)   instantaneous GIA in head frame (m/s²)
-    Cyclopean delayed signals:
-        scene_slip:       (3,)   delayed scene angular velocity [yaw,pitch,roll] deg/s → VS/OKR
-        scene_linear_vel: (3,)   delayed scene linear velocity [x,y,z] m/s → looming
-        target_pos:       (3,)   delayed target position → SG
-        target_slip:      (3,)   delayed target velocity → pursuit
-        target_disparity: (3,)   delayed vergence disparity (diplopia-gated) → vergence
-        scene_visible:    scalar delayed cyclopean scene presence gate
-        target_visible:   scalar delayed cyclopean target presence gate
-        target_motion_visible: scalar delayed pursuit gate = delay(target_visible × (1−strobe))
-        acc_demand:       float  accommodation demand (1/m)
+    _IDX_C         — canal states                   (12,)
+    _IDX_OTO       — otolith states                  (6,)
+    _IDX_RETINA_L  — left-eye sharp cascade states  (90,)
+    _IDX_RETINA_R  — right-eye sharp cascade states (90,)
+    _IDX_VIS       — full per-eye visual block     (180,)
+    _IDX_VIS_L     — alias for _IDX_RETINA_L (backward compat)
 """
 
 from typing import NamedTuple
@@ -59,7 +33,7 @@ import jax.numpy as jnp
 from oculomotor.models.sensory_models import canal            as _canal
 from oculomotor.models.sensory_models import otolith          as _otolith
 from oculomotor.models.sensory_models import retina           as _retina
-from oculomotor.models.sensory_models import perception_cyclopean as _cv
+from oculomotor.models.sensory_models.retina import RetinaOut  # noqa: F401  (re-export)
 from oculomotor.models.plant_models.readout import rotation_matrix as _rotation_matrix
 
 
@@ -88,38 +62,16 @@ class SensoryParams(NamedTuple):
     # Otolith — first-order LP adaptation (Fernandez & Goldberg 1976)
     tau_oto:            float       = 100.0  # otolith adaptation TC (s); large → near-DC pass
 
-    # Visual pathway — two-tier transmission per signal:
-    #   tau_vis            — sharp cascade mean delay for target_pos (legacy 40-stage cascade)
-    #   tau_vis_sharp      — sharp cascade mean delay for all OTHER signals (Pugh-Lamb 6-stage
-    #                        photo-transduction model, common across motion/disparity/defocus/etc.)
-    #   tau_vis_smooth_*   — per-channel 1-pole LP smoothing applied AFTER the sharp cascade,
-    #                        modelling channel-specific neural integration windows.
-    tau_vis:                     float = 0.08   # target_pos cascade delay (s); Lisberger & Movshon 1999
-    tau_vis_sharp:               float = 0.05   # sharp cascade mean delay (s) — photo-transduction +
-                                                  # axonal/synaptic transport (Pugh & Lamb 1993,
-                                                  # Dunn & Rieke 2006). Shared across non-position signals.
-    tau_vis_smooth_target_vel:   float = 0.15   # LP TC for target_vel cascade — slower than scene
-                                                  # motion so that brief target-velocity pulses (<100 ms)
-                                                  # are attenuated below the pursuit threshold (matches
-                                                  # the ~100 ms open-loop pursuit window observed
-                                                  # empirically; Krauzlis & Lisberger 1994).
-    tau_vis_smooth_motion:       float = 0.02   # LP TC for scene_angular_vel, scene_linear_vel,
-                                                  # target_vel — MT/MST motion integration window.
-                                                  # Tightened from 0.05 to sharpen EC cancellation
-                                                  # of brief saccade bursts (must match BrainParams).
-    tau_vis_smooth_disparity:    float = 0.15   # LP TC for target_disparity — V1 stereo correspondence
-                                                  # is genuinely slow (~150 ms; Cumming & DeAngelis 2001),
-                                                  # so this is the sloppy channel (1-pole gives long tail).
-    tau_vis_smooth_defocus:      float = 0.20   # LP TC for defocus (s). 200 ms 1-pole gives a long
-                                                  # exponential tail — sloppy accommodation channel,
-                                                  # consistent with the observed sluggish open-loop
-                                                  # accommodation responses (combined with the lens
-                                                  # plant tau_acc_plant ~150 ms downstream).
-    tau_vis_smooth_visibility:   float = 0.01   # LP TC for visibility / fusion gate signals — fast
-                                                  # (just enough to avoid sharp transitions causing
-                                                  # numerical issues with the gating).
-    visual_field_limit: float       = 90.0   # retinal eccentricity limit (deg); ~90° monocular field
-    k_visual_field:     float       = 1.0    # sigmoid steepness for visual field gate (1/deg)
+    # Visual pathway — sensor-side parameters only. The brain-side LP smoothing
+    # TCs (tau_vis_smooth_*) and the binocular-fusion-policy parameters (npc /
+    # div_max / vert_max / tors_max / eye_dominant) live in BrainParams since
+    # they're cortical decisions; perception_cyclopean (in brain_models) reads
+    # them from there.
+    tau_vis_sharp:      float = 0.05   # sharp cascade mean delay (s) — photo-transduction +
+                                       # axonal/synaptic transport (Pugh & Lamb 1993,
+                                       # Dunn & Rieke 2006). Used by retina.step.
+    visual_field_limit: float = 90.0   # retinal eccentricity limit (deg); ~90° monocular field
+    k_visual_field:     float = 1.0    # sigmoid steepness for visual field gate (1/deg)
 
     # Sensory noise (std in output units; 0 = noiseless). All four sources are
     # Ornstein-Uhlenbeck processes — short τ approaches white noise (band-limited),
@@ -136,25 +88,12 @@ class SensoryParams(NamedTuple):
     # Binocular geometry
     ipd:                float       = 0.064  # inter-pupillary distance (m); ~64 mm adult
 
-    # Binocular fusion and motor limits (used by pre_delay_fusion for diplopia suppression)
-    # ── Motor limits (absolute vergence angle — eye position space) ─────────────────────────
-    #    Diplopia gate closes when total vergence demand exceeds these.
-    #    Horizontal is asymmetric (large convergence range, small divergence range).
-    #    Vertical and torsional are symmetric.
-    npc:                float       = 50.0   # near point of convergence (deg); convergence motor limit
-                                             # 50° ≈ NPC 7 cm (IPD=64 mm); physiological range ~40–55° for young adults
-    div_max:            float       = 6.0    # maximum divergence (deg); ~6° for young adults
-    vert_max:           float       = 5.0    # maximum vertical vergence ±(deg); ~3–5° clinical range
-    tors_max:           float       = 8.0    # maximum cyclovergence ±(deg); ~5–8° max
-    eye_dominant:       float       = 1.0    # 1.0 = right dominant, 0.0 = left dominant
-
-    # Pre-delay velocity saturation (applied before visual cascade to suppress spikes)
-    # Mirrors the speed tuning of MT/MST (target) and NOT/AOS (scene) neurons.
-    # Must match the v_max_pursuit / v_max_okr values in BrainParams so that the
-    # EC correction (which is clipped to the same ceiling) exactly cancels what
-    # made it through the visual cascade.
-    v_max_target_vel:   float       = 40.0   # MT/MST speed ceiling (deg/s); clips target_vel before cascade
-    v_max_scene_vel:    float       = 80.0   # NOT/AOS speed ceiling (deg/s); clips scene_vel before cascade
+    # Sensor-side velocity saturation (applied per-eye in retina.step before sharp cascade).
+    # Mirrors the speed tuning of MT/MST (target) and NOT/AOS (scene) neurons. Must match
+    # the v_max_pursuit / v_max_okr values in BrainParams so that the EC correction (clipped
+    # to the same ceiling) exactly cancels what made it through the retina cascade.
+    v_max_target_vel:   float       = 40.0   # MT/MST speed ceiling (deg/s)
+    v_max_scene_vel:    float       = 80.0   # NOT/AOS speed ceiling (deg/s)
 
 # ── Re-exports for external callers ────────────────────────────────────────────
 
@@ -166,36 +105,37 @@ FLOOR             = _canal.FLOOR           # 80.0
 _SOFTNESS         = _canal._SOFTNESS       # 0.5  nonlinearity sharpness
 canal_nonlinearity = _canal.nonlinearity   # renamed in canal.py
 
-# Visual delay — readout matrices for the single 800-state cyclopean cascade
-N_STAGES           = _retina.N_STAGES             # 40
-_N_PER_SIG         = _retina._N_PER_SIG           # 120
-C_slip             = _retina.C_slip               # (3, 800)  delayed scene angular velocity
-C_scene_linear_vel = _retina.C_scene_linear_vel   # (3, 800)  delayed scene linear velocity (m/s, eye xyz)
-C_pos              = _retina.C_pos                # (3, 800)  delayed target position (raw)
-C_vel              = _retina.C_vel                # (3, 800)  delayed target velocity (raw)
-C_target_disp      = _retina.C_target_disp        # (3, 800)  delayed target disparity (deg)
-C_scene_visible    = _retina.C_scene_visible      # (1, 800)  delayed scene_present
-C_target_visible   = _retina.C_target_visible     # (1, 800)  delayed target_present × target_in_vf
-C_defocus          = _retina.C_defocus            # (1, 800)  delayed defocus (D)
+# Visual delay — readout helpers live in perception_cyclopean (in brain_models).
+# External code reading delayed cyclopean signals should import them directly:
+#     from oculomotor.models.brain_models.perception_cyclopean import C_slip, ...
+#     from oculomotor.models.brain_models.brain_model           import _IDX_CYC_BRAIN
+#     scene_slip_d = states.brain[:, _IDX_CYC_BRAIN] @ C_slip.T
+N_STAGES           = _retina.N_STAGES             # 40 (legacy constant)
+_N_PER_SIG         = _retina._N_PER_SIG           # 120 (legacy)
 delay_cascade_step = _retina.delay_cascade_step
-delay_cascade_read = _retina.delay_cascade_read
 
 # ── State layout ───────────────────────────────────────────────────────────────
+# Per-eye retina sharp cascades only (90 each). The cyclopean brain LP block
+# now lives in brain state (perception_cyclopean is in brain_models).
 
-_N_CANAL_STATES  = _canal.N_STATES          # 12
-_N_OTO_STATES    = _otolith.N_STATES        #  6
-_N_VIS_STATES    = _retina.N_STATES         # 800  single cyclopean cascade (incl. defocus)
-N_STATES         = _N_CANAL_STATES + _N_OTO_STATES + _N_VIS_STATES  # 12+6+800 = 818
+_N_CANAL_STATES  = _canal.N_STATES                # 12
+_N_OTO_STATES    = _otolith.N_STATES              #  6
+_N_RETINA_PER_EYE= _retina.N_STATES_PER_EYE       # 90
+_N_VIS_STATES    = 2 * _N_RETINA_PER_EYE          # 90+90 = 180
+N_STATES         = _N_CANAL_STATES + _N_OTO_STATES + _N_VIS_STATES  # 12+6+180 = 198
 
 # Index constants — relative to x_sensory
-_IDX_C     = slice(0,
-                   _N_CANAL_STATES)                                              # (12,)
-_IDX_OTO   = slice(_N_CANAL_STATES,
-                   _N_CANAL_STATES + _N_OTO_STATES)                             # (6,)
-_IDX_VIS   = slice(_N_CANAL_STATES + _N_OTO_STATES,
-                   _N_CANAL_STATES + _N_OTO_STATES + _N_VIS_STATES)             # (720,)
-_IDX_VIS_L = _IDX_VIS   # backward-compat alias (some scripts still use this name)
-# _IDX_VIS_R intentionally removed — single cyclopean cascade
+_o_canal = 0
+_o_oto   = _o_canal + _N_CANAL_STATES             # 12
+_o_retL  = _o_oto   + _N_OTO_STATES               # 18
+_o_retR  = _o_retL  + _N_RETINA_PER_EYE           # 108
+
+_IDX_C         = slice(_o_canal, _o_canal + _N_CANAL_STATES)     # (12,)
+_IDX_OTO       = slice(_o_oto,   _o_oto   + _N_OTO_STATES)       #  (6,)
+_IDX_RETINA_L  = slice(_o_retL,  _o_retL  + _N_RETINA_PER_EYE)   # (90,)
+_IDX_RETINA_R  = slice(_o_retR,  _o_retR  + _N_RETINA_PER_EYE)   # (90,)
+_IDX_VIS       = slice(_o_retL,  _o_retR  + _N_RETINA_PER_EYE)   # (180,) full per-eye retina block
+_IDX_VIS_L     = _IDX_RETINA_L   # backward-compat alias
 
 
 # ── Bundled sensory output ──────────────────────────────────────────────────────
@@ -221,27 +161,22 @@ class SensoryOutput(NamedTuple):
                                  Positive = near target closer than current accommodation.
                                  Gated by defocus_visible = OR(scene_vis, target_vis).
     """
-    canal:           jnp.ndarray   # (6,)
-    otolith:         jnp.ndarray   # (3,)
-    scene_slip:      jnp.ndarray   # (3,)
-    scene_linear_vel: jnp.ndarray  # (3,)  scene linear velocity, head-frame xyz (m/s)
-    target_pos:      jnp.ndarray   # (3,)
-    target_slip:     jnp.ndarray   # (3,)
-    target_disparity: jnp.ndarray  # (3,)
-    scene_visible:   jnp.ndarray   # scalar
-    target_visible:  jnp.ndarray   # scalar
-    defocus:         float = 0.0   # delayed cyclopean defocus (diopters)
+    canal:    jnp.ndarray            # (6,)  canal afferent rates
+    otolith:  jnp.ndarray            # (3,)  instantaneous GIA (m/s², head frame)
+    retina_L: RetinaOut              # delayed per-eye signals — left eye
+    retina_R: RetinaOut              # delayed per-eye signals — right eye
 
 
 def read_outputs(x_sensory, sensory_params, q_head, a_head):
     """Read all sensory outputs from the current state (pure state readout).
 
-    Returns cyclopean delayed cascade readouts — all binocularly fused.
-    acc_demand_L/R are 0.0 here; the ODE layer passes them to sensory_model.step()
-    which computes the fusion-weighted acc_demand_cyc via cyclopean_vision.step().
+    Cyclopean signals come from the post-fusion brain LP block (x_cyc_brain);
+    per-eye sharp cascade states sit in x_retina_L / x_retina_R but are not
+    surfaced through SensoryOutput — they're consumed inside step() by the
+    perception_cyclopean fusion logic.
 
     Args:
-        x_sensory:      (738,)  sensory state
+        x_sensory:      (241,)  sensory state
         sensory_params: SensoryParams
         q_head:         (3,)    head rotation vector [yaw,pitch,roll] (deg) — for GIA
         a_head:         (3,)    head linear acceleration (m/s², world frame) — for GIA
@@ -249,32 +184,23 @@ def read_outputs(x_sensory, sensory_params, q_head, a_head):
     Returns:
         SensoryOutput with cyclopean delayed signals.
     """
-    x_c   = x_sensory[_IDX_C]
-    x_vis = x_sensory[_IDX_VIS]
+    x_c        = x_sensory[_IDX_C]
+    x_retina_L = x_sensory[_IDX_RETINA_L]
+    x_retina_R = x_sensory[_IDX_RETINA_R]
 
     canal_out = _canal.nonlinearity(x_c, sensory_params.canal_gains, sensory_params.canal_floor)
     canal_out = jnp.clip(canal_out, -sensory_params.canal_v_max, sensory_params.canal_v_max)
 
     # Instantaneous GIA in head frame — same formula as otolith.step().
-    # x_oto (LP state, tau=100s) is NOT used here: it hasn't adapted after
-    # a short-duration tilt, so using it would pull the gravity estimator
-    # back toward upright (exactly the drift bug we're fixing).
-    # x_oto is retained in the state purely for somatogravic illusion modelling.
     q_xyz = jnp.array([-q_head[1], q_head[0], q_head[2]])
     R     = _rotation_matrix(q_xyz)
     f_gia = R.T @ _otolith.G_WORLD + R.T @ a_head   # GIA in head frame (m/s²)
 
     return SensoryOutput(
-        canal            = canal_out,
-        otolith          = f_gia,
-        scene_slip       = _retina.C_slip             @ x_vis,
-        scene_linear_vel = _retina.C_scene_linear_vel @ x_vis,
-        target_pos       = _retina.C_pos              @ x_vis,
-        target_slip      = _retina.C_vel              @ x_vis,
-        target_disparity = _retina.C_target_disp      @ x_vis,
-        scene_visible    = (_retina.C_scene_visible    @ x_vis)[0],
-        target_visible   = (_retina.C_target_visible   @ x_vis)[0],
-        defocus          = (_retina.C_defocus          @ x_vis)[0],
+        canal    = canal_out,
+        otolith  = f_gia,
+        retina_L = _retina.read_outputs(x_retina_L),
+        retina_R = _retina.read_outputs(x_retina_R),
     )
 
 
@@ -314,9 +240,10 @@ def step(x_sensory,
     Returns:
         dx_sensory: (818,)  dx_sensory/dt
     """
-    x_c   = x_sensory[_IDX_C]
-    x_oto = x_sensory[_IDX_OTO]
-    x_vis = x_sensory[_IDX_VIS]
+    x_c         = x_sensory[_IDX_C]
+    x_oto       = x_sensory[_IDX_OTO]
+    x_retina_L  = x_sensory[_IDX_RETINA_L]
+    x_retina_R  = x_sensory[_IDX_RETINA_R]
 
     ipd_half  = sensory_params.ipd * 0.5
     eye_off_L = jnp.array([-ipd_half, 0.0, 0.0])
@@ -325,33 +252,21 @@ def step(x_sensory,
     dx_c,   _ = _canal.step(x_c,   w_head, sensory_params)
     dx_oto, _ = _otolith.step(x_oto, jnp.concatenate([a_head, q_head]), sensory_params)
 
-    # World → retina projection (one call per eye; geometry + visibility live in retina.py).
-    # All per-eye inputs (scene, target, eye pose) are pre-transformed by the ODE layer —
-    # prisms, stereo displays, and covers are invisible to this function.
-    target_pos_L, scene_angular_vel_L, scene_linear_vel_L, target_vel_L, scene_vis_L, target_vis_L = \
-        _retina.world_to_retina(
-            p_target_L, eye_off_L, q_head, w_head, x_head, v_head,
-            q_eye_L, w_eye_L, w_scene_L, v_scene_L, dp_dt_L,
-            scene_present_L, target_present_L,
-            sensory_params.visual_field_limit, sensory_params.k_visual_field)
+    # ── Per-eye retina step: world_to_retina + saturation + sharp cascade ────
+    # Cyclopean fusion + brain LP smoothing happen in the brain (perception_cyclopean
+    # in brain_models). Sensory step exposes the per-eye delayed signals via
+    # SensoryOutput.retina_L / retina_R for the brain to consume.
+    # ec_vel / ec_pos / ec_verg are no longer used here.
+    _ = ec_vel, ec_pos, ec_verg
+    dx_retina_L, _ = _retina.step(
+        x_retina_L, eye_off_L, q_head, w_head, x_head, v_head,
+        q_eye_L, w_eye_L, w_scene_L, v_scene_L, p_target_L, dp_dt_L,
+        defocus_L, scene_present_L, target_present_L, target_strobed,
+        sensory_params)
+    dx_retina_R, _ = _retina.step(
+        x_retina_R, eye_off_R, q_head, w_head, x_head, v_head,
+        q_eye_R, w_eye_R, w_scene_R, v_scene_R, p_target_R, dp_dt_R,
+        defocus_R, scene_present_R, target_present_R, target_strobed,
+        sensory_params)
 
-    target_pos_R, scene_angular_vel_R, scene_linear_vel_R, target_vel_R, scene_vis_R, target_vis_R = \
-        _retina.world_to_retina(
-            p_target_R, eye_off_R, q_head, w_head, x_head, v_head,
-            q_eye_R, w_eye_R, w_scene_R, v_scene_R, dp_dt_R,
-            scene_present_R, target_present_R,
-            sensory_params.visual_field_limit, sensory_params.k_visual_field)
-
-    # Strobe gate: applied here so cyclopean fusion only receives _visible signals
-    target_motion_vis_L = target_vis_L * (1.0 - target_strobed)
-    target_motion_vis_R = target_vis_R * (1.0 - target_strobed)
-
-    # Pre-delay cyclopean fusion + cascade advance (single call)
-    dx_vis = _cv.step(
-        x_vis,
-        scene_angular_vel_L, scene_linear_vel_L, target_pos_L, target_vel_L, scene_vis_L, target_vis_L, target_motion_vis_L,
-        scene_angular_vel_R, scene_linear_vel_R, target_pos_R, target_vel_R, scene_vis_R, target_vis_R, target_motion_vis_R,
-        sensory_params, ec_vel, ec_pos, ec_verg,
-        defocus_L, defocus_R)
-
-    return jnp.concatenate([dx_c, dx_oto, dx_vis])
+    return jnp.concatenate([dx_c, dx_oto, dx_retina_L, dx_retina_R])

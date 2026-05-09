@@ -22,7 +22,7 @@ from oculomotor.sim.simulator import (
     _IDX_SG, _IDX_VIS, _IDX_PURSUIT,
 )
 from oculomotor.sim import kinematics as km
-from oculomotor.models.sensory_models.sensory_model import C_pos
+from oculomotor.models.brain_models.perception_cyclopean import C_pos  # noqa: F401
 from oculomotor.analysis import ax_fmt, extract_burst, extract_sg, ni_net
 
 SHOW  = '--show' in sys.argv

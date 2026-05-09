@@ -22,8 +22,10 @@ from oculomotor.sim.simulator import (
     _IDX_C, _IDX_VS, _IDX_NI, _IDX_VIS,
 )
 from oculomotor.models.sensory_models.sensory_model import (
-    N_CANALS, FLOOR, _SOFTNESS, PINV_SENS, C_slip,
+    N_CANALS, FLOOR, _SOFTNESS, PINV_SENS,
 )
+from oculomotor.models.brain_models.perception_cyclopean import C_slip
+from oculomotor.models.brain_models.brain_model         import _IDX_CYC_BRAIN
 from oculomotor.sim import kinematics as km
 from oculomotor.analysis import ax_fmt, extract_canal, vs_net, vs_null, ni_net, fit_tc, extract_spv_states
 
@@ -304,8 +306,8 @@ def _cascade(show):
     st_o   = _simulate(THETA_NOISELESS, t_okn, scene_vel=sv,
                        scene_present=sp, target_present=jnp.zeros(T_okn), key=6)
 
-    x_vis  = np.array(st_o.sensory[:, _IDX_VIS])
-    slip   = (np.array(C_slip) @ x_vis.T)[0, :]
+    x_cyc  = np.array(st_o.brain[:, _IDX_CYC_BRAIN])
+    slip   = (np.array(C_slip) @ x_cyc.T)[0, :]
     x_vs_o = vs_net(st_o)[:, 0]
     x_ni_o = ni_net(st_o)[:, 0]
     eye_o  = np.array(st_o.plant[:, 0])

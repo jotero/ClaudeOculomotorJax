@@ -25,9 +25,10 @@ from oculomotor.sim.simulator import (
     PARAMS_DEFAULT, SimConfig, simulate, with_brain, with_sensory,
     _IDX_ACC, _IDX_NI_L, _IDX_NI_R, _IDX_VERG, _IDX_VIS,
 )
-from oculomotor.models.sensory_models.sensory_model import (
+from oculomotor.models.brain_models.perception_cyclopean import (
     C_vel as _C_vel, C_target_disp as _C_disp, C_defocus as _C_defocus,
 )
+from oculomotor.models.brain_models.brain_model import _IDX_CYC_BRAIN
 from oculomotor.sim import kinematics as km
 from oculomotor.sim.kinematics import build_target
 from oculomotor.analysis import extract_spv_states
@@ -184,11 +185,11 @@ def _occlusion(show, *, save_name, plot_title, dist_m, lens_d, theta_base, dark_
         # x_verg layout = [x_fast(3) | x_slow(3) | x_copy(3)]; [H] component is index 0.
         x_verg_v_h = np.array(st.brain[:, _IDX_VERG])[:, 0]
         cac_drive  = float(theta_base.brain.CA_C) * (x_verg_v_h / 0.5729)
-        # Cyclopean cascade outputs (what the brain receives after the visual delay)
-        x_vis_np  = np.array(st.sensory[:, _IDX_VIS])
-        cyc_motion = (x_vis_np @ np.array(_C_vel).T)[:, 0]      # H component (deg/s)
-        cyc_disp   = (x_vis_np @ np.array(_C_disp).T)[:, 0]     # H component (deg)
-        cyc_defocus = (x_vis_np @ np.array(_C_defocus).T)[:, 0] # scalar (D)
+        # Cyclopean cascade outputs (post-fusion brain LP, lives in brain state)
+        x_cyc      = np.array(st.brain[:, _IDX_CYC_BRAIN])
+        cyc_motion  = (x_cyc @ np.array(_C_vel).T)[:, 0]      # H component (deg/s)
+        cyc_disp    = (x_cyc @ np.array(_C_disp).T)[:, 0]     # H component (deg)
+        cyc_defocus = (x_cyc @ np.array(_C_defocus).T)[:, 0]  # scalar (D)
 
         # Row 0: target visibility per eye as colored patches (L on top, R on bottom)
         tL_flag, tR_flag, _ts = flag_arrays[ci]

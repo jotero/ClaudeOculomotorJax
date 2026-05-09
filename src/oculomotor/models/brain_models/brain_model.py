@@ -79,6 +79,7 @@ import jax.numpy as jnp
 
 from oculomotor.models.brain_models  import perception_self_motion as sm
 from oculomotor.models.brain_models  import perception_target      as pt
+from oculomotor.models.brain_models  import perception_cyclopean   as pc
 from oculomotor.models.brain_models  import vergence_accommodation as va
 from oculomotor.models.brain_models  import neural_integrator      as ni
 from oculomotor.models.brain_models  import saccade_generator      as sg
@@ -91,7 +92,7 @@ from oculomotor.models.sensory_models.sensory_model import SensoryOutput
 from oculomotor.models.brain_models.final_common_pathway import G_NUCLEUS_DEFAULT, G_NERVE_DEFAULT
 from oculomotor.models.plant_models.readout         import rotation_matrix
 from oculomotor.models.sensory_models.retina        import ypr_to_xyz, xyz_to_ypr, cascade_lp_step
-from oculomotor.models.sensory_models.perception_cyclopean import velocity_saturation
+from oculomotor.models.sensory_models.retina               import velocity_saturation
 
 
 # ── State layout ───────────────────────────────────────────────────────────────
@@ -116,27 +117,29 @@ _EC_VEL_N_LP      = 1                                       # smoothing LP stage
 _EC_VEL_SCENE_N   = (_EC_VEL_N_SHARP + _EC_VEL_N_LP) * 3    # 21 states — scene path EC
 _EC_VEL_TARGET_N  = (_EC_VEL_N_SHARP + _EC_VEL_N_LP) * 3    # 21 states — target path EC
 
-N_STATES = sm.N_STATES + ni.N_STATES + sg.N_STATES + pu.N_STATES + va.N_STATES + pt.N_STATES + _EC_VEL_SCENE_N + _EC_VEL_TARGET_N
-#        = 21 + 9 + 18 + 3 + 11 + 4 + 21 + 21 = 108
+N_STATES = sm.N_STATES + ni.N_STATES + sg.N_STATES + pu.N_STATES + va.N_STATES + pt.N_STATES + pc.N_STATES + _EC_VEL_SCENE_N + _EC_VEL_TARGET_N
+#        = 21 + 9 + 18 + 3 + 11 + 4 + 43 + 21 + 21 = 151
 
 # ── Top-level offsets ─────────────────────────────────────────────────────────
 _o_sm    = 0
-_o_ni    = _o_sm + sm.N_STATES        # 21
-_o_sg    = _o_ni + ni.N_STATES        # 30
-_o_pu    = _o_sg + sg.N_STATES        # 48
-_o_va    = _o_pu + pu.N_STATES        # 51
-_o_tm    = _o_va + va.N_STATES        # 62
-_o_ec_s  = _o_tm  + pt.N_STATES       # 66  (scene EC start)
-_o_ec_t  = _o_ec_s + _EC_VEL_SCENE_N  # 87  (target EC start)
+_o_ni    = _o_sm   + sm.N_STATES         # 21
+_o_sg    = _o_ni   + ni.N_STATES         # 30
+_o_pu    = _o_sg   + sg.N_STATES         # 48
+_o_va    = _o_pu   + pu.N_STATES         # 51
+_o_tm    = _o_va   + va.N_STATES         # 62
+_o_pc    = _o_tm   + pt.N_STATES         # 66  (perception_cyclopean brain LP block)
+_o_ec_s  = _o_pc   + pc.N_STATES         # 109 (scene EC start)
+_o_ec_t  = _o_ec_s + _EC_VEL_SCENE_N     # 130 (target EC start)
 
-_IDX_SELF_MOTION   = slice(_o_sm,    _o_sm    + sm.N_STATES)      # (21,) [0:21]  — VS|GRAV|HEAD
-_IDX_NI            = slice(_o_ni,    _o_ni    + ni.N_STATES)      #  (9,) [21:30]
-_IDX_SG            = slice(_o_sg,    _o_sg    + sg.N_STATES)      # (18,) [30:48]
-_IDX_PURSUIT       = slice(_o_pu,    _o_pu    + pu.N_STATES)      #  (3,) [48:51]
-_IDX_VA            = slice(_o_va,    _o_va    + va.N_STATES)      # (11,) [51:62] — VERG|ACC
-_IDX_TARGET_MEM    = slice(_o_tm,    _o_tm    + pt.N_STATES)      #  (4,) [62:66] — perception_target memory (x_mem_pos(3) | trust(1))
-_IDX_EC_VEL_SCENE  = slice(_o_ec_s,  _o_ec_s  + _EC_VEL_SCENE_N)  # (21,) [66:87]  — scene EC cascade (matches scene_angular_vel)
-_IDX_EC_VEL_TARGET = slice(_o_ec_t,  _o_ec_t  + _EC_VEL_TARGET_N) # (21,) [87:108] — target EC cascade (matches target_vel)
+_IDX_SELF_MOTION   = slice(_o_sm,    _o_sm    + sm.N_STATES)      # (21,)
+_IDX_NI            = slice(_o_ni,    _o_ni    + ni.N_STATES)      #  (9,)
+_IDX_SG            = slice(_o_sg,    _o_sg    + sg.N_STATES)      # (18,)
+_IDX_PURSUIT       = slice(_o_pu,    _o_pu    + pu.N_STATES)      #  (3,)
+_IDX_VA            = slice(_o_va,    _o_va    + va.N_STATES)      # (11,)
+_IDX_TARGET_MEM    = slice(_o_tm,    _o_tm    + pt.N_STATES)      #  (4,) perception_target memory
+_IDX_CYC_BRAIN     = slice(_o_pc,    _o_pc    + pc.N_STATES)      # (43,) perception_cyclopean brain LP
+_IDX_EC_VEL_SCENE  = slice(_o_ec_s,  _o_ec_s  + _EC_VEL_SCENE_N)  # (21,) scene EC cascade
+_IDX_EC_VEL_TARGET = slice(_o_ec_t,  _o_ec_t  + _EC_VEL_TARGET_N) # (21,) target EC cascade
 
 # ── Backward-compat aliases for sub-states ────────────────────────────────────
 # External code (benches, llm_pipeline) still references the per-module slices.
@@ -263,8 +266,7 @@ class BrainParams(NamedTuple):
                                           # may differ in pathology (imperfect internal model)
     # Internal model copies of the sensory cascade shape used by the post-delay
     # EC subtraction in brain_model.step. cascade_lp_step on ec_vel_eye must match
-    # cyclopean_vision's slip cascade for clean cancellation; defaults mirror
-    # SensoryParams.tau_vis_sharp / tau_vis_smooth_motion.
+    # the matched perception_cyclopean LP cascade for clean cancellation.
     tau_vis_sharp:              float = 0.05   # sharp cascade mean delay (s); 6 stages × this/6
                                                 # Shared by both scene and target EC cascades.
     tau_vis_smooth_motion:      float = 0.02   # smoothing LP TC (s) for SCENE EC cascade.
@@ -276,6 +278,26 @@ class BrainParams(NamedTuple):
                                                 # Heavier smoothing than scene because the visual
                                                 # target-velocity pathway is intrinsically slower
                                                 # (Krauzlis & Lisberger 1994).
+    tau_vis_smooth_disparity:   float = 0.15   # smoothing LP TC (s) for target_disparity cyclopean LP.
+                                                # V1 stereo correspondence is genuinely slow (~150 ms;
+                                                # Cumming & DeAngelis 2001).
+    tau_vis_smooth_defocus:     float = 0.20   # smoothing LP TC (s) for defocus cyclopean LP.
+                                                # Sloppy accommodation channel; combined with the lens
+                                                # plant TC (Schor & Bharadwaj 2006) produces realistic
+                                                # sluggish open-loop accommodation responses.
+    tau_brain_pos:              float = 0.03   # N-stage gamma TC (s) for target_pos / visibility brain
+                                                # phase (post-fusion). Total visual mean delay for these
+                                                # signals ≈ tau_vis_sharp + tau_brain_pos = 0.08 s.
+
+    # Binocular fusion policy (perception_cyclopean.binocular_fusion_policy)
+    # Cortical decisions about fusion limits and eye dominance — moved here
+    # because they're brain-side, not peripheral sensor properties.
+    npc:                        float = 50.0   # near point of convergence (deg); convergence motor limit
+                                                # 50° ≈ NPC 7 cm (IPD=64 mm); physiological 40–55° young adults
+    div_max:                    float = 6.0    # maximum divergence (deg); ~6° young adults
+    vert_max:                   float = 5.0    # maximum vertical vergence ±(deg); ~3–5° clinical range
+    tors_max:                   float = 8.0    # maximum cyclovergence ±(deg); ~5–8° max
+    eye_dominant:               float = 1.0    # 1.0 = right dominant, 0.0 = left dominant
     b_ni:                  float = 0.0    # NPH intrinsic resting bias (deg); 0 = no net bias at centre gaze
                                           # future: set >0 for unilateral NPH lesion modelling
     tau_ni_adapt:          float = 20.0   # NI null adaptation TC (s); controls rebound nystagmus amplitude
@@ -603,7 +625,7 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
     Returns:
         dx_brain: (62,)  dx_brain/dt
         nerves:   (12,)  per-muscle nerve activations [L6 | R6] → plant
-        ec_vel:   (3,)   version velocity efference for cyclopean_vision EC correction
+        ec_vel:   (3,)   version velocity efference (head frame, deg/s)
         ec_pos:   (3,)   eye position efference
         ec_verg:  (3,)   vergence efference
         u_acc:    scalar total lens-plant input (D) — neural + CA/C, drives acc_plant
@@ -616,44 +638,48 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
     x_pursuit     = x_brain[_IDX_PURSUIT]          #  (3,) pursuit velocity memory
     x_va          = x_brain[_IDX_VA]               # (11,) vergence + accommodation
     x_target_mem  = x_brain[_IDX_TARGET_MEM]       #  (4,) target memory: x_mem_pos(3) | trust(1)
-    x_ec_scene    = x_brain[_IDX_EC_VEL_SCENE]     # (21,) scene EC cascade  (matches scene_angular_vel)
-    x_ec_target   = x_brain[_IDX_EC_VEL_TARGET]    # (21,) target EC cascade (matches target_vel)
+    x_cyc_brain   = x_brain[_IDX_CYC_BRAIN]        # (43,) cyclopean brain LP block
+    x_ec_scene    = x_brain[_IDX_EC_VEL_SCENE]     # (21,) scene EC cascade
+    x_ec_target   = x_brain[_IDX_EC_VEL_TARGET]    # (21,) target EC cascade
 
-    # Cascade-delayed EC = last 3 elements of each cascade (LP-stage output),
-    # matched in shape to the corresponding slip cascade → clean post-delay sub.
     ec_d_scene    = x_ec_scene[-3:]
     ec_d_target   = x_ec_target[-3:]
 
-    # ── Post-delay EC subtraction + saccadic-suppression gates ───────────────
-    # Two separate EC cascades, one matched to each slip cascade's LP TC:
-    #   - ec_d_scene  matches scene_angular_vel cascade (tau_smooth_motion)
-    #   - ec_d_target matches target_vel cascade   (tau_smooth_target_vel)
+    # ── Cyclopean perception: binocular fusion + brain LP smoothing ──────────
+    # Fuses per-eye DELAYED retina signals into cyclopean delayed signals.
+    # Uses ec_pos = x_ni_net (current) and a lagged ec_verg approximation from
+    # the vergence integrator state (avoids the va↔cyclopean circular dependency
+    # — exact ec_verg from this step's va.step isn't available yet).
+    ec_pos_lagged  = x_ni_net
+    ec_verg_lagged = x_va[0:3] + x_va[3:6] \
+                     + jnp.array([brain_params.tonic_verg, 0.0, 0.0])
+    dx_cyc_brain, cyc = pc.step(
+        x_cyc_brain, sensory_out.retina_L, sensory_out.retina_R,
+        ec_pos_lagged, ec_verg_lagged, brain_params,
+    )
+
     # ── Target path: encapsulated in perception_target.step ───────────────────
-    # Handles EC sub + magnitude + directional gate + target memory in one go.
     # Memory drain is driven by |ec_d_target| (no z_act needed) — small saccades
     # still drain memory fast because the delayed EC is in deg/s.
     dx_target_mem, target_slip_for_pursuit, tgt_pos_eff, tgt_vis_eff = pt.step(
         x_target_mem,
-        sensory_out.target_slip,
-        sensory_out.target_visible,
-        sensory_out.target_pos,
+        cyc.target_vel,
+        cyc.target_visible,
+        cyc.target_pos,
         ec_d_target,
         brain_params,
     )
 
     # ── Self-motion observer (VS + GE + HE) — single unified step ────────────
-    # Internal sequencing (post-delay EC sub + scene gates → VS uses delayed
-    # rf_state → GE uses fresh w_est → HE uses fresh a_lin) is owned by
-    # perception_self_motion.step. We pass RAW delayed scene slip and scene
-    # linear velocity along with ec_d_scene; the module handles the gating.
+    # Receives the cyclopean fused + brain-LP-smoothed scene signals.
     dx_self_motion, w_est, g_est, v_lin, a_lin_est = sm.step(
         x_self_motion,
         jnp.concatenate([
             sensory_out.canal,
-            sensory_out.scene_slip,
+            cyc.scene_angular_vel,
             sensory_out.otolith,
-            sensory_out.scene_linear_vel,
-            jnp.array([sensory_out.scene_visible]),
+            cyc.scene_linear_vel,
+            jnp.array([cyc.scene_visible]),
             ec_d_scene,
         ]),
         brain_params,
@@ -730,8 +756,8 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
     dx_va, u_verg, u_acc = va.step(
         x_va,
         jnp.concatenate([
-            jnp.array([sensory_out.defocus]),
-            sensory_out.target_disparity,
+            jnp.array([cyc.defocus]),
+            cyc.target_disparity,
             verg_rate_tvor,
             jnp.array([z_act_verg]),
         ]),
@@ -741,17 +767,15 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
     # ── Final common pathway: nucleus encode → nerve activations ─────────────
     nerves = fcp.step(jnp.concatenate([motor_cmd_ni, u_verg]), brain_params)   # (12,) [L6|R6]
 
-    # ── Efference copy signals for pre-delay EC in cyclopean_vision ──────────
-    # Rotation to eye frame is done inside cyclopean_vision.step().
+    # ── Efference copy signals returned for the simulator + EC cascades ──────
+    # ec_vel feeds the matched-cascade EC blocks at the end of step (rotation to
+    # eye frame happens inside the cascade update). ec_pos / ec_verg are also
+    # returned so the simulator can pipe them back as needed; perception_cyclopean
+    # consumes ec_pos and ec_verg directly from x_ni_net + x_va via the lagged
+    # readout near the top of step.
     ec_vel  = u_burst + u_pursuit + omega_tvor   # version velocity efference (deg/s)
-    ec_pos  = x_ni_net               # eye position efference (head frame, [yaw,pitch,roll] deg)
-                                     # OCR flows through NI's set-point path → already in x_ni_net.
-    # Pass the FULL vergence position command (3,) — not just the fast-integrator
-    # state — so the binocular-fusion gate in cyclopean_vision sees the WORLD
-    # vergence demand of the target (raw_disp + actual_vergence ≈ V_target).
-    # Using only x_v missed x_tonic, so when x_v dipped during a transient the
-    # gate would slam shut and prevent the closed loop from completing.
-    ec_verg = u_verg   # (3,) [H, V, T] — actual vergence command, includes tonic
+    ec_pos  = x_ni_net                            # eye position efference (head frame, deg)
+    ec_verg = u_verg                              # full vergence command (3,) [H,V,T]
 
     # ── Update post-delay EC state — two cascades in parallel ────────────────
     # Same input (rotated + saturated ec_vel_eye), different LP smoothing TCs
@@ -772,6 +796,6 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
 
     # ── Pack state derivative ─────────────────────────────────────────────────
     dx_brain = jnp.concatenate([dx_self_motion, dx_ni, dx_sg, dx_pursuit, dx_va, dx_target_mem,
-                                dx_ec_scene, dx_ec_target])
+                                dx_cyc_brain, dx_ec_scene, dx_ec_target])
 
     return dx_brain, nerves, ec_vel, ec_pos, ec_verg, u_acc

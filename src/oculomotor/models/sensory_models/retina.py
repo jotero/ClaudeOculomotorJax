@@ -72,93 +72,86 @@ N_STAGES      = 40
 # 4-6 stage biochemical cascade gives the right rise shape).
 _N_STAGES_OTHER = 6
 
-# Per-signal layout: (N_sharp, N_lp, n_axes)  in declaration order.
-# N_lp = 0 → no smoothing stage; N_lp = 1 → single 1-pole LP; N_lp ≥ 2 → gamma
-# cascade (N_lp poles, total mean delay = tau_smooth) — sharper rolloff than a
-# single LP, less exponential tail.  n_axes=3 → 3-D signal; n_axes=1 → scalar.
-_SIG_LAYOUT = [
-    ('scene_angular_vel',    _N_STAGES_OTHER, 1, 3),
-    ('scene_linear_vel',     _N_STAGES_OTHER, 1, 3),
-    ('target_pos',           N_STAGES,        0, 3),   # legacy 40-stage, no LP — sharp targeting
-    ('target_vel',           _N_STAGES_OTHER, 1, 3),
-    ('target_disparity',     _N_STAGES_OTHER, 1, 3),   # 1-pole smoothing — V1 stereo matching is
-                                                       # genuinely slow, so the sloppy channel sits here
-    # Visibility flags consumed by brain (HE, SG): full 40-stage cascade (no LP)
-    # so brief target pulses propagate without amplitude loss. target_motion_visible
-    # and target_fusable are NOT cascaded — they're used inline inside cyclopean_vision
-    # to gate target_slip and target_disparity before those go through the cascade.
-    ('scene_visible',        N_STAGES,        0, 1),
-    ('target_visible',       N_STAGES,        0, 1),
-    ('defocus',              _N_STAGES_OTHER, 1, 1),   # 1-pole LP — long exponential tail;
-                                                       # sloppy sensory channel for accommodation
+# ── Per-eye retina state layout ────────────────────────────────────────────────
+# Each eye has its own sharp gamma cascade per signal (N = _N_STAGES_OTHER stages
+# × τ_retina). target_disparity is NOT here — it's a binocular construction
+# computed in perception_cyclopean from delayed per-eye target_pos.
+_RETINA_PER_EYE_LAYOUT = [
+    ('scene_angular_vel', _N_STAGES_OTHER, 3),   # 18
+    ('scene_linear_vel',  _N_STAGES_OTHER, 3),   # 18
+    ('target_pos',        _N_STAGES_OTHER, 3),   # 18
+    ('target_vel',        _N_STAGES_OTHER, 3),   # 18
+    ('scene_visible',     _N_STAGES_OTHER, 1),   #  6
+    ('target_visible',    _N_STAGES_OTHER, 1),   #  6
+    ('defocus',           _N_STAGES_OTHER, 1),   #  6
 ]
 
-def _sig_size(N, N_lp, n_axes):
-    """States = (cascade + LP) × n_axes."""
-    return (N + N_lp) * n_axes
-
-# Compute per-signal sizes and offsets at module load time
-_SIG_SIZES   = {name: _sig_size(N, lp, n) for name, N, lp, n in _SIG_LAYOUT}
-_SIG_OFFSETS = {}
+_RETINA_PER_EYE_SIZES = {name: N * n for name, N, n in _RETINA_PER_EYE_LAYOUT}
+_RETINA_PER_EYE_OFFSETS = {}
 _offset = 0
-for name, N, lp, n in _SIG_LAYOUT:
-    _SIG_OFFSETS[name] = _offset
-    _offset += _SIG_SIZES[name]
-N_STATES = _offset    # total cascade-substate count
+for name, N, n in _RETINA_PER_EYE_LAYOUT:
+    _RETINA_PER_EYE_OFFSETS[name] = _offset
+    _offset += _RETINA_PER_EYE_SIZES[name]
+N_STATES_PER_EYE = _offset   # 90 — sharp cascade states per eye
 
-# Convenience module-level offset constants used by cyclopean_vision.step().
-# Each `_OFF_<SIGNAL>` is the start index of the signal's block in x_vis;
-# the *block* contains [cascade (N×n) | LP (n if has_lp)].
-_OFF_SCENE_ANGULAR_VEL    = _SIG_OFFSETS['scene_angular_vel']
-_OFF_SCENE_LINEAR         = _SIG_OFFSETS['scene_linear_vel']
-_OFF_TARGET_POS           = _SIG_OFFSETS['target_pos']
-_OFF_TARGET_VEL           = _SIG_OFFSETS['target_vel']
-_OFF_TARGET_DISP          = _SIG_OFFSETS['target_disparity']
-_OFF_SCENE_VIS            = _SIG_OFFSETS['scene_visible']
-_OFF_TARGET_VIS           = _SIG_OFFSETS['target_visible']
-_OFF_DEFOCUS              = _SIG_OFFSETS['defocus']
+_RET_OFF_SCENE_ANGULAR_VEL = _RETINA_PER_EYE_OFFSETS['scene_angular_vel']
+_RET_OFF_SCENE_LINEAR      = _RETINA_PER_EYE_OFFSETS['scene_linear_vel']
+_RET_OFF_TARGET_POS        = _RETINA_PER_EYE_OFFSETS['target_pos']
+_RET_OFF_TARGET_VEL        = _RETINA_PER_EYE_OFFSETS['target_vel']
+_RET_OFF_SCENE_VIS         = _RETINA_PER_EYE_OFFSETS['scene_visible']
+_RET_OFF_TARGET_VIS        = _RETINA_PER_EYE_OFFSETS['target_visible']
+_RET_OFF_DEFOCUS           = _RETINA_PER_EYE_OFFSETS['defocus']
 
-# Block-end indices (= offset + size) for slicing each signal's block.
-_END_SCENE_ANGULAR_VEL    = _OFF_SCENE_ANGULAR_VEL    + _SIG_SIZES['scene_angular_vel']
-_END_SCENE_LINEAR         = _OFF_SCENE_LINEAR         + _SIG_SIZES['scene_linear_vel']
-_END_TARGET_POS           = _OFF_TARGET_POS           + _SIG_SIZES['target_pos']
-_END_TARGET_VEL           = _OFF_TARGET_VEL           + _SIG_SIZES['target_vel']
-_END_TARGET_DISP          = _OFF_TARGET_DISP          + _SIG_SIZES['target_disparity']
-_END_SCENE_VIS            = _OFF_SCENE_VIS            + _SIG_SIZES['scene_visible']
-_END_TARGET_VIS           = _OFF_TARGET_VIS           + _SIG_SIZES['target_visible']
-_END_DEFOCUS              = _OFF_DEFOCUS              + _SIG_SIZES['defocus']
+_RET_END_SCENE_ANGULAR_VEL = _RET_OFF_SCENE_ANGULAR_VEL + _RETINA_PER_EYE_SIZES['scene_angular_vel']
+_RET_END_SCENE_LINEAR      = _RET_OFF_SCENE_LINEAR      + _RETINA_PER_EYE_SIZES['scene_linear_vel']
+_RET_END_TARGET_POS        = _RET_OFF_TARGET_POS        + _RETINA_PER_EYE_SIZES['target_pos']
+_RET_END_TARGET_VEL        = _RET_OFF_TARGET_VEL        + _RETINA_PER_EYE_SIZES['target_vel']
+_RET_END_SCENE_VIS         = _RET_OFF_SCENE_VIS         + _RETINA_PER_EYE_SIZES['scene_visible']
+_RET_END_TARGET_VIS        = _RET_OFF_TARGET_VIS        + _RETINA_PER_EYE_SIZES['target_visible']
+_RET_END_DEFOCUS           = _RET_OFF_DEFOCUS           + _RETINA_PER_EYE_SIZES['defocus']
 
-# Legacy alias for code that still references the old "120 states per 3-D signal"
-# constant — only target_pos still has this size.
-_N_PER_SIG    = N_STAGES * 3        # 120 (target_pos block size)
-_N_SCALAR     = _N_STAGES_OTHER     # used in retina geometry below for scaling — keeps
-                                    # the visual-field gate sigmoid the same as before
+_N_SCALAR = _N_STAGES_OTHER     # used in retina geometry below for scaling — keeps
+                                # the visual-field gate sigmoid the same as before
+
+# Backward-compat alias for legacy code (efference_copy.py) that hardcodes the
+# 40-stage 3-axis cascade size.
+_N_PER_SIG = N_STAGES * 3       # 120
 
 
-def _make_C_last_n(end_idx, n_axes):
-    """Read-off matrix that selects the LAST n_axes elements of a signal block.
+# ── Sensor saturation ───────────────────────────────────────────────────────────
 
-    For signals with LP: last n_axes states = LP states (the smoothed output).
-    For signals without LP (target_pos): last n_axes states = last cascade stage.
-    Either way, this is the channel's "current observed value".
+def velocity_saturation(v, v_sat, v_zero=None, v_offset=None):
+    """Smooth velocity saturation: passes at low speed, gain ramps to zero at high speed.
+
+    Models NOT/AOS / MT-MST firing-rate ceiling — neurons are band-pass tuned
+    for speed and stop firing for implausibly fast retinal motion.
+
+        |v| ≤ v_sat          → output = v           (gain = 1)
+        v_sat < |v| < v_zero → output = v · gain    (cosine rolloff, 1 → 0)
+        |v| ≥ v_zero         → output = 0           (gain = 0)
+
+    Args:
+        v:        (N,) velocity vector (deg/s); norm computed over the full vector
+        v_sat:    saturation onset (deg/s) — gain is exactly 1 below this
+        v_zero:   speed where gain reaches 0 (deg/s); default = 2 × v_sat
+        v_offset: (N,) background velocity to shift the clip window (deg/s)
+
+    Returns:
+        Same shape as v, scaled by smooth gain ∈ [0, 1], plus v_offset if given.
     """
-    C = jnp.zeros((n_axes, N_STATES))
-    for i in range(n_axes):
-        C = C.at[i, end_idx - n_axes + i].set(1.0)
-    return C
-
-
-# ── Readout matrices ────────────────────────────────────────────────────────────
-# Exported so sensory_model / efference_copy can read cascade outputs directly.
-
-C_slip             = _make_C_last_n(_END_SCENE_ANGULAR_VEL, 3)
-C_scene_linear_vel = _make_C_last_n(_END_SCENE_LINEAR,      3)
-C_pos              = _make_C_last_n(_END_TARGET_POS,        3)
-C_vel              = _make_C_last_n(_END_TARGET_VEL,        3)
-C_target_disp      = _make_C_last_n(_END_TARGET_DISP,       3)
-C_scene_visible    = _make_C_last_n(_END_SCENE_VIS,         1)
-C_target_visible   = _make_C_last_n(_END_TARGET_VIS,        1)
-C_defocus          = _make_C_last_n(_END_DEFOCUS,           1)
+    if v_zero is None:
+        v_zero = 2.0 * v_sat
+    if v_offset is not None:
+        v_rel = v - v_offset
+    else:
+        v_rel = v
+    speed = jnp.linalg.norm(v_rel)
+    t     = jnp.clip((speed - v_sat) / (v_zero - v_sat), 0.0, 1.0)
+    gain  = 0.5 * (1.0 + jnp.cos(jnp.pi * t))
+    result = v_rel * gain
+    if v_offset is not None:
+        result = result + v_offset
+    return result
 
 
 # ── Coordinate helpers ──────────────────────────────────────────────────────────
@@ -415,5 +408,128 @@ def cascade_lp_step(x_block, u, tau_sharp, tau_smooth, N, n_axes, N_lp):
     x_lp = x_block[n_cascade : n_cascade + N_lp * n_axes]
     dx_lp = delay_cascade_step(x_lp, cascade_out, tau_smooth, N=N_lp)
     return jnp.concatenate([dx_cascade, dx_lp])
+
+
+# ── Per-eye retina step ─────────────────────────────────────────────────────────
+
+from typing import NamedTuple
+
+
+class RetinaOut(NamedTuple):
+    """Per-eye delayed retinal signals after the sharp gamma cascade.
+
+    All signals are in EYE FRAME at the delayed time (≈ τ_retina ago). Field
+    order matches the cascade state-block layout for consistency. Read into
+    perception_cyclopean for binocular fusion + brain LP smoothing.
+    """
+    scene_angular_vel: jnp.ndarray  # (3,) [yaw, pitch, roll] (deg/s) — gated by scene_visible + saturated
+    scene_linear_vel:  jnp.ndarray  # (3,) [x, y, z] (m/s, head frame, per-eye) — gated by scene_visible
+    target_pos:        jnp.ndarray  # (3,) [yaw, pitch, 0] (deg) — gated by target_visible
+    target_vel:        jnp.ndarray  # (3,) [yaw, pitch, 0] (deg/s) — gated by target_motion_vis + saturated
+    scene_visible:     jnp.ndarray  # scalar — delayed scene_present
+    target_visible:    jnp.ndarray  # scalar — delayed target_present × target_in_vf (NOT strobe-gated)
+    defocus:           jnp.ndarray  # scalar — delayed defocus (D)
+
+
+def step(x_retina_eye,
+         eye_offset_head, q_head, w_head, x_head, v_head,
+         q_eye, w_eye,
+         w_scene, v_scene, p_target, dp_dt,
+         defocus_eye,
+         scene_present, target_present, target_strobed,
+         sensory_params):
+    """Per-eye retina step: world_to_retina + sensor saturation + sharp cascade.
+
+    Each eye runs an independent sharp gamma cascade (N = _N_STAGES_OTHER stages
+    × τ_retina). Binocular fusion happens downstream in perception_cyclopean,
+    so this function knows nothing about the other eye.
+
+    Args:
+        x_retina_eye:    (N_STATES_PER_EYE,) per-eye retina cascade state
+        eye_offset_head: (3,) this eye's anatomical offset in head frame (m)
+        q_head, w_head, x_head, v_head: head pose / velocity (world frame)
+        q_eye, w_eye:    eye pose / velocity (head frame)
+        w_scene, v_scene, p_target, dp_dt: world-frame scene / target stimulus
+        defocus_eye:     scalar — instantaneous per-eye defocus (D)
+        scene_present, target_present: scalar visibility flags (this eye)
+        target_strobed:  scalar global strobe gate; (1−strobed) gates target_vel only
+        sensory_params:  SensoryParams — reads tau_vis_sharp, v_max_scene_vel,
+                         v_max_target_vel, visual_field_limit, k_visual_field
+
+    Returns:
+        dx_retina_eye: (N_STATES_PER_EYE,) state derivative
+        retina_out:    RetinaOut bundle of delayed per-eye signals
+    """
+    # ── 1. Geometry — world_to_retina projection ─────────────────────────────
+    target_pos, scene_angular_vel, scene_linear_vel, target_vel, scene_vis, target_vis = \
+        world_to_retina(
+            p_target, eye_offset_head, q_head, w_head, x_head, v_head,
+            q_eye, w_eye, w_scene, v_scene, dp_dt,
+            scene_present, target_present,
+            sensory_params.visual_field_limit, sensory_params.k_visual_field,
+        )
+
+    # ── 2. Per-eye gating + sensor saturation ────────────────────────────────
+    # Strobe gate: only target_vel sees it (so SG still sees target_visible during
+    # strobed pursuit and can re-target accurately).
+    target_motion_vis  = target_vis * (1.0 - target_strobed)
+    scene_angular_in   = velocity_saturation(scene_angular_vel * scene_vis, sensory_params.v_max_scene_vel)
+    target_vel_in      = velocity_saturation(target_vel * target_motion_vis, sensory_params.v_max_target_vel)
+    scene_linear_in    = scene_linear_vel * scene_vis
+    target_pos_in      = target_pos * target_vis
+    defocus_in         = defocus_eye
+
+    # ── 3. Slice per-eye cascade state ───────────────────────────────────────
+    x_scene_ang  = x_retina_eye[_RET_OFF_SCENE_ANGULAR_VEL : _RET_END_SCENE_ANGULAR_VEL]
+    x_scene_lin  = x_retina_eye[_RET_OFF_SCENE_LINEAR      : _RET_END_SCENE_LINEAR]
+    x_target_pos = x_retina_eye[_RET_OFF_TARGET_POS        : _RET_END_TARGET_POS]
+    x_target_vel = x_retina_eye[_RET_OFF_TARGET_VEL        : _RET_END_TARGET_VEL]
+    x_scene_vis  = x_retina_eye[_RET_OFF_SCENE_VIS         : _RET_END_SCENE_VIS]
+    x_target_vis = x_retina_eye[_RET_OFF_TARGET_VIS        : _RET_END_TARGET_VIS]
+    x_defocus    = x_retina_eye[_RET_OFF_DEFOCUS           : _RET_END_DEFOCUS]
+
+    # ── 4. Advance sharp cascades (N stages × τ_retina, per signal) ──────────
+    tau_retina = sensory_params.tau_vis_sharp
+    N          = _N_STAGES_OTHER
+    dx_scene_ang  = delay_cascade_step(x_scene_ang,  scene_angular_in, tau_retina, N=N)
+    dx_scene_lin  = delay_cascade_step(x_scene_lin,  scene_linear_in,  tau_retina, N=N)
+    dx_target_pos = delay_cascade_step(x_target_pos, target_pos_in,    tau_retina, N=N)
+    dx_target_vel = delay_cascade_step(x_target_vel, target_vel_in,    tau_retina, N=N)
+    dx_scene_vis  = delay_cascade_step(x_scene_vis,  scene_vis,        tau_retina, N=N)
+    dx_target_vis = delay_cascade_step(x_target_vis, target_vis,       tau_retina, N=N)
+    dx_defocus    = delay_cascade_step(x_defocus,    defocus_in,       tau_retina, N=N)
+
+    dx_retina_eye = jnp.concatenate([
+        dx_scene_ang, dx_scene_lin, dx_target_pos, dx_target_vel,
+        dx_scene_vis, dx_target_vis, dx_defocus,
+    ])
+
+    # ── 5. Read delayed signals (last n_axes of each cascade) ────────────────
+    out = RetinaOut(
+        scene_angular_vel = x_scene_ang[-3:],
+        scene_linear_vel  = x_scene_lin[-3:],
+        target_pos        = x_target_pos[-3:],
+        target_vel        = x_target_vel[-3:],
+        scene_visible     = x_scene_vis[-1],
+        target_visible    = x_target_vis[-1],
+        defocus           = x_defocus[-1],
+    )
+    return dx_retina_eye, out
+
+
+def read_outputs(x_retina_eye):
+    """Pure state readout — returns RetinaOut from a per-eye cascade state.
+
+    Last n_axes of each block = sharp-cascade output (delayed per-eye signal).
+    """
+    return RetinaOut(
+        scene_angular_vel = x_retina_eye[_RET_END_SCENE_ANGULAR_VEL - 3 : _RET_END_SCENE_ANGULAR_VEL],
+        scene_linear_vel  = x_retina_eye[_RET_END_SCENE_LINEAR      - 3 : _RET_END_SCENE_LINEAR],
+        target_pos        = x_retina_eye[_RET_END_TARGET_POS        - 3 : _RET_END_TARGET_POS],
+        target_vel        = x_retina_eye[_RET_END_TARGET_VEL        - 3 : _RET_END_TARGET_VEL],
+        scene_visible     = x_retina_eye[_RET_END_SCENE_VIS         - 1],
+        target_visible    = x_retina_eye[_RET_END_TARGET_VIS        - 1],
+        defocus           = x_retina_eye[_RET_END_DEFOCUS           - 1],
+    )
 
 
