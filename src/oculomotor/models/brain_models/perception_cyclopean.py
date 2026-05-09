@@ -135,25 +135,42 @@ def binocular_fusion_policy(target_pos_L, target_vel_L, target_vis_L,
     bino_raw = target_vis_L * target_vis_R
     raw_disp = bino_raw * (target_pos_L - target_pos_R)
 
+    # Horizontal: demand-based gates (physical eye-rotation limits).  The brain
+    # commands vergence; gates close when the required eye position exceeds
+    # the convergence (NPC) or divergence range — an EYE-position constraint.
     total_demand_h = raw_disp[0] + ec_verg[0]
-    total_demand_v = raw_disp[1] + ec_verg[1]
-    total_demand_t = raw_disp[2] + ec_verg[2]
     gate_conv = jax.nn.sigmoid(100.0 * (brain_params.npc      - total_demand_h))
-    gate_div  = jax.nn.sigmoid(100.0 * (brain_params.div_max  + total_demand_h ))
-    gate_vert = jax.nn.sigmoid(100.0 * (brain_params.vert_max - jnp.abs(total_demand_v)))
-    gate_tors = jax.nn.sigmoid(100.0 * (brain_params.tors_max - jnp.abs(total_demand_t)))
+    gate_div  = jax.nn.sigmoid(100.0 * (brain_params.div_max  + total_demand_h))
 
-    # Motor-integrity gate (tropia model).  Per-eye weakest link across the
-    # horizontal motor pathways; the overall gate is the product, so any one
-    # eye being motorically compromised blocks fusion.
-    #   L eye yaw: ABN_L motoneurons → LR_L; AIN_R → MR_L via left  MLF; CN3_MR_L
-    #   R eye yaw: ABN_R motoneurons → LR_R; AIN_L → MR_R via right MLF; CN3_MR_R
+    # Vertical & torsional: disparity-based gates (neural fusion reserves).
+    # The brain has only ~2-3° vertical and ~5-8° torsional vergence range —
+    # if raw retinal disparity exceeds this, no fusion is attempted regardless
+    # of whether the eyes COULD in principle align.  This is what makes a
+    # tonic vertical/torsional tropia (e.g. CN IV) suppress fusion.
+    gate_vert = jax.nn.sigmoid(100.0 * (brain_params.vert_max - jnp.abs(raw_disp[1])))
+    gate_tors = jax.nn.sigmoid(100.0 * (brain_params.tors_max - jnp.abs(raw_disp[2])))
+
+    # Motor-integrity gate (tropia model).  Per-eye weakest link across ALL
+    # motor pathways for that eye — every nerve, every nucleus driving any of
+    # its 6 muscles, plus the MLF input to MR.  Any one of them dropping
+    # suppresses fusion.  This catches vertical / torsional muscle palsies
+    # (CN III, CN IV) that are missed by the horizontal-only check.
+    #   L eye nuclei: ABN_L (LR), CN3_MR_L, CN3_SR_L, CN3_IR_L, CN3_IO_L,
+    #                 CN4_R (drives SO_L contralaterally)
+    #   R eye nuclei: ABN_R (LR), CN3_MR_R, CN3_SR_R, CN3_IR_R, CN3_IO_R,
+    #                 CN4_L (drives SO_R contralaterally)
     g_nuc = brain_params.g_nucleus
     g_nrv = brain_params.g_nerve
-    motor_L = jnp.minimum(jnp.minimum(g_nuc[0], g_nuc[4]),                       # ABN_L, CN3_MR_L
-              jnp.minimum(jnp.minimum(g_nrv[0], g_nrv[1]), brain_params.g_mlf_L))  # LR_L, MR_L, left MLF
-    motor_R = jnp.minimum(jnp.minimum(g_nuc[1], g_nuc[5]),                       # ABN_R, CN3_MR_R
-              jnp.minimum(jnp.minimum(g_nrv[6], g_nrv[7]), brain_params.g_mlf_R))  # LR_R, MR_R, right MLF
+    motor_L = jnp.min(jnp.array([
+        g_nuc[0], g_nuc[3], g_nuc[4], g_nuc[6], g_nuc[8], g_nuc[10],   # nuclei: ABN_L, CN4_R, CN3_{MR,SR,IR,IO}_L
+        g_nrv[0], g_nrv[1], g_nrv[2], g_nrv[3], g_nrv[4], g_nrv[5],     # nerves: 6 L-eye muscles
+        brain_params.g_mlf_L,
+    ]))
+    motor_R = jnp.min(jnp.array([
+        g_nuc[1], g_nuc[2], g_nuc[5], g_nuc[7], g_nuc[9], g_nuc[11],   # nuclei: ABN_R, CN4_L, CN3_{MR,SR,IR,IO}_R
+        g_nrv[6], g_nrv[7], g_nrv[8], g_nrv[9], g_nrv[10], g_nrv[11],   # nerves: 6 R-eye muscles
+        brain_params.g_mlf_R,
+    ]))
     # Sharp transition around 0.5: full integrity → 1, half integrity → 0.5,
     # ≤0.3 → essentially 0.  Clinically partial palsy still tries to fuse a
     # little; severe palsy gives up.

@@ -67,10 +67,29 @@ import numpy as np
 import jax.numpy as jnp
 
 
-# ── Orbital angles ─────────────────────────────────────────────────────────────
+# ── Per-muscle rotation-axis components ───────────────────────────────────────
+# Each row of M_NERVE is the rotation-axis-per-unit-firing for one muscle, in
+# [yaw, pitch, roll] coords.  These are NOT the muscle pulling directions —
+# they're the eye's rotation axis when that muscle contracts, derived from
+# R × F (insertion position × force vector) biomechanics.  Specified
+# directly per Robinson 1975 / Tweed & Vilis 1998.
+#
+# Vertical recti (SR, IR): insert ~7 mm in front of equator, pull posteriorly
+# with small nasal tilt (α_VR ≈ 23° from sagittal).  R × F gives a rotation
+# axis dominated by the lateral component → strong vertical action with
+# small torsion as a secondary effect.  Approx pitch:roll ≈ 0.92:0.39.
+_VR_PITCH = float(np.cos(np.radians(23.0)))   # 0.92  primary vertical action
+_VR_ROLL  = float(np.sin(np.radians(23.0)))   # 0.39  secondary torsion
 
-_ALPHA_VR  = np.radians(23.0)   # vertical recti: nasal tilt from sagittal plane
-_ALPHA_OBL = np.radians(54.0)   # obliques: angle from sagittal after trochlea/pulley
+# Obliques (SO, IO): insert behind the equator on the superior-temporal /
+# inferior-temporal sclera and pull anteriorly toward the trochlea / orbital
+# floor.  Different insertion/pull geometry → R × F is dominantly along the
+# AP axis (z), so the rotation axis is mostly torsional with small vertical
+# action.  Robinson 1975 / Tweed & Vilis 1998: pitch ≈ 0.18, roll ≈ 0.98.
+# These cannot be obtained from the same `sin α / cos α` formula as the
+# vertical recti — the cross-product geometry is fundamentally different.
+_OBL_PITCH = 0.18    # secondary vertical action (depression for SO, elevation for IO)
+_OBL_ROLL  = 0.98    # primary torsional action (intorsion for SO, extorsion for IO)
 
 
 # ── Per-eye muscle geometry  M_NERVE_{L,R}  (6 × 3) ──────────────────────────
@@ -78,12 +97,12 @@ _ALPHA_OBL = np.radians(54.0)   # obliques: angle from sagittal after trochlea/p
 # Columns: [yaw, pitch, roll]
 
 _M_NERVE_R_np = np.array([
-    [+1.0,                   0.0,                   0.0             ],  # LR: abduction
-    [-1.0,                   0.0,                   0.0             ],  # MR: adduction
-    [ 0.0, +np.cos(_ALPHA_VR),  -np.sin(_ALPHA_VR) ],  # SR: elevation + intorsion
-    [ 0.0, -np.cos(_ALPHA_VR),  +np.sin(_ALPHA_VR) ],  # IR: depression + extorsion
-    [ 0.0, -np.sin(_ALPHA_OBL), -np.cos(_ALPHA_OBL)],  # SO: depression + intorsion (CN IV)
-    [ 0.0, +np.sin(_ALPHA_OBL), +np.cos(_ALPHA_OBL)],  # IO: elevation + extorsion
+    [+1.0,         0.0,         0.0       ],  # LR: pure abduction
+    [-1.0,         0.0,         0.0       ],  # MR: pure adduction
+    [ 0.0, +_VR_PITCH, -_VR_ROLL ],  # SR: dominant elevation + small intorsion
+    [ 0.0, -_VR_PITCH, +_VR_ROLL ],  # IR: dominant depression + small extorsion
+    [ 0.0, -_OBL_PITCH, -_OBL_ROLL],  # SO: dominant intorsion + small depression (CN IV)
+    [ 0.0, +_OBL_PITCH, +_OBL_ROLL],  # IO: dominant extorsion + small elevation
 ], dtype=np.float32)
 
 # Left eye: mirror yaw (col 0) and roll (col 2)

@@ -37,7 +37,14 @@ from oculomotor import __version__ as _SIM_VERSION
 from oculomotor.llm_pipeline.scenario import SimulationScenario, SimulationComparison
 from oculomotor.llm_pipeline.runner import run_scenario, run_comparison
 from oculomotor.llm_pipeline.simulate import call_llm
+from oculomotor.llm_pipeline.patient_builder import Patient as _PatientCls
 from gen_admin import generate as _gen_admin
+
+# YAML schema used to enrich patient-change diffs with anatomy / disorders.
+import yaml as _yaml
+_SCHEMA_PATH = Path(__file__).parent.parent / 'docs' / 'parameters_schema.yaml'
+with open(_SCHEMA_PATH, encoding='utf-8') as _f:
+    _PARAM_SCHEMA = _yaml.safe_load(_f) or {}
 
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
@@ -126,6 +133,7 @@ class RunResponse(BaseModel):
     version:          str
     eye_trajectory:   dict | None = None   # single mode: one trajectory
     eye_trajectories: list | None = None   # comparison mode: one per scenario (with 'label' field)
+    patient_changes:  list | None = None   # single mode: list of changed parameters w/ metadata
 
 
 class FeedbackRequest(BaseModel):
@@ -180,6 +188,71 @@ def _build_eye_trajectory(sim_data: dict, fps: int = 60) -> dict | None:
     )
 
 
+# ── Patient-changes diff (LLM overrides vs healthy defaults) ──────────────────
+
+def _looks_changed(value, default) -> bool:
+    """Robust equality test for scalars + lists, tolerating float drift."""
+    if isinstance(value, list) or isinstance(default, list):
+        v = list(value) if isinstance(value, (list, tuple)) else [value]
+        d = list(default) if isinstance(default, (list, tuple)) else [default]
+        if len(v) != len(d):
+            return True
+        return any(abs(float(a) - float(b)) > 1e-9 for a, b in zip(v, d))
+    try:
+        return abs(float(value) - float(default)) > 1e-9
+    except (TypeError, ValueError):
+        return value != default
+
+
+def _format_disorders(disorders):
+    if not disorders:
+        return []
+    return [
+        {'name': d.get('name', '?'), 'value': d.get('value', ''), 'tag': d.get('tag', 'other')}
+        for d in disorders
+    ]
+
+
+def _find_schema_entry(field_name: str) -> dict:
+    """Locate the YAML entry for a Patient field, trying brain/sensory/plant."""
+    for prefix in ('brain', 'sensory', 'plant'):
+        key = f'{prefix}.{field_name}'
+        if key in _PARAM_SCHEMA:
+            return _PARAM_SCHEMA[key]
+    return {}
+
+
+def _build_patient_changes(patient) -> list[dict]:
+    """Diff the LLM-set Patient against defaults; enrich with YAML metadata.
+
+    Returns a list of dicts (only changed parameters) for the avatar page to
+    render, mirroring the parameters.html column structure but with explicit
+    default→value diff so users see exactly what the LLM tweaked.
+    """
+    default_patient = _PatientCls()
+    changes = []
+    for fname in _PatientCls.model_fields:
+        try:
+            value   = getattr(patient, fname)
+            default = getattr(default_patient, fname)
+        except AttributeError:
+            continue
+        if not _looks_changed(value, default):
+            continue
+        entry = _find_schema_entry(fname)
+        changes.append({
+            'name':        fname,
+            'default':     default,
+            'value':       value,
+            'units':       entry.get('units', ''),
+            'description': (entry.get('description') or '').strip(),
+            'anatomy':     entry.get('anatomy', ''),
+            'disorders':   _format_disorders(entry.get('disorders', [])),
+            'group':       entry.get('group', 'ungrouped'),
+        })
+    return changes
+
+
 # ── API endpoints ─────────────────────────────────────────────────────────────
 
 @app.get('/version')
@@ -207,13 +280,16 @@ async def run_endpoint(req: RunRequest):
                 traj = _build_eye_trajectory(sd)
                 if traj is not None:
                     traj['label'] = scenario.description
+                    traj['patient_changes'] = _build_patient_changes(scenario.patient)
                     eye_trajectories.append(traj)
+            patient_changes = None   # per-scenario, attached on each entry
         else:
             fig, sim_data = run_scenario(result, return_data=True)
             title            = result.description
             mode             = 'single'
             detail           = result.model_dump()
             eye_trajectories = []
+            patient_changes  = _build_patient_changes(result.patient)
 
         # Save figure to disk
         fig_name = f'{run_id}.png'
@@ -253,6 +329,7 @@ async def run_endpoint(req: RunRequest):
             version          = _SIM_VERSION,
             eye_trajectory   = _build_eye_trajectory(sim_data) if mode == 'single' else None,
             eye_trajectories = eye_trajectories if mode == 'comparison' else None,
+            patient_changes  = patient_changes,
         )
 
     except Exception as e:

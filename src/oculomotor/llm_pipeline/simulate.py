@@ -261,21 +261,40 @@ All defaults match the healthy model. Only specify parameters that differ from h
 
 ### Cranial nerve and MLF lesions — use ONLY the parameters below, not VN/cerebellar params
 
-**g_nucleus** — 12-element list [0=paralysed, 1=intact]:
+The final common pathway has THREE distinct lesion types, each with different physiology:
+
+**g_nucleus** (12-element list [0..1]) — multiplicative cell-loss gain.
+  Models cell death in a motor nucleus; ALL frequencies attenuated equally
+  (burst AND tonic AND baseline tone).  Indices:
   [ABN_L, ABN_R, CN4_L, CN4_R, CN3_MR_L, CN3_MR_R, CN3_SR_L, CN3_SR_R, CN3_IR_L, CN3_IR_R, CN3_IO_L, CN3_IO_R]
-  ABN gain covers BOTH ipsilateral LR motoneurons AND the MLF outflow to contralateral MR
-  (intermingled populations).  CN VI nucleus palsy → horizontal gaze palsy to that side.
+  ABN gain covers BOTH ipsilateral LR motoneurons AND the AIN/MLF outflow to contralateral MR
+  (intermingled abducens populations) → CN VI nucleus palsy = horizontal gaze palsy.
+  Partial value (e.g. 0.5) automatically produces both saccade slowing AND tonic strabismus
+  via the now-asymmetric baseline — no separate phoria parameter needed.
 
-**g_nerve** — 12-element list [0=paralysed, 1=intact]:
-  Left eye indices 0–5: [LR_L, MR_L, SR_L, IR_L, SO_L, IO_L]
-  Right eye indices 6–11: [LR_R, MR_R, SR_R, IR_R, SO_R, IO_R]
+**g_nerve** (12-element list [0..1]) — axonal CONDUCTION CAP, frequency-selective.
+  Models demyelination / fascicular lesion of the cranial nerve axon.  Burst (high
+  firing rate) is clipped, tonic (low firing rate) gets through → slow saccades but
+  intact fixation hold.  Indices:
+  Left eye 0–5: [LR_L, MR_L, SR_L, IR_L, SO_L, IO_L]  (CN VI/III/III/III/IV/III)
+  Right eye 6–11: [LR_R, MR_R, SR_R, IR_R, SO_R, IO_R]
 
-**g_mlf_L** — float [0–1]. 0 = left INO (left eye cannot adduct on rightward gaze; convergence intact).
-**g_mlf_R** — float [0–1]. 0 = right INO (right eye cannot adduct on leftward gaze; convergence intact).
+**g_mlf_L / g_mlf_R** (scalars [0..1]) — MLF axon CONDUCTION CAP, frequency-selective.
+  AIN motoneurons project across midline through the MLF to contralateral CN3_MR
+  motoneurons.  Conduction block in the MLF blocks fast version drive while
+  preserving tonic vergence drive (delivered via CN3_MR direct, bypassing MLF).
+  g_mlf_L = 0 → left INO (L eye fails to adduct on rightward gaze; convergence intact).
+  g_mlf_R = 0 → right INO.  Both = 0 → bilateral INO (BIMLF).
 
-INO is NOT a vestibular and NOT a cerebellar lesion. Do NOT set b_vs_L/R, canal_gains, tau_i, or
-K_pursuit for INO. The only parameter that changes is g_mlf_L or g_mlf_R.
-Complete patient block for left INO: `"patient": { "g_mlf_L": 0.0 }`
+**r_baseline** (12-element list, default [50]·12, deg/s) — per-nucleus tonic baseline.
+  Default symmetric baselines are invisible at the plant (zero-sum decode); ASYMMETRIC
+  values produce tonic strabismus directly (no lesion required).  Indices match g_nucleus.
+  Examples:  [50,80,…] = right exotropia (extra LR_R tone);
+             [50,50,50,50,50,80,…] = right esotropia (extra MR_R tone).
+
+**Important:** INO is NOT a vestibular and NOT a cerebellar lesion. Do NOT set b_vs_L/R,
+canal_gains, tau_i, or K_pursuit for INO. The only parameters that change are g_mlf_L
+or g_mlf_R.  Complete patient block for left INO: `"patient": { "g_mlf_L": 0.0 }`
 
 The table below maps all conditions to parameters — use it:
 
@@ -298,11 +317,16 @@ The table below maps all conditions to parameters — use it:
 | Left INO | g_mlf_L=0.0 |
 | Right INO | g_mlf_R=0.0 |
 | Bilateral INO | g_mlf_L=0.0, g_mlf_R=0.0 |
+| Partial INO (recovering) | g_mlf_L=0.5  (or g_mlf_R=0.5) |
 | CN VI nerve palsy (R) | g_nerve=[1,1,1,1,1,1,0,1,1,1,1,1] |
 | CN VI nucleus palsy (R) → horizontal gaze palsy R | g_nucleus=[1,0,1,1,1,1,1,1,1,1,1,1] |
+| Partial CN VI nucleus (R) → eso + slow saccades | g_nucleus=[1,0.5,1,1,1,1,1,1,1,1,1,1] |
 | CN III nerve palsy (R) | g_nerve=[1,1,1,1,1,1,1,0,0,0,1,0] |
-| CN IV nerve palsy (R) | g_nerve=[1,1,1,1,1,1,1,1,1,1,0,1] |
+| CN IV nerve palsy (R) → R hypertropia | g_nerve=[1,1,1,1,1,1,1,1,1,1,0,1] |
 | Partial CN VI palsy (recovering) | g_nerve=[1,1,1,1,1,1,0.4,1,1,1,1,1] |
+| Right exotropia (extra LR_R tone) | r_baseline=[50,80,50,50,50,50,50,50,50,50,50,50] |
+| Right esotropia (extra MR_R tone) | r_baseline=[50,50,50,50,50,80,50,50,50,50,50,50] |
+| Right hypertropia (extra SR_R tone) | r_baseline=[50,50,50,50,50,50,50,80,50,50,50,50] |
 
 For INO stimulus: rightward saccade for left INO, leftward for right INO.
 Panels: ['eye_position', 'eye_velocity'].

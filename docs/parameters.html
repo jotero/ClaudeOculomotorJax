@@ -57,6 +57,12 @@ tr:last-child { border-bottom: none; }
 .review      { display: inline-block; padding: 2px 7px; border-radius: 10px;
                font-size: 10px; font-weight: 600; background: #d1ecf1;
                color: #0c5460; margin-left: 8px; }
+.llm-tag     { display: inline-block; padding: 2px 7px; border-radius: 10px;
+               font-size: 10px; font-weight: 700; background: #d4edda;
+               color: #155724; margin-left: 8px;
+               cursor: help; }
+.range-cell  { font-family: 'SF Mono', Consolas, monospace; font-size: 11px;
+               color: #555; white-space: nowrap; }
 .warning     { background: #fff3cd; border-left: 4px solid #f6c90e;
                padding: 10px 14px; border-radius: 4px; font-size: 12px;
                margin-bottom: 18px; color: #856404; }
@@ -76,24 +82,26 @@ tr:last-child { border-bottom: none; }
   <nav>
     <h2>Sections</h2>
     <a href="#brainparams">BrainParams</a>
-    <a href="#brainparams-self_motion_estimation" style="padding-left:32px;font-size:11px;color:#aaa">Self Motion Estimation <span style="color:#666">(18)</span></a>
+    <a href="#brainparams-self_motion_estimation" style="padding-left:32px;font-size:11px;color:#aaa">Self Motion Estimation <span style="color:#666">(17)</span></a>
+    <a href="#brainparams-ungrouped" style="padding-left:32px;font-size:11px;color:#aaa">Ungrouped <span style="color:#666">(15)</span></a>
     <a href="#brainparams-neural_integrator" style="padding-left:32px;font-size:11px;color:#aaa">Neural Integrator <span style="color:#666">(7)</span></a>
+    <a href="#brainparams-binocular" style="padding-left:32px;font-size:11px;color:#aaa">Binocular <span style="color:#666">(5)</span></a>
     <a href="#brainparams-saccade_generator" style="padding-left:32px;font-size:11px;color:#aaa">Saccade Generator <span style="color:#666">(29)</span></a>
-    <a href="#brainparams-ungrouped" style="padding-left:32px;font-size:11px;color:#aaa">Ungrouped <span style="color:#666">(3)</span></a>
     <a href="#brainparams-listing" style="padding-left:32px;font-size:11px;color:#aaa">Listing <span style="color:#666">(2)</span></a>
     <a href="#brainparams-pursuit" style="padding-left:32px;font-size:11px;color:#aaa">Pursuit <span style="color:#666">(4)</span></a>
     <a href="#brainparams-vergence" style="padding-left:32px;font-size:11px;color:#aaa">Vergence <span style="color:#666">(12)</span></a>
     <a href="#brainparams-tvor" style="padding-left:32px;font-size:11px;color:#aaa">Tvor <span style="color:#666">(6)</span></a>
     <a href="#brainparams-accommodation" style="padding-left:32px;font-size:11px;color:#aaa">Accommodation <span style="color:#666">(9)</span></a>
-    <a href="#brainparams-final_common_pathway" style="padding-left:32px;font-size:11px;color:#aaa">Final Common Pathway <span style="color:#666">(4)</span></a>
+    <a href="#brainparams-final_common_pathway" style="padding-left:32px;font-size:11px;color:#aaa">Final Common Pathway <span style="color:#666">(6)</span></a>
     <div style="height:8px"></div>
     <a href="#sensoryparams">SensoryParams</a>
     <a href="#sensoryparams-canals" style="padding-left:32px;font-size:11px;color:#aaa">Canals <span style="color:#666">(4)</span></a>
+    <a href="#sensoryparams-self_motion_estimation" style="padding-left:32px;font-size:11px;color:#aaa">Self Motion Estimation <span style="color:#666">(1)</span></a>
     <a href="#sensoryparams-otolith" style="padding-left:32px;font-size:11px;color:#aaa">Otolith <span style="color:#666">(1)</span></a>
     <a href="#sensoryparams-visual" style="padding-left:32px;font-size:11px;color:#aaa">Visual <span style="color:#666">(5)</span></a>
-    <a href="#sensoryparams-ungrouped" style="padding-left:32px;font-size:11px;color:#aaa">Ungrouped <span style="color:#666">(4)</span></a>
     <a href="#sensoryparams-noise" style="padding-left:32px;font-size:11px;color:#aaa">Noise <span style="color:#666">(5)</span></a>
-    <a href="#sensoryparams-binocular" style="padding-left:32px;font-size:11px;color:#aaa">Binocular <span style="color:#666">(6)</span></a>
+    <a href="#sensoryparams-ungrouped" style="padding-left:32px;font-size:11px;color:#aaa">Ungrouped <span style="color:#666">(3)</span></a>
+    <a href="#sensoryparams-binocular" style="padding-left:32px;font-size:11px;color:#aaa">Binocular <span style="color:#666">(1)</span></a>
     <div style="height:8px"></div>
     <a href="#plantparams">PlantParams</a>
     <a href="#plantparams-plant" style="padding-left:32px;font-size:11px;color:#aaa">Plant <span style="color:#666">(3)</span></a>
@@ -106,34 +114,36 @@ tr:last-child { border-bottom: none; }
   <main>
     <h1>OculomotorJax — Parameter Reference</h1>
     <p class="meta">
-      Generated: <strong>2026-05-05 17:43</strong> &nbsp;|&nbsp;
-      Version: <strong>37fd6fc-dirty</strong> &nbsp;|&nbsp;
+      Generated: <strong>2026-05-09 04:58</strong> &nbsp;|&nbsp;
+      Version: <strong>88db8fa-dirty</strong> &nbsp;|&nbsp;
       Schema: <strong>D:\OneDrive\UC Berkeley\OMlab - JOM\Code\ClaudeOculomotorJax\docs\parameters_schema.yaml</strong>
     </p>
     <input id="search" type="search" placeholder="Search parameters by name, description, anatomy, disorder…" autofocus>
     <div id="match-count" class="match-count"></div>
-    <div class="warning"><b>7 fields lack schema entries</b> and are flagged TODO below. Add to <code>docs/parameters_schema.yaml</code> to provide rich descriptions, anatomy, and disorder tags.</div>
+    <div class="warning"><b>18 fields lack schema entries</b> and are flagged TODO below. Add to <code>docs/parameters_schema.yaml</code> to provide rich descriptions, anatomy, and disorder tags.</div><div class="warning"><b>2 stale schema entries</b> do not match any current field: <code>brain.b_vs_L, brain.b_vs_R</code>. Remove from YAML or rename to match the current code.</div>
     
   <section class="section" id="brainparams">
-    <h2>BrainParams <small style="font-size:12px;font-weight:400;color:#888">(94 fields)</small></h2>
+    <h2>BrainParams <small style="font-size:12px;font-weight:400;color:#888">(112 fields)</small></h2>
     <p class="desc">Central neural model parameters — VS, NI, SG, gravity, vergence, accommodation, T-VOR, OCR, CN/MLF gains. Read by every brain submodule's <code>step()</code>.</p>
     
     <div class="subsection" id="brainparams-self_motion_estimation">
-      <h3>Self Motion Estimation <small style="font-size:11px;font-weight:400;color:#888">(18 fields)</small></h3>
+      <h3>Self Motion Estimation <small style="font-size:11px;font-weight:400;color:#888">(17 fields)</small></h3>
       <table class="param-table">
         <thead><tr>
           <th style="width:160px">Parameter</th>
           <th style="width:90px">Default</th>
           <th style="width:60px">Units</th>
+          <th style="width:110px">Valid range</th>
           <th>Description</th>
           <th style="width:170px">Anatomical locus</th>
           <th style="width:200px">Disorders / notable values</th>
         </tr></thead>
         <tbody>
         <tr>
-          <td class="param-name">tau_vs</td>
+          <td class="param-name">tau_vs<span class="llm-tag" title="Exposed in the LLM Patient schema">LLM</span></td>
           <td><span class="default">20</span></td>
           <td class="units">s</td>
+          <td class="range-cell">[0, +∞]</td>
           <td class="desc-cell"><p>Yaw velocity-storage time constant. Healthy ~20 s monkey, ~15 s human. Determines OKAN decay TC after scene off and post-rotational nystagmus decay in the dark.</p><div class="refs">Raphan, Matsuo & Cohen (1979) · Cohen, Henn, Raphan & Dennett (1981)</div></td>
           <td class="anatomy-cell">MVN, nodulus/uvula</td>
           <td><span class="tag tag-cerebellar">Nodulus/uvula lesion: 1.5</span> <span class="tag tag-vn">Bilateral vestibular loss: 5.0</span></td>
@@ -143,6 +153,7 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">tau_vs_pitch_frac</td>
           <td><span class="default">1</span></td>
           <td class="units">—</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>Pitch VS TC = tau_vs × this fraction. Default 1.0 (yaw and pitch held equally well in the model). Literature suggests pitch may be slightly leakier than yaw (Hess & Dieringer 1991: ~5–10 s vs ~15–20 s yaw).</p><div class="refs">Hess & Dieringer (1991) · Angelaki & Henn (2000)</div></td>
           <td class="anatomy-cell">MVN pitch axis</td>
           <td></td>
@@ -152,6 +163,7 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">tau_vs_roll_frac<span class="review">needs review</span></td>
           <td><span class="default">1</span></td>
           <td class="units">—</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>Roll VS TC = tau_vs × this fraction. Default 1.0; literature suggests roll storage is the leakiest axis (Dai et al. 1991: ~2–5 s). Consider lowering for closer literature match.</p><div class="refs">Dai et al. (1991) · Angelaki et al. (1995)</div></td>
           <td class="anatomy-cell">MVN roll axis</td>
           <td></td>
@@ -161,87 +173,87 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">b_vs</td>
           <td><span class="default">100</span></td>
           <td class="units">deg/s</td>
-          <td class="desc-cell"><p>VN resting firing rate (deg/s equivalent). Scalar broadcasts to all 6 states; pass a (6,) array for asymmetric (lesion) cases. Simultaneously sets equilibrium firing rate AND input responsiveness (canal drive scales by b_vs / B_NOMINAL = 100).</p></td>
+          <td class="range-cell">[0, 200] <small>(len 6)</small></td>
+          <td class="desc-cell"><p>VN resting firing rate (deg/s equivalent).  Internal model parameter — a (6,) array.  Use the b_vs_L / b_vs_R aliases for clinical lesion modelling (asymmetric VN tone).</p></td>
           <td class="anatomy-cell">Vestibular nucleus resting bias (Type-I VN tonic firing)</td>
-          <td><span class="tag tag-vn">Vestibular neuritis (one side): 70</span> <span class="tag tag-vn">VN infarct (one side): 0</span></td>
+          <td></td>
         </tr>
 
         <tr>
-          <td class="param-name">tau_vs_adapt</td>
+          <td class="param-name">tau_vs_adapt<span class="llm-tag" title="Exposed in the LLM Patient schema">LLM</span></td>
           <td><span class="default">600</span></td>
           <td class="units">s</td>
+          <td class="range-cell">[0, +∞]</td>
           <td class="desc-cell"><p>VS null-adaptation TC. Default 600 s → negligible in normal demos. Reduce to ~30–60 s to engage PAN-like (periodic alternating nystagmus) slow oscillation through anti-symmetric VS drift.</p></td>
           <td class="anatomy-cell">Cerebellar feedback to MVN (PAN-related)</td>
           <td><span class="tag tag-cerebellar">PAN: 45.0</span></td>
         </tr>
 
         <tr>
-          <td class="param-name">g_vor</td>
+          <td class="param-name">g_vor<span class="llm-tag" title="Exposed in the LLM Patient schema">LLM</span></td>
           <td><span class="default">1</span></td>
           <td class="units">—</td>
+          <td class="range-cell">[0, 2]</td>
           <td class="desc-cell"><p>Central VOR gain — scales canal feedthrough to VS output. 1.0 = healthy; <1 = hypofunction / VOR adaptation down; >1 = adaptation up. Distinct from peripheral canal_gains (transduction sensitivity).</p></td>
           <td class="anatomy-cell">Cerebellar VOR calibration (flocculus)</td>
           <td><span class="tag tag-vn">VOR hypofunction: 0.5</span> <span class="tag tag-vn">VOR gain-up adaptation (BVH): 1.5</span></td>
         </tr>
 
         <tr>
-          <td class="param-name">v_max_vor</td>
-          <td><span class="default">400</span></td>
-          <td class="units">deg/s</td>
-          <td class="desc-cell"><p>Excitatory canal afferent saturation. Inhibitory floor (~80 deg/s, Ewald's 2nd law) is implemented in canal nonlinearity. Excitatory ceiling 300–600 deg/s (Goldberg & Fernandez 1971).</p><div class="refs">Goldberg & Fernández (1971) J Neurophysiol 34:635</div></td>
-          <td class="anatomy-cell">Type-I VN saturation</td>
-          <td></td>
-        </tr>
-
-        <tr>
-          <td class="param-name">K_vs</td>
+          <td class="param-name">K_vs<span class="llm-tag" title="Exposed in the LLM Patient schema">LLM</span></td>
           <td><span class="default">0.1</span></td>
           <td class="units">1/s</td>
+          <td class="range-cell">[0, +∞]</td>
           <td class="desc-cell"><p>Canal-to-VS integration gain. Bilateral push-pull, so effective net gain = 2·K_vs.</p><div class="refs">Raphan et al. (1979)</div></td>
           <td class="anatomy-cell">Canal afferents → MVN integrator input</td>
-          <td></td>
+          <td><span class="tag tag-cerebellar">Nodulus lesion (with tau_vs reduction): 0.05</span></td>
         </tr>
 
         <tr>
-          <td class="param-name">K_vis</td>
+          <td class="param-name">K_vis<span class="llm-tag" title="Exposed in the LLM Patient schema">LLM</span></td>
           <td><span class="default">0.1</span></td>
           <td class="units">1/s</td>
+          <td class="range-cell">[0, +∞]</td>
           <td class="desc-cell"><p>Visual-to-VS gain, drives OKR/OKAN charging. Bilateral push-pull, so effective net gain = 2·K_vis. Combined with g_vis, OKN steady-state gain ≈ 0.82 at K_vis=0.1, g_vis=0.6 (Raphan 1979).</p><div class="refs">Raphan (1979)</div></td>
           <td class="anatomy-cell">NOT/AOS → MVN (visual-vestibular convergence)</td>
           <td><span class="tag tag-cerebellar">OKR/OKAN abolished: 0.0</span></td>
         </tr>
 
         <tr>
-          <td class="param-name">g_vis</td>
+          <td class="param-name">g_vis<span class="llm-tag" title="Exposed in the LLM Patient schema">LLM</span></td>
           <td><span class="default">0.6</span></td>
           <td class="units">—</td>
+          <td class="range-cell">[0, 1]</td>
           <td class="desc-cell"><p>Direct visual feedthrough gain (Raphan 1979 Fig 8: gl=0.6). OKR inner loop stable iff g_vis < 1. Larger → faster OKR onset but ringing risk.</p><div class="refs">Raphan (1979)</div></td>
           <td class="anatomy-cell">Direct pretectal / NOT visual pathway</td>
-          <td></td>
+          <td><span class="tag tag-cerebellar">Reduced direct OKR feedthrough: 0.3</span></td>
         </tr>
 
         <tr>
           <td class="param-name">v_max_okr</td>
           <td><span class="default">80</span></td>
           <td class="units">deg/s</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>Visual slip saturation feeding VS. NOT neurons saturate ~80 deg/s (Hoffmann 1979). OKR gain ≈1 below 30 deg/s, half-max ~60 deg/s.</p><div class="refs">Hoffmann (1979) Exp Brain Res · Cohen, Matsuo & Raphan (1977)</div></td>
           <td class="anatomy-cell">NOT/AOS neurons</td>
           <td></td>
         </tr>
 
         <tr>
-          <td class="param-name">K_grav</td>
+          <td class="param-name">K_grav<span class="llm-tag" title="Exposed in the LLM Patient schema">LLM</span></td>
           <td><span class="default">0.6</span></td>
           <td class="units">1/s</td>
+          <td class="range-cell">[0, +∞]</td>
           <td class="desc-cell"><p>Somatogravic gain — pulls g_est toward the GIA residual. L&A 2011 calls this "g_o" and uses 0.6 (faster commitment to tilt percept). Our 0.2 keeps the somatogravic bandwidth around 0.032 Hz, matching slower psychophysical tilt-percept onset (Mayne 1974, Holly 1996). Higher K_grav → stronger / faster somatogravic illusion.</p><div class="refs">Laurens & Angelaki (2011) J Neurosci 31:11414 · Mayne (1974); Holly (1996)</div></td>
           <td class="anatomy-cell">Nodulus/uvula → MVN (otolith-canal fusion)</td>
-          <td></td>
+          <td><span class="tag tag-vn">Reduced gravity-prior reliance: 0.2</span></td>
         </tr>
 
         <tr>
-          <td class="param-name">K_lin</td>
+          <td class="param-name">K_lin<span class="llm-tag" title="Exposed in the LLM Patient schema">LLM</span></td>
           <td><span class="default">0.1</span></td>
           <td class="units">1/s</td>
+          <td class="range-cell">[0, +∞]</td>
           <td class="desc-cell"><p>Linear-acceleration adaptation gain — competing share-claim on the GIA residual. Smaller K_lin → more somatogravic effect (gravity wins more of the residual). Larger → faster separation of true translation from tilt.</p><div class="refs">Laurens & Angelaki (2011)</div></td>
           <td class="anatomy-cell">Nodulus/uvula; PIVC</td>
           <td><span class="tag tag-vn">Strong somatogravic illusion: 0.0</span></td>
@@ -251,24 +263,27 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">tau_a_lin</td>
           <td><span class="default">1.5</span></td>
           <td class="units">s</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>Decay TC of the linear-acceleration estimate. Bayesian "translation duration prior" — real self-motion accelerations are brief, so â returns to 0 in absence of sustained evidence. SS â for sustained residual r: K_lin · τ_a_lin · r.</p><div class="refs">Laurens, Meng & Angelaki (2013) PLoS Comp Bio</div></td>
           <td class="anatomy-cell">Nodulus/uvula; deterministic stand-in for Bayesian translation prior</td>
           <td></td>
         </tr>
 
         <tr>
-          <td class="param-name">K_gd</td>
+          <td class="param-name">K_gd<span class="llm-tag" title="Exposed in the LLM Patient schema">LLM</span></td>
           <td><span class="default">2.86</span></td>
           <td class="units">—</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>Gravity-dumping gain. Scales the rotational feedback rf = (GIA × −g_est)/G0² fed into VS. Drives velocity-storage dumping ⊥ gravity (tilt suppression) and OVAR sustained nystagmus. Default 2.86 = L&A's 0.05 rad/s² in deg-converted units.</p><div class="refs">Laurens & Angelaki (2011) · Raphan & Cohen (1988)</div></td>
           <td class="anatomy-cell">Nodulus/uvula → MVN (velocity-storage gravity dumping)</td>
           <td><span class="tag tag-cerebellar">Gravity-blind VS: 0.0</span></td>
         </tr>
 
         <tr>
-          <td class="param-name">g_ocr</td>
+          <td class="param-name">g_ocr<span class="llm-tag" title="Exposed in the LLM Patient schema">LLM</span></td>
           <td><span class="default">1.019</span></td>
           <td class="units">deg/(m/s²)</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>Ocular counter-roll gain — torsion command per unit lateral gravity. Default 10°/9.81 ≈ 1.019 → ~10° SS torsion at 90° lateral tilt.</p><div class="refs">Howard & Templeton (1966) · Diamond, Markham et al. (1979)</div></td>
           <td class="anatomy-cell">Utricle → CN3 (IO/SR subnuclei); CN4 (SO)</td>
           <td><span class="tag tag-vn">Utricle lesion: 0.0</span></td>
@@ -278,6 +293,7 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">tau_head</td>
           <td><span class="default">2</span></td>
           <td class="units">s</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>Linear-velocity integration TC. Longer τ_head → bigger v_lin during sustained translation (better DARK T-VOR gain) but more drift containment needed. Paige & Tomko (1991) DARK gain ~0.5–0.7 for 1.6 s pulses suggests τ_head in 2–4 s range; we use 10 s for stronger DARK T-VOR coupling.</p><div class="refs">Paige & Tomko (1991)</div></td>
           <td class="anatomy-cell">Vestibular translational pathway (otolith integration)</td>
           <td></td>
@@ -287,8 +303,175 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">K_he_vis</td>
           <td><span class="default">5</span></td>
           <td class="units">1/s</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>Visual-velocity pull gain on v_lin. Fuses scene translational flow with the vestibular integration of otolith. In dark the pull is toward 0, suppressing drift during pure rotation (OVAR, tilt suppression).</p></td>
           <td class="anatomy-cell">MST translational flow → vestibular nuclei</td>
+          <td></td>
+        </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="subsection" id="brainparams-ungrouped">
+      <h3>Ungrouped <small style="font-size:11px;font-weight:400;color:#888">(15 fields)</small></h3>
+      <table class="param-table">
+        <thead><tr>
+          <th style="width:160px">Parameter</th>
+          <th style="width:90px">Default</th>
+          <th style="width:60px">Units</th>
+          <th style="width:110px">Valid range</th>
+          <th>Description</th>
+          <th style="width:170px">Anatomical locus</th>
+          <th style="width:200px">Disorders / notable values</th>
+        </tr></thead>
+        <tbody>
+        <tr>
+          <td class="param-name">v_crit_ec_gate<span class="todo">TODO: enrich schema</span></td>
+          <td><span class="default">50</span></td>
+          <td class="units"></td>
+          <td class="range-cell"></td>
+          <td class="desc-cell"><p>Hill threshold (deg/s); K=0.5 at this velocity.</p></td>
+          <td class="anatomy-cell"></td>
+          <td></td>
+        </tr>
+
+        <tr>
+          <td class="param-name">n_ec_gate<span class="todo">TODO: enrich schema</span></td>
+          <td><span class="default">6</span></td>
+          <td class="units"></td>
+          <td class="range-cell"></td>
+          <td class="desc-cell"><p>Hill exponent.</p></td>
+          <td class="anatomy-cell"></td>
+          <td></td>
+        </tr>
+
+        <tr>
+          <td class="param-name">tau_ec_gate<span class="todo">TODO: enrich schema</span></td>
+          <td><span class="default">0.07</span></td>
+          <td class="units"></td>
+          <td class="range-cell"></td>
+          <td class="desc-cell"><p>1-pole LP TC for ec_vel_eye → mean delay = tau, peak of impulse response at t=0+ (anticipatory: fires immediately at saccade onset, ~50 ms earlier than the slip cascade's gamma peak at ≈40 ms). Tau matches slip cascade total mean delay (0.07 s).</p></td>
+          <td class="anatomy-cell"></td>
+          <td></td>
+        </tr>
+
+        <tr>
+          <td class="param-name">alpha_ec_dir<span class="todo">TODO: enrich schema</span></td>
+          <td><span class="default">0.4</span></td>
+          <td class="units"></td>
+          <td class="range-cell"></td>
+          <td class="desc-cell"><p>Directional gate sigmoid sharpness (1/(deg/s)). Sign-sensitive scalar gate on the EC-corrected slip, using the SIGNED projection of the *raw* delayed slip onto the ec_d direction. The intuition (per the saccade cascade plot): slip and EC are anti-parallel during self-motion, so a strongly *negative* projection means "slip and EC point opposite directions" — that's a self-motion case and the residual after EC sub should be suppressed harder. slip_dot = dot(raw_slip, ec_d_hat)   (signed deg/s) K = sigmoid((slip_dot + bias) · alpha) K large when slip_dot positive (same direction = real motion) or near zero (no slip → pass; matters for pursuit where raw target_slip ≈ 0). K small when slip_dot strongly negative (opposite to ec_d).</p></td>
+          <td class="anatomy-cell"></td>
+          <td></td>
+        </tr>
+
+        <tr>
+          <td class="param-name">bias_ec_dir<span class="todo">TODO: enrich schema</span></td>
+          <td><span class="default">15</span></td>
+          <td class="units"></td>
+          <td class="range-cell"></td>
+          <td class="desc-cell"><p>Sigmoid offset (deg/s); K=0.5 at slip_dot = -bias. K(0)≈0.998 (pursuit/quiescent slip), K(-15)=0.5, K(-25)≈0.018, K(-50)≈0. Larger bias = need more opposition before suppression triggers.</p></td>
+          <td class="anatomy-cell"></td>
+          <td></td>
+        </tr>
+
+        <tr>
+          <td class="param-name">tau_vis_sharp<span class="todo">TODO: enrich schema</span></td>
+          <td><span class="default">0.05</span></td>
+          <td class="units"></td>
+          <td class="range-cell"></td>
+          <td class="desc-cell"><p>sharp cascade mean delay (s); 6 stages × this/6 Shared by both scene and target EC cascades.</p></td>
+          <td class="anatomy-cell"></td>
+          <td></td>
+        </tr>
+
+        <tr>
+          <td class="param-name">tau_vis_smooth_motion<span class="todo">TODO: enrich schema</span></td>
+          <td><span class="default">0.02</span></td>
+          <td class="units"></td>
+          <td class="range-cell"></td>
+          <td class="desc-cell"><p>smoothing LP TC (s) for SCENE EC cascade. Must match SensoryParams.tau_vis_smooth_motion so the EC and slip cascades have the same shape → clean post-delay subtraction in brain_model.step.</p></td>
+          <td class="anatomy-cell"></td>
+          <td></td>
+        </tr>
+
+        <tr>
+          <td class="param-name">tau_vis_smooth_target_vel<span class="todo">TODO: enrich schema</span></td>
+          <td><span class="default">0.15</span></td>
+          <td class="units"></td>
+          <td class="range-cell"></td>
+          <td class="desc-cell"><p>smoothing LP TC (s) for TARGET EC cascade. Must match SensoryParams.tau_vis_smooth_target_vel. Heavier smoothing than scene because the visual target-velocity pathway is intrinsically slower (Krauzlis & Lisberger 1994).</p></td>
+          <td class="anatomy-cell"></td>
+          <td></td>
+        </tr>
+
+        <tr>
+          <td class="param-name">tau_vis_smooth_disparity<span class="todo">TODO: enrich schema</span></td>
+          <td><span class="default">0.15</span></td>
+          <td class="units"></td>
+          <td class="range-cell"></td>
+          <td class="desc-cell"><p>smoothing LP TC (s) for target_disparity cyclopean LP. V1 stereo correspondence is genuinely slow (~150 ms; Cumming & DeAngelis 2001).</p></td>
+          <td class="anatomy-cell"></td>
+          <td></td>
+        </tr>
+
+        <tr>
+          <td class="param-name">tau_vis_smooth_defocus<span class="todo">TODO: enrich schema</span></td>
+          <td><span class="default">0.2</span></td>
+          <td class="units"></td>
+          <td class="range-cell"></td>
+          <td class="desc-cell"><p>smoothing LP TC (s) for defocus cyclopean LP. Sloppy accommodation channel; combined with the lens plant TC (Schor & Bharadwaj 2006) produces realistic sluggish open-loop accommodation responses.</p></td>
+          <td class="anatomy-cell"></td>
+          <td></td>
+        </tr>
+
+        <tr>
+          <td class="param-name">tau_brain_pos<span class="todo">TODO: enrich schema</span></td>
+          <td><span class="default">0.03</span></td>
+          <td class="units"></td>
+          <td class="range-cell"></td>
+          <td class="desc-cell"><p>N-stage gamma TC (s) for target_pos / visibility brain phase (post-fusion). Total visual mean delay for these signals ≈ tau_vis_sharp + tau_brain_pos = 0.08 s.</p></td>
+          <td class="anatomy-cell"></td>
+          <td></td>
+        </tr>
+
+        <tr>
+          <td class="param-name">w_canal_gate<span class="todo">TODO: enrich schema</span></td>
+          <td><span class="default">2</span></td>
+          <td class="units"></td>
+          <td class="range-cell"></td>
+          <td class="desc-cell"><p>canal-gating threshold (deg/s) — Laurens 2017 Bayesian disambiguation extension. Used by the dynamic gate ρ = |ω × ĝ| / w_canal_gate; K_grav_eff = K_grav · √(1+ρ), K_lin_eff = K_lin / √(1+ρ). Lower threshold → gating engages at slower rotations. Set to 1e6 to disable for pure Laurens-2011 testing.</p></td>
+          <td class="anatomy-cell"></td>
+          <td></td>
+        </tr>
+
+        <tr>
+          <td class="param-name">listing_gain<span class="todo">TODO: enrich schema</span></td>
+          <td><span class="default">1</span></td>
+          <td class="units"></td>
+          <td class="range-cell"></td>
+          <td class="desc-cell"><p>master gain on the Listing's corrections (cyc_torsion_vel and cyclo_verg_rate). Set to 0 to disable both for debugging.</p></td>
+          <td class="anatomy-cell"></td>
+          <td></td>
+        </tr>
+
+        <tr>
+          <td class="param-name">proximal_d<span class="todo">TODO: enrich schema</span></td>
+          <td><span class="default">0</span></td>
+          <td class="units"></td>
+          <td class="range-cell"></td>
+          <td class="desc-cell"><p>perceived-distance prior (D = 1/m). Drives BOTH vergence (residual = proximal·IPD·180/π − u_verg[H]) and accommodation (residual = proximal − u_acc) toward a perceived-near target. The fast integrators absorb the residual; vision wins when present (closed-loop). Distinct from motor priors tonic_verg / tonic_acc: proximal_d is a perceptual-cue parameter (HMD, instrument myopia, awareness-of-near). 0 = no proximal effect. Zee (1992) SVBN saccadic vergence burst — asymmetric saturating gain y = sign(disp) · g · (1 − exp(−|disp|/X))     (deg/s); fires while OPN pauses (z_act≈1) Convergence much stronger than divergence (Zee Table 1: ~50°/s vs ~12°/s peaks). Set g_svbn_conv = g_svbn_div = 0 to disable the burst (slow vergence only). Zee (1992) Table 1: pure conv peak velocity 41–58 °/s for 10° amplitude; pure div 9.5–13 °/s for 2.5°. Saturating exponential y = g·(1 − exp(−|disp|/X)) tuned so y(10°, conv) ≈ 60·(1−e^{-10/3}) ≈ 58 °/s and y(2.5°, div) ≈ 14·(1−e^{-2.5/1}) ≈ 13 °/s.</p></td>
+          <td class="anatomy-cell"></td>
+          <td></td>
+        </tr>
+
+        <tr>
+          <td class="param-name">K_phasic_tvor<span class="todo">TODO: enrich schema</span></td>
+          <td><span class="default">1</span></td>
+          <td class="units"></td>
+          <td class="range-cell"></td>
+          <td class="desc-cell"><p>T-VOR direct (phasic) pathway gain (s) — multiplies a_lin in the cross-product formula to give a fast onset velocity that bypasses the heading-estimator (v_lin) integrator. Implicit units: s, since it converts a_lin (m/s²) into a v-equivalent (m/s) for the cross product. ~0.1–0.3 matches the ~100 ms short-latency T-VOR onset reported by Paige & Tomko (1991), Angelaki et al. (1999). Set 0 to disable direct pathway (integrator-only T-VOR).</p></td>
+          <td class="anatomy-cell"></td>
           <td></td>
         </tr>
         </tbody>
@@ -302,15 +485,17 @@ tr:last-child { border-bottom: none; }
           <th style="width:160px">Parameter</th>
           <th style="width:90px">Default</th>
           <th style="width:60px">Units</th>
+          <th style="width:110px">Valid range</th>
           <th>Description</th>
           <th style="width:170px">Anatomical locus</th>
           <th style="width:200px">Disorders / notable values</th>
         </tr></thead>
         <tbody>
         <tr>
-          <td class="param-name">tau_i</td>
+          <td class="param-name">tau_i<span class="llm-tag" title="Exposed in the LLM Patient schema">LLM</span></td>
           <td><span class="default">25</span></td>
           <td class="units">s</td>
+          <td class="range-cell">[0, +∞]</td>
           <td class="desc-cell"><p>Yaw NI leak TC. Healthy >20 s (Cannon & Robinson 1985). Per-axis fractions apply for pitch/roll. Short tau_i (2–8 s) → centripetal drift → gaze-evoked nystagmus.</p><div class="refs">Cannon & Robinson (1985) · Robinson (1975) Brain Res 71:195</div></td>
           <td class="anatomy-cell">NPH (horizontal); INC (vertical/torsional)</td>
           <td><span class="tag tag-cerebellar">Cerebellar GEN: 4.0</span></td>
@@ -320,6 +505,7 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">tau_i_pitch_frac</td>
           <td><span class="default">1</span></td>
           <td class="units">—</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>Pitch NI TC = tau_i × this fraction. Vertical NI similar to horizontal in healthy humans; default 1.0.</p></td>
           <td class="anatomy-cell">Vertical NI in INC</td>
           <td></td>
@@ -329,6 +515,7 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">tau_i_roll_frac</td>
           <td><span class="default">0.3</span></td>
           <td class="units">—</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>Roll (torsion) NI TC = tau_i × this fraction. Torsional integrator is leakier — Crawford & Vilis (1991) report ~5–10 s vs 20–25 s for horizontal NPH; default 0.3 → 7.5 s.</p><div class="refs">Crawford & Vilis (1991) · Suzuki et al. (1995) · Anastasopoulos & Mergner (1982)</div></td>
           <td class="anatomy-cell">Torsional NI in INC</td>
           <td></td>
@@ -338,6 +525,7 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">tau_p</td>
           <td><span class="default">0.15</span></td>
           <td class="units">s</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>Plant TC copy used by NI for lag-cancellation feedthrough. Should match PlantParams.tau_p in healthy subjects; mismatch in pathology models imperfect internal models.</p></td>
           <td class="anatomy-cell">NI feedforward to plant (pulse-step compensation)</td>
           <td></td>
@@ -347,6 +535,7 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">tau_vis</td>
           <td><span class="default">0.08</span></td>
           <td class="units">s</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>Visual delay copy — efference-copy delay must match retinal delay (sensory tau_vis) for clean slip cancellation. Mismatch creates visual-vestibular misalignment artifacts.</p></td>
           <td class="anatomy-cell">Efference-copy delay matching</td>
           <td></td>
@@ -356,18 +545,86 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">b_ni<span class="review">needs review</span></td>
           <td><span class="default">0</span></td>
           <td class="units">deg</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>NPH resting bias (deg). 0 = no net bias at centre gaze. Set >0 to model unilateral NPH asymmetric drive (future work — currently unused).</p></td>
           <td class="anatomy-cell">NPH intrinsic resting bias</td>
           <td></td>
         </tr>
 
         <tr>
-          <td class="param-name">tau_ni_adapt</td>
+          <td class="param-name">tau_ni_adapt<span class="llm-tag" title="Exposed in the LLM Patient schema">LLM</span></td>
           <td><span class="default">20</span></td>
           <td class="units">s</td>
+          <td class="range-cell">[0, +∞]</td>
           <td class="desc-cell"><p>Null-adaptation TC: x_null slowly tracks current net position. After sustained eccentric gaze, x_null = E; on return to centre, NI leaks toward x_null = E → eye drifts back → corrective fast phase = rebound nystagmus.</p><div class="refs">Zee et al. (1980)</div></td>
           <td class="anatomy-cell">NPH null-adaptation circuit (cerebellar input)</td>
           <td><span class="tag tag-cerebellar">No rebound (cerebellar): 1000000</span></td>
+        </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="subsection" id="brainparams-binocular">
+      <h3>Binocular <small style="font-size:11px;font-weight:400;color:#888">(5 fields)</small></h3>
+      <table class="param-table">
+        <thead><tr>
+          <th style="width:160px">Parameter</th>
+          <th style="width:90px">Default</th>
+          <th style="width:60px">Units</th>
+          <th style="width:110px">Valid range</th>
+          <th>Description</th>
+          <th style="width:170px">Anatomical locus</th>
+          <th style="width:200px">Disorders / notable values</th>
+        </tr></thead>
+        <tbody>
+        <tr>
+          <td class="param-name">npc<span class="llm-tag" title="Exposed in the LLM Patient schema">LLM</span></td>
+          <td><span class="default">50</span></td>
+          <td class="units">deg</td>
+          <td class="range-cell">[0, 90]</td>
+          <td class="desc-cell"><p>Near point of convergence (vergence angle limit). 50° ≈ NPC 7 cm at IPD 64 mm. Closes the diplopia / fusion gate (gate_conv) beyond this.</p></td>
+          <td class="anatomy-cell">Convergence motor limit</td>
+          <td><span class="tag tag-vergence">Convergence insufficiency (poor NPC): 25.0</span></td>
+        </tr>
+
+        <tr>
+          <td class="param-name">div_max</td>
+          <td><span class="default">6</span></td>
+          <td class="units">deg</td>
+          <td class="range-cell">[0, 30]</td>
+          <td class="desc-cell"><p>Maximum divergence — ~6° for young adults.  Closes the gate_div fusion gate when commanded divergence exceeds this.</p></td>
+          <td class="anatomy-cell">Divergence motor limit</td>
+          <td></td>
+        </tr>
+
+        <tr>
+          <td class="param-name">vert_max</td>
+          <td><span class="default">5</span></td>
+          <td class="units">deg</td>
+          <td class="range-cell">[0, 20]</td>
+          <td class="desc-cell"><p>Vertical fusional reserve — fusion fails when raw retinal vertical disparity exceeds this.  ~2-3° clinical, set to 5° default for headroom.  Drives the disparity-based gate_vert in the fusion policy.</p></td>
+          <td class="anatomy-cell">Vertical fusion range</td>
+          <td></td>
+        </tr>
+
+        <tr>
+          <td class="param-name">tors_max</td>
+          <td><span class="default">8</span></td>
+          <td class="units">deg</td>
+          <td class="range-cell">[0, 30]</td>
+          <td class="desc-cell"><p>Torsional fusional reserve — fusion fails when raw retinal torsional disparity exceeds this.  ~5-8° clinical maximum.  Drives the disparity-based gate_tors in the fusion policy.</p></td>
+          <td class="anatomy-cell">Cyclovergence (torsional) fusion range</td>
+          <td></td>
+        </tr>
+
+        <tr>
+          <td class="param-name">eye_dominant</td>
+          <td><span class="default">1</span></td>
+          <td class="units">—</td>
+          <td class="range-cell">[0, 1]</td>
+          <td class="desc-cell"><p>1.0 = right eye dominant, 0.0 = left dominant.  Determines the fixating eye when fusion is suppressed (auto-overridden when motor integrity is asymmetric — healthier eye becomes fixating).</p></td>
+          <td class="anatomy-cell">Sensory eye dominance preference</td>
+          <td></td>
         </tr>
         </tbody>
       </table>
@@ -380,15 +637,17 @@ tr:last-child { border-bottom: none; }
           <th style="width:160px">Parameter</th>
           <th style="width:90px">Default</th>
           <th style="width:60px">Units</th>
+          <th style="width:110px">Valid range</th>
           <th>Description</th>
           <th style="width:170px">Anatomical locus</th>
           <th style="width:200px">Disorders / notable values</th>
         </tr></thead>
         <tbody>
         <tr>
-          <td class="param-name">g_burst</td>
+          <td class="param-name">g_burst<span class="llm-tag" title="Exposed in the LLM Patient schema">LLM</span></td>
           <td><span class="default">700</span></td>
           <td class="units">deg/s</td>
+          <td class="range-cell">[0, 1000]</td>
           <td class="desc-cell"><p>Burst neuron ceiling firing (deg/s equivalent). Sets peak saccade velocity ~700 deg/s for healthy. 0 disables saccades entirely.</p></td>
           <td class="anatomy-cell">Excitatory burst neurons (PPRF / riMLF)</td>
           <td><span class="tag tag-cerebellar">Slow saccades (PSP, SCA): 250</span> <span class="tag tag-other">Saccadic palsy: 0</span></td>
@@ -398,6 +657,7 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">e_sat_sac</td>
           <td><span class="default">7</span></td>
           <td class="units">deg</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>Main-sequence saturation amplitude. Saccade peak velocity follows v_peak ≈ g_burst·(1 − exp(−A/e_sat_sac)).</p></td>
           <td class="anatomy-cell">Burst neuron sigmoid scaling</td>
           <td></td>
@@ -407,6 +667,7 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">k_sac</td>
           <td><span class="default">200</span></td>
           <td class="units">1/deg</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>Trigger sigmoid steepness — controls how sharply the OPN-pause / burst initiation gate fires once retinal error exceeds threshold.</p></td>
           <td class="anatomy-cell">Saccade trigger gating</td>
           <td></td>
@@ -416,6 +677,7 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">threshold_sac</td>
           <td><span class="default">0.5</span></td>
           <td class="units">deg</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>Retinal error threshold to fire a saccade when target is visible (in-field foveation path). Default 0.5° matches subjects' minimum saccade amplitude.</p></td>
           <td class="anatomy-cell">Saccade trigger threshold (in-field)</td>
           <td></td>
@@ -425,6 +687,7 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">threshold_stop</td>
           <td><span class="default">0.1</span></td>
           <td class="units">deg</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>Burst-stop threshold — saccade ends when residual error falls below this.</p></td>
           <td class="anatomy-cell">Burst termination (e_held → 0)</td>
           <td></td>
@@ -434,6 +697,7 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">tau_latch<span class="review">needs review</span></td>
           <td><span class="default">0.003</span></td>
           <td class="units">s</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>Unused; kept for backward compatibility with older bench scripts.</p></td>
           <td class="anatomy-cell">(legacy)</td>
           <td></td>
@@ -443,6 +707,7 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">tau_hold</td>
           <td><span class="default">0.02</span></td>
           <td class="units">s</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>e_held tracking TC between saccades (not during). 180 ms accumulator / 20 ms hold TC = 9 TCs → 99.99% capture. Burst freezes tracking during saccade.</p></td>
           <td class="anatomy-cell">e_held tracking integrator</td>
           <td></td>
@@ -452,6 +717,7 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">tau_sac</td>
           <td><span class="default">0.001</span></td>
           <td class="units">s</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>Saccade latch TC — OPN state-update rate. Combined with k_tonic_opn sets the post-saccade OPN recovery (~2 ms with default k=0.5).</p></td>
           <td class="anatomy-cell">OPN latch dynamics</td>
           <td></td>
@@ -461,6 +727,7 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">k_tonic_opn</td>
           <td><span class="default">0.5</span></td>
           <td class="units">—</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>OPN tonic recovery gain. Recovery TC = tau_sac/k_tonic = 2 ms. Keeps z_opn at 100 unless IBN inhibition overcomes it.</p></td>
           <td class="anatomy-cell">OPN tonic recovery (always-on)</td>
           <td></td>
@@ -470,6 +737,7 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">tau_bn</td>
           <td><span class="default">0.003</span></td>
           <td class="units">s</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>Burst-neuron state TC. Constrained by Heun stability: (1+g_opn_bn·100)·dt/tau_bn < 2 → tau_bn > 2.5 ms with default params.</p></td>
           <td class="anatomy-cell">EBN/IBN membrane TC</td>
           <td></td>
@@ -479,6 +747,7 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">g_opn_bn</td>
           <td><span class="default">0.04</span></td>
           <td class="units">—</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>OPN→BN multiplicative suppression gain. Constrained by Heun stability (g_opn_bn < 0.09 with dt=1ms, tau_bn=3ms).</p></td>
           <td class="anatomy-cell">OPN → BN multiplicative inhibition</td>
           <td></td>
@@ -488,6 +757,7 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">g_opn_bn_hold</td>
           <td><span class="default">0.4</span></td>
           <td class="units">—</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>OPN→BN additive offset. At tonic OPN (act=100): opn_inh=40°. Tonic BN_eq = (e_held−40)/5. Keeps BNs negative for fixation errors up to ~40°, so IBN stays at 0 between saccades.</p></td>
           <td class="anatomy-cell">OPN → BN additive offset</td>
           <td></td>
@@ -497,6 +767,7 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">g_ibn_bn</td>
           <td><span class="default">0.143</span></td>
           <td class="units">—</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>IBN → contralateral BN inhibition gain (= g_ci/g_burst = 100/700). Element-wise across yaw/pitch/roll axes.</p></td>
           <td class="anatomy-cell">IBN → contralateral BN</td>
           <td></td>
@@ -506,6 +777,7 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">g_opn_pause</td>
           <td><span class="default">500</span></td>
           <td class="units">—</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>OPN inhibitory overshoot — IBN inhibition drives OPN membrane to −g_opn_pause (below spike threshold). Firing rate clips at 0; large value → OPN pauses in ~2 ms.</p></td>
           <td class="anatomy-cell">OPN inhibitory overshoot floor</td>
           <td></td>
@@ -515,6 +787,7 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">tau_acc</td>
           <td><span class="default">0.18</span></td>
           <td class="units">s</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>Saccade-trigger accumulator rise TC. ~120 ms to threshold, refractory cycle ~270 ms (matches inter-saccade interval).</p></td>
           <td class="anatomy-cell">Accumulator integrator (rise-to-bound)</td>
           <td></td>
@@ -524,6 +797,7 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">tau_burst_drain</td>
           <td><span class="default">0.002</span></td>
           <td class="units">s</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>Accumulator drain TC during OPN-paused burst. Drives z_acc → acc_burst_floor (forces re-climb after each saccade).</p></td>
           <td class="anatomy-cell">Accumulator drain during burst</td>
           <td></td>
@@ -533,6 +807,7 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">acc_burst_floor</td>
           <td><span class="default">-0.5</span></td>
           <td class="units">—</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>Accumulator target during burst — negative so accumulator must re-climb over the refractory period, enforcing minimum inter-saccade interval (~270 ms with default params).</p></td>
           <td class="anatomy-cell">Post-saccade accumulator reset point</td>
           <td></td>
@@ -542,6 +817,7 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">threshold_acc</td>
           <td><span class="default">1</span></td>
           <td class="units">—</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>Accumulator trigger threshold. Natural unit: triggers at 1.</p></td>
           <td class="anatomy-cell">Accumulator → OPN-pause trigger</td>
           <td></td>
@@ -551,6 +827,7 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">threshold_sac_qp</td>
           <td><span class="default">2</span></td>
           <td class="units">deg</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>Error threshold to begin accumulating for quick phases (target absent). Higher → larger drift required before accumulation → fewer spurious resets.</p></td>
           <td class="anatomy-cell">Quick-phase trigger threshold (out-of-field)</td>
           <td></td>
@@ -560,6 +837,7 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">k_acc</td>
           <td><span class="default">500</span></td>
           <td class="units">—</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>Accumulator → OPN suppression steepness. High value → near-hard threshold (OPN drops sharply just before z_acc crosses threshold_acc).</p></td>
           <td class="anatomy-cell">Accumulator → OPN sigmoid steepness</td>
           <td></td>
@@ -569,6 +847,7 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">sigma_acc</td>
           <td><span class="default">0.2</span></td>
           <td class="units">1/√s</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>Accumulator diffusion noise. ~0.15–0.25 gives ±15–25 ms RT SD; 0 = deterministic.</p></td>
           <td class="anatomy-cell">Accumulator diffusion noise (RT variability)</td>
           <td></td>
@@ -578,6 +857,7 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">g_ibn_opn</td>
           <td><span class="default">200</span></td>
           <td class="units">—</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>IBN → OPN inhibition gain. Forms Schmitt trigger: burst → IBN keeps OPN suppressed; burst ends → IBN → 0 → OPN recovers.</p></td>
           <td class="anatomy-cell">IBN → OPN inhibition (Schmitt trigger)</td>
           <td></td>
@@ -587,6 +867,7 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">tau_trig</td>
           <td><span class="default">0.002</span></td>
           <td class="units">s</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>z_trig rise TC — smooth onset for OPN suppression. Drained fast by IBN during burst (effective TC ≈ 0.7 ms).</p></td>
           <td class="anatomy-cell">z_trig smoothing integrator</td>
           <td></td>
@@ -596,6 +877,7 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">g_ibn_trig</td>
           <td><span class="default">2</span></td>
           <td class="units">—</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>IBN → z_trig drain gain. Sets z_trig drain TC during burst: tau_trig/(1+g_ibn_trig).</p></td>
           <td class="anatomy-cell">IBN → z_trig drain</td>
           <td></td>
@@ -605,6 +887,7 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">g_acc_drain</td>
           <td><span class="default">3</span></td>
           <td class="units">—</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>IBN drain multiplier for z_acc. Boosts drain for small saccades (weak IBN) without breaking triggering.</p></td>
           <td class="anatomy-cell">IBN → accumulator drain multiplier</td>
           <td></td>
@@ -614,6 +897,7 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">tau_acc_leak</td>
           <td><span class="default">5</span></td>
           <td class="units">s</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>Passive accumulator leak TC. Pulls z_acc → 0 between saccades. Keep ≥ 5 s — shorter values starve small saccades during OPN suppression.</p></td>
           <td class="anatomy-cell">Accumulator passive leak</td>
           <td></td>
@@ -623,6 +907,7 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">orbital_limit</td>
           <td><span class="default">50</span></td>
           <td class="units">deg</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>Oculomotor range half-width — target position is clipped to ±limit before the saccade goal is sent to the burst generator.</p></td>
           <td class="anatomy-cell">Saccade target clip (motor range)</td>
           <td></td>
@@ -632,6 +917,7 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">alpha_reset</td>
           <td><span class="default">1.25</span></td>
           <td class="units">—</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>Centripetal reset gain — e_center = −α·x_ni when target is out-of-field. Default 1.25 → quick phases overshoot centre slightly to compensate for slow-phase drift during refractory.</p></td>
           <td class="anatomy-cell">Quick-phase centring gain</td>
           <td></td>
@@ -641,50 +927,9 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">k_center_vel</td>
           <td><span class="default">0.75</span></td>
           <td class="units">—</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>Quick-phase prediction gain. look_ahead = k·τ_ref; aims past centre to compensate for slow-phase drift during the refractory period.</p></td>
           <td class="anatomy-cell">Quick-phase predictive look-ahead</td>
-          <td></td>
-        </tr>
-        </tbody>
-      </table>
-    </div>
-
-    <div class="subsection" id="brainparams-ungrouped">
-      <h3>Ungrouped <small style="font-size:11px;font-weight:400;color:#888">(3 fields)</small></h3>
-      <table class="param-table">
-        <thead><tr>
-          <th style="width:160px">Parameter</th>
-          <th style="width:90px">Default</th>
-          <th style="width:60px">Units</th>
-          <th>Description</th>
-          <th style="width:170px">Anatomical locus</th>
-          <th style="width:200px">Disorders / notable values</th>
-        </tr></thead>
-        <tbody>
-        <tr>
-          <td class="param-name">w_canal_gate<span class="todo">TODO: enrich schema</span></td>
-          <td><span class="default">2</span></td>
-          <td class="units"></td>
-          <td class="desc-cell"><p>canal-gating threshold (deg/s) — Laurens 2017 Bayesian disambiguation extension. Used by the dynamic gate ρ = |ω × ĝ| / w_canal_gate; K_grav_eff = K_grav · √(1+ρ), K_lin_eff = K_lin / √(1+ρ). Lower threshold → gating engages at slower rotations. Set to 1e6 to disable for pure Laurens-2011 testing.</p></td>
-          <td class="anatomy-cell"></td>
-          <td></td>
-        </tr>
-
-        <tr>
-          <td class="param-name">listing_gain<span class="todo">TODO: enrich schema</span></td>
-          <td><span class="default">1</span></td>
-          <td class="units"></td>
-          <td class="desc-cell"><p>master gain on the Listing's corrections (cyc_torsion_vel and cyclo_verg_rate). Set to 0 to disable both for debugging.</p></td>
-          <td class="anatomy-cell"></td>
-          <td></td>
-        </tr>
-
-        <tr>
-          <td class="param-name">K_phasic_tvor<span class="todo">TODO: enrich schema</span></td>
-          <td><span class="default">1</span></td>
-          <td class="units"></td>
-          <td class="desc-cell"><p>T-VOR direct (phasic) pathway gain (s) — multiplies a_lin in the cross-product formula to give a fast onset velocity that bypasses the heading-estimator (v_lin) integrator. Implicit units: s, since it converts a_lin (m/s²) into a v-equivalent (m/s) for the cross product. ~0.1–0.3 matches the ~100 ms short-latency T-VOR onset reported by Paige & Tomko (1991), Angelaki et al. (1999). Set 0 to disable direct pathway (integrator-only T-VOR).</p></td>
-          <td class="anatomy-cell"></td>
           <td></td>
         </tr>
         </tbody>
@@ -698,6 +943,7 @@ tr:last-child { border-bottom: none; }
           <th style="width:160px">Parameter</th>
           <th style="width:90px">Default</th>
           <th style="width:60px">Units</th>
+          <th style="width:110px">Valid range</th>
           <th>Description</th>
           <th style="width:170px">Anatomical locus</th>
           <th style="width:200px">Disorders / notable values</th>
@@ -707,6 +953,7 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">listing_primary</td>
           <td><span class="default">[0.0, 0.0]</span></td>
           <td class="units">deg</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>Primary position [yaw₀, pitch₀] — centre of Listing's plane. Default [0, 0] = straight ahead. Shifts the half-angle rule's reference point.</p><div class="refs">Tweed et al. (1998)</div></td>
           <td class="anatomy-cell">Cerebellar/INC torsion calibration</td>
           <td></td>
@@ -716,6 +963,7 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">listing_l2_frac<span class="review">needs review</span></td>
           <td><span class="default">0</span></td>
           <td class="units">—</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>L2 cyclovergence fraction (0=off, 0.5=physiological). Listing's plane tilts ±l2_frac·φ/2 per eye with vergence. Disabled until validated with binocular torsion data.</p></td>
           <td class="anatomy-cell">Per-eye Listing's plane tilt at vergence</td>
           <td></td>
@@ -731,42 +979,47 @@ tr:last-child { border-bottom: none; }
           <th style="width:160px">Parameter</th>
           <th style="width:90px">Default</th>
           <th style="width:60px">Units</th>
+          <th style="width:110px">Valid range</th>
           <th>Description</th>
           <th style="width:170px">Anatomical locus</th>
           <th style="width:200px">Disorders / notable values</th>
         </tr></thead>
         <tbody>
         <tr>
-          <td class="param-name">K_pursuit</td>
+          <td class="param-name">K_pursuit<span class="llm-tag" title="Exposed in the LLM Patient schema">LLM</span></td>
           <td><span class="default">4</span></td>
           <td class="units">1/s</td>
+          <td class="range-cell">[0, +∞]</td>
           <td class="desc-cell"><p>Pursuit integration gain. Rise TC ≈ 1/K_pursuit (~250 ms for default). Cerebellar/MT lesion → 0.1–0.5 = severe pursuit deficit.</p><div class="refs">Lisberger (1988)</div></td>
           <td class="anatomy-cell">MT/MST → cerebellar pursuit pathway</td>
           <td><span class="tag tag-cerebellar">Cerebellar pursuit deficit: 0.3</span></td>
         </tr>
 
         <tr>
-          <td class="param-name">K_phasic_pursuit</td>
+          <td class="param-name">K_phasic_pursuit<span class="llm-tag" title="Exposed in the LLM Patient schema">LLM</span></td>
           <td><span class="default">5</span></td>
           <td class="units">—</td>
+          <td class="range-cell">[0, +∞]</td>
           <td class="desc-cell"><p>Pursuit direct feedthrough gain. Controls fast onset velocity step before the integrator catches up.</p></td>
           <td class="anatomy-cell">Direct pursuit feedthrough</td>
-          <td></td>
+          <td><span class="tag tag-cerebellar">Cerebellar pursuit deficit: 1.0</span></td>
         </tr>
 
         <tr>
-          <td class="param-name">tau_pursuit</td>
+          <td class="param-name">tau_pursuit<span class="llm-tag" title="Exposed in the LLM Patient schema">LLM</span></td>
           <td><span class="default">40</span></td>
           <td class="units">s</td>
+          <td class="range-cell">[0, +∞]</td>
           <td class="desc-cell"><p>Pursuit leak TC. ~40 s → ~97% gain at 1 Hz. Short (5–15 s) → poor pursuit maintenance.</p></td>
           <td class="anatomy-cell">Pursuit memory leak</td>
-          <td></td>
+          <td><span class="tag tag-cerebellar">Poor pursuit maintenance (cerebellar): 8.0</span></td>
         </tr>
 
         <tr>
           <td class="param-name">v_max_pursuit</td>
           <td><span class="default">40</span></td>
           <td class="units">deg/s</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>MT/MST velocity saturation. Pursuit gain ≈1 up to ~30–40 deg/s, then falls (Fuchs 1967, Lisberger & Westbrook 1985).</p><div class="refs">Fuchs (1967) J Physiol · Lisberger & Westbrook (1985) J Neurosci</div></td>
           <td class="anatomy-cell">MT/MST velocity tuning ceiling</td>
           <td></td>
@@ -782,69 +1035,77 @@ tr:last-child { border-bottom: none; }
           <th style="width:160px">Parameter</th>
           <th style="width:90px">Default</th>
           <th style="width:60px">Units</th>
+          <th style="width:110px">Valid range</th>
           <th>Description</th>
           <th style="width:170px">Anatomical locus</th>
           <th style="width:200px">Disorders / notable values</th>
         </tr></thead>
         <tbody>
         <tr>
-          <td class="param-name">K_phasic_verg</td>
+          <td class="param-name">K_phasic_verg<span class="llm-tag" title="Exposed in the LLM Patient schema">LLM</span></td>
           <td><span class="default">1</span></td>
           <td class="units">1/s</td>
+          <td class="range-cell">[0, +∞]</td>
           <td class="desc-cell"><p>Direct phasic vergence gain. Provides the ~150–200 ms fast onset (Rashbass & Westheimer 1961), achieved via plant cancellation.</p><div class="refs">Rashbass & Westheimer (1961) J Physiol 159:339</div></td>
           <td class="anatomy-cell">Vergence direct phasic pathway</td>
-          <td></td>
+          <td><span class="tag tag-other">Reduced direct vergence drive: 0.5</span></td>
         </tr>
 
         <tr>
-          <td class="param-name">K_verg</td>
+          <td class="param-name">K_verg<span class="llm-tag" title="Exposed in the LLM Patient schema">LLM</span></td>
           <td><span class="default">1.25</span></td>
           <td class="units">1/s</td>
+          <td class="range-cell">[0, +∞]</td>
           <td class="desc-cell"><p>Vergence integrator gain. Static gain G = K·tau ≈ 8 matches Read & Schor (2022) Table 1. (Was K_verg_fast / Schor's Kf.)</p><div class="refs">Schor (1979) Vision Res 19:1359 · Hung & Semmlow (1980) · Read & Schor (2022) J Vision 22(9):4</div></td>
           <td class="anatomy-cell">Vergence integrator (cerebellar/midbrain)</td>
-          <td></td>
+          <td><span class="tag tag-other">Convergence insufficiency: 0.5</span></td>
         </tr>
 
         <tr>
-          <td class="param-name">K_verg_tonic</td>
+          <td class="param-name">K_verg_tonic<span class="llm-tag" title="Exposed in the LLM Patient schema">LLM</span></td>
           <td><span class="default">1.5</span></td>
           <td class="units">1/s</td>
+          <td class="range-cell">[0, +∞]</td>
           <td class="desc-cell"><p>Tonic vergence integrator gain. G_tonic = K·tau ≈ 6 boosts DC gain so steady-state fixation disparity stays small. (Was K_verg_slow / Schor's Ks.)</p></td>
           <td class="anatomy-cell">Tonic vergence integrator (slow adapter)</td>
-          <td></td>
+          <td><span class="tag tag-other">Reduced tonic vergence adapter: 0.5</span></td>
         </tr>
 
         <tr>
-          <td class="param-name">tau_verg</td>
+          <td class="param-name">tau_verg<span class="llm-tag" title="Exposed in the LLM Patient schema">LLM</span></td>
           <td><span class="default">5</span></td>
           <td class="units">s</td>
+          <td class="range-cell">[0, +∞]</td>
           <td class="desc-cell"><p>Vergence integrator TC. Schor 1979 / Hung & Semmlow 1980: ≈ 5 s. Sub-second to ~2 s tracking. (Was tau_verg_fast / Schor's Tf.)</p></td>
           <td class="anatomy-cell">Vergence integrator (cerebellar/midbrain)</td>
-          <td></td>
+          <td><span class="tag tag-other">Slow vergence onset: 10.0</span></td>
         </tr>
 
         <tr>
-          <td class="param-name">tau_verg_tonic</td>
+          <td class="param-name">tau_verg_tonic<span class="llm-tag" title="Exposed in the LLM Patient schema">LLM</span></td>
           <td><span class="default">20</span></td>
           <td class="units">s</td>
+          <td class="range-cell">[0, +∞]</td>
           <td class="desc-cell"><p>Tonic vergence integrator TC. Minutes-scale dark-vergence drift (Schor 1979). (Was tau_verg_slow / Schor's Ts.)</p></td>
           <td class="anatomy-cell">Tonic vergence integrator (slow adapter)</td>
-          <td></td>
+          <td><span class="tag tag-other">Fast tonic vergence adapter (latent CI): 5.0</span></td>
         </tr>
 
         <tr>
           <td class="param-name">tau_vp</td>
           <td><span class="default">0.15</span></td>
           <td class="units">s</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>Vergence plant TC for phasic path = τ_p (same muscles as version).</p></td>
           <td class="anatomy-cell">Vergence plant TC for phasic feedthrough</td>
           <td></td>
         </tr>
 
         <tr>
-          <td class="param-name">tonic_verg</td>
+          <td class="param-name">tonic_verg<span class="llm-tag" title="Exposed in the LLM Patient schema">LLM</span></td>
           <td><span class="default">3.67</span></td>
           <td class="units">deg</td>
+          <td class="range-cell">[-30, 60]</td>
           <td class="desc-cell"><p>Tonic (brainstem) vergence baseline — resting dark-vergence position. 3.67° ≈ 1 m at IPD=64 mm (Riggs & Niehl 1960). Increase for esophoric, decrease for exophoric. Phoria is a clinical *measurement*; tonic_verg is the underlying model parameter.</p><div class="refs">Riggs & Niehl (1960) · Morgan (1944)</div></td>
           <td class="anatomy-cell">Brainstem tonic vergence baseline</td>
           <td><span class="tag tag-other">Esophoria (large tonic): 8.0</span> <span class="tag tag-other">Exophoria: 1.0</span></td>
@@ -854,6 +1115,7 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">g_svbn_conv</td>
           <td><span class="default">30</span></td>
           <td class="units">deg/s</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>SVBN convergence asymptotic burst velocity. Zee (1992) Table 1: pure convergence peaks 41–58 deg/s for 10° amplitude. Fires only during OPN pause (z_act ≈ 1).</p><div class="refs">Zee, FitzGibbon, Optican (1992)</div></td>
           <td class="anatomy-cell">Saccade-vergence burst neurons (SVBN) — convergence</td>
           <td></td>
@@ -863,6 +1125,7 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">X_svbn_conv</td>
           <td><span class="default">3</span></td>
           <td class="units">deg</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>Convergence saturation scale: y = g·(1 − exp(−|disp|/X_conv)). Tuned so y(10°) ≈ 58 deg/s (Zee 1992 Table 1).</p></td>
           <td class="anatomy-cell">SVBN convergence saturation scale</td>
           <td></td>
@@ -872,6 +1135,7 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">g_svbn_div</td>
           <td><span class="default">14</span></td>
           <td class="units">deg/s</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>SVBN divergence asymptotic burst velocity. Zee (1992) Table 1: pure divergence peaks 9.5–13 deg/s for 2.5° amplitude (much weaker than conv).</p></td>
           <td class="anatomy-cell">SVBN divergence asymptotic burst</td>
           <td></td>
@@ -881,6 +1145,7 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">X_svbn_div</td>
           <td><span class="default">1</span></td>
           <td class="units">deg</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>Divergence saturation scale, tuned so y(2.5°) ≈ 13 deg/s (Zee 1992).</p></td>
           <td class="anatomy-cell">SVBN divergence saturation scale</td>
           <td></td>
@@ -890,6 +1155,7 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">g_burst_verg<span class="review">needs review</span></td>
           <td><span class="default">0</span></td>
           <td class="units">—</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>Legacy vergence burst gain. Kept for bench compatibility; default 0 (replaced by SVBN params above).</p></td>
           <td class="anatomy-cell">(legacy)</td>
           <td></td>
@@ -905,15 +1171,17 @@ tr:last-child { border-bottom: none; }
           <th style="width:160px">Parameter</th>
           <th style="width:90px">Default</th>
           <th style="width:60px">Units</th>
+          <th style="width:110px">Valid range</th>
           <th>Description</th>
           <th style="width:170px">Anatomical locus</th>
           <th style="width:200px">Disorders / notable values</th>
         </tr></thead>
         <tbody>
         <tr>
-          <td class="param-name">g_tvor</td>
+          <td class="param-name">g_tvor<span class="llm-tag" title="Exposed in the LLM Patient schema">LLM</span></td>
           <td><span class="default">1</span></td>
           <td class="units">—</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>T-VOR version output gain (cross product). ~unity per Paige & Tomko (1991) for sustained translation in the light.</p><div class="refs">Paige & Tomko (1991) J Neurophysiol 65:1170</div></td>
           <td class="anatomy-cell">Cerebellar T-VOR calibration (flocculus)</td>
           <td><span class="tag tag-cerebellar">Cerebellar T-VOR loss: 0.3</span></td>
@@ -923,6 +1191,7 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">g_tvor_verg</td>
           <td><span class="default">0.4</span></td>
           <td class="units">—</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>T-VOR vergence-rate gain. Drives vergence integrator from (g_hat · v_lin)/D². Kept below unity because vergence drift from sustained-tilt v_lin leak is harder to contain than the version output.</p></td>
           <td class="anatomy-cell">Cerebellar T-VOR vergence pathway</td>
           <td></td>
@@ -932,6 +1201,7 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">g_tvor_l2_cyclo<span class="review">needs review</span></td>
           <td><span class="default">0</span></td>
           <td class="units">—</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>L2 cyclo-vergence cross-coupling gain. Currently disabled (positive feedback risk during head tilts via FCP linear Hering's). Re-enable when FCP uses rotation-matrix Hering's.</p></td>
           <td class="anatomy-cell">Per-eye Listing tilt × T-VOR cross-coupling</td>
           <td></td>
@@ -941,6 +1211,7 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">tau_tvor_pos</td>
           <td><span class="default">2</span></td>
           <td class="units">s</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>T-VOR low-pass TC for v_lin. State currently inert (post velocity-output refactor); value retained for state-shape compatibility.</p></td>
           <td class="anatomy-cell">T-VOR pathway low-pass (legacy state)</td>
           <td></td>
@@ -950,6 +1221,7 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">ipd_brain</td>
           <td><span class="default">0.064</span></td>
           <td class="units">m</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>Interpupillary distance for vergence→distance calc. Mirror of SensoryParams.ipd, kept brain-side so brain_model.step doesn't need to thread sensory_params through.</p></td>
           <td class="anatomy-cell">Brain's internal IPD estimate</td>
           <td></td>
@@ -959,6 +1231,7 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">distance_npc</td>
           <td><span class="default">0.08</span></td>
           <td class="units">m</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>NPC — anatomical floor on T-VOR distance. Below this depth no real target can be fused; T-VOR's 1/D scaling is gated to zero. Clinical Sheard / Gulick range 6–10 cm.</p></td>
           <td class="anatomy-cell">Anatomical near-point of convergence floor</td>
           <td></td>
@@ -974,6 +1247,7 @@ tr:last-child { border-bottom: none; }
           <th style="width:160px">Parameter</th>
           <th style="width:90px">Default</th>
           <th style="width:60px">Units</th>
+          <th style="width:110px">Valid range</th>
           <th>Description</th>
           <th style="width:170px">Anatomical locus</th>
           <th style="width:200px">Disorders / notable values</th>
@@ -983,6 +1257,7 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">tonic_acc</td>
           <td><span class="default">1</span></td>
           <td class="units">D</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>Dark-focus resting accommodation. ~1 D ≈ 1 m for young adults. x_fast and x_slow represent DEVIATIONS from this baseline. Calibrate with tonic_verg via tan/half-angle formula.</p></td>
           <td class="anatomy-cell">Resting dark focus (ciliary muscle tonus)</td>
           <td></td>
@@ -992,6 +1267,7 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">tau_acc_plant</td>
           <td><span class="default">0.156</span></td>
           <td class="units">s</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>Lens / ciliary muscle TC. First-order biomechanical: P(s) = 1/(1 + τ_p·s).</p><div class="refs">Schor & Bharadwaj (2006)</div></td>
           <td class="anatomy-cell">Lens / ciliary muscle mechanics</td>
           <td></td>
@@ -1001,6 +1277,7 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">tau_acc_fast</td>
           <td><span class="default">5</span></td>
           <td class="units">s</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>Fast neural integrator TC. Stability requires τ_fast ≥ 2·G_fast·τ_plant ≈ 2.5 s.</p><div class="refs">Read & Schor (2022)</div></td>
           <td class="anatomy-cell">Fast accommodation neural integrator</td>
           <td></td>
@@ -1010,6 +1287,7 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">tau_acc_slow</td>
           <td><span class="default">20</span></td>
           <td class="units">s</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>Slow tonic adaptation TC.</p><div class="refs">Schor (1979)</div></td>
           <td class="anatomy-cell">Slow tonic accommodation adapter</td>
           <td></td>
@@ -1019,6 +1297,7 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">K_acc_fast</td>
           <td><span class="default">2.5</span></td>
           <td class="units">1/s</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>Fast blur gain = G_fast / tau_fast = 8 / 2.5. Closed-loop G_fast = K_acc_fast · tau_acc_fast = 8 (Read & Schor 2022).</p></td>
           <td class="anatomy-cell">Fast blur → accommodation gain</td>
           <td></td>
@@ -1028,15 +1307,17 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">K_acc_slow</td>
           <td><span class="default">1.5</span></td>
           <td class="units">1/s</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>Slow integration gain = G_slow / tau_slow = 5 / 30.</p></td>
           <td class="anatomy-cell">Slow accommodation integration gain</td>
           <td></td>
         </tr>
 
         <tr>
-          <td class="param-name">AC_A</td>
+          <td class="param-name">AC_A<span class="llm-tag" title="Exposed in the LLM Patient schema">LLM</span></td>
           <td><span class="default">5</span></td>
           <td class="units">pd/D</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>AC/A ratio (prism diopters per diopter). Typical 4–6. At 40 cm (2.5 D): AC/A drive ≈ 5×0.573×2.5 ≈ 7.2°. At 6 m (0.17 D): ~0.5° — explains why intermittent exotropia decompensates preferentially at distance.</p></td>
           <td class="anatomy-cell">Accommodative-convergence cross-link</td>
           <td><span class="tag tag-other">High AC/A (esotropia at near): 12.0</span> <span class="tag tag-other">Low AC/A (exotropia at near): 2.0</span></td>
@@ -1046,15 +1327,17 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">CA_C</td>
           <td><span class="default">0.08</span></td>
           <td class="units">D/pd</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>CA/C ratio. Schor & Kotulak 1986 report ≈ 0.5 D/MA (meter-angle); at IPD 64 mm that's ≈ 0.08 D/pd. Loop product AC_A·CA_C ≈ 0.4 D/D < 1 keeps the cross-loop stable.</p><div class="refs">Schor & Kotulak (1986) · Schor (1992) J Opt Soc Am</div></td>
           <td class="anatomy-cell">Convergence-accommodation cross-link</td>
           <td></td>
         </tr>
 
         <tr>
-          <td class="param-name">refractive_error</td>
+          <td class="param-name">refractive_error<span class="llm-tag" title="Exposed in the LLM Patient schema">LLM</span></td>
           <td><span class="default">0</span></td>
           <td class="units">D</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>Patient refractive error. >0 hyperopia (needs more accommodation at every distance), <0 myopia (natural far point = 1/|RE| m).</p></td>
           <td class="anatomy-cell">Patient refractive error</td>
           <td><span class="tag tag-other">+2 D hyperope (uncorrected): 2.0</span> <span class="tag tag-other">−2 D myope (uncorrected): -2.0</span></td>
@@ -1064,51 +1347,76 @@ tr:last-child { border-bottom: none; }
     </div>
 
     <div class="subsection" id="brainparams-final_common_pathway">
-      <h3>Final Common Pathway <small style="font-size:11px;font-weight:400;color:#888">(4 fields)</small></h3>
+      <h3>Final Common Pathway <small style="font-size:11px;font-weight:400;color:#888">(6 fields)</small></h3>
       <table class="param-table">
         <thead><tr>
           <th style="width:160px">Parameter</th>
           <th style="width:90px">Default</th>
           <th style="width:60px">Units</th>
+          <th style="width:110px">Valid range</th>
           <th>Description</th>
           <th style="width:170px">Anatomical locus</th>
           <th style="width:200px">Disorders / notable values</th>
         </tr></thead>
         <tbody>
         <tr>
-          <td class="param-name">g_nucleus</td>
+          <td class="param-name">g_nucleus<span class="llm-tag" title="Exposed in the LLM Patient schema">LLM</span></td>
           <td><span class="default">[1, 1, 1, … (12 total)]</span></td>
           <td class="units">—</td>
-          <td class="desc-cell"><p>Per-nucleus gain [0..1]. 12 elements: [ABN_L, ABN_R, CN4_L, CN4_R,  CN3_MR_L, CN3_MR_R, CN3_SR_L, CN3_SR_R,  CN3_IR_L, CN3_IR_R, CN3_IO_L, CN3_IO_R]. 0 = nucleus lesion (isolates ipsilateral muscle).</p></td>
+          <td class="range-cell">[0, 1] <small>(len 12)</small></td>
+          <td class="desc-cell"><p>Per-nucleus multiplicative gain [0..1].  Models cell-loss in a motor nucleus — burst firing AND tonic baseline are both attenuated by this gain (cells fire less, fewer cells fire).  Gain shared between ABN motoneurons and AIN (intermingled abducens populations). 12 elements: [ABN_L, ABN_R, CN4_L, CN4_R,  CN3_MR_L, CN3_MR_R, CN3_SR_L, CN3_SR_R,  CN3_IR_L, CN3_IR_R, CN3_IO_L, CN3_IO_R]. 0 = nucleus silenced (full lesion).  Partial gain produces graded weakness AND tonic strabismus (asymmetric baseline → eye drift). CN VI nucleus lesion = horizontal gaze palsy (silences ABN motoneurons AND AIN MLF outflow on the same side).</p></td>
           <td class="anatomy-cell">12 motor nuclei: ABN, CN4, CN3 subnuclei (L/R)</td>
-          <td><span class="tag tag-cn">CN VI nucleus palsy (R): [1,0,1,1,1,1,1,1,1,1,1,1]</span> <span class="tag tag-cn">CN III nucleus palsy (R): [1,1,1,1,1,0,1,1,1,1,1,0]</span></td>
+          <td><span class="tag tag-cn">CN VI nucleus palsy (R): [1,0,1,1,1,1,1,1,1,1,1,1]</span> <span class="tag tag-cn">CN III nucleus palsy (R): [1,1,1,1,1,0,1,1,1,1,1,0]</span> <span class="tag tag-cn">Partial CN VI nucleus (R): [1,0.5,1,1,1,1,1,1,1,1,1,1]</span></td>
         </tr>
 
         <tr>
-          <td class="param-name">g_nerve</td>
+          <td class="param-name">g_nerve<span class="llm-tag" title="Exposed in the LLM Patient schema">LLM</span></td>
           <td><span class="default">[1, 1, 1, … (12 total)]</span></td>
           <td class="units">—</td>
-          <td class="desc-cell"><p>Per-nerve gain [0..1]. 12 elements (left then right): [LR_L, MR_L, SR_L, IR_L, SO_L, IO_L,  LR_R, MR_R, SR_R, IR_R, SO_R, IO_R]. 0 = complete nerve palsy.</p></td>
-          <td class="anatomy-cell">12 cranial nerve fascicles to extraocular muscles</td>
-          <td><span class="tag tag-cn">CN VI palsy (R): [1,1,1,1,1,1, 0,1,1,1,1,1]</span> <span class="tag tag-cn">CN III palsy (R): [1,1,1,1,1,1, 1,0,0,0,1,0]</span> <span class="tag tag-cn">CN IV palsy (R, SO): [1,1,1,1,1,1, 1,1,1,1,0,1]</span></td>
+          <td class="range-cell">[0, 1] <small>(len 12)</small></td>
+          <td class="desc-cell"><p>Per-nerve max firing rate as a fraction of NERVE_MAX (250 deg/s). Models conduction block / demyelination of the cranial nerve axon — frequency-selective (burst clipped, tonic preserved).  At g=0 the axon transmits nothing → muscle paralysis.  At g=1 the axon is transparent (cap above normal firing range). 12 elements (left then right): [LR_L, MR_L, SR_L, IR_L, SO_L, IO_L,  LR_R, MR_R, SR_R, IR_R, SO_R, IO_R].</p></td>
+          <td class="anatomy-cell">12 cranial nerve axon ceiling (axonal conduction block)</td>
+          <td><span class="tag tag-cn">CN VI palsy (R): [1,1,1,1,1,1, 0,1,1,1,1,1]</span> <span class="tag tag-cn">CN III palsy (R): [1,1,1,1,1,1, 1,0,0,0,1,0]</span> <span class="tag tag-cn">CN IV palsy (R, SO): [1,1,1,1,1,1, 1,1,1,1,0,1]</span> <span class="tag tag-cn">Recovering CN VI (R): [1,1,1,1,1,1, 0.4,1,1,1,1,1]</span></td>
         </tr>
 
         <tr>
-          <td class="param-name">g_mlf_ver_L</td>
+          <td class="param-name">r_baseline<span class="llm-tag" title="Exposed in the LLM Patient schema">LLM</span></td>
+          <td><span class="default">[50, 50, 50, … (12 total)]</span></td>
+          <td class="units">deg/s equivalent</td>
+          <td class="range-cell">[0, 200] <small>(len 12)</small></td>
+          <td class="desc-cell"><p>Per-nucleus tonic baseline firing rate at primary position (12,). Symmetric default (50) is invisible at the plant via zero-sum decode columns — the plant only sees agonist−antagonist differences, so uniform baselines cancel.  Asymmetric baselines produce tonic strabismus directly without needing to lesion a gain. Default: 50 across all 12 nuclei.  Indices match g_nucleus. Note: g_nucleus also scales the baseline (cell loss reduces tone too), so partial nuclear lesions automatically produce both saccade slowing AND tonic strabismus.</p></td>
+          <td class="anatomy-cell">Per-nucleus tonic baseline firing (deg/s)</td>
+          <td><span class="tag tag-phoria">Right exotropia (extra LR_R tone): [50,80,50,50,50,50,50,50,50,50,50,50]</span> <span class="tag tag-phoria">Right esotropia (extra MR_R tone): [50,50,50,50,50,80,50,50,50,50,50,50]</span></td>
+        </tr>
+
+        <tr>
+          <td class="param-name">tau_mn</td>
+          <td><span class="default">0.005</span></td>
+          <td class="units">s</td>
+          <td class="range-cell"></td>
+          <td class="desc-cell"><p>Per-MN low-pass time constant for the motor neuron firing-rate dynamics (Robinson 1981; Sylvestre & Cullen 1999).  ~5 ms is the membrane TC of oculomotor motoneurons.  Behaviorally invisible at healthy plant TCs (~150-200 ms), but a clean state-level hook for MN-pathology modelling.</p></td>
+          <td class="anatomy-cell">Motor neuron LP membrane time constant</td>
+          <td></td>
+        </tr>
+
+        <tr>
+          <td class="param-name">g_mlf_L<span class="llm-tag" title="Exposed in the LLM Patient schema">LLM</span></td>
           <td><span class="default">1</span></td>
           <td class="units">—</td>
-          <td class="desc-cell"><p>Version-yaw gain for the left MR subnucleus. 0 = left INO: left eye cannot adduct on rightward conjugate gaze; convergence (vergence component) preserved.</p></td>
-          <td class="anatomy-cell">Left MR version-yaw gain (right MLF pathway)</td>
+          <td class="range-cell">[0, 1]</td>
+          <td class="desc-cell"><p>Conduction cap on the left MLF axon tract that carries abducens internuclear neuron (AIN_R) signal to contralateral CN3_MR_L motoneurons.  Frequency-selective — saccadic burst (high-frequency) fails to propagate while tonic vergence drive (low-frequency, via CN3_MR_L direct from supraoculomotor) is preserved. 0 = left INO: left eye cannot adduct on rightward conjugate gaze; convergence preserved.  Partial values 0.3-0.7 = recovering INO.</p></td>
+          <td class="anatomy-cell">Left MLF axon conduction (AIN_R → MR_L pathway)</td>
           <td><span class="tag tag-ino">Left INO: 0.0</span> <span class="tag tag-ino">Partial INO (recovering): 0.5</span></td>
         </tr>
 
         <tr>
-          <td class="param-name">g_mlf_ver_R</td>
+          <td class="param-name">g_mlf_R<span class="llm-tag" title="Exposed in the LLM Patient schema">LLM</span></td>
           <td><span class="default">1</span></td>
           <td class="units">—</td>
-          <td class="desc-cell"><p>Version-yaw gain for the right MR subnucleus. 0 = right INO; bilateral INO when both g_mlf_ver_L and g_mlf_ver_R = 0.</p></td>
-          <td class="anatomy-cell">Right MR version-yaw gain (left MLF pathway)</td>
-          <td><span class="tag tag-ino">Right INO: 0.0</span> <span class="tag tag-ino">Bilateral INO: 0.0</span></td>
+          <td class="range-cell">[0, 1]</td>
+          <td class="desc-cell"><p>Conduction cap on the right MLF axon tract.  Symmetric to g_mlf_L: 0 = right INO; partial = recovering.  Bilateral INO when both = 0.</p></td>
+          <td class="anatomy-cell">Right MLF axon conduction (AIN_L → MR_R pathway)</td>
+          <td><span class="tag tag-ino">Right INO: 0.0</span> <span class="tag tag-ino">Bilateral INO (BIMLF): 0.0</span></td>
         </tr>
         </tbody>
       </table>
@@ -1116,7 +1424,7 @@ tr:last-child { border-bottom: none; }
   </section>
     
   <section class="section" id="sensoryparams">
-    <h2>SensoryParams <small style="font-size:12px;font-weight:400;color:#888">(25 fields)</small></h2>
+    <h2>SensoryParams <small style="font-size:12px;font-weight:400;color:#888">(20 fields)</small></h2>
     <p class="desc">Peripheral sensor parameters — canal/otolith dynamics, visual delay, retinal noise, IPD.</p>
     
     <div class="subsection" id="sensoryparams-canals">
@@ -1126,6 +1434,7 @@ tr:last-child { border-bottom: none; }
           <th style="width:160px">Parameter</th>
           <th style="width:90px">Default</th>
           <th style="width:60px">Units</th>
+          <th style="width:110px">Valid range</th>
           <th>Description</th>
           <th style="width:170px">Anatomical locus</th>
           <th style="width:200px">Disorders / notable values</th>
@@ -1135,6 +1444,7 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">tau_c</td>
           <td><span class="default">5</span></td>
           <td class="units">s</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>Cupula adaptation TC — high-pass corner ≈ 0.03 Hz. Sets the drop-off of canal afferents to sustained rotation (post-rotational decay).</p><div class="refs">Fernandez & Goldberg (1971)</div></td>
           <td class="anatomy-cell">Cupula long-TC (Steinhausen pendulum)</td>
           <td></td>
@@ -1144,15 +1454,17 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">tau_s</td>
           <td><span class="default">0.005</span></td>
           <td class="units">s</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>Endolymph inertia TC — low-pass corner ≈ 32 Hz. Defines the upper frequency limit of canal sensitivity.</p><div class="refs">Fernandez & Goldberg (1971)</div></td>
           <td class="anatomy-cell">Endolymph inertia (Steinhausen pendulum)</td>
           <td></td>
         </tr>
 
         <tr>
-          <td class="param-name">canal_gains</td>
+          <td class="param-name">canal_gains<span class="llm-tag" title="Exposed in the LLM Patient schema">LLM</span></td>
           <td><span class="default">[1.0, 1.0, 1.0, 1.0, 1.0, 1.0]</span></td>
           <td class="units">—</td>
+          <td class="range-cell">[0, 1] <small>(len 6)</small></td>
           <td class="desc-cell"><p>(6,) per-canal scale [L_HC, L_AC, L_PC, R_HC, R_AC, R_PC]. 1.0 = intact, 0 = paresis. Used for unilateral / per-canal lesion modelling.</p></td>
           <td class="anatomy-cell">Per-canal afferent sensitivity (6 ducts)</td>
           <td><span class="tag tag-vn">Left vestibular neuritis: [0,0,0,1,1,1]</span> <span class="tag tag-vn">Right vestibular neuritis: [1,1,1,0,0,0]</span> <span class="tag tag-vn">Bilateral vestibular loss: [0,0,0,0,0,0]</span></td>
@@ -1162,8 +1474,35 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">canal_floor</td>
           <td><span class="default">80</span></td>
           <td class="units">deg/s</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>Resting canal afferent firing rate (deg/s equivalent). Inhibitory saturation occurs at velocity = canal_floor (Ewald's 2nd law).</p><div class="refs">Goldberg & Fernandez (1971) J Neurophysiol 34:635</div></td>
           <td class="anatomy-cell">Resting discharge (inhibitory saturation point)</td>
+          <td></td>
+        </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="subsection" id="sensoryparams-self_motion_estimation">
+      <h3>Self Motion Estimation <small style="font-size:11px;font-weight:400;color:#888">(1 field)</small></h3>
+      <table class="param-table">
+        <thead><tr>
+          <th style="width:160px">Parameter</th>
+          <th style="width:90px">Default</th>
+          <th style="width:60px">Units</th>
+          <th style="width:110px">Valid range</th>
+          <th>Description</th>
+          <th style="width:170px">Anatomical locus</th>
+          <th style="width:200px">Disorders / notable values</th>
+        </tr></thead>
+        <tbody>
+        <tr>
+          <td class="param-name">canal_v_max<span class="llm-tag" title="Exposed in the LLM Patient schema">LLM</span></td>
+          <td><span class="default">400</span></td>
+          <td class="units">deg/s</td>
+          <td class="range-cell">[0, +∞]</td>
+          <td class="desc-cell"><p>Excitatory canal afferent saturation in canal.step.  Inhibitory floor (~80 deg/s, Ewald's 2nd law) is implemented in canal nonlinearity. Excitatory ceiling 300–600 deg/s (Goldberg & Fernandez 1971).</p><div class="refs">Goldberg & Fernández (1971) J Neurophysiol 34:635</div></td>
+          <td class="anatomy-cell">Canal afferent saturation (sensor-side ceiling)</td>
           <td></td>
         </tr>
         </tbody>
@@ -1177,6 +1516,7 @@ tr:last-child { border-bottom: none; }
           <th style="width:160px">Parameter</th>
           <th style="width:90px">Default</th>
           <th style="width:60px">Units</th>
+          <th style="width:110px">Valid range</th>
           <th>Description</th>
           <th style="width:170px">Anatomical locus</th>
           <th style="width:200px">Disorders / notable values</th>
@@ -1186,6 +1526,7 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">tau_oto</td>
           <td><span class="default">100</span></td>
           <td class="units">s</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>Otolith adaptation TC. Large value → near-DC pass — otoliths report sustained gravito-inertial force with little adaptation.</p><div class="refs">Fernandez & Goldberg (1976)</div></td>
           <td class="anatomy-cell">Utricle/saccule afferent low-pass adaptation</td>
           <td></td>
@@ -1201,17 +1542,19 @@ tr:last-child { border-bottom: none; }
           <th style="width:160px">Parameter</th>
           <th style="width:90px">Default</th>
           <th style="width:60px">Units</th>
+          <th style="width:110px">Valid range</th>
           <th>Description</th>
           <th style="width:170px">Anatomical locus</th>
           <th style="width:200px">Disorders / notable values</th>
         </tr></thead>
         <tbody>
         <tr>
-          <td class="param-name">tau_vis</td>
-          <td><span class="default">0.08</span></td>
+          <td class="param-name">tau_vis_sharp</td>
+          <td><span class="default">0.05</span></td>
           <td class="units">s</td>
-          <td class="desc-cell"><p>Gamma-cascade mean delay. ~80 ms matches retina → V1/MT/MST processing latency for motion signals.</p><div class="refs">Lisberger & Movshon (1999)</div></td>
-          <td class="anatomy-cell">Visual processing delay (gamma cascade)</td>
+          <td class="range-cell"></td>
+          <td class="desc-cell"><p>Sharp-cascade mean delay (per stage / total ≈ 50-80 ms) — retina → V1/MT/MST processing latency for motion signals.  Replaces the previous single tau_vis with a two-stage (sharp + smoothing) architecture; smoothing TCs are tau_vis_smooth_motion / target_vel / disparity / defocus depending on the channel.</p><div class="refs">Lisberger & Movshon (1999)</div></td>
+          <td class="anatomy-cell">Visual sharp delay cascade mean TC</td>
           <td></td>
         </tr>
 
@@ -1219,6 +1562,7 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">visual_field_limit</td>
           <td><span class="default">90</span></td>
           <td class="units">deg</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>Eccentricity limit beyond which target is considered out-of-field. ~90° per eye for monocular field.</p></td>
           <td class="anatomy-cell">Retinal eccentricity boundary</td>
           <td></td>
@@ -1228,6 +1572,7 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">k_visual_field</td>
           <td><span class="default">1</span></td>
           <td class="units">1/deg</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>Sigmoid steepness for the in-field / out-of-field gate.</p></td>
           <td class="anatomy-cell">Visual-field gate sigmoid steepness</td>
           <td></td>
@@ -1237,6 +1582,7 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">v_max_target_vel</td>
           <td><span class="default">40</span></td>
           <td class="units">deg/s</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>MT/MST speed ceiling — clips target velocity before the visual cascade. Must match brain.v_max_pursuit so the EC correction cancels exactly.</p></td>
           <td class="anatomy-cell">MT/MST target-velocity ceiling</td>
           <td></td>
@@ -1246,59 +1592,9 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">v_max_scene_vel</td>
           <td><span class="default">80</span></td>
           <td class="units">deg/s</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>NOT/AOS speed ceiling — clips scene velocity before the visual cascade. Must match brain.v_max_okr.</p></td>
           <td class="anatomy-cell">NOT/AOS scene-velocity ceiling</td>
-          <td></td>
-        </tr>
-        </tbody>
-      </table>
-    </div>
-
-    <div class="subsection" id="sensoryparams-ungrouped">
-      <h3>Ungrouped <small style="font-size:11px;font-weight:400;color:#888">(4 fields)</small></h3>
-      <table class="param-table">
-        <thead><tr>
-          <th style="width:160px">Parameter</th>
-          <th style="width:90px">Default</th>
-          <th style="width:60px">Units</th>
-          <th>Description</th>
-          <th style="width:170px">Anatomical locus</th>
-          <th style="width:200px">Disorders / notable values</th>
-        </tr></thead>
-        <tbody>
-        <tr>
-          <td class="param-name">tau_vis_disparity<span class="todo">TODO: enrich schema</span></td>
-          <td><span class="default">0.16</span></td>
-          <td class="units"></td>
-          <td class="desc-cell"><p>disparity-specific cascade delay (s). Disparity processing is slower than position/motion (V1 stereo correspondence + MT/MST → vergence pathway, ~150–200 ms vs ~80–100 ms for OKR/pursuit). Same number of cascade stages, just slower per-stage rate (k = N/τ).</p></td>
-          <td class="anatomy-cell"></td>
-          <td></td>
-        </tr>
-
-        <tr>
-          <td class="param-name">tau_canal_drift<span class="todo">TODO: enrich schema</span></td>
-          <td><span class="default">0.005</span></td>
-          <td class="units"></td>
-          <td class="desc-cell"><p>OU TC for canal noise (s); essentially band-limited white</p></td>
-          <td class="anatomy-cell"></td>
-          <td></td>
-        </tr>
-
-        <tr>
-          <td class="param-name">tau_slip_drift<span class="todo">TODO: enrich schema</span></td>
-          <td><span class="default">0.005</span></td>
-          <td class="units"></td>
-          <td class="desc-cell"><p>OU TC for slip noise (s)</p></td>
-          <td class="anatomy-cell"></td>
-          <td></td>
-        </tr>
-
-        <tr>
-          <td class="param-name">tau_vel_drift<span class="todo">TODO: enrich schema</span></td>
-          <td><span class="default">0.005</span></td>
-          <td class="units"></td>
-          <td class="desc-cell"><p>OU TC for retinal-vel noise (s); essentially band-limited white</p></td>
-          <td class="anatomy-cell"></td>
           <td></td>
         </tr>
         </tbody>
@@ -1312,6 +1608,7 @@ tr:last-child { border-bottom: none; }
           <th style="width:160px">Parameter</th>
           <th style="width:90px">Default</th>
           <th style="width:60px">Units</th>
+          <th style="width:110px">Valid range</th>
           <th>Description</th>
           <th style="width:170px">Anatomical locus</th>
           <th style="width:200px">Disorders / notable values</th>
@@ -1321,6 +1618,7 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">sigma_canal</td>
           <td><span class="default">1</span></td>
           <td class="units">deg/s</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>Canal afferent noise std. Realistic ~1–3 deg/s. Filtered heavily by VS/NI/plant before reaching the eye.</p></td>
           <td class="anatomy-cell">Canal afferent noise</td>
           <td></td>
@@ -1330,6 +1628,7 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">sigma_slip</td>
           <td><span class="default">0</span></td>
           <td class="units">deg/s</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>Retinal scene-velocity noise std. Affects OKR/VS drive.</p></td>
           <td class="anatomy-cell">Retinal slip noise (drives VS/OKR)</td>
           <td></td>
@@ -1339,6 +1638,7 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">sigma_pos</td>
           <td><span class="default">0.2</span></td>
           <td class="units">deg</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>Retinal position noise std (Ornstein-Uhlenbeck). Drives the saccade generator → microsaccades. Default 0.2° matches realistic fixational-eye-movement amplitudes.</p></td>
           <td class="anatomy-cell">Retinal position drift (OU process)</td>
           <td></td>
@@ -1348,6 +1648,7 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">tau_pos_drift</td>
           <td><span class="default">0.2</span></td>
           <td class="units">s</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>OU TC for the position drift — sets how slowly retinal position error wanders, controlling inter-microsaccade interval.</p></td>
           <td class="anatomy-cell">OU drift correlation TC</td>
           <td></td>
@@ -1357,6 +1658,7 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">sigma_vel</td>
           <td><span class="default">1</span></td>
           <td class="units">deg/s</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>Target velocity noise std — creates pursuit-like slow drift.</p></td>
           <td class="anatomy-cell">Target velocity noise (drives pursuit integrator)</td>
           <td></td>
@@ -1365,13 +1667,60 @@ tr:last-child { border-bottom: none; }
       </table>
     </div>
 
-    <div class="subsection" id="sensoryparams-binocular">
-      <h3>Binocular <small style="font-size:11px;font-weight:400;color:#888">(6 fields)</small></h3>
+    <div class="subsection" id="sensoryparams-ungrouped">
+      <h3>Ungrouped <small style="font-size:11px;font-weight:400;color:#888">(3 fields)</small></h3>
       <table class="param-table">
         <thead><tr>
           <th style="width:160px">Parameter</th>
           <th style="width:90px">Default</th>
           <th style="width:60px">Units</th>
+          <th style="width:110px">Valid range</th>
+          <th>Description</th>
+          <th style="width:170px">Anatomical locus</th>
+          <th style="width:200px">Disorders / notable values</th>
+        </tr></thead>
+        <tbody>
+        <tr>
+          <td class="param-name">tau_canal_drift<span class="todo">TODO: enrich schema</span></td>
+          <td><span class="default">0.005</span></td>
+          <td class="units"></td>
+          <td class="range-cell"></td>
+          <td class="desc-cell"><p>OU TC for canal noise (s); essentially band-limited white</p></td>
+          <td class="anatomy-cell"></td>
+          <td></td>
+        </tr>
+
+        <tr>
+          <td class="param-name">tau_slip_drift<span class="todo">TODO: enrich schema</span></td>
+          <td><span class="default">0.005</span></td>
+          <td class="units"></td>
+          <td class="range-cell"></td>
+          <td class="desc-cell"><p>OU TC for slip noise (s)</p></td>
+          <td class="anatomy-cell"></td>
+          <td></td>
+        </tr>
+
+        <tr>
+          <td class="param-name">tau_vel_drift<span class="todo">TODO: enrich schema</span></td>
+          <td><span class="default">0.005</span></td>
+          <td class="units"></td>
+          <td class="range-cell"></td>
+          <td class="desc-cell"><p>OU TC for retinal-vel noise (s); essentially band-limited white</p></td>
+          <td class="anatomy-cell"></td>
+          <td></td>
+        </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="subsection" id="sensoryparams-binocular">
+      <h3>Binocular <small style="font-size:11px;font-weight:400;color:#888">(1 field)</small></h3>
+      <table class="param-table">
+        <thead><tr>
+          <th style="width:160px">Parameter</th>
+          <th style="width:90px">Default</th>
+          <th style="width:60px">Units</th>
+          <th style="width:110px">Valid range</th>
           <th>Description</th>
           <th style="width:170px">Anatomical locus</th>
           <th style="width:200px">Disorders / notable values</th>
@@ -1381,53 +1730,9 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">ipd</td>
           <td><span class="default">0.064</span></td>
           <td class="units">m</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>IPD — adult typical 64 mm. Sets vergence/distance conversion (mirror of brain.ipd_brain).</p></td>
           <td class="anatomy-cell">Inter-pupillary distance</td>
-          <td></td>
-        </tr>
-
-        <tr>
-          <td class="param-name">npc</td>
-          <td><span class="default">50</span></td>
-          <td class="units">deg</td>
-          <td class="desc-cell"><p>Near point of convergence (vergence angle limit). 50° ≈ NPC 7 cm at IPD 64 mm. Closes diplopia gate beyond this.</p></td>
-          <td class="anatomy-cell">Convergence motor limit</td>
-          <td></td>
-        </tr>
-
-        <tr>
-          <td class="param-name">div_max</td>
-          <td><span class="default">6</span></td>
-          <td class="units">deg</td>
-          <td class="desc-cell"><p>Maximum divergence — ~6° for young adults.</p></td>
-          <td class="anatomy-cell">Divergence motor limit</td>
-          <td></td>
-        </tr>
-
-        <tr>
-          <td class="param-name">vert_max</td>
-          <td><span class="default">5</span></td>
-          <td class="units">deg</td>
-          <td class="desc-cell"><p>Maximum vertical vergence ±deg. ~3–5° clinical range.</p></td>
-          <td class="anatomy-cell">Vertical vergence motor limit</td>
-          <td></td>
-        </tr>
-
-        <tr>
-          <td class="param-name">tors_max</td>
-          <td><span class="default">8</span></td>
-          <td class="units">deg</td>
-          <td class="desc-cell"><p>Maximum cyclo-vergence ±deg. ~5–8° max physiologically.</p></td>
-          <td class="anatomy-cell">Cyclovergence motor limit</td>
-          <td></td>
-        </tr>
-
-        <tr>
-          <td class="param-name">eye_dominant</td>
-          <td><span class="default">1</span></td>
-          <td class="units">—</td>
-          <td class="desc-cell"><p>1.0 = right eye dominant, 0.0 = left dominant. Used in fusion / diplopia suppression.</p></td>
-          <td class="anatomy-cell">Sensory eye dominance flag</td>
           <td></td>
         </tr>
         </tbody>
@@ -1446,6 +1751,7 @@ tr:last-child { border-bottom: none; }
           <th style="width:160px">Parameter</th>
           <th style="width:90px">Default</th>
           <th style="width:60px">Units</th>
+          <th style="width:110px">Valid range</th>
           <th>Description</th>
           <th style="width:170px">Anatomical locus</th>
           <th style="width:200px">Disorders / notable values</th>
@@ -1455,6 +1761,7 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">tau_p</td>
           <td><span class="default">0.15</span></td>
           <td class="units">s</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>First-order plant time constant. Converts pulse-step motor command to eye rotation velocity.</p><div class="refs">Robinson (1981) · Goldstein (1983) Biol Cybern</div></td>
           <td class="anatomy-cell">Extraocular muscle / orbital mechanics</td>
           <td></td>
@@ -1464,6 +1771,7 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">orbital_limit</td>
           <td><span class="default">50</span></td>
           <td class="units">deg</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>Mechanical half-range of the orbit. Anatomical wall — eye velocity is zeroed when the eye reaches ±orbital_limit and the motor drive would push it further outward.</p></td>
           <td class="anatomy-cell">Mechanical orbital range</td>
           <td></td>
@@ -1473,6 +1781,7 @@ tr:last-child { border-bottom: none; }
           <td class="param-name">k_orbital</td>
           <td><span class="default">1</span></td>
           <td class="units">1/deg</td>
+          <td class="range-cell"></td>
           <td class="desc-cell"><p>Sigmoid steepness for the orbital-limit gate; controls how sharply the velocity-clip kicks in near ±orbital_limit.</p></td>
           <td class="anatomy-cell">Orbital wall sigmoid steepness</td>
           <td></td>

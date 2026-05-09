@@ -137,50 +137,15 @@ def _build_stimulus(scenario: SimulationScenario) -> dict:
 # ── Parameter builder ─────────────────────────────────────────────────────────
 
 def _build_params(patient: Patient):
-    """Convert Patient overrides to a Params NamedTuple."""
-    params = PARAMS_DEFAULT
+    """Convert Patient overrides to a Params NamedTuple.
 
-    # Sensory overrides
-    params = with_sensory(params,
-        canal_gains = jnp.array(patient.canal_gains, dtype=float),
-        canal_v_max = patient.canal_v_max,
-    )
-
-    # b_vs_L/R → 6-vector (model LEFT pop = anatomical RIGHT VN, model RIGHT pop = anatomical LEFT VN)
-    b_vs = jnp.array([
-        patient.b_vs_R, patient.b_vs_R, patient.b_vs_R,   # model LEFT pop = anatomical RIGHT VN
-        patient.b_vs_L, patient.b_vs_L, patient.b_vs_L,   # model RIGHT pop = anatomical LEFT  VN
-    ], dtype=float)
-
-    # Brain overrides
-    params = with_brain(params,
-        b_vs            = b_vs,
-        tau_vs          = patient.tau_vs,
-        g_vor           = patient.g_vor,
-        K_vs            = patient.K_vs,
-        K_vis           = patient.K_vis,
-        g_vis           = patient.g_vis,
-        tau_i           = patient.tau_i,
-        g_burst         = patient.g_burst,
-        K_pursuit       = patient.K_pursuit,
-        K_phasic_pursuit= patient.K_phasic_pursuit,
-        tau_pursuit     = patient.tau_pursuit,
-        K_grav          = patient.K_grav,
-        K_lin           = patient.K_lin,
-        tau_vs_adapt    = patient.tau_vs_adapt,
-        tau_ni_adapt    = patient.tau_ni_adapt,
-        K_phasic_verg   = patient.K_phasic_verg,
-        K_verg          = patient.K_verg,
-        tau_verg        = patient.tau_verg,
-        K_verg_tonic    = patient.K_verg_tonic,
-        tau_verg_tonic  = patient.tau_verg_tonic,
-        tonic_verg      = patient.tonic_verg,
-        g_nucleus       = jnp.array(patient.g_nucleus, dtype=jnp.float32),
-        g_nerve         = jnp.array(patient.g_nerve,   dtype=jnp.float32),
-        g_mlf_L         = patient.g_mlf_L,
-        g_mlf_R         = patient.g_mlf_R,
-    )
-    return params
+    Delegates to patient_builder.apply_patient — that module owns the
+    introspection that maps each YAML-defined Patient field onto the right
+    BrainParams / SensoryParams / PlantParams slot (including aliases like
+    b_vs_L / b_vs_R that write into a slice of the underlying b_vs array).
+    """
+    from oculomotor.llm_pipeline.patient_builder import apply_patient
+    return apply_patient(patient, PARAMS_DEFAULT)
 
 
 # ── Signal extraction helpers ─────────────────────────────────────────────────

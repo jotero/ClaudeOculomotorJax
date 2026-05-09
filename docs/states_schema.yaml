@@ -1,0 +1,874 @@
+# State / activation registry — model state vectors and key derived signals
+# mapped to anatomical loci.  Mirrors the parameters_schema.yaml pattern:
+# YAML enriches code-side state, gen_states.py renders states.html, and a
+# future signal-registry consumes the same file to drive LLM custom panels.
+#
+# Keys are "<class>.<name>" where class ∈ {sensory, brain, plant, derived}.
+#
+# Schema fields (all optional):
+#   group:        section grouping in the HTML output
+#   encodes:      what the signal represents (e.g. head angular velocity,
+#                 prediction error, motor error)
+#   frame:        coordinate frame of interpretation (head, eye, retina,
+#                 cyclopean, focus distance, scalar, etc.)
+#   shape:        list, e.g. [3] (yaw/pitch/roll) or [12] (per-muscle)
+#   axes:         per-element label (matches shape)
+#   units:        physical units displayed alongside the value
+#   description:  multi-line markdown-friendly description
+#   anatomy:      brief anatomical locus.  Accepts either a string (single
+#                 region) OR a list of {axes, region} dicts when different
+#                 axes of the signal map to different anatomical structures
+#                 (e.g. yaw → PPRF, pitch/roll → riMLF for saccade bursts).
+#   population:   neural population type (e.g. "Type-I VN")
+#   state_slice:  how to extract from SimState (for stored state)
+#   computation:  symbolic expression (for derived signals)
+#   references:   list of citation strings
+#   llm_plottable: true → expose as a candidate for LLM custom-panel signals
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SENSORY — semicircular canals
+# ─────────────────────────────────────────────────────────────────────────────
+
+sensory.canal_afferents:
+  group: vestibular_periphery
+  encodes:    "head angular velocity (push-pull canal pairs)"
+  frame:      "canal-aligned (HC ≈ yaw, AC/PC ≈ pitch + roll)"
+  shape: [6]
+  axes:  [L_HC, L_AC, L_PC, R_HC, R_AC, R_PC]
+  units: "deg/s"
+  anatomy:    "Vestibular nerve afferents (CN VIII)"
+  population: "Primary canal afferents (regular + irregular pop)"
+  description: |
+    Cupula-deflection-derived afferent firing rate per canal, push-pull
+    pairs (L_HC ↔ R_HC, L_AC ↔ R_PC, L_PC ↔ R_AC) feed the vestibular
+    nuclei.  Steinhausen second-order dynamics with smooth saturation at
+    high velocity.
+  state_slice: "sensory.canal[ y from canal.nonlinearity ]"
+  references:
+    - "Steinhausen (1933)"
+    - "Goldberg & Fernandez (1971)"
+  llm_plottable: true
+
+sensory.canal_state:
+  group: vestibular_periphery
+  encodes:    "cupula deflection + inertia (internal Steinhausen state)"
+  frame:      "per-canal"
+  shape: [12]
+  axes:  [HC_L_x1, HC_L_x2, AC_L_x1, AC_L_x2, PC_L_x1, PC_L_x2,
+          HC_R_x1, HC_R_x2, AC_R_x1, AC_R_x2, PC_R_x1, PC_R_x2]
+  units: "—"
+  anatomy:    "Cupula mechanics (Steinhausen pendulum, per canal)"
+  description: |
+    Two-state SSM per canal: x1 = cupula deflection, x2 = inertia state.
+    Internal model state — usually plot the rectified afferent
+    (canal_afferents) instead.
+  state_slice: "sensory[_IDX_C]"
+  llm_plottable: false
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SENSORY — otoliths
+# ─────────────────────────────────────────────────────────────────────────────
+
+sensory.otolith:
+  group: vestibular_periphery
+  encodes:    "specific force (linear acceleration + gravity, LP-adapted)"
+  frame:      "head"
+  shape: [6]
+  axes:  [L_x1, L_x2, L_x3, R_x1, R_x2, R_x3]
+  units: "m/s²"
+  anatomy:    "Utricular + saccular afferents (CN VIII)"
+  population: "Otolithic primary afferents"
+  description: |
+    Bilateral linear-acceleration afferents (specific force in head frame).
+    LP-adapter dynamics; output drives gravity / heading observers.
+  state_slice: "sensory[_IDX_OTO]"
+  references: ["Fernandez & Goldberg (1976)"]
+  llm_plottable: true
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SENSORY — retinal delay cascades (per eye)
+# ─────────────────────────────────────────────────────────────────────────────
+
+sensory.retina_L:
+  group: visual_periphery
+  encodes:    "multi-channel visual signals (slip / target / visibility / defocus, delayed)"
+  frame:      "left retina (foveal-centred)"
+  shape: [90]
+  units: "various"
+  anatomy:    "Left-eye visual processing (retina → V1 / MT / MST)"
+  description: |
+    6-stage gamma cascade per signal channel: scene_angular_vel (3),
+    scene_linear_vel (3), target_pos (3), target_vel (3), scene_visible (1),
+    target_visible (1), defocus (1).  Total 90 states; the last stage of
+    each cascade is the post-delay readout.
+  state_slice: "sensory[_IDX_RETINA_L]"
+  llm_plottable: false
+
+sensory.retina_R:
+  group: visual_periphery
+  encodes:    "multi-channel visual signals (slip / target / visibility / defocus, delayed)"
+  frame:      "right retina (foveal-centred)"
+  shape: [90]
+  units: "various"
+  anatomy:    "Right-eye visual processing (retina → V1 / MT / MST)"
+  description: |
+    Same structure as retina_L.  See per-channel readouts in derived signals.
+  state_slice: "sensory[_IDX_RETINA_R]"
+  llm_plottable: false
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BRAIN — Velocity Storage (MVN)
+# ─────────────────────────────────────────────────────────────────────────────
+
+brain.vs_left:
+  group: velocity_storage
+  encodes:    "head angular velocity (compensatory drive, left pop)"
+  frame:      "head"
+  shape: [3]
+  axes:  [yaw, pitch, roll]
+  units: "deg/s"
+  anatomy:
+    - {axes: [yaw],          region: "Left MVN (medial vestibular nucleus)"}
+    - {axes: [pitch, roll],  region: "Left SVN + LVN (superior + lateral VN, vertical/torsional)"}
+  population: "Type-I VN, push-pull with vs_right"
+  description: |
+    Left VN firing rate (deg/s equiv).  Net VS velocity = vs_left − vs_right.
+    Drives leftward yaw / pitch / roll on this side.  Horizontal velocity
+    storage primarily in MVN; vertical and torsional in SVN/LVN.
+  state_slice: "brain[_IDX_VS_L]"
+  references: ["Raphan, Matsuo & Cohen (1979)", "Angelaki & Hess (1994)"]
+  llm_plottable: true
+
+brain.vs_right:
+  group: velocity_storage
+  encodes:    "head angular velocity (compensatory drive, right pop)"
+  frame:      "head"
+  shape: [3]
+  axes:  [yaw, pitch, roll]
+  units: "deg/s"
+  anatomy:
+    - {axes: [yaw],          region: "Right MVN (medial vestibular nucleus)"}
+    - {axes: [pitch, roll],  region: "Right SVN + LVN (superior + lateral VN)"}
+  population: "Type-I VN, push-pull with vs_left"
+  description:  "Right VN firing rate; net VS = vs_left − vs_right.  MVN for yaw, SVN/LVN for vertical/torsional."
+  state_slice: "brain[_IDX_VS_R]"
+  llm_plottable: true
+
+brain.vs_null:
+  group: velocity_storage
+  encodes:    "slow VS bilateral-imbalance adapter (PAN substrate)"
+  frame:      "head"
+  shape: [3]
+  axes:  [yaw, pitch, roll]
+  units: "deg/s"
+  anatomy:    "Cerebellar slow-time-scale adapter on VS (nodulus / uvula)"
+  description: |
+    Slow null-adaptation state for VS push-pull.  Drives PAN-like (periodic
+    alternating nystagmus) when tau_vs_adapt is reduced.
+  state_slice: "brain[_IDX_VS_NULL]"
+  llm_plottable: true
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BRAIN — Self-motion observers (gravity, heading)
+# ─────────────────────────────────────────────────────────────────────────────
+
+brain.gravity_estimate:
+  group: self_motion_observer
+  encodes:    "estimated gravity vector (somatogravic prior)"
+  frame:      "head"
+  shape: [3]
+  axes:  [x, y, z]
+  units: "m/s²"
+  anatomy:    "Brainstem / cerebellar gravity-vector observer (Laurens 2017)"
+  description: |
+    Internal gravity vector estimate in head frame.  Cross-product transport
+    by canal velocity; correction toward delayed otolith.  Drives OCR (g_ocr)
+    and tilt-suppression (K_gd).
+  state_slice: "brain[_IDX_GRAV][0:3]"
+  references: ["Laurens & Angelaki (2011, 2017)"]
+  llm_plottable: true
+
+brain.linear_accel_estimate:
+  group: self_motion_observer
+  encodes:    "linear-acceleration estimate (otolith − gravity prediction)"
+  frame:      "head"
+  shape: [3]
+  axes:  [x, y, z]
+  units: "m/s²"
+  anatomy:    "Linear-acceleration estimate (otolith − gravity prediction)"
+  description: |
+    Brain's estimate of linear acceleration — what the otolith reports minus
+    the gravity prediction.  Drives the heading estimator's velocity update.
+  state_slice: "brain[_IDX_GRAV][3:6]"
+  llm_plottable: true
+
+brain.rotation_frame:
+  group: self_motion_observer
+  encodes:    "rotating-frame bookkeeping for gravity transport (internal)"
+  frame:      "head"
+  shape: [3]
+  axes:  [x, y, z]
+  units: "—"
+  anatomy:    "Internal rotation-frame state (gravity transport bookkeeping)"
+  description: |
+    Auxiliary state for the gravity observer — tracks the orientation of the
+    rotating frame for cross-product transport of the gravity vector.
+    Internal; rarely useful to plot.
+  state_slice: "brain[_IDX_GRAV][6:9]"
+  llm_plottable: false
+
+brain.linear_velocity_estimate:
+  group: self_motion_observer
+  encodes:    "head-fixed linear velocity (heading)"
+  frame:      "head"
+  shape: [3]
+  axes:  [x, y, z]
+  units: "m/s"
+  anatomy:    "Heading estimator (head-fixed linear velocity)"
+  description: |
+    Linear velocity in head frame (gravity-corrected, ~2 s integration TC).
+    Consumed by translational VOR (T-VOR) for distance-scaled compensation.
+  state_slice: "brain[_IDX_HEAD]"
+  references: ["Paige & Tomko (1991)"]
+  llm_plottable: true
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BRAIN — Neural Integrator (NPH + INC)
+# ─────────────────────────────────────────────────────────────────────────────
+
+brain.ni_left:
+  group: neural_integrator
+  encodes:    "eye-position equivalent (left pop, integrated velocity)"
+  frame:      "head"
+  shape: [3]
+  axes:  [yaw, pitch, roll]
+  units: "deg"
+  anatomy:
+    - {axes: [yaw],          region: "Left NPH (nucleus prepositus hypoglossi)"}
+    - {axes: [pitch, roll],  region: "INC (interstitial nucleus of Cajal)"}
+  population: "Bilateral leaky integrator (Robinson 1975)"
+  description: |
+    Left NI population — eye-position equivalent.  Net eye position =
+    ni_left − ni_right.  Tau_i ~25 s; short tau_i → centripetal drift
+    (gaze-evoked nystagmus).  Horizontal integration in NPH; vertical
+    and torsional integration in INC (Crawford & Vilis 1991).
+  state_slice: "brain[_IDX_NI_L]"
+  references: ["Cannon & Robinson (1985)", "Crawford & Vilis (1991)"]
+  llm_plottable: true
+
+brain.ni_right:
+  group: neural_integrator
+  encodes:    "eye-position equivalent (right pop, integrated velocity)"
+  frame:      "head"
+  shape: [3]
+  axes:  [yaw, pitch, roll]
+  units: "deg"
+  anatomy:
+    - {axes: [yaw],          region: "Right NPH (nucleus prepositus hypoglossi)"}
+    - {axes: [pitch, roll],  region: "INC (interstitial nucleus of Cajal)"}
+  description: "Right NI population, push-pull with ni_left.  NPH for yaw, INC for pitch/roll."
+  state_slice: "brain[_IDX_NI_R]"
+  llm_plottable: true
+
+brain.ni_null:
+  group: neural_integrator
+  encodes:    "slow NI bilateral-imbalance adapter (rebound nystagmus substrate)"
+  frame:      "head"
+  shape: [3]
+  axes:  [yaw, pitch, roll]
+  units: "deg"
+  anatomy:
+    - {axes: [yaw],          region: "Cerebellar floc/paraflocculus → NPH (yaw adapter)"}
+    - {axes: [pitch, roll],  region: "Cerebellar projection → INC (vertical/torsional adapter)"}
+  description: |
+    Slow adapter on NI bilateral imbalance.  Drives rebound nystagmus after
+    sustained eccentric gaze (tau_ni_adapt ~20 s).  Cerebellar tone
+    rebalances the integrator; lesions here abolish or extend rebound.
+  state_slice: "brain[_IDX_NI_NULL]"
+  references: ["Zee, Yamazaki, Butler, Gücer (1981)"]
+  llm_plottable: true
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BRAIN — Saccade Generator (PPRF / riMLF)
+# ─────────────────────────────────────────────────────────────────────────────
+
+brain.e_held:
+  group: saccade_generator
+  encodes:    "held motor error during saccade (target − current eye position)"
+  frame:      "head"
+  shape: [3]
+  axes:  [yaw, pitch, roll]
+  units: "deg"
+  anatomy:    "Saccade target latch — superior colliculus / FEF readout"
+  description: |
+    Held motor-error command for the current saccade.  Frozen at saccade
+    onset (when z_opn / OPN drops); drives the burst's amplitude until
+    saccade stops.  Used in Robinson's local-feedback architecture.
+  state_slice: "brain[_IDX_SG][0:3]"
+  references: ["Robinson (1975)", "Sparks (2002)"]
+  llm_plottable: true
+
+brain.opn_act:
+  group: saccade_generator
+  encodes:    "saccade gate (tonic between saccades, paused during burst)"
+  frame:      "scalar (firing-rate fraction)"
+  shape: [1]
+  units: "fr (~100 = tonic)"
+  anatomy:    "Omnipause neurons (rostral nucleus raphe interpositus)"
+  population: "OPNs — pause during saccade, tonic between"
+  description: |
+    Tonically-active neurons that gate the saccadic burst.  Drop to 0 during
+    a saccade (paused by IBN inhibition); recover via tonic drive between
+    saccades.  z_opn = 100 = full tonic.
+  state_slice: "brain[_IDX_SG][3]"
+  references: ["Cohen & Henn (1972)", "Hepp et al. (1989)"]
+  llm_plottable: true
+
+brain.acc_buildup:
+  group: saccade_generator
+  encodes:    "saccade-trigger accumulator (rise-to-bound)"
+  frame:      "scalar"
+  shape: [1]
+  units: "—"
+  anatomy:    "SC rostral / caudal accumulator (rise-to-bound)"
+  description: |
+    Accumulator state that crosses threshold to trigger a saccade.  Models
+    SC build-up neurons + diffusion noise → realistic saccade RT distribution.
+  state_slice: "brain[_IDX_SG][4]"
+  references: ["Carpenter (1981) LATER model"]
+  llm_plottable: true
+
+brain.trig_state:
+  group: saccade_generator
+  encodes:    "OPN-suppression latch state"
+  frame:      "scalar"
+  shape: [1]
+  units: "—"
+  anatomy:    "OPN-suppression trigger latch"
+  description: |
+    Smooth trigger state — converts the accumulator threshold crossing into
+    a sustained OPN-pause signal during the saccadic burst.
+  state_slice: "brain[_IDX_SG][5]"
+  llm_plottable: false
+
+brain.ebn_R:
+  group: saccade_generator
+  encodes:    "saccade burst-velocity command (right pop, agonist for leftward gaze)"
+  frame:      "head"
+  shape: [3]
+  axes:  [yaw, pitch, roll]
+  units: "deg/s"
+  anatomy:
+    - {axes: [yaw],          region: "Right PPRF (paramedian pontine reticular formation)"}
+    - {axes: [pitch, roll],  region: "riMLF (rostral interstitial nucleus of MLF)"}
+  population: "EBN — right-side burst pop"
+  description: |
+    Right EBN firing rate during saccades.  Drives ipsilateral motoneurons
+    (LR_R via ABN_R, MR_L via MLF/AIN_R).  Horizontal cells live in PPRF;
+    vertical and torsional cells in riMLF — clinically distinct lesion
+    syndromes.
+  state_slice: "brain[_IDX_SG][6:9]"
+  references: ["Strassman et al. (1986)", "Büttner-Ennever & Büttner (1978)"]
+  llm_plottable: true
+
+brain.ebn_L:
+  group: saccade_generator
+  encodes:    "saccade burst-velocity command (left pop, agonist for rightward gaze)"
+  frame:      "head"
+  shape: [3]
+  axes:  [yaw, pitch, roll]
+  units: "deg/s"
+  anatomy:
+    - {axes: [yaw],          region: "Left PPRF (paramedian pontine reticular formation)"}
+    - {axes: [pitch, roll],  region: "riMLF (rostral interstitial nucleus of MLF)"}
+  description: |
+    Left EBN firing rate; symmetric to ebn_R.  Horizontal cells in PPRF,
+    vertical / torsional in riMLF.
+  state_slice: "brain[_IDX_SG][9:12]"
+  llm_plottable: true
+
+brain.ibn_R:
+  group: saccade_generator
+  encodes:    "right inhibitory burst (contralateral antagonist + OPN suppression)"
+  frame:      "head"
+  shape: [3]
+  axes:  [yaw, pitch, roll]
+  units: "deg/s"
+  anatomy:
+    - {axes: [yaw],          region: "Right PPRF (IBN — caudal subgroup)"}
+    - {axes: [pitch, roll],  region: "riMLF (paraventricular IBN cluster)"}
+  population: "IBN — paused-state output to OPN"
+  description: |
+    Right IBN — inhibits contralateral antagonist motoneurons AND OPNs
+    (driving the OPN pause that gates saccadic bursts).  Horizontal IBNs
+    in PPRF, vertical / torsional in riMLF.
+  state_slice: "brain[_IDX_SG][12:15]"
+  references: ["Strassman, Highstein & McCrea (1986)"]
+  llm_plottable: true
+
+brain.ibn_L:
+  group: saccade_generator
+  encodes:    "left inhibitory burst (contralateral antagonist + OPN suppression)"
+  frame:      "head"
+  shape: [3]
+  axes:  [yaw, pitch, roll]
+  units: "deg/s"
+  anatomy:
+    - {axes: [yaw],          region: "Left PPRF (IBN — caudal subgroup)"}
+    - {axes: [pitch, roll],  region: "riMLF (paraventricular IBN cluster)"}
+  description: "Left IBN; symmetric to ibn_R."
+  state_slice: "brain[_IDX_SG][15:18]"
+  llm_plottable: true
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BRAIN — Smooth pursuit
+# ─────────────────────────────────────────────────────────────────────────────
+
+brain.pursuit:
+  group: pursuit
+  encodes:    "pursuit eye-velocity command (Smith-predictor integrator)"
+  frame:      "head"
+  shape: [3]
+  axes:  [yaw, pitch, roll]
+  units: "deg/s"
+  anatomy:    "Pursuit integrator (cerebellar floc/paraflocculus + MST)"
+  description: |
+    Leaky pursuit integrator state — eye-velocity command for smooth
+    pursuit.  K_pursuit controls rise TC; tau_pursuit the leak.  Smith
+    predictor cancels saccadic contamination via efference copy.
+  state_slice: "brain[_IDX_PURSUIT]"
+  references: ["Lisberger (1988)", "Krauzlis & Lisberger (1994)"]
+  llm_plottable: true
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BRAIN — Vergence (Schor dual integrator)
+# ─────────────────────────────────────────────────────────────────────────────
+
+brain.verg_fast:
+  group: vergence_accommodation
+  encodes:    "phasic vergence position (fast disparity-driven integrator)"
+  frame:      "binocular vergence angle"
+  shape: [3]
+  axes:  [horizontal, vertical, torsional]
+  units: "deg"
+  anatomy:    "Supraoculomotor area / midbrain vergence neurons (fast pop)"
+  description: |
+    Fast vergence integrator state (Schor 1986 'phasic' integrator,
+    tau_verg ~5 s).  Drives binocular fusion via convergence command.
+  state_slice: "brain[_IDX_VERG][0:3]"
+  references: ["Schor (1986)", "Read & Schor (2022)"]
+  llm_plottable: true
+
+brain.verg_tonic:
+  group: vergence_accommodation
+  encodes:    "tonic vergence (slow adapter, dark vergence baseline)"
+  frame:      "binocular vergence angle"
+  shape: [3]
+  axes:  [horizontal, vertical, torsional]
+  units: "deg"
+  anatomy:    "Tonic vergence adapter (slow population)"
+  description: |
+    Slow tonic-vergence integrator (tau_verg_tonic ~20 s).  Adapts to
+    sustained convergence demand; drives dark-vergence.
+  state_slice: "brain[_IDX_VERG][3:6]"
+  references: ["Schor (1986)"]
+  llm_plottable: true
+
+brain.verg_copy:
+  group: vergence_accommodation
+  encodes:    "saccadic vergence burst efference copy (SVBN)"
+  frame:      "binocular vergence angle"
+  shape: [3]
+  axes:  [horizontal, vertical, torsional]
+  units: "deg"
+  anatomy:    "SVBN saccadic-vergence-burst efference copy"
+  description: |
+    Saccadic-vergence-burst (SVBN) efference copy state.  Models the fast
+    Zee 1992 vergence burst that fires during OPN pauses.
+  state_slice: "brain[_IDX_VERG][6:9]"
+  references: ["Zee, Fitzgibbon & Optican (1992)"]
+  llm_plottable: false
+
+brain.acc_fast:
+  group: vergence_accommodation
+  encodes:    "phasic accommodation drive (fast lens controller)"
+  frame:      "focus distance (diopters)"
+  shape: [1]
+  units: "diopters"
+  anatomy:    "Phasic accommodation integrator (Edinger-Westphal nucleus)"
+  description: |
+    Fast accommodation integrator (Schor 1986 'phasic' lens controller).
+    Drives sub-second focus changes.
+  state_slice: "brain[_IDX_ACC][0]"
+  references: ["Schor (1979, 1986)", "Read et al. (2022)"]
+  llm_plottable: true
+
+brain.acc_slow:
+  group: vergence_accommodation
+  encodes:    "tonic accommodation (dark focus / sustained near work)"
+  frame:      "focus distance (diopters)"
+  shape: [1]
+  units: "diopters"
+  anatomy:    "Tonic accommodation adapter"
+  description: |
+    Slow accommodation adapter (tau_acc_slow ~20 s).  Drives dark focus and
+    sustained near work.
+  state_slice: "brain[_IDX_ACC][1]"
+  llm_plottable: true
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BRAIN — Target memory (working-memory blank-fill)
+# ─────────────────────────────────────────────────────────────────────────────
+
+brain.target_mem_pos:
+  group: target_memory
+  encodes:    "remembered target position (working-memory blank-fill)"
+  frame:      "head (foveal offset)"
+  shape: [3]
+  axes:  [yaw, pitch, roll]
+  units: "deg"
+  anatomy:    "Visual working memory (FEF / SC / parietal)"
+  description: |
+    Remembered target position when target_visible drops (e.g. blink).
+    Drains slowly; trust scalar gates how much pursuit/saccade systems use it.
+  state_slice: "brain[_IDX_TARGET_MEM][0:3]"
+  references: ["Barborica & Ferrera (2003)"]
+  llm_plottable: true
+
+brain.target_mem_trust:
+  group: target_memory
+  encodes:    "memory-confidence modulator (gates downstream consumers)"
+  frame:      "scalar [0,1]"
+  shape: [1]
+  units: "—"
+  anatomy:    "Memory-trust modulator"
+  description: |
+    [0,1] confidence in the memory; rises when target visible, decays when
+    not.  Multiplies memory output before downstream consumption.
+  state_slice: "brain[_IDX_TARGET_MEM][3]"
+  llm_plottable: false
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BRAIN — Cyclopean perception LP cascade (post-fusion delay)
+# ─────────────────────────────────────────────────────────────────────────────
+
+brain.cyclopean_signals:
+  group: cyclopean_perception
+  encodes:    "binocular-fused, brain-LP-smoothed visual signals (multi-channel buffer)"
+  frame:      "cyclopean retina"
+  shape: [43]
+  units: "various"
+  anatomy:    "Post-fusion LP smoothing (V1+ / MT+ / MST+ / V2+ stereo)"
+  description: |
+    Cyclopean (binocular-fused) versions of scene velocity, target position,
+    target velocity, target disparity, defocus, and visibility flags — each
+    smoothed by an additional brain-side LP cascade after fusion.  Block
+    layout:  scene_angular_vel(3) | scene_linear_vel(3) | target_pos(3×N) |
+    target_vel(3) | target_disparity(3) | scene_visible(N) | target_visible(N)
+    | defocus(1).  N = N_STAGES_OTHER = 6.
+  state_slice: "brain[_IDX_CYC_BRAIN]"
+  references: ["Cumming & DeAngelis (2001)"]
+  llm_plottable: false
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BRAIN — Efference copy delay cascades (eye-velocity copy, 2 paths)
+# ─────────────────────────────────────────────────────────────────────────────
+
+brain.ec_scene_cascade:
+  group: efference_copy
+  encodes:    "delayed eye-velocity efference copy (matched to scene-slip cascade)"
+  frame:      "eye"
+  shape: [21]
+  units: "deg/s"
+  anatomy:    "Efference copy of eye velocity, scene-cascade-matched"
+  description: |
+    Cascade-LP delay of ec_vel_eye matched to the scene_angular_vel slip
+    cascade (sharp 6 stages × 3 axes + 1 LP × 3 = 21 states).  Subtracted
+    from delayed scene slip → cancels self-induced slip during smooth
+    pursuit / VOR.
+  state_slice: "brain[_IDX_EC_VEL_SCENE]"
+  references: ["von Helmholtz (1867)", "Sperry (1950)"]
+  llm_plottable: false
+
+brain.ec_target_cascade:
+  group: efference_copy
+  encodes:    "delayed eye-velocity efference copy (matched to target-slip cascade)"
+  frame:      "eye"
+  shape: [21]
+  units: "deg/s"
+  anatomy:    "Efference copy of eye velocity, target-cascade-matched"
+  description: |
+    Same as ec_scene_cascade but matched to the slower target_vel slip
+    cascade for pursuit Smith-predictor cancellation.
+  state_slice: "brain[_IDX_EC_VEL_TARGET]"
+  llm_plottable: false
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BRAIN — Final common pathway (motor neurons)
+# ─────────────────────────────────────────────────────────────────────────────
+
+brain.mn:
+  group: final_common_pathway
+  encodes:    "motor neuron firing rates (12 muscle-MNs + 2 abducens internuclear)"
+  frame:      "per-MN (firing rate, deg/s equiv)"
+  shape: [14]
+  axes:  [LR_L, MR_L, SR_L, IR_L, SO_L, IO_L,
+          LR_R, MR_R, SR_R, IR_R, SO_R, IO_R, AIN_L, AIN_R]
+  units: "deg/s equivalent"
+  anatomy:    "Motor neurons in CN VI / III / IV nuclei + AIN"
+  population: "ABN MNs, AIN, CN3 subnuclei (MR/SR/IR/IO), CN4 MNs"
+  description: |
+    14 motor neuron firing rates: 12 muscle-driving MNs (in nucleus order)
+    + 2 abducens internuclear (AIN) populations whose axons cross via the
+    MLF to contralateral CN3_MR.  Output `nerves[12]` is the MN firing
+    rate clipped by g_nerve · NERVE_MAX (axon conduction cap).
+  state_slice: "brain[_IDX_MN]"
+  references: ["Robinson (1981)", "Sylvestre & Cullen (1999)"]
+  llm_plottable: true
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PLANT — eyeball orientations
+# ─────────────────────────────────────────────────────────────────────────────
+
+plant.eye_pos_L:
+  group: plant
+  encodes:    "left globe orientation (rotation vector)"
+  frame:      "head"
+  shape: [3]
+  axes:  [yaw, pitch, roll]
+  units: "deg"
+  anatomy:    "Left globe orientation in head frame"
+  description: |
+    Left eye position (rotation vector, deg).  First-order Robinson 1964
+    plant integrates motor command (via M_PLANT_EYE @ nerves) toward target.
+  state_slice: "plant[_IDX_P_L]"
+  references: ["Robinson (1964)"]
+  llm_plottable: true
+
+plant.eye_pos_R:
+  group: plant
+  encodes:    "right globe orientation (rotation vector)"
+  frame:      "head"
+  shape: [3]
+  axes:  [yaw, pitch, roll]
+  units: "deg"
+  anatomy:    "Right globe orientation in head frame"
+  description:  "Right eye position; symmetric to eye_pos_L."
+  state_slice: "plant[_IDX_P_R]"
+  llm_plottable: true
+
+plant.acc_plant:
+  group: plant
+  encodes:    "lens optical power (accommodation plant output)"
+  frame:      "focus distance (diopters)"
+  shape: [1]
+  units: "diopters"
+  anatomy:    "Lens / ciliary muscle (accommodation plant)"
+  description: |
+    Lens-driven accommodation state (diopters).  First-order plant with
+    tau_acc_plant ~0.16 s (Schor & Bharadwaj 2006).
+  state_slice: "acc_plant"
+  references: ["Schor & Bharadwaj (2006)"]
+  llm_plottable: true
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DERIVED — common readouts computed per ODE step
+# ─────────────────────────────────────────────────────────────────────────────
+
+derived.vs_net:
+  group: velocity_storage
+  encodes:    "net VS estimate of head angular velocity"
+  frame:      "head"
+  shape: [3]
+  axes:  [yaw, pitch, roll]
+  units: "deg/s"
+  anatomy:    "Net velocity-storage estimate (Type-I VN bilateral diff)"
+  description: |
+    Net VS angular-velocity estimate that drives NI + plant.  Decayed copy
+    of vestibular afferents + visual slip integrand.
+  computation: "vs_left − vs_right"
+  references: ["Raphan, Matsuo & Cohen (1979)"]
+  llm_plottable: true
+
+derived.ni_net:
+  group: neural_integrator
+  encodes:    "net eye-position command (integrator output)"
+  frame:      "head"
+  shape: [3]
+  axes:  [yaw, pitch, roll]
+  units: "deg"
+  anatomy:    "Net eye-position command (NPH bilateral diff)"
+  description: |
+    Net eye-position equivalent — what the plant uses for tonic position
+    hold.  Equal to ni_left − ni_right.
+  computation: "ni_left − ni_right"
+  llm_plottable: true
+
+derived.u_burst:
+  group: saccade_generator
+  encodes:    "saccade burst velocity (net EBN minus IBN inhibition, OPN-gated)"
+  frame:      "head"
+  shape: [3]
+  axes:  [yaw, pitch, roll]
+  units: "deg/s"
+  anatomy:    "Saccadic burst command (EBN_R − EBN_L − ipsi_IBN inhibition)"
+  description: |
+    Net saccadic burst velocity command.  Drives NI + plant during a saccade,
+    gated by OPN pause.  Peak ~700 deg/s (g_burst).
+  computation: "from saccade_generator.step (EBN/IBN balance)"
+  llm_plottable: true
+
+derived.u_pursuit:
+  group: pursuit
+  encodes:    "pursuit velocity command (integrator + phasic feed-through)"
+  frame:      "head"
+  shape: [3]
+  axes:  [yaw, pitch, roll]
+  units: "deg/s"
+  anatomy:    "Pursuit velocity drive (integrator + phasic feed-through)"
+  description: |
+    Smooth-pursuit eye-velocity command.  Sum of leaky integrator (x_pursuit)
+    and phasic direct-path feed-through (K_phasic_pursuit · target_slip).
+  computation: "x_pursuit + K_phasic_pursuit · e_vel_pred"
+  llm_plottable: true
+
+derived.u_verg:
+  group: vergence_accommodation
+  encodes:    "total vergence command (phasic + tonic + SVBN + direct)"
+  frame:      "binocular vergence angle"
+  shape: [3]
+  axes:  [horizontal, vertical, torsional]
+  units: "deg"
+  anatomy:    "Vergence command (sum of phasic / tonic / SVBN paths)"
+  description: |
+    Total vergence command sent to the FCP.  Sum of tonic vergence baseline,
+    fast and slow integrator outputs, SVBN burst, and direct phasic path.
+  computation: "tonic_verg + verg_fast + verg_tonic + tau_p · K_phasic · disparity"
+  llm_plottable: true
+
+derived.omega_tvor:
+  group: self_motion_observer
+  encodes:    "translational-VOR compensation velocity (1/distance scaled)"
+  frame:      "head"
+  shape: [3]
+  axes:  [yaw, pitch, roll]
+  units: "deg/s"
+  anatomy:    "Translational VOR (T-VOR) version output"
+  description: |
+    T-VOR compensatory eye velocity from heading × gaze geometry, scaled by
+    1/distance (vergence-derived).  Adds to NI input alongside −w_est.
+  computation: "g_tvor · (v_lin × ec_d_unit) / distance"
+  references: ["Paige & Tomko (1991)"]
+  llm_plottable: true
+
+derived.ocr:
+  group: self_motion_observer
+  encodes:    "gravity-driven static torsion set-point (ocular counter-roll)"
+  frame:      "head"
+  shape: [3]
+  axes:  [yaw, pitch, roll]
+  units: "deg"
+  anatomy:    "Ocular counter-roll (gravity-driven static torsion)"
+  description: |
+    Static torsion command from gravity estimate (gravity_estimate[0] →
+    roll set-point).  Drives ~10° eye torsion at 90° head tilt (Diamond,
+    Markham et al.).
+  computation: "[0, 0, −g_ocr · gravity_estimate[0]]"
+  references: ["Diamond, Markham, Furuya, Melvill Jones (1979)"]
+  llm_plottable: true
+
+derived.nerves:
+  group: final_common_pathway
+  encodes:    "cranial-nerve axonal firing rates (post conduction-cap clip)"
+  frame:      "per-muscle (12)"
+  shape: [12]
+  axes:  [LR_L, MR_L, SR_L, IR_L, SO_L, IO_L, LR_R, MR_R, SR_R, IR_R, SO_R, IO_R]
+  units: "deg/s equivalent"
+  anatomy:    "Cranial-nerve axon outputs to extraocular muscles"
+  description: |
+    Per-muscle nerve firing rates after the axonal conduction cap
+    (g_nerve · NERVE_MAX).  Plant decodes via M_PLANT_EYE = pinv(M_NERVE).
+  computation: "smooth_clip(M_NERVE_PROJ @ x_mn, g_nerve · NERVE_MAX)"
+  llm_plottable: true
+
+derived.eye_vel_L:
+  group: plant
+  encodes:    "instantaneous left-eye angular velocity"
+  frame:      "head"
+  shape: [3]
+  axes:  [yaw, pitch, roll]
+  units: "deg/s"
+  anatomy:    "Left eye angular velocity (instantaneous)"
+  description: |
+    Algebraic eye velocity = M_PLANT_EYE_L @ nerves_L − x_p_L/tau_p.
+    Used by retina (slip), efference copy, and plotting.
+  computation: "M_PLANT_EYE_L @ nerves[0:6] − eye_pos_L / tau_p"
+  llm_plottable: true
+
+derived.eye_vel_R:
+  group: plant
+  encodes:    "instantaneous right-eye angular velocity"
+  frame:      "head"
+  shape: [3]
+  axes:  [yaw, pitch, roll]
+  units: "deg/s"
+  anatomy:    "Right eye angular velocity (instantaneous)"
+  description: "Symmetric to eye_vel_L."
+  computation: "M_PLANT_EYE_R @ nerves[6:12] − eye_pos_R / tau_p"
+  llm_plottable: true
+
+derived.cyclopean_target_pos:
+  group: cyclopean_perception
+  encodes:    "cyclopean target position (foveal offset, post-delay + post-fusion)"
+  frame:      "cyclopean retina"
+  shape: [3]
+  axes:  [yaw, pitch, roll]
+  units: "deg"
+  anatomy:    "Cyclopean target position (binocular fused, delayed)"
+  description: |
+    Foveal target offset in cyclopean visual field, post-retinal-delay +
+    post-fusion brain LP smoothing.  Drives saccade trigger and vergence.
+  computation: "perception_cyclopean.step → cyc.target_pos"
+  llm_plottable: true
+
+derived.cyclopean_scene_slip:
+  group: cyclopean_perception
+  encodes:    "scene retinal slip (post-EC residual = self-motion-corrected slip)"
+  frame:      "cyclopean retina (eye frame)"
+  shape: [3]
+  axes:  [yaw, pitch, roll]
+  units: "deg/s"
+  anatomy:    "Cyclopean scene angular velocity on retina"
+  description: |
+    Full-field optic flow used by OKR / VS.  Cyclopean fusion of per-eye
+    delayed scene slips.
+  computation: "perception_cyclopean.step → cyc.scene_angular_vel"
+  llm_plottable: true
+
+derived.cyclopean_target_disparity:
+  group: cyclopean_perception
+  encodes:    "binocular target disparity (vergence error signal)"
+  frame:      "cyclopean disparity"
+  shape: [3]
+  axes:  [horizontal, vertical, torsional]
+  units: "deg"
+  anatomy:    "Binocular disparity (vergence drive)"
+  description: |
+    Inter-ocular target-position mismatch; drives the vergence integrator.
+    Vergence range gates (npc, div_max, vert_max, tors_max) close fusion
+    when this exceeds physiological reserves.
+  computation: "raw_disp = bino_raw · (target_pos_L − target_pos_R)"
+  llm_plottable: true
+
+derived.cyclopean_defocus:
+  group: cyclopean_perception
+  encodes:    "retinal blur (defocus error → accommodation drive)"
+  frame:      "focus distance (diopters)"
+  shape: [1]
+  units: "diopters"
+  anatomy:    "Retinal blur signal (delayed)"
+  description: |
+    Defocus signal (1/z + RE − x_acc_plant) seen post-retinal delay; drives
+    accommodation phasic / tonic integrators.
+  computation: "perception_cyclopean.step → cyc.defocus"
+  llm_plottable: true

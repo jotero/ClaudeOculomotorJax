@@ -180,248 +180,38 @@ class VisualFlagsSegment(BaseModel):
 
 # ── Patient (unchanged) ────────────────────────────────────────────────────────
 
-class Patient(BaseModel):
-    """Model parameter overrides relative to healthy defaults.
+# ── Patient — auto-generated from docs/parameters_schema.yaml ──────────────────
+# The Patient Pydantic class (and its fields, defaults, descriptions, range
+# validators) is derived at import time from the YAML schema.  Adding/removing
+# the `disorders:` key on a YAML entry adds/removes the corresponding LLM-
+# tunable parameter.  See patient_builder.py for the build logic.
+from oculomotor.llm_pipeline.patient_builder import Patient
 
-    Only specify parameters that differ from the healthy default.
-    Leave all others at their defaults.
+# Augment the auto-generated docstring with clinical guidance the LLM should
+# always have in mind (this gets surfaced via Pydantic's class-level metadata).
+Patient.__doc__ = """Model parameter overrides relative to healthy defaults.
 
-    Gaze-evoked nystagmus (GEN) — IMPORTANT
-    ----------------------------------------
-    GEN requires a leaky neural integrator (tau_i small) so gaze positions
-    drift centripetally.  But in a lit room with a target, smooth pursuit
-    compensates that drift → no nystagmus is visible.
+Only specify parameters that differ from the healthy default.  Leave all
+others at their defaults.  Auto-generated from docs/parameters_schema.yaml.
 
-    To simulate GEN you must therefore impair BOTH:
-        tau_i    = 3–8 s    (leaky NI; cerebellar/brainstem lesion)
-        K_pursuit = 0.1–0.3  (severely impaired pursuit; cerebellar)
-    With K_pursuit ≥ 1 pursuit compensates the NI drift and GEN disappears,
-    even when tau_i is very short.
+Gaze-evoked nystagmus (GEN) — IMPORTANT
+----------------------------------------
+GEN requires a leaky neural integrator (tau_i small) so gaze positions drift
+centripetally.  But in a lit room with a target, smooth pursuit compensates
+that drift → no nystagmus is visible.
 
-    In the dark (scene_present=False, target_present=False) pursuit and OKR
-    are absent, so GEN is always visible with a leaky NI regardless of K_pursuit.
+To simulate GEN you must therefore impair BOTH:
+    tau_i    = 3–8 s    (leaky NI; cerebellar/brainstem lesion)
+    K_pursuit = 0.1–0.3  (severely impaired pursuit; cerebellar)
+With K_pursuit ≥ 1 pursuit compensates the NI drift and GEN disappears,
+even when tau_i is very short.
 
-    Quick reference — typical cerebellar patient for GEN:
-        tau_i=4, K_pursuit=0.2, tau_vs=5, K_vs=0.05
-    """
+In the dark (scene_present=False, target_present=False) pursuit and OKR are
+absent, so GEN is always visible with a leaky NI regardless of K_pursuit.
 
-    canal_gains: Annotated[list[float], Field(min_length=6, max_length=6)] = Field(
-        default=[1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
-        description=(
-            "Per-canal sensitivity scale [0=complete paresis, 1=fully intact]. "
-            "Canal order: [L_HC, L_AC, L_PC, R_HC, R_AC, R_PC]. "
-            "Left vestibular neuritis → [0,0,0,1,1,1]; "
-            "right neuritis → [1,1,1,0,0,0]; bilateral loss → [0,0,0,0,0,0]."
-        )
-    )
-    b_vs_L: float = Field(
-        default=100.0,
-        description=(
-            "Left vestibular nucleus bias and responsiveness (deg/s). Healthy 100. "
-            "Controls both resting firing rate and canal drive gain for the left VN. "
-            "70 = vestibular neuritis (intrinsic activity survives, afferent drive lost). "
-            "0  = VN infarct (population completely silent, no canal drive). "
-            "Use alongside canal_gains=0 for neuritis; b_vs_L=0 alone for VN infarct."
-        )
-    )
-    b_vs_R: float = Field(
-        default=100.0,
-        description=(
-            "Right vestibular nucleus bias and responsiveness (deg/s). Healthy 100. "
-            "Same scale as b_vs_L. 70 = right neuritis; 0 = right VN infarct."
-        )
-    )
-    tau_vs: float = Field(default=20.0, description="Velocity storage TC (s). Healthy 20 s. Nodulus/uvula lesion → 1–3 s. OKN/OKAN decay TC.")
-    g_vor:     float = Field(default=1.0,  description="VOR central gain (dim'less). Healthy 1.0. Reduce for hypofunction (e.g., 0.5 = 50% gain loss). Increase for gain-up adaptation. Distinct from canal_gains (peripheral transduction).")
-    canal_v_max: float = Field(default=400.0, description="Canal afferent saturation (deg/s, sensor-side). Healthy 400. Rarely needs changing — only for extreme rotational stimuli.")
-    K_vs:      float = Field(default=0.1,  description="Canal→VS integration gain (1/s). Healthy 0.1. Reduce with tau_vs for nodulus lesions.")
-    K_vis:  float = Field(default=0.1,  description="Visual→VS charging gain (1/s). Healthy 0.1. OKR/OKAN drive. 0 = no OKR.")
-    g_vis:  float = Field(default=0.6,  description="Direct visual feedthrough gain (Raphan 1979). Healthy 0.6. Fast OKR onset component. OKR inner-loop stable when g_vis < 1.")
-    tau_i:  float = Field(default=25.0,
-        description=(
-            "Neural integrator TC (s). Healthy 25 s. "
-            "Short (2–8 s) → centripetal drift → gaze-evoked nystagmus (GEN). "
-            "GEN visible in lit room only if pursuit also impaired (K_pursuit ≤ 0.3). "
-            "Cerebellar lesion: pair with K_pursuit=0.1–0.3."
-        ))
-    g_burst: float = Field(default=700.0, description="Saccade burst ceiling (deg/s). Healthy 700. 0 = complete palsy. 200–400 = slow saccades (PSP, SCA).")
-    K_pursuit:        float = Field(default=4.0,
-        description=(
-            "Pursuit integration gain (1/s). Healthy 4.0. Rise TC ≈ 1/K_pursuit. "
-            "Cerebellar/MT lesion → 0.1–0.5 (severe pursuit deficit). "
-            "Reduce alongside tau_i to see GEN in a lit room."
-        ))
-    K_phasic_pursuit: float = Field(default=5.0,  description="Pursuit direct feedthrough gain. Healthy 5.0. Controls fast pursuit onset velocity step.")
-    tau_pursuit:      float = Field(default=40.0, description="Pursuit leak TC (s). Healthy 40 s → ~97% gain at 1 Hz. Short (5–15 s) → poor pursuit maintenance.")
-    K_grav: float = Field(default=0.6, description="Somatogravic gain (Laurens & Angelaki 2011 'go'). Sets corner frequency f_c ≈ 0.095 Hz for tilt-percept commitment. Relevant for tilt / OVAR / off-vertical axis rotation.")
-    K_lin:  float = Field(default=0.1, description="Linear-acceleration adaptation gain (Laurens & Angelaki 2011 'ka'). Decreases for chronic vestibular loss.")
-
-    # Adaptation time constants
-    tau_vs_adapt: float = Field(
-        default=600.0,
-        description=(
-            "VS null-adaptation TC (s). Default 600 s → negligible in short demos. "
-            "Reduce to 30–60 s to model PAN (periodic alternating nystagmus) — "
-            "slow oscillatory null-point drift due to VS adaptation."
-        ))
-    tau_ni_adapt: float = Field(
-        default=20.0,
-        description=(
-            "NI null-adaptation TC (s). Default 20 s → rebound nystagmus after sustained eccentric gaze. "
-            "Longer (>60 s) → weaker rebound; shorter (5–10 s) → strong rebound after brief gaze deviation. "
-            "Cerebellar/brainstem lesion may impair or abolish rebound nystagmus."
-        ))
-
-    # Vergence — Schor (1986) dual integrator + Robinson (1975) direct phasic path
-    K_phasic_verg: float              = Field(default=1.0,
-        description="Vergence direct phasic gain (1/s). τ_vp·K_phasic·e_disp gives plant-canceling pulse.")
-    K_verg:        float              = Field(default=1.25,
-        description="Vergence (fast) integrator gain. Couples binocular disparity to vergence.")
-    tau_verg:      float              = Field(default=5.0,
-        description="Vergence (fast) integrator TC (s). Sub-second to ~2 s onset, settles in ~5 s.")
-    K_verg_tonic:  float              = Field(default=1.5,
-        description="Tonic-vergence (slow) integrator gain. Schor adapter coupling fast → slow.")
-    tau_verg_tonic:float              = Field(default=20.0,
-        description="Tonic-vergence (slow) integrator TC (s). 20–60 s adaptation; minutes-scale dark drift.")
-    tonic_verg:    float              = Field(default=3.67,
-        description=(
-            "Tonic (brainstem) vergence baseline (deg). Resting dark-vergence position. "
-            "3.67° ≈ 1 m (IPD=64 mm); Riggs & Niehl 1960. "
-            "Increase for esophoric patients (over-convergent resting state); decrease for exophoric. "
-            "Note: phoria is a clinical *measurement* (cover-test outcome); tonic_verg is the model parameter."
-        )
-    )
-
-    # ── Motor nucleus gains (Stage 1) ──────────────────────────────────────────
-    g_nucleus: Annotated[list[float], Field(min_length=12, max_length=12)] = Field(
-        default=[1.0] * 12,
-        description=(
-            "Per-nucleus gains [0=complete lesion, 1=intact]. 12 values in order:\n"
-            "  [0] ABN_L   — left  abducens nucleus  (CN VI, drives LR_L AND MLF→MR_R)\n"
-            "  [1] ABN_R   — right abducens nucleus  (CN VI, drives LR_R AND MLF→MR_L)\n"
-            "  [2] CN4_L   — left  trochlear nucleus (CN IV, drives contralateral SO_R)\n"
-            "  [3] CN4_R   — right trochlear nucleus (CN IV, drives contralateral SO_L)\n"
-            "  [4] CN3_MR_L — left  CN III medial rectus subnucleus (vergence drive to MR_L)\n"
-            "  [5] CN3_MR_R — right CN III medial rectus subnucleus (vergence drive to MR_R)\n"
-            "  [6] CN3_SR_L — left  CN III superior rectus subnucleus\n"
-            "  [7] CN3_SR_R — right CN III superior rectus subnucleus\n"
-            "  [8] CN3_IR_L — left  CN III inferior rectus subnucleus\n"
-            "  [9] CN3_IR_R — right CN III inferior rectus subnucleus\n"
-            " [10] CN3_IO_L — left  CN III inferior oblique subnucleus\n"
-            " [11] CN3_IO_R — right CN III inferior oblique subnucleus\n"
-            "ABN gain covers BOTH the LR motoneuron pool and the AIN→MLF→contralateral-MR\n"
-            "outflow on the same side (intermingled populations — any real abducens-nucleus\n"
-            "lesion takes them out together → horizontal gaze palsy to that side).\n"
-            "Examples:\n"
-            "  CN VI nucleus palsy (R): index 1 → 0  → right LR paralysed AND left MR\n"
-            "    fails to adduct on rightward gaze → horizontal gaze palsy to the right.\n"
-            "  CN IV nucleus palsy (R): index 3 → 0  → left SO paralysed (contralateral projection)\n"
-            "  CN III nucleus palsy (R): indices 5,7,9,11 → 0  → right MR/SR/IR/IO paralysed"
-        )
-    )
-
-    # ── Per-nerve (fascicular / peripheral) gains (Stage 2) ────────────────────
-    g_nerve: Annotated[list[float], Field(min_length=12, max_length=12)] = Field(
-        default=[1.0] * 12,
-        description=(
-            "Per-nerve gains [0=complete palsy, 1=intact]. 12 values in order:\n"
-            "Left-eye nerves (indices 0–5):\n"
-            "  [0] LR_L  — left lateral rectus  (CN VI nerve)\n"
-            "  [1] MR_L  — left medial rectus   (CN III nerve)\n"
-            "  [2] SR_L  — left superior rectus (CN III nerve)\n"
-            "  [3] IR_L  — left inferior rectus (CN III nerve)\n"
-            "  [4] SO_L  — left superior oblique (CN IV nerve)\n"
-            "  [5] IO_L  — left inferior oblique (CN III nerve)\n"
-            "Right-eye nerves (indices 6–11):\n"
-            "  [6] LR_R  — right lateral rectus  (CN VI nerve)\n"
-            "  [7] MR_R  — right medial rectus   (CN III nerve)\n"
-            "  [8] SR_R  — right superior rectus (CN III nerve)\n"
-            "  [9] IR_R  — right inferior rectus (CN III nerve)\n"
-            " [10] SO_R  — right superior oblique (CN IV nerve)\n"
-            " [11] IO_R  — right inferior oblique (CN III nerve)\n"
-            "Examples:\n"
-            "  CN VI nerve palsy (R):  index 6 → 0   → right LR only\n"
-            "  CN III nerve palsy (R): indices 7,8,9,11 → 0  → right eye fixed lateral/down\n"
-            "  CN IV nerve palsy (R):  index 10 → 0  → right SO: hypertropia in adduction\n"
-            "  Partial palsy (e.g. recovering CN VI): index 6 → 0.4"
-        )
-    )
-
-    # ── MLF (medial longitudinal fasciculus) integrity ─────────────────────────
-    g_mlf_L: float = Field(
-        default=1.0,
-        description=(
-            "Synaptic gain on the left MLF input to MR_L motoneurons (AIN_R → MR_L). "
-            "0 = left INO: left eye adduction absent on rightward conjugate gaze; "
-            "convergence preserved (CN3_MR_L direct vergence drive intact). "
-            "Partial values (0.3–0.7) = incomplete INO / recovering INO. "
-            "Healthy = 1.0."
-        )
-    )
-    g_mlf_R: float = Field(
-        default=1.0,
-        description=(
-            "Synaptic gain on the right MLF input to MR_R motoneurons (AIN_L → MR_R). "
-            "0 = right INO: right eye adduction absent on leftward conjugate gaze; "
-            "convergence preserved. "
-            "Set both g_mlf_L=0 and g_mlf_R=0 for bilateral INO (BIMLF). "
-            "Healthy = 1.0."
-        )
-    )
-
-    @field_validator('canal_gains')
-    @classmethod
-    def _check_canal_gains(cls, v):
-        for i, g in enumerate(v):
-            if not (0.0 <= g <= 1.0):
-                raise ValueError(f'canal_gains[{i}]={g} out of range [0, 1]')
-        return v
-
-    @field_validator('g_nucleus', 'g_nerve')
-    @classmethod
-    def _check_nerve_gains(cls, v, info):
-        for i, g in enumerate(v):
-            if not (0.0 <= g <= 1.0):
-                raise ValueError(f'{info.field_name}[{i}]={g} out of range [0, 1]')
-        return v
-
-    @field_validator('g_mlf_L', 'g_mlf_R')
-    @classmethod
-    def _check_mlf(cls, v, info):
-        if not (0.0 <= v <= 1.0):
-            raise ValueError(f'{info.field_name}={v} out of range [0, 1]')
-        return v
-
-    @field_validator('tau_vs', 'tau_i', 'tau_pursuit', 'tau_verg', 'tau_verg_tonic', 'tau_vs_adapt', 'tau_ni_adapt')
-    @classmethod
-    def _check_positive_tc(cls, v, info):
-        if v <= 0:
-            raise ValueError(f'{info.field_name} must be > 0')
-        return v
-
-    @field_validator('g_burst')
-    @classmethod
-    def _check_burst(cls, v):
-        if v < 0:
-            raise ValueError('g_burst must be ≥ 0 (use 0 to disable saccades)')
-        if v > 1000:
-            raise ValueError(f'g_burst={v} is physiologically unrealistic (max ~700)')
-        return v
-
-    @field_validator('g_vor', 'K_vs', 'K_vis', 'K_pursuit', 'K_phasic_pursuit',
-                     'K_grav', 'K_lin', 'K_phasic_verg', 'K_verg', 'K_verg_tonic')
-    @classmethod
-    def _check_nonneg_gains(cls, v, info):
-        if v < 0:
-            raise ValueError(f'{info.field_name} must be ≥ 0')
-        return v
-
-    @field_validator('tonic_verg')
-    @classmethod
-    def _check_tonic_verg(cls, v):
-        if v < -10 or v > 30:
-            raise ValueError(f'tonic_verg={v} deg is extreme; typical range 0–10° (0=diverged, 3.67°=1m)')
-        return v
+Quick reference — typical cerebellar patient for GEN:
+    tau_i=4, K_pursuit=0.2, tau_vs=5, K_vs=0.05
+"""
 
 
 # ── PlotConfig (unchanged) ─────────────────────────────────────────────────────

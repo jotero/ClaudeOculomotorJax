@@ -147,6 +147,36 @@
     width: 1px; background: #2a2d3a; pointer-events: none;
   }
   .avatar-wrap.single-view::after { display: none; }
+
+  /* Patient-changes table — mirrors parameters.html styling but inlined here */
+  .param-table { width: 100%; border-collapse: collapse; background: #fff;
+                 border: 1px solid #e0e0e0; border-radius: 6px; font-size: 12px; }
+  .param-table th { background: #f5f5f5; padding: 8px 10px; text-align: left;
+                    font-weight: 600; border-bottom: 2px solid #e0e0e0;
+                    color: #1a1a2e; }
+  .param-table td { padding: 7px 10px; border-bottom: 1px solid #eee;
+                    vertical-align: top; }
+  .param-table tr:last-child td { border-bottom: none; }
+  .param-table .pname { font-family: 'SF Mono', Consolas, monospace;
+                        font-weight: 600; color: #1a1a2e; }
+  .param-table .pdefault { font-family: monospace; color: #888; }
+  .param-table .pnew { font-family: monospace; color: #c0392b; font-weight: 600; }
+  .param-table .panatomy { font-size: 11px; color: #666; font-style: italic; }
+  .param-table .ptag {
+    display: inline-block; padding: 2px 7px; border-radius: 10px;
+    font-size: 10px; font-weight: 600; margin: 1px 2px;
+  }
+  .param-table .tag-vn         { background: #d1ecf1; color: #0c5460; }
+  .param-table .tag-cerebellar { background: #fff3cd; color: #856404; }
+  .param-table .tag-ino        { background: #f5d4e8; color: #5c1c4a; }
+  .param-table .tag-cn         { background: #f8d7da; color: #721c24; }
+  .param-table .tag-phoria     { background: #e2eafc; color: #1d3a8a; }
+  .param-table .tag-other      { background: #e2e3e5; color: #383d41; }
+  .pchange-tab { background: #f5f5f5; border: 1px solid #ddd; border-radius: 4px;
+                 padding: 5px 12px; margin-right: 6px; cursor: pointer;
+                 font-size: 12px; color: #444; }
+  .pchange-tab.active { background: #4a6cf7; color: #fff; border-color: #4a6cf7; }
+  .pchange-empty { padding: 10px; color: #888; font-style: italic; font-size: 12px; }
   /* Scenario tabs for comparison mode */
   #avatar-tabs {
     display: none; flex-wrap: wrap; gap: 6px;
@@ -219,6 +249,30 @@
     <img id="plot" src="" alt="Simulation plot"
          style="width:100%;border-radius:8px;border:1px solid #2a2d3a;margin-top:20px;">
 
+    <!-- Patient parameter changes — populated from RunResponse.patient_changes -->
+    <div id="patient-changes-section" style="display:none;margin-top:18px;">
+      <h3 style="font-size:14px;margin-bottom:8px;color:#1a1a2e;">Patient parameters changed by the LLM</h3>
+      <p style="font-size:11px;color:#666;margin-bottom:10px;">
+        Each row shows a parameter the LLM tuned for this scenario, with its
+        healthy default and the new value.  Same fields appear in
+        <a href="parameters.html" target="_blank">parameters.html</a> with full
+        context.  No row = the LLM left the patient at all defaults (healthy).
+      </p>
+      <div id="patient-changes-tabs" style="display:none;margin-bottom:8px;"></div>
+      <table class="param-table" id="patient-changes-table">
+        <thead><tr>
+          <th style="width:160px">Parameter</th>
+          <th style="width:120px">Default</th>
+          <th style="width:120px">New value</th>
+          <th style="width:60px">Units</th>
+          <th>Why it matters</th>
+          <th style="width:170px">Anatomical locus</th>
+          <th style="width:200px">Clinical examples</th>
+        </tr></thead>
+        <tbody id="patient-changes-body"></tbody>
+      </table>
+    </div>
+
     <!-- Feedback -->
     <div class="feedback-section" id="feedback-section">
       <h3>Feedback</h3>
@@ -283,6 +337,7 @@ async function run() {
   btn.disabled = true;
   result.style.display = 'none';
   document.getElementById('avatar-section').style.display = 'none';
+  document.getElementById('patient-changes-section').style.display = 'none';
   document.getElementById('feedback-section').style.display = 'none';
   document.getElementById('feedback-confirm').style.display = 'none';
   document.querySelectorAll('input[name="looks-correct"]').forEach(r => r.checked = false);
@@ -333,16 +388,21 @@ async function run() {
           avatarTabs.querySelectorAll('.avatar-tab').forEach(b => b.classList.remove('active'));
           btn.classList.add('active');
           window.loadEyeTrajectory(traj);
+          renderPatientChanges(traj.patient_changes || []);
         };
         avatarTabs.appendChild(btn);
       });
       window.loadEyeTrajectory(data.eye_trajectories[0]);
+      renderPatientChanges(data.eye_trajectories[0].patient_changes || []);
     } else if (data.eye_trajectory && typeof window.loadEyeTrajectory === 'function') {
       // Single mode: no tabs
       avatarTabs.innerHTML = '';
       avatarTabs.style.display = 'none';
       document.getElementById('avatar-section').style.display = 'block';
       window.loadEyeTrajectory(data.eye_trajectory);
+      renderPatientChanges(data.patient_changes || []);
+    } else {
+      renderPatientChanges(data.patient_changes || []);
     }
 
   } catch(e) {
@@ -353,6 +413,59 @@ async function run() {
     }
   } finally { btn.disabled = false; }
 }
+
+
+// ── Patient-changes table rendering ───────────────────────────────────────────
+function _formatValue(v) {
+  if (Array.isArray(v)) {
+    // Compact list: max 12 entries shown, comma-separated, monospaced
+    return '[' + v.map(x => Number(x).toFixed(2).replace(/\.?0+$/, '')).join(', ') + ']';
+  }
+  if (typeof v === 'number') return Number(v.toFixed(4)).toString();
+  return String(v);
+}
+
+function _formatDescription(desc) {
+  // First sentence (or first 220 chars), rest tucked into title attr.
+  const oneLine = (desc || '').replace(/\s+/g, ' ').trim();
+  const cut = oneLine.length > 220
+    ? oneLine.slice(0, 220).replace(/[.,;]?\s*[^\s.,;]*$/, '') + '…'
+    : oneLine;
+  return `<span title="${oneLine.replace(/"/g, '&quot;')}">${cut}</span>`;
+}
+
+function renderPatientChanges(changes) {
+  const section = document.getElementById('patient-changes-section');
+  const tbody   = document.getElementById('patient-changes-body');
+  tbody.innerHTML = '';
+
+  if (!changes || changes.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="7" class="pchange-empty">'
+      + 'LLM left the patient at all healthy defaults — no parameter changes.'
+      + '</td></tr>';
+    section.style.display = 'block';
+    return;
+  }
+
+  changes.forEach(c => {
+    const disorders = (c.disorders || []).map(d =>
+      `<span class="ptag tag-${d.tag}">${d.name}: ${_formatValue(d.value)}</span>`
+    ).join(' ');
+
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td class="pname">${c.name}</td>
+      <td class="pdefault">${_formatValue(c.default)}</td>
+      <td class="pnew">${_formatValue(c.value)}</td>
+      <td>${c.units || ''}</td>
+      <td>${_formatDescription(c.description)}</td>
+      <td class="panatomy">${c.anatomy || ''}</td>
+      <td>${disorders}</td>`;
+    tbody.appendChild(tr);
+  });
+  section.style.display = 'block';
+}
+
 
 async function submitFeedback() {
   if (!_currentRunId) return;
@@ -486,36 +599,64 @@ new GLTFLoader().load(AVATAR_PATH, (gltf) => {
   worldCam.lookAt(eyeMid);
   worldCam.near = near; worldCam.far = far; worldCam.updateProjectionMatrix();
 
-  // Build procedural eye-cover patches (parented to model root = head-fixed).
-  // posL / posR are world positions — convert to model-local before using as
-  // child position, and push forward (+Z world) so they sit in front of the face.
-  const eyeL_local = posL.clone();
-  const eyeR_local = posR.clone();
-  model.worldToLocal(eyeL_local);
-  model.worldToLocal(eyeR_local);
-  // Forward direction in model-local space (world +Z = toward camera)
-  const fwdLocal = new THREE.Vector3(0, 0, 1)
-      .transformDirection(model.matrixWorld.clone().invert());
-  const fwdOffset = size.y * 0.04;    // clear of face surface
-
-  const coverGeo = new THREE.CircleGeometry(size.y * 0.022, 48);
-  const coverMat = new THREE.MeshStandardMaterial({
-    color: 0x0a0508, transparent: true, opacity: 0.82,
-    depthWrite: false, depthTest: false,
+  // Build procedural eye-cover patches — black disc parented to the model
+  // root (acts as head bone) so they stay head-fixed: the eyeball rotates
+  // beneath the disc while the disc stays put on the face.  Visibility is
+  // toggled per frame from _traj.cover_L / _traj.cover_R.
+  //
+  // Material choices that matter:
+  //   MeshBasicMaterial   — no lighting required, guaranteed solid black
+  //   DoubleSide          — visible from either side (model rotates in world view)
+  //   depthTest:false     — never occluded by face mesh
+  //   renderOrder: 999    — drawn last so it lands on top of everything
+  //   transparent:false   — avoid three.js transparent-sort quirks
+  const coverGeo = new THREE.CircleGeometry(size.y * 0.028, 48);
+  const coverMat = new THREE.MeshBasicMaterial({
+    color: 0x000000,
+    side: THREE.DoubleSide,
+    depthTest:  false,
+    depthWrite: false,
+    transparent: false,
   });
+
+  // Make sure all matrices are current before computing offsets.
+  model.updateMatrixWorld(true);
+
+  // Forward direction (toward camera) in MODEL-local coords.  The camera
+  // sits at +Z relative to the eye midpoint in world space; the face is
+  // oriented such that this is "out of the head" — exactly what we want.
+  const fwdLocalModel = new THREE.Vector3(0, 0, 1)
+      .transformDirection(new THREE.Matrix4().copy(model.matrixWorld).invert());
+
+  // Build a temporary "cover anchor" in model-local space, just in front
+  // of each eye, then reparent to the model root.  Parenting to model
+  // (not the eye bone) keeps the cover head-fixed: the eye rotates
+  // beneath the cover, the cover stays put on the face.
+  const fwdOffset = size.y * 0.05;
+
+  // posL / posR are world positions of the eye bones — convert to model-local.
+  const eyeL_local = model.worldToLocal(posL.clone());
+  const eyeR_local = model.worldToLocal(posR.clone());
+
   coverMeshL = new THREE.Mesh(coverGeo, coverMat);
   coverMeshR = new THREE.Mesh(coverGeo, coverMat.clone());
-  coverMeshL.renderOrder = 1;
-  coverMeshR.renderOrder = 1;
-  coverMeshL.position.copy(eyeL_local).addScaledVector(fwdLocal, fwdOffset);
-  coverMeshR.position.copy(eyeR_local).addScaledVector(fwdLocal, fwdOffset);
-  model.add(coverMeshL);
-  model.add(coverMeshR);
-  // Orient disk face toward camera regardless of model's rest rotation
-  coverMeshL.lookAt(headCam.position);
-  coverMeshR.lookAt(headCam.position);
+  coverMeshL.position.copy(eyeL_local).addScaledVector(fwdLocalModel, fwdOffset);
+  coverMeshR.position.copy(eyeR_local).addScaledVector(fwdLocalModel, fwdOffset);
+  coverMeshL.renderOrder = 999;
+  coverMeshR.renderOrder = 999;
   coverMeshL.visible = false;
   coverMeshR.visible = false;
+  model.add(coverMeshL);
+  model.add(coverMeshR);
+
+  // Orient discs to face the camera.  At load time the model is at its
+  // rest pose, so the head-fixed view sees the discs head-on.  In world
+  // view the model rotates and the cover rotates with it — DoubleSide
+  // material keeps it visible from either side.
+  coverMeshL.lookAt(headCam.position);
+  coverMeshR.lookAt(headCam.position);
+
+  console.log('Eye-cover meshes created, parented to avatar root, hidden by default.');
 
   document.getElementById('avatar-loading').style.display = 'none';
 
@@ -585,6 +726,16 @@ window.loadEyeTrajectory = function(traj) {
       ...traj.head.map(h => Math.sqrt(h[0]*h[0] + h[1]*h[1] + h[2]*h[2]))
     );
     _headMoves = maxDisp > 1.0;
+  }
+
+  // One-time diagnostic: if a trajectory has any cover_L/R frames > 0,
+  // log it so we can see in the console that the data path is intact.
+  // (Data flows: stimuli.build_visual_flags → simulate → server _build_traj
+  //  → cover_L/cover_R int arrays → window.loadEyeTrajectory.)
+  if (traj.cover_L || traj.cover_R) {
+    const sumL = (traj.cover_L || []).reduce((a, b) => a + b, 0);
+    const sumR = (traj.cover_R || []).reduce((a, b) => a + b, 0);
+    console.log(`Cover data: L=${sumL} frames covered, R=${sumR} frames covered.`);
   }
 
   // Show/hide world-view label + divider
@@ -686,6 +837,8 @@ requestAnimationFrame(animate);
   <a href="clinical_benchmarks/">Clinical Benchmarks</a>
   <span class="sep">·</span>
   <a href="parameters.html">Parameters</a>
+  <span class="sep">·</span>
+  <a href="states.html">States &amp; activations</a>
 </div>
 
 </body>

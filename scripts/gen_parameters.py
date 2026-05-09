@@ -125,9 +125,12 @@ def _enrich(class_tag, name, default, fallback_comment, schema):
     """Combine code-side info with optional YAML enrichment.
 
     Schema keys are ``<class_tag>.<field>`` (e.g. ``brain.K_grav``).
+    Presence of ``disorders:`` (even empty list) marks the field as
+    LLM-exposed — the YAML-driven Patient builder picks it up.
     """
     key = f"{class_tag}.{name}"
     entry = schema.get(key, {})
+    rng = entry.get("range")
     return {
         "name":         name,
         "default":      _format_default(default),
@@ -136,11 +139,25 @@ def _enrich(class_tag, name, default, fallback_comment, schema):
         "anatomy":      entry.get("anatomy", ""),
         "references":   entry.get("references", []),
         "disorders":    entry.get("disorders", []),
+        "range":        rng,
+        "length":       entry.get("length"),
+        "llm_exposed":  "disorders" in entry,
         "group":        entry.get("group", "ungrouped"),
         "needs_review": bool(entry.get("needs_review", False)),
         "enriched":     key in schema,
         "key":          key,
     }
+
+
+def _format_range(rng):
+    """Format range [lo, hi] for display.  None = unbounded."""
+    if not rng:
+        return ""
+    lo = rng[0] if len(rng) > 0 else None
+    hi = rng[1] if len(rng) > 1 else None
+    lo_s = "−∞" if lo is None else f"{lo:g}"
+    hi_s = "+∞" if hi is None else f"{hi:g}"
+    return f"[{lo_s}, {hi_s}]"
 
 
 # ── HTML emission ─────────────────────────────────────────────────────────────
@@ -198,6 +215,12 @@ tr:last-child { border-bottom: none; }
 .review      { display: inline-block; padding: 2px 7px; border-radius: 10px;
                font-size: 10px; font-weight: 600; background: #d1ecf1;
                color: #0c5460; margin-left: 8px; }
+.llm-tag     { display: inline-block; padding: 2px 7px; border-radius: 10px;
+               font-size: 10px; font-weight: 700; background: #d4edda;
+               color: #155724; margin-left: 8px;
+               cursor: help; }
+.range-cell  { font-family: 'SF Mono', Consolas, monospace; font-size: 11px;
+               color: #555; white-space: nowrap; }
 .warning     { background: #fff3cd; border-left: 4px solid #f6c90e;
                padding: 10px 14px; border-radius: 4px; font-size: 12px;
                margin-bottom: 18px; color: #856404; }
@@ -215,12 +238,14 @@ tr:last-child { border-bottom: none; }
 
 
 def _row_html(field):
-    badge = ""
+    badges = []
     if not field["enriched"]:
-        badge = '<span class="todo">TODO: enrich schema</span>'
+        badges.append('<span class="todo">TODO: enrich schema</span>')
     elif field["needs_review"]:
-        badge = '<span class="review">needs review</span>'
-    todo = badge
+        badges.append('<span class="review">needs review</span>')
+    if field["llm_exposed"]:
+        badges.append('<span class="llm-tag" title="Exposed in the LLM Patient schema">LLM</span>')
+    badge = " ".join(badges)
     refs_html = (
         '<div class="refs">' + " · ".join(field["references"]) + '</div>'
         if field["references"] else ""
@@ -234,15 +259,19 @@ def _row_html(field):
             val = d.get("value", "")
             items.append(f'<span class="tag {tag_cls}">{label}: {val}</span>')
         disorders_html = " ".join(items)
+    range_html = _format_range(field["range"])
+    if field["length"]:
+        range_html = (range_html + " " if range_html else "") + f"<small>(len {field['length']})</small>"
     desc = field["description"].rstrip()
     # Preserve multi-paragraph YAML descriptions: blank-line-separated chunks → <p>.
     paragraphs = [p.strip() for p in desc.split("\n\n") if p.strip()]
     desc_html = "".join(f"<p>{p.replace(chr(10), ' ')}</p>" for p in paragraphs) or desc
     return f"""
         <tr>
-          <td class="param-name">{field["name"]}{todo}</td>
+          <td class="param-name">{field["name"]}{badge}</td>
           <td><span class="default">{field["default"]}</span></td>
           <td class="units">{field["units"]}</td>
+          <td class="range-cell">{range_html}</td>
           <td class="desc-cell">{desc_html}{refs_html}</td>
           <td class="anatomy-cell">{field["anatomy"]}</td>
           <td>{disorders_html}</td>
@@ -266,6 +295,7 @@ def _subsection_html(class_label, group_key, fields):
           <th style="width:160px">Parameter</th>
           <th style="width:90px">Default</th>
           <th style="width:60px">Units</th>
+          <th style="width:110px">Valid range</th>
           <th>Description</th>
           <th style="width:170px">Anatomical locus</th>
           <th style="width:200px">Disorders / notable values</th>

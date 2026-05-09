@@ -21,6 +21,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 brain.tau_vs:
+  range: [0, null]
   group: self_motion_estimation
   units: "s"
   anatomy: "MVN, nodulus/uvula"
@@ -65,15 +66,40 @@ brain.b_vs:
   units: "deg/s"
   anatomy: "Vestibular nucleus resting bias (Type-I VN tonic firing)"
   description: |
-    VN resting firing rate (deg/s equivalent). Scalar broadcasts to all 6
-    states; pass a (6,) array for asymmetric (lesion) cases. Simultaneously
-    sets equilibrium firing rate AND input responsiveness (canal drive
-    scales by b_vs / B_NOMINAL = 100).
+    VN resting firing rate (deg/s equivalent).  Internal model parameter —
+    a (6,) array.  Use the b_vs_L / b_vs_R aliases for clinical lesion
+    modelling (asymmetric VN tone).
+  range: [0, 200]
+  length: 6
+
+brain.b_vs_L:
+  group: self_motion_estimation
+  units: "deg/s"
+  anatomy: "Left vestibular-nucleus resting bias"
+  description: |
+    Left vestibular nucleus tone (deg/s).  Patient-facing alias — the runner
+    expands it into the appropriate slice of the underlying b_vs (6,) array.
+    Healthy 100; reduce to 70 for vestibular neuritis (intrinsic activity
+    survives, afferent drive lost); 0 for VN infarct (silent pop, no canal
+    drive).  Use alongside canal_gains for neuritis; alone for VN infarct.
+  range: [0, 200]
   disorders:
-    - {name: "Vestibular neuritis (one side)", value: 70, tag: vn}
-    - {name: "VN infarct (one side)", value: 0, tag: vn}
+    - {name: "Left vestibular neuritis", value: 70, tag: vn}
+    - {name: "Left VN infarct", value: 0, tag: vn}
+
+brain.b_vs_R:
+  group: self_motion_estimation
+  units: "deg/s"
+  anatomy: "Right vestibular-nucleus resting bias"
+  description: |
+    Right vestibular nucleus tone (deg/s).  Symmetric to b_vs_L.
+  range: [0, 200]
+  disorders:
+    - {name: "Right vestibular neuritis", value: 70, tag: vn}
+    - {name: "Right VN infarct", value: 0, tag: vn}
 
 brain.tau_vs_adapt:
+  range: [0, null]
   group: self_motion_estimation
   units: "s"
   anatomy: "Cerebellar feedback to MVN (PAN-related)"
@@ -85,6 +111,7 @@ brain.tau_vs_adapt:
     - {name: "PAN", value: 45.0, tag: cerebellar}
 
 brain.g_vor:
+  range: [0, 2]
   group: self_motion_estimation
   units: "—"
   anatomy: "Cerebellar VOR calibration (flocculus)"
@@ -96,18 +123,21 @@ brain.g_vor:
     - {name: "VOR hypofunction", value: 0.5, tag: vn}
     - {name: "VOR gain-up adaptation (BVH)", value: 1.5, tag: vn}
 
-brain.v_max_vor:
+sensory.canal_v_max:
+  range: [0, null]
   group: self_motion_estimation
   units: "deg/s"
-  anatomy: "Type-I VN saturation"
+  anatomy: "Canal afferent saturation (sensor-side ceiling)"
   description: |
-    Excitatory canal afferent saturation. Inhibitory floor (~80 deg/s,
-    Ewald's 2nd law) is implemented in canal nonlinearity. Excitatory
-    ceiling 300–600 deg/s (Goldberg & Fernandez 1971).
+    Excitatory canal afferent saturation in canal.step.  Inhibitory floor
+    (~80 deg/s, Ewald's 2nd law) is implemented in canal nonlinearity.
+    Excitatory ceiling 300–600 deg/s (Goldberg & Fernandez 1971).
   references:
     - "Goldberg & Fernández (1971) J Neurophysiol 34:635"
+  disorders: []
 
 brain.K_vs:
+  range: [0, null]
   group: self_motion_estimation
   units: "1/s"
   anatomy: "Canal afferents → MVN integrator input"
@@ -116,8 +146,11 @@ brain.K_vs:
     = 2·K_vs.
   references:
     - "Raphan et al. (1979)"
+  disorders:
+    - {name: "Nodulus lesion (with tau_vs reduction)", value: 0.05, tag: cerebellar}
 
 brain.K_vis:
+  range: [0, null]
   group: self_motion_estimation
   units: "1/s"
   anatomy: "NOT/AOS → MVN (visual-vestibular convergence)"
@@ -131,6 +164,7 @@ brain.K_vis:
     - {name: "OKR/OKAN abolished", value: 0.0, tag: cerebellar}
 
 brain.g_vis:
+  range: [0, 1]
   group: self_motion_estimation
   units: "—"
   anatomy: "Direct pretectal / NOT visual pathway"
@@ -139,6 +173,8 @@ brain.g_vis:
     loop stable iff g_vis < 1. Larger → faster OKR onset but ringing risk.
   references:
     - "Raphan (1979)"
+  disorders:
+    - {name: "Reduced direct OKR feedthrough", value: 0.3, tag: cerebellar}
 
 brain.v_max_okr:
   group: self_motion_estimation
@@ -156,6 +192,7 @@ brain.v_max_okr:
 # ─────────────────────────────────────────────────────────────────────────────
 
 brain.tau_i:
+  range: [0, null]
   group: neural_integrator
   units: "s"
   anatomy: "NPH (horizontal); INC (vertical/torsional)"
@@ -218,6 +255,7 @@ brain.b_ni:
   needs_review: true
 
 brain.tau_ni_adapt:
+  range: [0, null]
   group: neural_integrator
   units: "s"
   anatomy: "NPH null-adaptation circuit (cerebellar input)"
@@ -235,6 +273,7 @@ brain.tau_ni_adapt:
 # ─────────────────────────────────────────────────────────────────────────────
 
 brain.g_burst:
+  range: [0, 1000]
   group: saccade_generator
   units: "deg/s"
   anatomy: "Excitatory burst neurons (PPRF / riMLF)"
@@ -477,6 +516,7 @@ brain.k_center_vel:
 # ─────────────────────────────────────────────────────────────────────────────
 
 brain.K_grav:
+  range: [0, null]
   group: self_motion_estimation
   units: "1/s"
   anatomy: "Nodulus/uvula → MVN (otolith-canal fusion)"
@@ -489,8 +529,11 @@ brain.K_grav:
   references:
     - "Laurens & Angelaki (2011) J Neurosci 31:11414"
     - "Mayne (1974); Holly (1996)"
+  disorders:
+    - {name: "Reduced gravity-prior reliance", value: 0.2, tag: vn}
 
 brain.K_lin:
+  range: [0, null]
   group: self_motion_estimation
   units: "1/s"
   anatomy: "Nodulus/uvula; PIVC"
@@ -597,6 +640,7 @@ brain.listing_l2_frac:
 # ─────────────────────────────────────────────────────────────────────────────
 
 brain.K_pursuit:
+  range: [0, null]
   group: pursuit
   units: "1/s"
   anatomy: "MT/MST → cerebellar pursuit pathway"
@@ -609,20 +653,26 @@ brain.K_pursuit:
     - {name: "Cerebellar pursuit deficit", value: 0.3, tag: cerebellar}
 
 brain.K_phasic_pursuit:
+  range: [0, null]
   group: pursuit
   units: "—"
   anatomy: "Direct pursuit feedthrough"
   description: |
     Pursuit direct feedthrough gain. Controls fast onset velocity step
     before the integrator catches up.
+  disorders:
+    - {name: "Cerebellar pursuit deficit", value: 1.0, tag: cerebellar}
 
 brain.tau_pursuit:
+  range: [0, null]
   group: pursuit
   units: "s"
   anatomy: "Pursuit memory leak"
   description: |
     Pursuit leak TC. ~40 s → ~97% gain at 1 Hz. Short (5–15 s) → poor pursuit
     maintenance.
+  disorders:
+    - {name: "Poor pursuit maintenance (cerebellar)", value: 8.0, tag: cerebellar}
 
 brain.v_max_pursuit:
   group: pursuit
@@ -640,6 +690,7 @@ brain.v_max_pursuit:
 # ─────────────────────────────────────────────────────────────────────────────
 
 brain.K_phasic_verg:
+  range: [0, null]
   group: vergence
   units: "1/s"
   anatomy: "Vergence direct phasic pathway"
@@ -648,8 +699,11 @@ brain.K_phasic_verg:
     (Rashbass & Westheimer 1961), achieved via plant cancellation.
   references:
     - "Rashbass & Westheimer (1961) J Physiol 159:339"
+  disorders:
+    - {name: "Reduced direct vergence drive", value: 0.5, tag: other}
 
 brain.K_verg:
+  range: [0, null]
   group: vergence
   units: "1/s"
   anatomy: "Vergence integrator (cerebellar/midbrain)"
@@ -660,30 +714,41 @@ brain.K_verg:
     - "Schor (1979) Vision Res 19:1359"
     - "Hung & Semmlow (1980)"
     - "Read & Schor (2022) J Vision 22(9):4"
+  disorders:
+    - {name: "Convergence insufficiency", value: 0.5, tag: other}
 
 brain.tau_verg:
+  range: [0, null]
   group: vergence
   units: "s"
   anatomy: "Vergence integrator (cerebellar/midbrain)"
   description: |
     Vergence integrator TC. Schor 1979 / Hung & Semmlow 1980: ≈ 5 s.
     Sub-second to ~2 s tracking. (Was tau_verg_fast / Schor's Tf.)
+  disorders:
+    - {name: "Slow vergence onset", value: 10.0, tag: other}
 
 brain.K_verg_tonic:
+  range: [0, null]
   group: vergence
   units: "1/s"
   anatomy: "Tonic vergence integrator (slow adapter)"
   description: |
     Tonic vergence integrator gain. G_tonic = K·tau ≈ 6 boosts DC gain so
     steady-state fixation disparity stays small. (Was K_verg_slow / Schor's Ks.)
+  disorders:
+    - {name: "Reduced tonic vergence adapter", value: 0.5, tag: other}
 
 brain.tau_verg_tonic:
+  range: [0, null]
   group: vergence
   units: "s"
   anatomy: "Tonic vergence integrator (slow adapter)"
   description: |
     Tonic vergence integrator TC. Minutes-scale dark-vergence drift (Schor 1979).
     (Was tau_verg_slow / Schor's Ts.)
+  disorders:
+    - {name: "Fast tonic vergence adapter (latent CI)", value: 5.0, tag: other}
 
 brain.tau_vp:
   group: vergence
@@ -693,6 +758,7 @@ brain.tau_vp:
     Vergence plant TC for phasic path = τ_p (same muscles as version).
 
 brain.tonic_verg:
+  range: [-30, 60]
   group: vergence
   units: "deg"
   anatomy: "Brainstem tonic vergence baseline"
@@ -908,55 +974,108 @@ brain.refractive_error:
 # ─────────────────────────────────────────────────────────────────────────────
 
 brain.g_nucleus:
+  range: [0, 1]
+  length: 12
   group: final_common_pathway
   units: "—"
   anatomy: "12 motor nuclei: ABN, CN4, CN3 subnuclei (L/R)"
   description: |
-    Per-nucleus gain [0..1]. 12 elements:
+    Per-nucleus multiplicative gain [0..1].  Models cell-loss in a motor
+    nucleus — burst firing AND tonic baseline are both attenuated by this
+    gain (cells fire less, fewer cells fire).  Gain shared between ABN
+    motoneurons and AIN (intermingled abducens populations).
+    12 elements:
     [ABN_L, ABN_R, CN4_L, CN4_R,
      CN3_MR_L, CN3_MR_R, CN3_SR_L, CN3_SR_R,
      CN3_IR_L, CN3_IR_R, CN3_IO_L, CN3_IO_R].
-    0 = nucleus lesion (isolates ipsilateral muscle).
+    0 = nucleus silenced (full lesion).  Partial gain produces graded
+    weakness AND tonic strabismus (asymmetric baseline → eye drift).
+    CN VI nucleus lesion = horizontal gaze palsy (silences ABN motoneurons
+    AND AIN MLF outflow on the same side).
   disorders:
     - {name: "CN VI nucleus palsy (R)", value: "[1,0,1,1,1,1,1,1,1,1,1,1]", tag: cn}
     - {name: "CN III nucleus palsy (R)", value: "[1,1,1,1,1,0,1,1,1,1,1,0]", tag: cn}
+    - {name: "Partial CN VI nucleus (R)", value: "[1,0.5,1,1,1,1,1,1,1,1,1,1]", tag: cn}
 
 brain.g_nerve:
+  range: [0, 1]
+  length: 12
   group: final_common_pathway
   units: "—"
-  anatomy: "12 cranial nerve fascicles to extraocular muscles"
+  anatomy: "12 cranial nerve axon ceiling (axonal conduction block)"
   description: |
-    Per-nerve gain [0..1]. 12 elements (left then right):
+    Per-nerve max firing rate as a fraction of NERVE_MAX (250 deg/s).
+    Models conduction block / demyelination of the cranial nerve axon —
+    frequency-selective (burst clipped, tonic preserved).  At g=0 the axon
+    transmits nothing → muscle paralysis.  At g=1 the axon is transparent
+    (cap above normal firing range).
+    12 elements (left then right):
     [LR_L, MR_L, SR_L, IR_L, SO_L, IO_L,
      LR_R, MR_R, SR_R, IR_R, SO_R, IO_R].
-    0 = complete nerve palsy.
   disorders:
     - {name: "CN VI palsy (R)", value: "[1,1,1,1,1,1, 0,1,1,1,1,1]", tag: cn}
     - {name: "CN III palsy (R)", value: "[1,1,1,1,1,1, 1,0,0,0,1,0]", tag: cn}
     - {name: "CN IV palsy (R, SO)", value: "[1,1,1,1,1,1, 1,1,1,1,0,1]", tag: cn}
+    - {name: "Recovering CN VI (R)", value: "[1,1,1,1,1,1, 0.4,1,1,1,1,1]", tag: cn}
 
-brain.g_mlf_ver_L:
+brain.r_baseline:
+  range: [0, 200]
+  length: 12
+  group: final_common_pathway
+  units: "deg/s equivalent"
+  anatomy: "Per-nucleus tonic baseline firing (deg/s)"
+  description: |
+    Per-nucleus tonic baseline firing rate at primary position (12,).
+    Symmetric default (50) is invisible at the plant via zero-sum decode
+    columns — the plant only sees agonist−antagonist differences, so
+    uniform baselines cancel.  Asymmetric baselines produce tonic
+    strabismus directly without needing to lesion a gain.
+    Default: 50 across all 12 nuclei.  Indices match g_nucleus.
+    Note: g_nucleus also scales the baseline (cell loss reduces tone too),
+    so partial nuclear lesions automatically produce both saccade
+    slowing AND tonic strabismus.
+  disorders:
+    - {name: "Right exotropia (extra LR_R tone)", value: "[50,80,50,50,50,50,50,50,50,50,50,50]", tag: phoria}
+    - {name: "Right esotropia (extra MR_R tone)", value: "[50,50,50,50,50,80,50,50,50,50,50,50]", tag: phoria}
+
+brain.g_mlf_L:
+  range: [0, 1]
   group: final_common_pathway
   units: "—"
-  anatomy: "Left MR version-yaw gain (right MLF pathway)"
+  anatomy: "Left MLF axon conduction (AIN_R → MR_L pathway)"
   description: |
-    Version-yaw gain for the left MR subnucleus. 0 = left INO: left eye
-    cannot adduct on rightward conjugate gaze; convergence (vergence
-    component) preserved.
+    Conduction cap on the left MLF axon tract that carries abducens
+    internuclear neuron (AIN_R) signal to contralateral CN3_MR_L
+    motoneurons.  Frequency-selective — saccadic burst (high-frequency)
+    fails to propagate while tonic vergence drive (low-frequency, via
+    CN3_MR_L direct from supraoculomotor) is preserved.
+    0 = left INO: left eye cannot adduct on rightward conjugate gaze;
+    convergence preserved.  Partial values 0.3-0.7 = recovering INO.
   disorders:
     - {name: "Left INO", value: 0.0, tag: ino}
     - {name: "Partial INO (recovering)", value: 0.5, tag: ino}
 
-brain.g_mlf_ver_R:
+brain.g_mlf_R:
+  range: [0, 1]
   group: final_common_pathway
   units: "—"
-  anatomy: "Right MR version-yaw gain (left MLF pathway)"
+  anatomy: "Right MLF axon conduction (AIN_L → MR_R pathway)"
   description: |
-    Version-yaw gain for the right MR subnucleus. 0 = right INO; bilateral
-    INO when both g_mlf_ver_L and g_mlf_ver_R = 0.
+    Conduction cap on the right MLF axon tract.  Symmetric to g_mlf_L:
+    0 = right INO; partial = recovering.  Bilateral INO when both = 0.
   disorders:
     - {name: "Right INO", value: 0.0, tag: ino}
-    - {name: "Bilateral INO", value: 0.0, tag: ino}
+    - {name: "Bilateral INO (BIMLF)", value: 0.0, tag: ino}
+
+brain.tau_mn:
+  group: final_common_pathway
+  units: "s"
+  anatomy: "Motor neuron LP membrane time constant"
+  description: |
+    Per-MN low-pass time constant for the motor neuron firing-rate dynamics
+    (Robinson 1981; Sylvestre & Cullen 1999).  ~5 ms is the membrane TC of
+    oculomotor motoneurons.  Behaviorally invisible at healthy plant TCs
+    (~150-200 ms), but a clean state-level hook for MN-pathology modelling.
 
 # ─────────────────────────────────────────────────────────────────────────────
 # SensoryParams — Semicircular Canals
@@ -983,6 +1102,8 @@ sensory.tau_s:
     - "Fernandez & Goldberg (1971)"
 
 sensory.canal_gains:
+  range: [0, 1]
+  length: 6
   group: canals
   units: "—"
   anatomy: "Per-canal afferent sensitivity (6 ducts)"
@@ -1022,13 +1143,16 @@ sensory.tau_oto:
 # SensoryParams — Visual pathway
 # ─────────────────────────────────────────────────────────────────────────────
 
-sensory.tau_vis:
+sensory.tau_vis_sharp:
   group: visual
   units: "s"
-  anatomy: "Visual processing delay (gamma cascade)"
+  anatomy: "Visual sharp delay cascade mean TC"
   description: |
-    Gamma-cascade mean delay. ~80 ms matches retina → V1/MT/MST processing
-    latency for motion signals.
+    Sharp-cascade mean delay (per stage / total ≈ 50-80 ms) — retina →
+    V1/MT/MST processing latency for motion signals.  Replaces the
+    previous single tau_vis with a two-stage (sharp + smoothing)
+    architecture; smoothing TCs are tau_vis_smooth_motion / target_vel /
+    disparity / defocus depending on the channel.
   references:
     - "Lisberger & Movshon (1999)"
 
@@ -1102,42 +1226,55 @@ sensory.ipd:
     IPD — adult typical 64 mm. Sets vergence/distance conversion (mirror
     of brain.ipd_brain).
 
-sensory.npc:
+brain.npc:
+  range: [0, 90]
   group: binocular
   units: "deg"
   anatomy: "Convergence motor limit"
   description: |
     Near point of convergence (vergence angle limit). 50° ≈ NPC 7 cm at
-    IPD 64 mm. Closes diplopia gate beyond this.
+    IPD 64 mm. Closes the diplopia / fusion gate (gate_conv) beyond this.
+  disorders:
+    - {name: "Convergence insufficiency (poor NPC)", value: 25.0, tag: vergence}
 
-sensory.div_max:
+brain.div_max:
+  range: [0, 30]
   group: binocular
   units: "deg"
   anatomy: "Divergence motor limit"
   description: |
-    Maximum divergence — ~6° for young adults.
+    Maximum divergence — ~6° for young adults.  Closes the gate_div fusion
+    gate when commanded divergence exceeds this.
 
-sensory.vert_max:
+brain.vert_max:
+  range: [0, 20]
   group: binocular
   units: "deg"
-  anatomy: "Vertical vergence motor limit"
+  anatomy: "Vertical fusion range"
   description: |
-    Maximum vertical vergence ±deg. ~3–5° clinical range.
+    Vertical fusional reserve — fusion fails when raw retinal vertical
+    disparity exceeds this.  ~2-3° clinical, set to 5° default for
+    headroom.  Drives the disparity-based gate_vert in the fusion policy.
 
-sensory.tors_max:
+brain.tors_max:
+  range: [0, 30]
   group: binocular
   units: "deg"
-  anatomy: "Cyclovergence motor limit"
+  anatomy: "Cyclovergence (torsional) fusion range"
   description: |
-    Maximum cyclo-vergence ±deg. ~5–8° max physiologically.
+    Torsional fusional reserve — fusion fails when raw retinal torsional
+    disparity exceeds this.  ~5-8° clinical maximum.  Drives the
+    disparity-based gate_tors in the fusion policy.
 
-sensory.eye_dominant:
+brain.eye_dominant:
+  range: [0, 1]
   group: binocular
   units: "—"
-  anatomy: "Sensory eye dominance flag"
+  anatomy: "Sensory eye dominance preference"
   description: |
-    1.0 = right eye dominant, 0.0 = left dominant. Used in fusion / diplopia
-    suppression.
+    1.0 = right eye dominant, 0.0 = left dominant.  Determines the
+    fixating eye when fusion is suppressed (auto-overridden when motor
+    integrity is asymmetric — healthier eye becomes fixating).
 
 sensory.v_max_target_vel:
   group: visual

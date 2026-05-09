@@ -108,7 +108,7 @@ TARGETS_DEG = {
 
 # ── Simulation helpers ────────────────────────────────────────────────────────
 
-T_SAC   = 0.5   # saccade simulation duration (s)
+T_SAC   = 1.0   # saccade simulation duration (s) — average over second half for steady state
 N_SAC   = int(T_SAC / DT) + 1
 T_ARR   = np.linspace(0.0, T_SAC, N_SAC, dtype=np.float32)
 _CFG    = SimConfig(warmup_s=2.0)   # settle eyes at center before saccade
@@ -155,17 +155,26 @@ def _sim_saccade(params, yaw_deg, pitch_deg, distance_m=1.0, key=0):
 def _nine_position(show):
     print('  Running 9-position gaze (8 conditions × 9 targets = 72 simulations)...')
 
-    # Run all simulations
+    # Run all simulations.  Average over the second half of the simulation
+    # (0.5–1.0 s) — gives the steady-state eye position even when closed-loop
+    # corrections oscillate (e.g. CN IV palsy with non-physiological force
+    # balance) instead of picking a single transient sample.
+    # Store full trajectories too so the trajectory-grid figure can use them.
+    half = N_SAC // 2
     all_results = []
+    all_traces  = []   # parallel list of {tgt_name: (T, 6) trajectory}
     for cond_name, params in CONDITIONS_9POS:
         results = {}
+        traces  = {}
         for tgt_name, (ya, pa) in TARGETS_DEG.items():
             eye = _sim_saccade(params, ya, pa)
+            traces[tgt_name] = eye
             results[tgt_name] = (
-                eye[-1, :2].copy(),   # L eye (yaw, pitch) deg
-                eye[-1, 3:5].copy(),  # R eye (yaw, pitch) deg
+                eye[half:, :2].mean(axis=0).copy(),   # L eye (yaw, pitch) deg
+                eye[half:, 3:5].mean(axis=0).copy(),  # R eye (yaw, pitch) deg
             )
         all_results.append(results)
+        all_traces.append(traces)
         print(f'    {cond_name}')
 
     # ── Plot ──────────────────────────────────────────────────────────────────
@@ -175,24 +184,22 @@ def _nine_position(show):
     lim_h = H_DEG + 8
     lim_v = V_DEG + 7
 
+    # Use the HEALTHY condition's center-gaze positions as the reference
+    # baseline for all conditions.  Subtracting this from every panel
+    # eliminates the small vergence-driven offset (L at +1.85°, R at -1.85°)
+    # that would otherwise appear in every panel as a resting "gap" — but
+    # PRESERVES any tropic deviation a lesion produces relative to the
+    # healthy resting position.  CN IV / CN VI nucleus / CN III lesions
+    # then show their resting hypertropia / esotropia at center directly.
+    healthy_results = all_results[0]   # CONDITIONS_9POS[0] is Healthy
+    L_ref = np.array(healthy_results['Center'][0])
+    R_ref = np.array(healthy_results['Center'][1])
+
     for i, (ax, (cond_name, _), results) in enumerate(
             zip(axes_flat, CONDITIONS_9POS, all_results)):
         names = list(TARGETS_DEG.keys())
-        L = np.array([results[n][0] for n in names])  # (9, 2)
-        R = np.array([results[n][1] for n in names])  # (9, 2)
-
-        # Subtract per-eye center-fixation baseline so eyes that are correctly
-        # aligned overlap on the plot.  At the central target a healthy pair
-        # has a small vergence-driven offset (L at +1.85°, R at -1.85°);
-        # subtracting those baselines puts both eyes at (0, 0) when fused, so
-        # any residual gap reflects motor misalignment rather than resting
-        # vergence.  For lesioned conditions, the center-gaze esotropia /
-        # exotropia is the baseline → other gaze positions show how far each
-        # eye actually MOVED from its starting point.
-        L_center = np.array(results['Center'][0])  # (2,)
-        R_center = np.array(results['Center'][1])
-        L = L - L_center
-        R = R - R_center
+        L = np.array([results[n][0] for n in names]) - L_ref  # (9, 2)
+        R = np.array([results[n][1] for n in names]) - R_ref  # (9, 2)
 
         # Connect L–R pairs with a thin line (shows diplopia gap)
         for j in range(len(names)):
@@ -234,7 +241,7 @@ def _nine_position(show):
 
     path, rp = utils.save_fig(fig, 'clin_cn_9positions', show=show, params=PARAMS_DEFAULT,
                               conditions='Lit, 9-cardinal-positions test — control vs simulated CN III/IV/VI palsy')
-    return utils.fig_meta(path, rp,
+    meta_scatter = utils.fig_meta(path, rp,
         title='9 Positions of Gaze',
         description='Standard clinical 9-position gaze test. Each panel shows '
                     'left (blue circles) and right (red squares) final eye positions '
@@ -249,6 +256,62 @@ def _nine_position(show):
         citation='Leigh RJ & Zee DS (2015) The Neurology of Eye Movements, 5th ed.',
         fig_type='behavior',
     )
+
+    # ── Figure 1b: trajectory grid (8 conditions × 9 targets × time) ──────────
+    # Same simulation data, plotted as time series.  Each cell is a (yaw, pitch)
+    # eye-position trajectory over the 1 s simulation; the second-half average
+    # used in the scatter plot is shown as the bold endpoint.
+    target_names = list(TARGETS_DEG.keys())
+    fig2, axes2 = plt.subplots(len(CONDITIONS_9POS), len(target_names),
+                               figsize=(20, 14), sharex=True, sharey=True)
+    for ri, ((cond_name, _), traces) in enumerate(zip(CONDITIONS_9POS, all_traces)):
+        for ci, tgt_name in enumerate(target_names):
+            ax = axes2[ri, ci]
+            eye = traces[tgt_name]                 # (T, 6)
+            tgt_yaw, tgt_pit = TARGETS_DEG[tgt_name]
+            # Target marker (cross at the gaze target position)
+            ax.plot(tgt_yaw, tgt_pit, marker='+', color='black', ms=10, mew=1.2, zorder=4)
+            # L and R eye 2D trajectories (yaw vs pitch over time)
+            ax.plot(eye[:, 0], eye[:, 1], color='royalblue', lw=0.8, alpha=0.9, zorder=2)
+            ax.plot(eye[:, 3], eye[:, 4], color='crimson',   lw=0.8, alpha=0.9, zorder=2)
+            # Steady-state averages (matches the scatter plot's data points)
+            L_ss = eye[half:, :2].mean(axis=0)
+            R_ss = eye[half:, 3:5].mean(axis=0)
+            ax.scatter(*L_ss, c='royalblue', s=22, zorder=5, marker='o', edgecolor='white', lw=0.6)
+            ax.scatter(*R_ss, c='crimson',   s=22, zorder=5, marker='s', edgecolor='white', lw=0.6)
+            ax.set_xlim(-30, 30)
+            ax.set_ylim(-25, 25)
+            ax.axhline(0, color='k', lw=0.3, alpha=0.2)
+            ax.axvline(0, color='k', lw=0.3, alpha=0.2)
+            ax.tick_params(labelsize=5)
+            ax.grid(True, alpha=0.1)
+            if ri == 0:
+                ax.set_title(tgt_name, fontsize=7)
+            if ci == 0:
+                ax.set_ylabel(cond_name, fontsize=7, fontweight='bold')
+
+    fig2.suptitle('Eye-position trajectories  –  rows = conditions, columns = targets, '
+                  'blue=L  red=R  ⊕=target  filled=steady-state mean (0.5–1.0 s)',
+                  fontsize=10, fontweight='bold')
+    plt.tight_layout()
+    path2, rp2 = utils.save_fig(fig2, 'clin_cn_9positions_trajectories', show=show,
+                                params=PARAMS_DEFAULT,
+                                conditions='Lit, 9-cardinal-positions trajectories — full 1 s eye-position sweeps')
+    meta_traces = utils.fig_meta(path2, rp2,
+        title='9 Positions of Gaze — trajectory grid',
+        description='Full eye-position trajectories for each (condition × target) pair. '
+                    'Solid traces are the (yaw, pitch) eye-position over time; the filled '
+                    'markers show the steady-state second-half mean used in the scatter '
+                    'plot. Useful for diagnosing closed-loop transients vs steady-state '
+                    'misalignment in non-physiological force balances (e.g. CN IV).',
+        expected='Healthy: trajectories converge cleanly to each target. '
+                 'Lesion conditions: trajectories may oscillate or drift; CN IV in '
+                 'particular shows continuous closed-loop correction without true rest.',
+        citation='Same simulations as 9-positions scatter.',
+        fig_type='behavior',
+    )
+
+    return [meta_scatter, meta_traces]
 
 
 # ── Figure 2: INO saccade time-series ─────────────────────────────────────────
@@ -441,8 +504,10 @@ FIGURES = None  # populated by run()
 
 def run(show=False):
     global FIGURES
+    # _nine_position now returns a list of two metas (scatter + trajectory grid).
+    nine_pos_metas = _nine_position(show)
     figs = [
-        _nine_position(show),
+        *nine_pos_metas,
         _ino_timeseries(show),
         _graded_palsy(show),
     ]
