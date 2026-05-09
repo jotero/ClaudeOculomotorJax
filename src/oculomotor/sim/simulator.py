@@ -65,19 +65,12 @@ from oculomotor.sim.kinematics import KinematicTrajectory, TargetTrajectory, bui
 from oculomotor.models.sensory_models.retina import ypr_to_xyz, xyz_to_ypr
 from oculomotor.models.plant_models.readout import rotation_matrix as _rotation_matrix
 
-from oculomotor.models.sensory_models.sensory_model import (
-    _IDX_C, _IDX_OTO, _IDX_VIS, _IDX_VIS_L, SensoryParams,
-)
-_IDX_VIS_R = _IDX_VIS   # backward-compat alias — single cyclopean cascade now
+from oculomotor.models.sensory_models.sensory_model import SensoryParams
+from oculomotor.models.sensory_models               import canal   as _canal
 from oculomotor.models.sensory_models               import otolith as _otolith
-from oculomotor.models.brain_models.brain_model    import (
-    _IDX_VS, _IDX_VS_L, _IDX_VS_R, _IDX_VS_NULL,
-    _IDX_NI, _IDX_NI_L, _IDX_NI_R, _IDX_NI_NULL,
-    _IDX_SG, _IDX_GRAV, _IDX_PURSUIT, _IDX_VERG, _IDX_ACC,
-    BrainParams,
-)
-_IDX_ACC_PLANT = slice(0, 1)  # index into SimState.acc_plant (1-element array)
-from oculomotor.models.plant_models.plant_model_first_order import PlantParams, _IDX_P_L, _IDX_P_R
+from oculomotor.models.sensory_models               import retina  as _retina
+from oculomotor.models.brain_models.brain_model    import BrainParams
+from oculomotor.models.plant_models.plant_model_first_order import PlantParams
 from oculomotor.models.plant_models.muscle_geometry import M_PLANT_EYE_L, M_PLANT_EYE_R
 from oculomotor.models.sensory_models import sensory_model
 from oculomotor.models.brain_models   import brain_model
@@ -269,11 +262,6 @@ def with_vn_lesion(params: Params, side: str = 'left') -> Params:
 
 __all__ = [
     'SimState', 'ODE_ocular_motor', 'simulate',
-    '_IDX_C', '_IDX_OTO', '_IDX_VIS', '_IDX_VIS_L', '_IDX_VIS_R',  # _IDX_VIS_R = _IDX_VIS alias
-    '_IDX_VS', '_IDX_VS_L', '_IDX_VS_R', '_IDX_VS_NULL',
-    '_IDX_NI', '_IDX_NI_L', '_IDX_NI_R', '_IDX_NI_NULL',
-    '_IDX_SG', '_IDX_GRAV', '_IDX_PURSUIT', '_IDX_VERG', '_IDX_ACC', '_IDX_ACC_PLANT',
-    '_IDX_P_L', '_IDX_P_R',
     'Params', 'SimConfig', 'SensoryParams', 'PlantParams', 'BrainParams',
     'default_params', 'with_brain', 'with_sensory', 'with_plant',
     'with_uvh', 'with_vn_lesion',
@@ -286,16 +274,20 @@ __all__ = [
 class SimState(NamedTuple):
     """Structured ODE state — JAX-compatible pytree (NamedTuple).
 
+    All four fields are nested NamedTuples (or scalar arrays).  No flat-array
+    layouts — read fields directly via `state.brain.<sub>.<field>`,
+    `state.sensory.canal.x1`, etc.
+
     Groups:
-        sensory   (818)  Canal (12) + otolith (6) + cyclopean cascade (800, incl. defocus).
-        brain      (62)  VS(9)+NI(9)+SG(18)+GE(9)+HE(3)+pursuit(3)+vergence(9)+acc_neural(2).
-        plant       (6)  Two extraocular plants — [left (3) | right (3)] eye rotation (deg).
-        acc_plant   (1)  Lens accommodation plant state (D).
+        sensory   sensory_model.State NT — canal, otolith, retina_L, retina_R
+        brain     brain_model.BrainState NT — pc, sm, pt, sg, pu, va, ni, fcp, ec_scene, ec_target
+        plant     plant_model.State NT — left, right eye rotation vectors (deg)
+        acc_plant (1,)  Lens accommodation plant state (D)
     """
-    sensory:   jnp.ndarray   # (818,)
-    brain:     jnp.ndarray   #  (62,)
-    plant:     jnp.ndarray   #   (6,)
-    acc_plant: jnp.ndarray   #   (1,)  lens accommodation (D)
+    sensory:   'sensory_model.State'    # nested per-sensor
+    brain:     'brain_model.BrainState' # nested per-subsystem
+    plant:     'plant_model.State'      # binocular eye rotation vectors
+    acc_plant: jnp.ndarray              # (1,) lens accommodation (D)
 
 
 # ── ODE vector field ───────────────────────────────────────────────────────────
@@ -389,13 +381,12 @@ def ODE_ocular_motor(t, state, args):
     )
 
     # ── Brain: VS + NI + SG + pursuit + vergence + accommodation ─────────────
-    # x_acc_plant from SimState.acc_plant: current lens accommodation (D).
-    dx_brain, nerves, ec_vel, ec_pos, ec_verg, u_acc = _BRAIN_STEP(
+    dbrain, nerves, ec_vel, ec_pos, ec_verg, u_acc = _BRAIN_STEP(
         state.brain, sensory_out, theta.brain, noise_acc_interp.evaluate(t))
 
     # ── Plant ─────────────────────────────────────────────────────────────────
-    dx_p_L, q_eye_L, w_eye_L = plant_model.step(state.plant[_IDX_P_L], nerves[:6], theta.plant, M_PLANT_EYE_L)
-    dx_p_R, q_eye_R, w_eye_R = plant_model.step(state.plant[_IDX_P_R], nerves[6:], theta.plant, M_PLANT_EYE_R)
+    dx_p_L, q_eye_L, w_eye_L = plant_model.step(state.plant.left,  nerves[:6], theta.plant, M_PLANT_EYE_L)
+    dx_p_R, q_eye_R, w_eye_R = plant_model.step(state.plant.right, nerves[6:], theta.plant, M_PLANT_EYE_R)
 
     # ── Accommodation plant ────────────────────────────────────────────────────
     # u_acc = brain neural command + CA/C feedforward (combined inside va.step).
@@ -436,8 +427,8 @@ def ODE_ocular_motor(t, state, args):
 
     return SimState(
         sensory   = dx_sensory,
-        brain     = dx_brain,
-        plant     = jnp.concatenate([dx_p_L, dx_p_R]),
+        brain     = dbrain,
+        plant     = plant_model.State(left=dx_p_L, right=dx_p_R),
         acc_plant = dx_acc_plant,
     )
 
@@ -685,15 +676,19 @@ def simulate(
     noise_acc_interp   = _interp(noise_acc)
 
     # ── Initial state ─────────────────────────────────────────────────────────
-    sensory_x0 = jnp.zeros(sensory_model.N_STATES)
-    sensory_x0 = sensory_x0.at[_IDX_OTO].set(_otolith.X0)
-
+    sensory_x0 = sensory_model.State(
+        canal    = _canal.rest_state(),
+        otolith  = _otolith.rest_state(),   # both sides settled to gravity
+        retina_L = _retina.rest_state(),
+        retina_R = _retina.rest_state(),
+    )
     brain_x0 = brain_model.make_x0(params.brain)
+    plant_x0 = plant_model.rest_state()
 
     x0 = SimState(
         sensory   = sensory_x0,
         brain     = brain_x0,
-        plant     = jnp.zeros(plant_model.N_STATES),
+        plant     = plant_x0,
         acc_plant = jnp.array([params.brain.tonic_acc]),  # start at dark focus (D)
     )
 
@@ -729,13 +724,13 @@ def simulate(
         max_steps=max_steps,
     )
 
-    ys = SimState(
-        sensory   = solution.ys.sensory[warmup_T:],
-        brain     = solution.ys.brain[warmup_T:],
-        plant     = solution.ys.plant[warmup_T:],
-        acc_plant = solution.ys.acc_plant[warmup_T:],
-    )
+    # `solution.ys` is a SimState pytree with a leading time axis on every leaf.
+    # All four fields are nested NamedTuples (or plain ndarray for acc_plant) —
+    # tree_map slices each leaf along the time axis.
+    ys = jax.tree_util.tree_map(lambda x: x[warmup_T:], solution.ys)
 
     if return_states:
         return ys
-    return ys.plant   # (T, 6)
+    # Default return: flat (T, 6) plant trajectory [L (3) | R (3)] — convenience
+    # for legacy callers that just want eye position over time.
+    return jnp.concatenate([ys.plant.left, ys.plant.right], axis=1)   # (T, 6)

@@ -6,7 +6,6 @@ import numpy as np
 import jax, jax.numpy as jnp
 from oculomotor.sim.simulator import (
     PARAMS_DEFAULT, with_sensory, simulate, SimConfig,
-    _IDX_NI, _IDX_NI_L, _IDX_NI_R, _IDX_SG,
 )
 from oculomotor.sim import kinematics as km
 from oculomotor.analysis import extract_sg
@@ -33,12 +32,12 @@ def run(amp):
                       key=jax.random.PRNGKey(0))
 
     # Plant states: left eye [0:3], right eye [3:6]
-    eye_L_yaw = np.array(states.plant[:, 0])   # left eye yaw
-    eye_R_yaw = np.array(states.plant[:, 3])   # right eye yaw
+    eye_L_yaw = np.array(states.plant.left[:, 0])   # left eye yaw
+    eye_R_yaw = np.array(states.plant.right[:, 0])   # right eye yaw
 
     # NI net state (x_L - x_R), yaw component
-    x_ni_L = np.array(states.brain[:, _IDX_NI_L])[:, 0]   # left NI pop, yaw
-    x_ni_R = np.array(states.brain[:, _IDX_NI_R])[:, 0]   # right NI pop, yaw
+    x_ni_L = np.array(states.brain.ni.L)[:, 0]   # left NI pop, yaw
+    x_ni_R = np.array(states.brain.ni.R)[:, 0]   # right NI pop, yaw
     x_ni_net_yaw = x_ni_L - x_ni_R
 
     # SG states

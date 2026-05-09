@@ -18,9 +18,6 @@ if '--show' not in sys.argv:
 import matplotlib.pyplot as plt
 
 from oculomotor.sim.simulator import PARAMS_DEFAULT, with_brain, with_sensory, simulate
-from oculomotor.sim.simulator import _IDX_VIS, _IDX_PURSUIT
-from oculomotor.models.brain_models.brain_model import _IDX_EC_VEL_SCENE, _IDX_EC_VEL_TARGET, _IDX_CYC_BRAIN
-_IDX_VIS_L = _IDX_VIS   # backward-compat alias for local use in this script
 from oculomotor.sim import kinematics as km
 from oculomotor.analysis import ax_fmt, extract_burst, extract_sg, ni_net, vs_net
 from oculomotor.models.brain_models.perception_cyclopean import C_vel as C_vel_sm, C_slip as C_slip_sm
@@ -104,7 +101,7 @@ def _main_sequence(show):
         pt3 = _pt3(t_np, amp, t_jump=t_jump)
         st  = _run(t_np, pt3, key=i)
         # version = average of left and right eye (conjugate movement hits target)
-        eye   = (np.array(st.plant[:, 0]) + np.array(st.plant[:, 3])) / 2.0
+        eye   = (np.array(st.plant.left[:, 0]) + np.array(st.plant.right[:, 0])) / 2.0
         burst = extract_burst(st, THETA)[:, 0]
         a_out, v_peak = _primary_saccade(burst, eye, t_np, t_jump)
         amps_out.append(a_out)
@@ -168,8 +165,8 @@ def _oblique(show):
 
     st    = _run(t_np, jnp.array(pt3), max_s=int(T_end / DT) + 500)
     # version: average of left eye (plant[:, :3]) and right eye (plant[:, 3:6])
-    eye_L = np.array(st.plant[:, :3])
-    eye_R = np.array(st.plant[:, 3:6])
+    eye_L = np.array(st.plant.left)
+    eye_R = np.array(st.plant.right)
     eye   = (eye_L + eye_R) / 2.0   # (T, 3) version position
 
     fig, axes = plt.subplots(1, 3, figsize=(14, 5))
@@ -250,7 +247,7 @@ def _refractoriness(show):
             pt3[:, 0] = np.tan(np.radians(tgt))
 
             st  = _run(t_np, jnp.array(pt3), key=ri * len(AMPS) + ci)
-            eye = (np.array(st.plant[:, 0]) + np.array(st.plant[:, 3])) / 2.0
+            eye = (np.array(st.plant.left[:, 0]) + np.array(st.plant.right[:, 0])) / 2.0
             bst = extract_burst(st, THETA)[:, 0]
 
             lbl = f'ISI={isi*1000:.0f}ms'
@@ -327,7 +324,7 @@ def _cascade(show, noisy=False):
         pt3 = _pt3(t_np, amp, t_jump=t_jump)
         st  = _run(t_np, pt3, key=ci, max_s=int(T_end/DT)+200, params=params)
         sg  = extract_sg(st, params)
-        eye = (np.array(st.plant[:, 0]) + np.array(st.plant[:, 3])) / 2.0
+        eye = (np.array(st.plant.left[:, 0]) + np.array(st.plant.right[:, 0])) / 2.0
         vel = np.gradient(eye, DT)
         tgt = np.degrees(np.arctan2(np.array(pt3[:,0]), np.array(pt3[:,2])))
 
@@ -366,11 +363,12 @@ def _cascade(show, noisy=False):
         if ci == 0: axes[4, ci].legend(fontsize=7)
 
         # ── Pursuit / OKR signal chain (rows 5–7) ────────────────────────────
-        x_cyc        = np.array(st.brain[:, _IDX_CYC_BRAIN])         # (T, 43) cyclopean brain LP block
-        vel_del      = x_cyc @ np.array(C_vel_sm).T                  # (T, 3) delayed target vel (cyclopean)
-        slip_del     = x_cyc @ np.array(C_slip_sm).T                 # (T, 3) delayed scene slip (cyclopean)
-        _xp_raw      = np.array(st.brain[:, _IDX_PURSUIT])           # (T, 6) bilateral memory
-        x_purs       = _xp_raw[:, :3] - _xp_raw[:, 3:6]              # (T, 3) NET pursuit memory
+        # Cyclopean delayed signals — read the LP output (last 3 of each cascade buffer)
+        # directly from BrainState rather than via the C_* readout matrices.
+        pc_st        = st.brain.pc
+        vel_del      = np.array(pc_st.target_vel)[:, -3:]              # (T, 3) delayed target vel
+        slip_del     = np.array(pc_st.scene_angular_vel)[:, -3:]       # (T, 3) delayed scene slip
+        x_purs       = np.array(st.brain.pu.R - st.brain.pu.L)         # (T, 3) NET pursuit memory
 
         # Row 5: raw delayed velocities
         axes[5, ci].plot(t_np, vel_del[:, 0],  color='darkorange', lw=1.2, label='tgt_vel')
@@ -384,8 +382,8 @@ def _cascade(show, noisy=False):
         # matches target_vel cascade shape (heavier smoothing).
         tgt_ec_sat   = _vel_sat_np(vel_del,  params.sensory.v_max_target_vel)
         scene_ec_sat = _vel_sat_np(slip_del, params.sensory.v_max_scene_vel)
-        ec_scene     = np.array(st.brain[:, _IDX_EC_VEL_SCENE])[:, -3:]   # last 3 = LP output
-        ec_target    = np.array(st.brain[:, _IDX_EC_VEL_TARGET])[:, -3:]
+        ec_scene     = np.array(st.brain.ec_scene)[:, -3:]   # last 3 = LP output
+        ec_target    = np.array(st.brain.ec_target)[:, -3:]
         axes[6, ci].plot(t_np, tgt_ec_sat[:, 0],   color='#7b2d8b', lw=1.2, label='tgt slip')
         axes[6, ci].plot(t_np, scene_ec_sat[:, 0], color='#1a7a4a', lw=1.2, label='scene slip')
         axes[6, ci].plot(t_np, ec_scene[:, 0],     color='#1f4dab', lw=1.0, ls='--', label='EC scene')

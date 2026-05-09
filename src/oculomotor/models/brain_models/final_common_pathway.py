@@ -90,25 +90,38 @@ def _smooth_clip(z, g_max):
     return jax.nn.softplus(z) - jax.nn.softplus(z - g_max)
 
 
-# ── Local registry (Phase-2 contract) ─────────────────────────────────────────
+# ── State + registries ────────────────────────────────────────────────────────
+
+class State(NamedTuple):
+    """FCP state — 14 motor neurons (12 muscle MNs + AIN_L + AIN_R).
+
+    AIN_L and AIN_R are abducens internuclear neurons whose axons enter the
+    MLF and synapse on contralateral CN3_MR motoneurons (no extraocular
+    muscle output).
+    """
+    rates: jnp.ndarray   # (14,) [LR_L,LR_R,CN4_L,CN4_R,MR_L,MR_R,SR_L,SR_R,IR_L,IR_R,IO_L,IO_R,AIN_L,AIN_R]
+
 
 class Activations(NamedTuple):
-    """FCP firing rates — motor neuron rates (= raw state, MN states ARE rates)."""
+    """FCP firing rates — only the 12 muscle MNs (AINs project internally via MLF)."""
     mn_rates: jnp.ndarray   # (12,) per-muscle MN firing rates  [oculomotor / trochlear / abducens]
 
 
-def read_activations(x_mn):
-    """Project motor-neuron raw state → Activations.
+def zero_state():
+    """All-zero state — useful as a NT-PyTree shape template."""
+    return State(rates=jnp.zeros(14))
 
-    MN states ARE firing rates by construction (LP dynamics with smooth-clip
-    f-I curve), so the projection is identity.  Note: x_mn has 14 states (12
-    muscle-MNs + AIN_L + AIN_R); only the 12 muscle-MN rates are exposed —
-    AINs project internally to MR via the MLF and aren't a downstream signal.
+
+def read_activations(state):
+    """MN states ARE firing rates by construction (LP + smooth-clip f-I curve).
+
+    Only the 12 muscle MNs are exposed — AINs project internally via MLF,
+    not to the plant.
     """
-    return Activations(mn_rates=x_mn[:12])
+    return Activations(mn_rates=state.rates[:12])
 
 
-def step(x_mn, premotor_activity, brain_params):
+def step(state, premotor_activity, brain_params):
     """Single ODE step: premotor activity → motor neurons → output nerves.
 
         dx_mn  =  (premotor + mlf  −  x_mn) / tau_mn
@@ -119,7 +132,7 @@ def step(x_mn, premotor_activity, brain_params):
     every other MN the MLF term is zero.
 
     Args:
-        x_mn:               (14,) MN firing rates in nucleus order
+        state:              fcp.State  MN firing rates (14,) in nucleus order
                              [ABN_L, ABN_R, CN4_L, CN4_R, CN3_MR_L, CN3_MR_R,
                               CN3_SR_L, CN3_SR_R, CN3_IR_L, CN3_IR_R,
                               CN3_IO_L, CN3_IO_R, AIN_L, AIN_R]
@@ -128,11 +141,12 @@ def step(x_mn, premotor_activity, brain_params):
         brain_params:       BrainParams (g_nucleus, g_nerve, g_mlf_L/R, tau_mn)
 
     Returns:
-        dx_mn:  (14,) MN state derivative
+        dstate: fcp.State  state derivative
         nerves: (12,) axonal firing rates to extraocular muscles
                  [LR_L, MR_L, SR_L, IR_L, SO_L, IO_L,
                   LR_R, MR_R, SR_R, IR_R, SO_R, IO_R]
     """
+    x_mn = state.rates
     # Premotor input arriving at each MN's synapses: linear projection of the
     # upstream brain command via M_NUCLEUS, scaled by g_nucleus (cell-loss
     # gain; AIN_L/R inherit ABN_L/R gain — intermingled populations), then
@@ -173,7 +187,19 @@ def step(x_mn, premotor_activity, brain_params):
     r_base14 = jnp.concatenate([r_base12, jnp.zeros(2)])    # AIN doesn't project to nerves
     nerves   = _smooth_clip(m_proj @ (x_mn + g_nuc14 * r_base14),
                             brain_params.g_nerve * _NERVE_MAX)                   # (12,)
-    return dx_mn, nerves
+    return State(rates=dx_mn), nerves
+
+
+# ── Legacy flat-array adapters (deleted once brain_model migrates to BrainState) ─
+
+def from_array(x_mn):
+    """(14,) flat array → fcp.State."""
+    return State(rates=x_mn)
+
+
+def to_array(state):
+    """fcp.State → (14,) flat array."""
+    return state.rates
 
 
 def rest_state(premotor_activity, brain_params):

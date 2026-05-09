@@ -50,6 +50,8 @@ Dynamics  (first-order adaptation, Fernandez & Goldberg 1976)
     that the DC gravity component is preserved.
 """
 
+from typing import NamedTuple
+
 import jax.numpy as jnp
 
 from oculomotor.models.plant_models.readout import rotation_matrix
@@ -77,34 +79,49 @@ N_STATES  = 6    # [x_L (3) | x_R (3)] — LP adaptation states; q_head is an in
 N_INPUTS  = 6    # [a_head (3) | q_head (3)]
 N_OUTPUTS = 3    # f_gia (3,) — GIA estimate
 
-_IDX_L = slice(0, 3)   # left  otolith adaptation state (m/s²)
-_IDX_R = slice(3, 6)   # right otolith adaptation state (m/s²)
-
 # Default initial state: both sides settled to gravity at rest, upright head
 X0 = jnp.concatenate([SENS_LEFT @ G_WORLD, SENS_RIGHT @ G_WORLD])   # [9.81,0,0, 9.81,0,0]
 
 
+# ── State NamedTuple ──────────────────────────────────────────────────────────
+
+class State(NamedTuple):
+    """Otolith state — bilateral LP adaptation registers (parallel, not push-pull)."""
+    x_L: jnp.ndarray   # (3,) left  utricle/saccule LP state (m/s²)
+    x_R: jnp.ndarray   # (3,) right utricle/saccule LP state (m/s²)
+
+
+def rest_state():
+    """Initial state — both sides settled at upright gravity."""
+    return State(x_L=SENS_LEFT @ G_WORLD, x_R=SENS_RIGHT @ G_WORLD)
+
+
+def to_array(state):
+    """otolith.State → (6,) flat array — legacy adapter; SimState uses the NT directly."""
+    return jnp.concatenate([state.x_L, state.x_R])
+
+
 # ── SSM step ───────────────────────────────────────────────────────────────────
 
-def step(x_oto, u, sensory_params):
+def step(state, u, sensory_params):
     """Single ODE step: otolith LP derivative + GIA estimate output.
 
     Args:
-        x_oto:          (6,)  otolith state [x_L (3) | x_R (3)]  (m/s²)
+        state:          otolith.State  (x_L, x_R) bilateral adaptation states (m/s²)
         u:              (6,)  [a_head (3) | q_head (3)]
                               a_head — head linear acceleration (m/s²)
                               q_head — head orientation rotation vector (deg)
         sensory_params: SensoryParams  (reads tau_oto)
 
     Returns:
-        dx_oto: (6,)  dx_oto/dt  (m/s³)
-        f_gia:  (3,)  LP-filtered GIA estimate → gravity_estimator (m/s²)
+        dstate: otolith.State  state derivative (m/s³)
+        f_gia:  (3,)           LP-filtered GIA estimate → gravity_estimator (m/s²)
     """
     a_head = u[:3]   # (3,) head linear acceleration (m/s²)
     q_head = u[3:]   # (3,) head orientation rotation vector (deg)
 
-    x_L = x_oto[_IDX_L]   # (3,) left  adaptation state
-    x_R = x_oto[_IDX_R]   # (3,) right adaptation state
+    x_L = state.x_L
+    x_R = state.x_R
 
     # Rotate q_head [yaw,pitch,roll] → xyz rotation vector for rotation_matrix.
     # Uses ypr_to_xyz convention: yaw→+y, pitch→−x, roll→+z  (left-handed world frame).
@@ -123,14 +140,11 @@ def step(x_oto, u, sensory_params):
     dx_L = (SENS_LEFT  @ f - x_L) / tau
     dx_R = (SENS_RIGHT @ f - x_R) / tau
 
-    dx_oto = jnp.concatenate([dx_L, dx_R])
     # Return the INSTANTANEOUS GIA (= f), not the LP-adapted state.
     # The gravity estimator needs the raw otolith reading so the correction
     # term K_grav·(f−ĝ) works correctly during sustained tilt — if we pass the
     # LP state (tau_oto=100 s), the correction pulls ĝ back toward upright
     # once the canal decays, causing visible drift.
-    # x_oto remains as an adaptation state for future somatogravic illusion
-    # modelling (comparing adapted vs raw response).
     f_gia  = f   # instantaneous GIA in head frame (m/s²)
 
-    return dx_oto, f_gia
+    return State(x_L=dx_L, x_R=dx_R), f_gia

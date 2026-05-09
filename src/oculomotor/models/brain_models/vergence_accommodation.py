@@ -94,16 +94,10 @@ _VG_IDX_COPY  = slice(6, 9)
 _ACC_IDX_FAST = 0
 _ACC_IDX_SLOW = 1
 
-# Top-level state
-N_STATES  = 9 + 2   # 11
-_IDX_VERG = slice(0, 9)
-_IDX_ACC  = slice(9, 11)
+# ── State + registries ────────────────────────────────────────────────────────
 
-
-# ── Local registries (Phase-2 contract) ──────────────────────────────────────
-
-class Activations(NamedTuple):
-    """Vergence + Accommodation firing rates."""
+class State(NamedTuple):
+    """Vergence + Accommodation state — five firing-rate populations."""
     verg_fast:  jnp.ndarray   # (3,)    phasic vergence neurons   [supraoculomotor area]
     verg_tonic: jnp.ndarray   # (3,)    tonic vergence neurons    [supraoculomotor area]
     verg_copy:  jnp.ndarray   # (3,)    saccadic-vergence EC pop  [supraoculomotor area; vestigial]
@@ -111,17 +105,24 @@ class Activations(NamedTuple):
     acc_slow:   jnp.ndarray   # scalar  slow accommodation pop    [NRTP / EW]
 
 
-def read_activations(x_va):
-    """Project vergence+accommodation raw state → Activations."""
-    x_verg = x_va[_IDX_VERG]
-    x_acc  = x_va[_IDX_ACC]
-    return Activations(
-        verg_fast  = x_verg[_VG_IDX_VERG],
-        verg_tonic = x_verg[_VG_IDX_TONIC],
-        verg_copy  = x_verg[_VG_IDX_COPY],
-        acc_fast   = x_acc[_ACC_IDX_FAST],
-        acc_slow   = x_acc[_ACC_IDX_SLOW],
+# State == Activations: all fields are firing rates.
+Activations = State
+
+
+def rest_state():
+    """Zero state — used for SimState initialisation."""
+    return State(
+        verg_fast  = jnp.zeros(3),
+        verg_tonic = jnp.zeros(3),
+        verg_copy  = jnp.zeros(3),
+        acc_fast   = jnp.float32(0.0),
+        acc_slow   = jnp.float32(0.0),
     )
+
+
+def read_activations(state):
+    """All VA fields are firing rates — identity projection."""
+    return state
 
 # Bundled-input layout
 N_INPUTS  = 1 + 3 + 3 + 1   # 8
@@ -137,28 +138,24 @@ _IDX_INPUT_Z_ACT          = 7
 # step() — entire near-response math, inlined
 # ─────────────────────────────────────────────────────────────────────────────
 
-def step(x_va, u, brain_params):
+def step(state, u, brain_params):
     """Single ODE step for the unified near-response (vergence + accommodation).
 
     Args:
-        x_va:         (11,) bundled state — see _IDX_VERG / _IDX_ACC
+        state:        va.State    bundled state (5 firing-rate fields)
         u:            (8,)  bundled input — see _IDX_INPUT_* above
         brain_params: BrainParams
 
     Returns:
-        dx_va  : (11,) state derivative
-        u_verg : (3,)  vergence position command (deg) → FCP per-eye split
-        u_acc  : scalar total lens-plant input (D) — neural + CA/C
+        dstate : va.State  state derivative
+        u_verg : (3,)      vergence position command (deg) → FCP per-eye split
+        u_acc  : scalar    total lens-plant input (D) — neural + CA/C
     """
-    # ── Split state into parallel sub-states for both subsystems ────────────
-    x_verg = x_va[_IDX_VERG]
-    x_acc  = x_va[_IDX_ACC]
-
-    x_verg_v     = x_verg[_VG_IDX_VERG]    # (3,) vergence integrator
-    x_verg_tonic = x_verg[_VG_IDX_TONIC]   # (3,) tonic vergence integrator
-    x_verg_copy  = x_verg[_VG_IDX_COPY]    # (3,) saccadic-vergence efference copy (vestigial)
-    x_acc_fast   = x_acc[_ACC_IDX_FAST]    # scalar
-    x_acc_slow   = x_acc[_ACC_IDX_SLOW]    # scalar
+    x_verg_v     = state.verg_fast
+    x_verg_tonic = state.verg_tonic
+    x_verg_copy  = state.verg_copy
+    x_acc_fast   = state.acc_fast
+    x_acc_slow   = state.acc_slow
 
     # ── Split bundled inputs ────────────────────────────────────────────────
     defocus          = u[_IDX_INPUT_DEFOCUS]
@@ -254,15 +251,45 @@ def step(x_va, u, brain_params):
     dx_a_fast  = dx_a_fast + proximal_acc_target / brain_params.tau_acc_fast
 
     # ── Pack ────────────────────────────────────────────────────────────────
-    dx_va = jnp.concatenate([
-        dx_v, dx_v_tonic, dx_v_copy,
-        jnp.array([dx_a_fast, dx_a_slow]),
+    dstate = State(
+        verg_fast  = dx_v,
+        verg_tonic = dx_v_tonic,
+        verg_copy  = dx_v_copy,
+        acc_fast   = dx_a_fast,
+        acc_slow   = dx_a_slow,
+    )
+    return dstate, u_verg, u_acc
+
+
+# ── Legacy flat-array adapters (deleted once brain_model migrates to BrainState) ─
+
+N_STATES  = 9 + 2   # 11
+_IDX_VERG = slice(0, 9)
+_IDX_ACC  = slice(9, 11)
+
+
+def from_array(x_va):
+    """(11,) flat array → va.State."""
+    return State(
+        verg_fast  = x_va[0:3],
+        verg_tonic = x_va[3:6],
+        verg_copy  = x_va[6:9],
+        acc_fast   = x_va[9],
+        acc_slow   = x_va[10],
+    )
+
+
+def to_array(state):
+    """va.State → (11,) flat array."""
+    return jnp.concatenate([
+        state.verg_fast, state.verg_tonic, state.verg_copy,
+        jnp.array([state.acc_fast, state.acc_slow]),
     ])
-    return dx_va, u_verg, u_acc
 
 
 __all__ = [
-    "step",
+    "step", "State", "Activations", "rest_state", "read_activations",
+    "from_array", "to_array",
     "N_STATES", "N_INPUTS", "N_OUTPUTS",
     "_IDX_VERG", "_IDX_ACC",
     "_IDX_INPUT_DEFOCUS", "_IDX_INPUT_TARGET_DISP", "_IDX_INPUT_VERG_RATE_TVOR",

@@ -10,9 +10,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import numpy as np
 import jax.numpy as jnp
 from oculomotor.sim.simulator import (PARAMS_DEFAULT, simulate, with_brain, with_sensory,
-                                       SimConfig, _IDX_GRAV)
+                                       SimConfig)
 from oculomotor.sim import kinematics as km
-from oculomotor.models.brain_models.brain_model import _IDX_HEAD
 from oculomotor.analysis import vs_net, extract_spv_states
 
 DT = 0.001
@@ -64,7 +63,7 @@ for tilt_deg in TILTS:
                       target_present_array=np.zeros(T),
                       sim_config=SimConfig(warmup_s=0.0),
                       return_states=True)
-        v_lin = np.array(st.brain[:, _IDX_HEAD])
+        v_lin = np.array(st.brain.sm.v_lin)
         # Use saccade-masked SPV (excludes quick-phase velocity)
         spv_full = extract_spv_states(st, t)[:, 0]   # yaw axis
         # Look at last 30s of constant rotation

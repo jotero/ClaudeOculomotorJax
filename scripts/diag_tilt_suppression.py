@@ -11,8 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import numpy as np
 from oculomotor.sim.simulator import (PARAMS_DEFAULT, simulate, with_brain,
-                                       SimConfig, _IDX_GRAV)
-from oculomotor.models.brain_models.brain_model import _IDX_HEAD
+                                       SimConfig)
 from oculomotor.sim import kinematics as km
 from oculomotor.analysis import vs_net
 
@@ -56,10 +55,10 @@ for name, kg, kl, ta, th, kgd in combos:
                   target_present_array=np.zeros(T),
                   sim_config=SimConfig(warmup_s=0.0),
                   return_states=True)
-    v_lin = np.array(st.brain[:, _IDX_HEAD])
-    verg  = np.array(st.plant[:, 0] - st.plant[:, 3])
-    pitch = (np.array(st.plant[:, 1]) + np.array(st.plant[:, 4])) / 2.0
-    g_est = np.array(st.brain[:, _IDX_GRAV])
+    v_lin = np.array(st.brain.sm.v_lin)
+    verg  = np.array(st.plant.left[:, 0] - st.plant.right[:, 0])
+    pitch = (np.array(st.plant.left[:, 1]) + np.array(st.plant.right[:, 1])) / 2.0
+    g_est = np.array(st.brain.sm.g_est)
 
     # window: post-pitch onset
     post = t > T_PRE

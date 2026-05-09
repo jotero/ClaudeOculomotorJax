@@ -132,7 +132,7 @@ def _sim_hit_lit(params, t_arr, head_vel_3d=None, key=0, target_onset_s=None):
 
 
 def _spv_from_state(st, t_arr):
-    ev  = np.gradient(np.array(st.plant[:, 0]), DT)
+    ev  = np.gradient(np.array(st.plant.left[:, 0]), DT)
     spv = extract_spv_states(st, t_arr)[:, 0]
     return ev, spv
 
@@ -156,7 +156,7 @@ def _test_spontaneous(show):
         st = _sim_dark(theta, t)
         ev, spv = _spv_from_state(st, t)
         dark_results[label] = dict(
-            pos=np.array(st.plant[:, 0]),
+            pos=np.array(st.plant.left[:, 0]),
             ev=ev, spv=spv,
             spv_ss=float(np.mean(spv[t > 5.0])))
 
@@ -166,7 +166,7 @@ def _test_spontaneous(show):
         st = _sim_fixation_lit(theta, t)
         ev, spv = _spv_from_state(st, t)
         fix_results[label] = dict(
-            pos=np.array(st.plant[:, 0]),
+            pos=np.array(st.plant.left[:, 0]),
             ev=ev, spv=spv,
             spv_ss=float(np.mean(spv[t > 5.0])))
 
@@ -284,7 +284,7 @@ def _test_vhit(show):
         for d, dname in [(+1, 'right'), (-1, 'left')]:
             st    = _sim_hit_lit(theta, t_hit, head_vel_3d=_impulse(d), key=d,
                                  target_onset_s=PRE_S - TARGET_LEAD_S)
-            ev  = np.gradient(np.array(st.plant[:, 0]), DT)
+            ev  = np.gradient(np.array(st.plant.left[:, 0]), DT)
             spv = extract_spv_states(st, t_hit)[:, 0]
             hv    = _impulse(d)[:, 0]
             hv_w  = hv[i0:i_gain]

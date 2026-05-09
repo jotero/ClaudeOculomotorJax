@@ -19,7 +19,7 @@ if '--show' not in sys.argv:
     matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
-from oculomotor.sim.simulator import PARAMS_DEFAULT, simulate, with_brain, with_sensory, _IDX_VERG, _IDX_SG
+from oculomotor.sim.simulator import PARAMS_DEFAULT, simulate, with_brain, with_sensory
 from oculomotor.sim import kinematics as km
 from oculomotor.analysis import ax_fmt
 
@@ -80,7 +80,7 @@ def _run_sym(t, d_start, d_end, T_STEP):
                   target=km.build_target(t, lin_pos=pt),
                   scene_present_array=np.ones(T),
                   return_states=True)
-    return np.array(st.plant[:, 0]), np.array(st.plant[:, 3])
+    return np.array(st.plant.left[:, 0]), np.array(st.plant.right[:, 0])
 
 
 def _run_asym(t, d_start, d_end, ver_deg, T_STEP):
@@ -94,7 +94,7 @@ def _run_asym(t, d_start, d_end, ver_deg, T_STEP):
                   target=km.build_target(t, lin_pos=pt),
                   scene_present_array=np.ones(T),
                   return_states=True)
-    return np.array(st.plant[:, 0]), np.array(st.plant[:, 3])
+    return np.array(st.plant.left[:, 0]), np.array(st.plant.right[:, 0])
 
 
 def _vergence_bidir(show):
@@ -228,8 +228,8 @@ def _fixation_distance(show):
                       scene_present_array=np.ones(T),
                       return_states=True)
 
-        eye_L_yaw = np.array(st.plant[:, 0])
-        eye_R_yaw = np.array(st.plant[:, 3])
+        eye_L_yaw = np.array(st.plant.left[:, 0])
+        eye_R_yaw = np.array(st.plant.right[:, 0])
         vergence  = eye_L_yaw - eye_R_yaw
 
         ss_mask = t >= T_SS
@@ -322,8 +322,8 @@ def _diplopia(show):
         st = simulate(PARAMS_VERG, t,
                       target=km.build_target(t, lin_pos=pt),
                       scene_present_array=np.ones(T), return_states=True)
-        eL_tr[d] = np.array(st.plant[:, 0])
-        eR_tr[d] = np.array(st.plant[:, 3])
+        eL_tr[d] = np.array(st.plant.left[:, 0])
+        eR_tr[d] = np.array(st.plant.right[:, 0])
 
     verg_tr  = {d: eL_tr[d] - eR_tr[d] for d in DEPTHS}
     vers_tr  = {d: (eL_tr[d] + eR_tr[d]) / 2 for d in DEPTHS}
@@ -500,30 +500,27 @@ def _vergence_cascade(show):
     st_asym_d = _run_asym_full(t, D_ASYM_START_D, D_ASYM_END_D, -VER, T_STEP)
     sts = [st_sym_c, st_sym_d, st_asym_c, st_asym_d]
 
-    eL = [np.array(st.plant[:, 0]) for st in sts]
-    eR = [np.array(st.plant[:, 3]) for st in sts]
+    eL = [np.array(st.plant.left[:, 0]) for st in sts]
+    eR = [np.array(st.plant.right[:, 0]) for st in sts]
 
     verg     = [eL[i] - eR[i]         for i in range(4)]
     vers     = [(eL[i] + eR[i]) / 2   for i in range(4)]
     verg_vel = [np.gradient(v, DT)    for v in verg]
 
-    # Internal vergence states: [x_verg(3) | x_verg_tonic(3) | x_verg_copy(3)]
-    verg_st  = [np.array(st.brain[:, _IDX_VERG]) for st in sts]
-    sg_st    = [np.array(st.brain[:, _IDX_SG])   for st in sts]
-
-    x_verg_h       = [vs[:, 0] for vs in verg_st]
-    x_verg_tonic_h = [vs[:, 3] for vs in verg_st]
-    x_copy_h       = [vs[:, 6] for vs in verg_st]
+    # Internal vergence states (each is (T, 3); take yaw component)
+    x_verg_h       = [np.array(st.brain.va.verg_fast)[:, 0]  for st in sts]
+    x_verg_tonic_h = [np.array(st.brain.va.verg_tonic)[:, 0] for st in sts]
+    x_copy_h       = [np.array(st.brain.va.verg_copy)[:, 0]  for st in sts]
 
     # OPN gate
-    z_opn = [ss[:, 3] for ss in sg_st]
+    z_opn = [np.array(st.brain.sg.z_opn) for st in sts]
     z_act = [1.0 - np.clip(zop, 0.0, 100.0) / 100.0 for zop in z_opn]
 
     # Reconstructed Zee SVBN burst (rough)
     bp = PARAMS_VERG_ASYM_DEBUG.brain
     burst_h = []
     for i in range(4):
-        x_verg_i = verg_st[i][:, 0]
+        x_verg_i = x_verg_h[i]
         disp_est = x_verg_i / max(bp.K_verg * bp.tau_verg, 1e-6)
         is_conv  = (disp_est > 0).astype(float)
         g_eff    = is_conv * bp.g_svbn_conv + (1 - is_conv) * bp.g_svbn_div

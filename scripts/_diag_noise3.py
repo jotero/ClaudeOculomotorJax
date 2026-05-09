@@ -4,7 +4,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 import numpy as np
 import jax
-from oculomotor.sim.simulator import PARAMS_DEFAULT, with_sensory, simulate, SimConfig, _IDX_SG, _IDX_NI_L, _IDX_NI_R, _IDX_PURSUIT
+from oculomotor.sim.simulator import PARAMS_DEFAULT, with_sensory, simulate, SimConfig
 from oculomotor.sim import kinematics as km
 
 DT = 0.001
@@ -28,22 +28,18 @@ def trace(seed, sigma_canal=0.0, sigma_pos=0.3, sigma_vel=5.0, amp=5):
                       return_states=True,
                       key=jax.random.PRNGKey(seed))
 
-    x_sg = np.array(states.brain[:, _IDX_SG])
-    ni_L = np.array(states.brain[:, _IDX_NI_L])
-    ni_R = np.array(states.brain[:, _IDX_NI_R])
-    _xp = np.array(states.brain[:, _IDX_PURSUIT])           # (T, 6) bilateral
-    x_pursuit = _xp[:, :3] - _xp[:, 3:6]                    # (T, 3) NET
-
-    z_opn    = x_sg[:, 6]
-    z_acc    = x_sg[:, 7]
-    x_copy   = x_sg[:, 0]
-    e_held   = x_sg[:, 3]
-    x_ebn_R  = x_sg[:, 8]   # yaw component
-    x_ebn_L  = x_sg[:, 11]
-    x_ibn_R  = x_sg[:, 14]
-    x_ibn_L  = x_sg[:, 17]
-    e_res    = e_held - x_copy
-    x_ni_net = (ni_L - ni_R)[:, 0]
+    sg_st     = states.brain.sg
+    x_pursuit = np.array(states.brain.pu.R - states.brain.pu.L)   # (T, 3) NET
+    z_opn     = np.array(sg_st.z_opn)
+    z_acc     = np.array(sg_st.z_acc)
+    e_held    = np.array(sg_st.e_held)[:, 0]   # yaw
+    x_copy    = e_held                          # legacy alias (no separate x_copy)
+    x_ebn_R   = np.array(sg_st.ebn_R)[:, 0]
+    x_ebn_L   = np.array(sg_st.ebn_L)[:, 0]
+    x_ibn_R   = np.array(sg_st.ibn_R)[:, 0]
+    x_ibn_L   = np.array(sg_st.ibn_L)[:, 0]
+    e_res     = e_held - x_copy
+    x_ni_net  = np.array(states.brain.ni.L - states.brain.ni.R)[:, 0]
 
     # Find start of burst
     sac_mask = z_opn < 50

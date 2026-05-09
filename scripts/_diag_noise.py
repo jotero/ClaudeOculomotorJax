@@ -4,7 +4,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 import numpy as np
 import jax
-from oculomotor.sim.simulator import PARAMS_DEFAULT, with_sensory, simulate, SimConfig, _IDX_SG, _IDX_NI_L, _IDX_NI_R
+from oculomotor.sim.simulator import PARAMS_DEFAULT, with_sensory, simulate, SimConfig
 from oculomotor.sim import kinematics as km
 
 DT = 0.001
@@ -31,9 +31,7 @@ def run_condition(label, sigma_canal=0.0, sigma_pos=0.0, sigma_vel=0.0, amp=5):
                           return_states=True,
                           key=jax.random.PRNGKey(seed))
 
-        x_sg = np.array(states.brain[:, _IDX_SG])
-        # New layout: e_held(0:3) | z_opn(3) | z_acc(4) | ...
-        z_opn = x_sg[:, 3]
+        z_opn = np.array(states.brain.sg.z_opn)
         sac_mask = z_opn < 50
         if not sac_mask.any():
             continue
@@ -45,10 +43,8 @@ def run_condition(label, sigma_canal=0.0, sigma_pos=0.0, sigma_vel=0.0, amp=5):
         else:
             e = s + int(np.argmin(after))
 
-        ni_L = np.array(states.brain[:, _IDX_NI_L])
-        ni_R = np.array(states.brain[:, _IDX_NI_R])
-        x_ni_net_yaw = (ni_L - ni_R)[e, 0]
-        e_held_yaw = x_sg[s, 0]  # e_held yaw at onset
+        x_ni_net_yaw = float((states.brain.ni.L - states.brain.ni.R)[e, 0])
+        e_held_yaw = float(states.brain.sg.e_held[s, 0])  # e_held yaw at onset
         results.append((x_ni_net_yaw, e_held_yaw))
 
     if results:

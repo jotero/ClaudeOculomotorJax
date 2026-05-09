@@ -4,7 +4,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import numpy as np
 from oculomotor.sim.simulator import (PARAMS_DEFAULT, simulate, with_brain, with_sensory,
-                                       SimConfig, _IDX_GRAV, _IDX_NI, _IDX_SG)
+                                       SimConfig)
 from oculomotor.sim import kinematics as km
 from oculomotor.analysis import vs_net, ni_net
 
@@ -32,18 +32,18 @@ st = simulate(params, t,
               sim_config=SimConfig(warmup_s=0.0),
               return_states=True)
 
-eye_L_tor = np.array(st.plant[:, 2])
-eye_R_tor = np.array(st.plant[:, 5])
+eye_L_tor = np.array(st.plant.left[:, 2])
+eye_R_tor = np.array(st.plant.right[:, 2])
 ni_tor    = ni_net(st)[:, 2]
 vs_tor    = vs_net(st)[:, 2]
-g_est_x   = np.array(st.brain[:, _IDX_GRAV])[:, 0]
+g_est_x   = np.array(st.brain.sm.g_est)[:, 0]
 ocr_sig   = -float(params.brain.g_ocr) * g_est_x
-# x_sg layout: [e_held(3) | z_opn | z_acc | z_trig | x_ebn_R(3) | x_ebn_L(3) | x_ibn_R(3) | x_ibn_L(3)]
-x_sg = np.array(st.brain[:, _IDX_SG])
-e_held_tor = x_sg[:, 2]   # e_held torsion component
-z_acc      = x_sg[:, 4]
-ebn_R_tor  = x_sg[:, 6 + 2]   # right EBN torsion
-ebn_L_tor  = x_sg[:, 9 + 2]   # left EBN torsion
+# Read SG sub-states directly from BrainState
+sg_st = st.brain.sg
+e_held_tor = np.array(sg_st.e_held)[:, 2]   # e_held torsion component
+z_acc      = np.array(sg_st.z_acc)
+ebn_R_tor  = np.array(sg_st.ebn_R)[:, 2]    # right EBN torsion
+ebn_L_tor  = np.array(sg_st.ebn_L)[:, 2]    # left  EBN torsion
 
 print(f"Tilt: {TILT_DEG}° at {TILT_VEL}°/s, hold {HOLD_T}s, lit + target on, noise OFF")
 print(f"Tilt phase: 0 → {tilt_dur:.2f}s; hold: {tilt_dur:.2f} → {tilt_dur+HOLD_T:.2f}s")

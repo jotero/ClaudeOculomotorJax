@@ -54,7 +54,7 @@ def _run_fixation(sigma_canal, sigma_pos, sigma_vel, seed, T):
                       return_states=True,
                       key=jax.random.PRNGKey(seed))
     t_np   = np.array(t)
-    eye    = np.array(states.plant[:, :3])
+    eye    = np.array(states.plant.left)
     ev     = np.gradient(eye, DT, axis=0)
     burst  = extract_burst(states, params)
     noise  = _gen_noise(params, T_act, jax.random.PRNGKey(seed))

@@ -25,9 +25,7 @@ import matplotlib.pyplot as plt
 
 from oculomotor.sim.simulator import (
     PARAMS_DEFAULT, with_brain, simulate, SimConfig,
-    _IDX_GRAV, _IDX_C, _IDX_SG, _IDX_VERG, _IDX_PURSUIT,
 )
-from oculomotor.models.brain_models.brain_model import _IDX_HEAD
 from oculomotor.sim import kinematics as km
 from oculomotor.analysis import ax_fmt, vs_net, ni_net, fit_tc, extract_spv_states
 from oculomotor.models.sensory_models.sensory_model import PINV_SENS as CANAL_PINV
@@ -115,8 +113,8 @@ def _ocr(show):
                       sim_config=SimConfig(warmup_s=0.0),
                       return_states=True)
 
-        eye_roll = (np.array(st.plant[:, 2]) + np.array(st.plant[:, 5])) / 2.0
-        g_est    = np.array(st.brain[:, _IDX_GRAV])
+        eye_roll = (np.array(st.plant.left[:, 2]) + np.array(st.plant.right[:, 2])) / 2.0
+        g_est    = np.array(st.brain.sm.g_est)
         t_hold   = t - tilt_dur
         traces_t[tilt_deg]    = t_hold
         traces_eye[tilt_deg]  = eye_roll
@@ -196,7 +194,6 @@ def _ocr(show):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _ovar(show):
-    from oculomotor.models.brain_models.brain_model import _IDX_HEAD
     from oculomotor.models.plant_models.readout import rotation_matrix
     from oculomotor.models.sensory_models.retina import ypr_to_xyz
     SPIN_VEL    = 60.0
@@ -254,11 +251,11 @@ def _ovar(show):
                             target_present_array=np.zeros(T),
                             sim_config=cfg, return_states=True)
 
-        eye_pos = (np.array(st.plant[:, 0]) + np.array(st.plant[:, 3])) / 2.0
+        eye_pos = (np.array(st.plant.left[:, 0]) + np.array(st.plant.right[:, 0])) / 2.0
         eye_vel = np.gradient(eye_pos, DT)
         spv     = extract_spv_states(st, t)[:, 0]
-        g_est   = np.array(st.brain[:, _IDX_GRAV])[:, :3]
-        v_lin   = np.array(st.brain[:, _IDX_HEAD])
+        g_est   = np.array(st.brain.sm.g_est)
+        v_lin   = np.array(st.brain.sm.v_lin)
 
         # Compute gia per timestep from head pose (no head translation here, so a_head=0).
         # gia_head = R(q_head)^T @ G_WORLD.  Then a_est = gia − g_est is what HE integrates.
@@ -418,17 +415,17 @@ def _tilt_suppression(show):
                       target_present_array=np.zeros(T),
                       sim_config=cfg, return_states=True)
 
-        eye_pos_L = np.array(st.plant[:, 0])           # left eye yaw   (deg)
-        eye_pos_R = np.array(st.plant[:, 3])           # right eye yaw  (deg)
-        eye_pit_L = np.array(st.plant[:, 1])           # left eye pitch (deg)
-        eye_rol_L = np.array(st.plant[:, 2])           # left eye roll  (deg)
+        eye_pos_L = np.array(st.plant.left[:, 0])           # left eye yaw   (deg)
+        eye_pos_R = np.array(st.plant.right[:, 0])           # right eye yaw  (deg)
+        eye_pit_L = np.array(st.plant.left[:, 1])           # left eye pitch (deg)
+        eye_rol_L = np.array(st.plant.left[:, 2])           # left eye roll  (deg)
         eye_pos   = (eye_pos_L + eye_pos_R) / 2.0      # binocular avg (for SPV gradient)
         verg      = eye_pos_L - eye_pos_R              # vergence (L − R, deg) → convergence positive
         eye_vel   = np.gradient(eye_pos, DT)
         spv       = extract_spv_states(st, t_arr, eye='version')[:, 0]   # true cyclopean SPV (yaw)
-        g_est_x   = np.array(st.brain[:, _IDX_GRAV])[:, 0]    # interaural / right
-        g_est_z   = np.array(st.brain[:, _IDX_GRAV])[:, 2]    # forward / roll-axis
-        v_lin    = np.array(st.brain[:, _IDX_HEAD])          # (T, 3) heading-estimator v_lin (m/s, head frame)
+        g_est_x   = np.array(st.brain.sm.g_est)[:, 0]    # interaural / right
+        g_est_z   = np.array(st.brain.sm.g_est)[:, 2]    # forward / roll-axis
+        v_lin    = np.array(st.brain.sm.v_lin)          # (T, 3) heading-estimator v_lin (m/s, head frame)
         x_tvor_x = v_lin[:, 0]   # interaural lin vel estimate (m/s)
         x_tvor_z = v_lin[:, 2]   # forward lin vel estimate (m/s)
         vs        = np.array(vs_net(st))                     # (T, 3) VS net yaw/pitch/roll (deg/s)
@@ -608,8 +605,8 @@ def _somatogravic_frequency(show):
                       target_present_array=np.zeros(T),
                       return_states=True)
 
-        eye_roll = (np.array(st.plant[:, 2]) + np.array(st.plant[:, 5])) / 2.0
-        g_est    = np.array(st.brain[:, _IDX_GRAV])
+        eye_roll = (np.array(st.plant.left[:, 2]) + np.array(st.plant.right[:, 2])) / 2.0
+        g_est    = np.array(st.brain.sm.g_est)
 
         # Display window: align to a full cycle so a_lat starts at 0.
         # Show up to the last 3 complete cycles after osc_start_s.
@@ -763,8 +760,7 @@ def _somatogravic_frequency(show):
 def _canal_vel_3d(states):
     """Extract bilateral canal velocity estimate (3,) for each timestep.  (T, 3) deg/s."""
     import scipy.special as sp
-    x_c  = np.array(states.sensory[:, _IDX_C])          # (T, 12)
-    x2   = x_c[:, N_CANALS:]                             # inertia states (T, 6)
+    x2   = np.array(states.sensory.canal.x2)             # (T, 6) inertia states
     k, f = float(_SOFTNESS), float(FLOOR)
     # Same softplus nonlinearity as analysis.extract_canal
     y_c  = -f + sp.log1p(np.exp(k * (x2 + f))) / k + sp.log1p(np.exp(k * (x2 - f))) / k
@@ -819,17 +815,18 @@ def _ocr_cascade(show):
     COL_COLORS = ['#2166ac', '#e08214', '#c51b7d']
 
     def _extract(st):
-        grav       = np.array(st.brain[:, _IDX_GRAV])
+        grav       = np.array(st.brain.sm.g_est)
         ocr_sig    = -G_OCR * grav[:, 0]              # torsion (g_est x-component)
         vs_a       = vs_net(st)[:, AXIS]
         spv_a      = extract_spv_states(st, t_np)[:, AXIS]
-        x2         = np.array(st.sensory[:, _IDX_C])[:, 6:12]
+        x2         = np.array(st.sensory.canal.x2)
         canal_ft_a = float(params.brain.g_vor) * (np.array(CANAL_PINV) @ x2.T)[AXIS, :]
-        plant_arr  = np.array(st.plant)
+        eye_L_arr  = np.array(st.plant.left)
+        eye_R_arr  = np.array(st.plant.right)
         return dict(
             ocr=ocr_sig, vs_neg=-vs_a,
-            eye_L=plant_arr[:, AXIS],
-            eye_R=plant_arr[:, 3 + AXIS],
+            eye_L=eye_L_arr[:, AXIS],
+            eye_R=eye_R_arr[:, AXIS],
             spv_tor=spv_a, canal_ft=canal_ft_a,
         )
 

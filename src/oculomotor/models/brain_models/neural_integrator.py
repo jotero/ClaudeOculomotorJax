@@ -55,24 +55,19 @@ from typing import NamedTuple
 
 import jax.numpy as jnp
 
-N_STATES  = 9   # x_L(3) + x_R(3) + x_null(3)
-N_INPUTS  = 3
-N_OUTPUTS = 3
+# ── State + registries ────────────────────────────────────────────────────────
 
-# Sub-index slices (relative to x_ni)
-_IDX_L    = slice(0, 3)
-_IDX_R    = slice(3, 6)
-_IDX_NULL = slice(6, 9)
+class State(NamedTuple):
+    """NI state — bilateral push-pull pops + null adaptation register."""
+    L:    jnp.ndarray   # (3,) left  NPH/INC pop  (rectified ≥ 0 by construction)
+    R:    jnp.ndarray   # (3,) right NPH/INC pop  (rectified ≥ 0 by construction)
+    null: jnp.ndarray   # (3,) signed adaptation register (drifts toward x_net)
 
-
-# ── Local registries (Phase-2 contract) ──────────────────────────────────────
-# Per-module Activations / Decoded / Weights — aggregated centrally by
-# `brain_models.activations.read_activations`.
 
 class Activations(NamedTuple):
-    """NI firing rates — bilateral push-pull pops."""
-    R: jnp.ndarray   # (3,) right NPH/INC pop  [NPH (yaw) | INC (vert/tors)]
+    """NI firing rates — bilateral pops only (null is a setpoint, in Weights)."""
     L: jnp.ndarray   # (3,) left  NPH/INC pop
+    R: jnp.ndarray   # (3,) right NPH/INC pop
 
 
 class Decoded(NamedTuple):
@@ -85,9 +80,14 @@ class Weights(NamedTuple):
     null: jnp.ndarray   # (3,) signed   slow null adaptation register
 
 
-def read_activations(x_ni):
-    """Project NI raw state → NI Activations."""
-    return Activations(R=x_ni[_IDX_R], L=x_ni[_IDX_L])
+def rest_state():
+    """Zero state — used for SimState initialisation."""
+    return State(L=jnp.zeros(3), R=jnp.zeros(3), null=jnp.zeros(3))
+
+
+def read_activations(state):
+    """NI bilateral pops are firing rates by construction — direct projection."""
+    return Activations(L=state.L, R=state.R)
 
 
 def decode_states(acts):
@@ -95,16 +95,16 @@ def decode_states(acts):
     return Decoded(net=acts.L - acts.R)
 
 
-def read_weights(x_ni):
+def read_weights(state):
     """NI null adaptation register."""
-    return Weights(null=x_ni[_IDX_NULL])
+    return Weights(null=state.null)
 
 
-def step(x_ni, u_vel, brain_params, u_tonic=0.0):
+def step(state, u_vel, brain_params, u_tonic=0.0):
     """Single ODE step: bilateral NI dynamics + null adaptation + motor command.
 
     Args:
-        x_ni:         (9,)  NI state [x_L (3,) | x_R (3,) | x_null (3,)]
+        state:        ni.State   (L, R, null) — each (3,)
         u_vel:        (3,)  combined eye-velocity command (deg/s) — sign-flipped upstream
         brain_params: BrainParams
         u_tonic:      (3,)  tonic position-offset set-point (e.g. OCR).
@@ -116,12 +116,12 @@ def step(x_ni, u_vel, brain_params, u_tonic=0.0):
                             consistent with the actual eye position.
 
     Returns:
-        dx:  (9,)  dx_ni/dt  (state derivative for the original x_null state)
-        u_p: (3,)  pulse-step motor command to plant
+        dstate: ni.State   state derivative
+        u_p:    (3,)       pulse-step motor command to plant
     """
-    x_L    = x_ni[_IDX_L]    # (3,) left  pop
-    x_R    = x_ni[_IDX_R]    # (3,) right pop
-    x_null = x_ni[_IDX_NULL] # (3,) adapted null
+    x_L    = state.L
+    x_R    = state.R
+    x_null = state.null
 
     b_ni   = jnp.asarray(brain_params.b_ni,  dtype=jnp.float32)
     L      = brain_params.orbital_limit
@@ -168,4 +168,21 @@ def step(x_ni, u_vel, brain_params, u_tonic=0.0):
     # ── Pulse-step motor command: lag cancellation feedthrough ────────────────
     u_p = x_net + brain_params.tau_p * u_vel
 
-    return jnp.concatenate([dx_L, dx_R, dx_null]), u_p
+    return State(L=dx_L, R=dx_R, null=dx_null), u_p
+
+
+# ── Legacy flat-array adapters (deleted once brain_model migrates to BrainState) ─
+
+N_STATES  = 9   # x_L(3) + x_R(3) + x_null(3)
+N_INPUTS  = 3
+N_OUTPUTS = 3
+
+
+def from_array(x_ni):
+    """(9,) flat array → ni.State."""
+    return State(L=x_ni[0:3], R=x_ni[3:6], null=x_ni[6:9])
+
+
+def to_array(state):
+    """ni.State → (9,) flat array."""
+    return jnp.concatenate([state.L, state.R, state.null])

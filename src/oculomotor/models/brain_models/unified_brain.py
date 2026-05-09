@@ -41,16 +41,15 @@ from typing import NamedTuple
 import jax
 import jax.numpy as jnp
 
-from oculomotor.models.brain_models.brain_model import (
-    N_STATES,
-    _IDX_PURSUIT, _IDX_NI, _IDX_NI_L, _IDX_NI_R, _IDX_NI_NULL,
-    _IDX_VERG, _IDX_ACC, _IDX_VA, _IDX_SG, _IDX_SELF_MOTION,
-    _IDX_VS, _IDX_VS_L, _IDX_VS_R, _IDX_VS_NULL, _IDX_GRAV, _IDX_HEAD,
-    _IDX_TARGET_MEM, _IDX_MN,
+from oculomotor.models.brain_models import brain_model
+from oculomotor.models.brain_models.perception_target import (
     _TAU_TARGET_MEM_UPDATE, _TAU_TARGET_MEM_TRUST_RISE,
-    _TAU_TARGET_MEM_TRUST_DECAY, _TAU_TARGET_MEM_CONSUME,
-    _TARGET_MEM_TRUST_THRESHOLD,
+    _TAU_TARGET_MEM_TRUST_DECAY, _TARGET_MEM_TRUST_THRESHOLD,
 )
+# `_TAU_TARGET_MEM_CONSUME` was the old constant name for the activity-driven
+# memory drain; perception_target.py drives drain by |ec_d_target| now.  Keep
+# a placeholder constant so this file (used only by bench_compare_unified) loads.
+_TAU_TARGET_MEM_CONSUME = 0.05
 from oculomotor.models.brain_models import (
     final_common_pathway as fcp,
 )
@@ -707,104 +706,113 @@ def f_motor(x_fast, x_slow, u_proc, theta):
 
 # ─── State packing helpers ─────────────────────────────────────────────────
 
-def _pack_subset(x_brain):
-    """Map 66-dim brain layout → (x_fast, x_slow) for the unified subset."""
+def _pack_subset(brain_state):
+    """Map BrainState NT → (x_fast, x_slow) for the unified subset.
+
+    Pursuit caveat: unified_brain treats pursuit as a single signed integrator
+    (linear).  Bilateral pursuit (x_R, x_L with rectified drives) cannot be
+    projected losslessly into the linear unified form; we collapse to
+    NET (x_R − x_L) here and re-distribute symmetrically in scatter.
+    bench_compare_unified.py will diverge from the bilateral path in lesion
+    scenarios that break L/R symmetry.
+    """
+    sg_st = brain_state.sg
+    va_st = brain_state.va
+    sm_st = brain_state.sm
+    pu_st = brain_state.pu
+    ni_st = brain_state.ni
+
     x_fast = jnp.zeros(N_FAST)
-    # TODO(bilateral pursuit): unified_brain treats pursuit as a single signed
-    # integrator (linear).  Bilateral pursuit (x_R, x_L with rectified drives)
-    # cannot be projected losslessly into the linear unified form; we collapse
-    # to NET (x_R − x_L) here and re-distribute symmetrically in scatter.
-    # bench_compare_unified.py will diverge from the bilateral path in lesion
-    # scenarios that break L/R symmetry.
-    _xpu = x_brain[_IDX_PURSUIT]
-    x_fast = x_fast.at[_F_PU      ].set(_xpu[:3] - _xpu[3:6])
-    x_fast = x_fast.at[_F_NI_L    ].set(x_brain[_IDX_NI_L])
-    x_fast = x_fast.at[_F_NI_R    ].set(x_brain[_IDX_NI_R])
-    x_fast = x_fast.at[_F_V       ].set(x_brain[_IDX_VERG.start    : _IDX_VERG.start + 3])
-    x_fast = x_fast.at[_F_V_COPY  ].set(x_brain[_IDX_VERG.start + 6: _IDX_VERG.start + 9])
-    x_fast = x_fast.at[_F_A_FAST  ].set(x_brain[_IDX_ACC.start])
-    # Self-motion fast states: VS_A, VS_B, GE (g, a_lin, rf), HE
-    x_fast = x_fast.at[_F_VS_A    ].set(x_brain[_IDX_VS_L])
-    x_fast = x_fast.at[_F_VS_B    ].set(x_brain[_IDX_VS_R])
-    x_fast = x_fast.at[_F_GRAV_G  ].set(x_brain[_IDX_GRAV.start    : _IDX_GRAV.start + 3])
-    x_fast = x_fast.at[_F_GRAV_A  ].set(x_brain[_IDX_GRAV.start + 3: _IDX_GRAV.start + 6])
-    x_fast = x_fast.at[_F_GRAV_RF ].set(x_brain[_IDX_GRAV.start + 6: _IDX_GRAV.start + 9])
-    x_fast = x_fast.at[_F_HEAD    ].set(x_brain[_IDX_HEAD])
-    # Saccade-generator states (laid out per saccade_generator.step docstring)
-    sg_base = _IDX_SG.start
-    x_fast = x_fast.at[_F_SG_E_HELD ].set(x_brain[sg_base     : sg_base +  3])
-    x_fast = x_fast.at[_F_SG_Z_OPN  ].set(x_brain[sg_base +  3])
-    x_fast = x_fast.at[_F_SG_Z_ACC  ].set(x_brain[sg_base +  4])
-    x_fast = x_fast.at[_F_SG_Z_TRIG ].set(x_brain[sg_base +  5])
-    x_fast = x_fast.at[_F_SG_X_EBN_R].set(x_brain[sg_base +  6: sg_base +  9])
-    x_fast = x_fast.at[_F_SG_X_EBN_L].set(x_brain[sg_base +  9: sg_base + 12])
-    x_fast = x_fast.at[_F_SG_X_IBN_R].set(x_brain[sg_base + 12: sg_base + 15])
-    x_fast = x_fast.at[_F_SG_X_IBN_L].set(x_brain[sg_base + 15: sg_base + 18])
+    x_fast = x_fast.at[_F_PU      ].set(pu_st.R - pu_st.L)
+    x_fast = x_fast.at[_F_NI_L    ].set(ni_st.L)
+    x_fast = x_fast.at[_F_NI_R    ].set(ni_st.R)
+    x_fast = x_fast.at[_F_V       ].set(va_st.verg_fast)
+    x_fast = x_fast.at[_F_V_COPY  ].set(va_st.verg_copy)
+    x_fast = x_fast.at[_F_A_FAST  ].set(va_st.acc_fast)
+    # Self-motion fast states: VS_A=L pop, VS_B=R pop, GE (g, a_lin, rf), HE
+    x_fast = x_fast.at[_F_VS_A    ].set(sm_st.vs_L)
+    x_fast = x_fast.at[_F_VS_B    ].set(sm_st.vs_R)
+    x_fast = x_fast.at[_F_GRAV_G  ].set(sm_st.g_est)
+    x_fast = x_fast.at[_F_GRAV_A  ].set(sm_st.a_lin)
+    x_fast = x_fast.at[_F_GRAV_RF ].set(sm_st.rf)
+    x_fast = x_fast.at[_F_HEAD    ].set(sm_st.v_lin)
+    x_fast = x_fast.at[_F_SG_E_HELD ].set(sg_st.e_held)
+    x_fast = x_fast.at[_F_SG_Z_OPN  ].set(sg_st.z_opn)
+    x_fast = x_fast.at[_F_SG_Z_ACC  ].set(sg_st.z_acc)
+    x_fast = x_fast.at[_F_SG_Z_TRIG ].set(sg_st.z_trig)
+    x_fast = x_fast.at[_F_SG_X_EBN_R].set(sg_st.ebn_R)
+    x_fast = x_fast.at[_F_SG_X_EBN_L].set(sg_st.ebn_L)
+    x_fast = x_fast.at[_F_SG_X_IBN_R].set(sg_st.ibn_R)
+    x_fast = x_fast.at[_F_SG_X_IBN_L].set(sg_st.ibn_L)
 
     x_slow = jnp.zeros(N_SLOW)
-    x_slow = x_slow.at[_S_NI_NULL ].set(x_brain[_IDX_NI_NULL])
-    x_slow = x_slow.at[_S_V_TONIC ].set(x_brain[_IDX_VERG.start + 3: _IDX_VERG.start + 6])
-    x_slow = x_slow.at[_S_A_SLOW  ].set(x_brain[_IDX_ACC.start + 1])
-    x_slow = x_slow.at[_S_VS_NULL ].set(x_brain[_IDX_VS_NULL])
+    x_slow = x_slow.at[_S_NI_NULL ].set(ni_st.null)
+    x_slow = x_slow.at[_S_V_TONIC ].set(va_st.verg_tonic)
+    x_slow = x_slow.at[_S_A_SLOW  ].set(va_st.acc_slow)
+    x_slow = x_slow.at[_S_VS_NULL ].set(sm_st.vs_null)
     return x_fast, x_slow
 
 
-def _scatter_subset(dx_brain, dx_fast, dx_slow):
-    """Map (dx_fast, dx_slow) → 66-dim brain derivative slots."""
-    # TODO(bilateral pursuit): split NET dx_pu evenly across (R, L).  Lossy —
-    # only correct in the linear regime where x_R, x_L track ±NET/2.
+def _scatter_subset(dbrain, dx_fast, dx_slow):
+    """Map (dx_fast, dx_slow) → BrainState derivative.
+
+    Pursuit caveat (see _pack_subset): NET dx_pu split evenly across (R, L).
+    """
     _dxpu_net = dx_fast[_F_PU]
-    dx_brain = dx_brain.at[_IDX_PURSUIT.start    : _IDX_PURSUIT.start + 3].set( 0.5 * _dxpu_net)
-    dx_brain = dx_brain.at[_IDX_PURSUIT.start + 3: _IDX_PURSUIT.start + 6].set(-0.5 * _dxpu_net)
-    dx_brain = dx_brain.at[_IDX_NI_L   ].set(dx_fast[_F_NI_L])
-    dx_brain = dx_brain.at[_IDX_NI_R   ].set(dx_fast[_F_NI_R])
-    dx_brain = dx_brain.at[_IDX_NI_NULL].set(dx_slow[_S_NI_NULL])
-    dx_brain = dx_brain.at[_IDX_VERG.start    : _IDX_VERG.start + 3].set(dx_fast[_F_V])
-    dx_brain = dx_brain.at[_IDX_VERG.start + 3: _IDX_VERG.start + 6].set(dx_slow[_S_V_TONIC])
-    dx_brain = dx_brain.at[_IDX_VERG.start + 6: _IDX_VERG.start + 9].set(dx_fast[_F_V_COPY])
-    dx_brain = dx_brain.at[_IDX_ACC.start    ].set(dx_fast[_F_A_FAST])
-    dx_brain = dx_brain.at[_IDX_ACC.start + 1].set(dx_slow[_S_A_SLOW])
-    dx_brain = dx_brain.at[_IDX_VS_L   ].set(dx_fast[_F_VS_A])
-    dx_brain = dx_brain.at[_IDX_VS_R   ].set(dx_fast[_F_VS_B])
-    dx_brain = dx_brain.at[_IDX_VS_NULL].set(dx_slow[_S_VS_NULL])
-    dx_brain = dx_brain.at[_IDX_GRAV.start    : _IDX_GRAV.start + 3].set(dx_fast[_F_GRAV_G])
-    dx_brain = dx_brain.at[_IDX_GRAV.start + 3: _IDX_GRAV.start + 6].set(dx_fast[_F_GRAV_A])
-    dx_brain = dx_brain.at[_IDX_GRAV.start + 6: _IDX_GRAV.start + 9].set(dx_fast[_F_GRAV_RF])
-    dx_brain = dx_brain.at[_IDX_HEAD   ].set(dx_fast[_F_HEAD])
-    sg_base = _IDX_SG.start
-    dx_brain = dx_brain.at[sg_base     : sg_base +  3].set(dx_fast[_F_SG_E_HELD])
-    dx_brain = dx_brain.at[sg_base +  3].set(dx_fast[_F_SG_Z_OPN])
-    dx_brain = dx_brain.at[sg_base +  4].set(dx_fast[_F_SG_Z_ACC])
-    dx_brain = dx_brain.at[sg_base +  5].set(dx_fast[_F_SG_Z_TRIG])
-    dx_brain = dx_brain.at[sg_base +  6: sg_base +  9].set(dx_fast[_F_SG_X_EBN_R])
-    dx_brain = dx_brain.at[sg_base +  9: sg_base + 12].set(dx_fast[_F_SG_X_EBN_L])
-    dx_brain = dx_brain.at[sg_base + 12: sg_base + 15].set(dx_fast[_F_SG_X_IBN_R])
-    dx_brain = dx_brain.at[sg_base + 15: sg_base + 18].set(dx_fast[_F_SG_X_IBN_L])
-    return dx_brain
+    dpu = brain_model.pu.State(R= 0.5 * _dxpu_net, L=-0.5 * _dxpu_net)
+    dni = brain_model.ni.State(L=dx_fast[_F_NI_L],
+                                R=dx_fast[_F_NI_R],
+                                null=dx_slow[_S_NI_NULL])
+    dva = brain_model.va.State(
+        verg_fast  = dx_fast[_F_V],
+        verg_tonic = dx_slow[_S_V_TONIC],
+        verg_copy  = dx_fast[_F_V_COPY],
+        acc_fast   = dx_fast[_F_A_FAST],
+        acc_slow   = dx_slow[_S_A_SLOW],
+    )
+    dsm = brain_model.sm.State(
+        vs_L    = dx_fast[_F_VS_A],
+        vs_R    = dx_fast[_F_VS_B],
+        vs_null = dx_slow[_S_VS_NULL],
+        g_est   = dx_fast[_F_GRAV_G],
+        a_lin   = dx_fast[_F_GRAV_A],
+        rf      = dx_fast[_F_GRAV_RF],
+        v_lin   = dx_fast[_F_HEAD],
+    )
+    dsg = brain_model.sg.State(
+        e_held = dx_fast[_F_SG_E_HELD],
+        z_opn  = dx_fast[_F_SG_Z_OPN],
+        z_acc  = dx_fast[_F_SG_Z_ACC],
+        z_trig = dx_fast[_F_SG_Z_TRIG],
+        ebn_R  = dx_fast[_F_SG_X_EBN_R],
+        ebn_L  = dx_fast[_F_SG_X_EBN_L],
+        ibn_R  = dx_fast[_F_SG_X_IBN_R],
+        ibn_L  = dx_fast[_F_SG_X_IBN_L],
+    )
+    return dbrain._replace(pu=dpu, ni=dni, va=dva, sm=dsm, sg=dsg)
 
 
 # ─── Step function — drop-in replacement for brain_model.step ──────────────
 
-def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
+def step(brain_state, sensory_out, brain_params, noise_acc=0.0):
     """Single ODE step in the unified state-space form.
 
     Continuous loops + self-motion (VS + gravity + heading) are now handled
     by the unified matrices + bilinear f. Saccade generator, T-VOR, target
     memory, Listing's law, and FCP remain delegated.
     """
-    x_va         = x_brain[_IDX_VA]
-    # x_sg is now part of x_fast (slots _F_SG_*); no separate reference needed
-    x_target_mem = x_brain[_IDX_TARGET_MEM]
-    x_ni         = x_brain[_IDX_NI]
-    x_ni_net     = x_ni[:3] - x_ni[3:6]
-    x_v_copy     = x_va[6:9]
-    x_acc_fast   = x_va[9]
-    x_mn         = x_brain[_IDX_MN]
+    va_st        = brain_state.va
+    pt_st        = brain_state.pt
+    fcp_st       = brain_state.fcp
+    x_target_mem = jnp.concatenate([pt_st.mem_pos, jnp.array([pt_st.mem_trust])])
+    x_ni_net     = brain_state.ni.L - brain_state.ni.R
+    x_v_copy     = va_st.verg_copy
+    x_acc_fast   = va_st.acc_fast
 
     # Pack unified subset state and build matrices early so all gains live
     # in M (the matrix bundle). Step() consumes named readouts (w_est, ocr)
     # from the matrix output, so no gain appears inline below.
-    x_fast, x_slow = _pack_subset(x_brain)
+    x_fast, x_slow = _pack_subset(brain_state)
     M = matrices(brain_params)
 
     # State-only readouts (no inputs that aren't sensors).
@@ -832,7 +840,8 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
     inv_decay  = 1.0 / _TAU_TARGET_MEM_TRUST_DECAY
     gain_trust = tgt_vis_d * inv_rise + (1.0 - tgt_vis_d) * inv_decay
     dx_trust   = gain_trust * (tgt_vis_d - trust)
-    dx_target_mem = jnp.concatenate([dx_mem, jnp.array([dx_trust])])
+    # Pack target-memory derivative as pt.State NT
+    dpt = brain_model.pt.State(mem_pos=dx_mem, mem_trust=dx_trust)
 
     # tgt_pos_eff / tgt_vis_eff use act.mem_active (computed below from x_target_mem).
     # Defer their construction until after activations() is called.
@@ -919,7 +928,7 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
     # Distance from vergence yaw via ipd / (2·tan(yaw/2)); NPC gate disengages
     # T-VOR scaling near the near-point of convergence.
     aca_term = brain_params.AC_A * _DEG_PER_PD * x_acc_fast
-    current_vergence_yaw = x_va[0] + x_va[3] + aca_term
+    current_vergence_yaw = va_st.verg_fast[0] + va_st.verg_tonic[0] + aca_term
     distance_raw = brain_params.ipd_brain / (
         2.0 * jnp.tan(jnp.radians(current_vergence_yaw) * 0.5))
     d_safe = jnp.maximum(distance_raw, _DISTANCE_EPSILON)
@@ -1040,20 +1049,21 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
     u_verg       = y[_Y_U_VERG]
     u_acc        = y[_Y_U_ACC]
 
-    # ── Stage 5: pack derivative into 66-dim brain state ────────────────────
-    dx_brain = jnp.zeros(N_STATES)
-    dx_brain = dx_brain.at[_IDX_TARGET_MEM].set(dx_target_mem)
-    dx_brain = _scatter_subset(dx_brain, dx_fast, dx_slow)
+    # ── Stage 5: pack derivative into BrainState NT ─────────────────────────
+    # Start from the input brain_state's structure, then apply scatter + sub-system updates
+    dbrain_init = brain_model.rest_brain_state()
+    dbrain      = dbrain_init._replace(pt=dpt)
+    dbrain      = _scatter_subset(dbrain, dx_fast, dx_slow)
 
     # ── Stage 6: efference copies and FCP nerves ────────────────────────────
     ec_vel = u_burst + u_pursuit + omega_tvor
     ec_pos = x_ni_net
     ec_verg = u_verg
 
-    dx_mn, nerves = fcp.step(x_mn, jnp.concatenate([motor_cmd_ni, u_verg]), brain_params)
-    dx_brain = dx_brain.at[_IDX_MN].set(dx_mn)
+    dfcp, nerves = fcp.step(fcp_st, jnp.concatenate([motor_cmd_ni, u_verg]), brain_params)
+    dbrain = dbrain._replace(fcp=dfcp)
 
-    return dx_brain, nerves, ec_vel, ec_pos, ec_verg, u_acc
+    return dbrain, nerves, ec_vel, ec_pos, ec_verg, u_acc
 
 
 __all__ = [

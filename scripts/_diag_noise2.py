@@ -4,7 +4,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 import numpy as np
 import jax
-from oculomotor.sim.simulator import PARAMS_DEFAULT, with_sensory, simulate, SimConfig, _IDX_SG, _IDX_NI_L, _IDX_NI_R, _IDX_PURSUIT
+from oculomotor.sim.simulator import PARAMS_DEFAULT, with_sensory, simulate, SimConfig
 from oculomotor.sim import kinematics as km
 
 DT = 0.001
@@ -28,16 +28,13 @@ def run_trial(seed, sigma_pos=0.3, sigma_vel=5.0, amp=5):
                       return_states=True,
                       key=jax.random.PRNGKey(seed))
 
-    x_sg = np.array(states.brain[:, _IDX_SG])
-    ni_L = np.array(states.brain[:, _IDX_NI_L])
-    ni_R = np.array(states.brain[:, _IDX_NI_R])
-    _xp = np.array(states.brain[:, _IDX_PURSUIT])           # (T, 6) bilateral
-    x_pursuit = _xp[:, :3] - _xp[:, 3:6]                    # (T, 3) NET
-    z_opn = x_sg[:, 6]
-    x_copy_yaw = x_sg[:, 0]
-    e_held_yaw = x_sg[:, 3]
-    z_acc = x_sg[:, 7]
-    x_ni_net = (ni_L - ni_R)[:, 0]
+    sg_st = states.brain.sg
+    x_pursuit  = np.array(states.brain.pu.R - states.brain.pu.L)   # (T, 3) NET
+    z_opn      = np.array(sg_st.z_opn)
+    e_held_yaw = np.array(sg_st.e_held)[:, 0]
+    z_acc      = np.array(sg_st.z_acc)
+    x_ni_net   = np.array(states.brain.ni.L - states.brain.ni.R)[:, 0]
+    x_copy_yaw = e_held_yaw   # legacy alias
 
     # All saccades: find each OPN pause
     sac_mask = z_opn < 50

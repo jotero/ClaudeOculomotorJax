@@ -42,36 +42,36 @@ _TAU_TARGET_MEM_TRUST_RISE   = 0.10    # trust rise TC when target is seen (s)
 _TAU_TARGET_MEM_TRUST_DECAY  = 5.0     # trust decay TC when target is unseen (s)
 _TARGET_MEM_TRUST_THRESHOLD  = 0.2     # trust level above which SG commits to saccade mode
 
-N_STATES = 4   # 3-D last-seen position + 1 trust scalar
+# ── State + registries ────────────────────────────────────────────────────────
 
-_IDX_MEM_POS   = slice(0, 3)
-_IDX_MEM_TRUST = 3
-
-
-# ── Local registries (Phase-2 contract) ──────────────────────────────────────
-
-class Activations(NamedTuple):
-    """Target-perception working-memory firing rates."""
+class State(NamedTuple):
+    """Target perception state — working-memory population + confidence."""
     mem_pos:   jnp.ndarray   # (3,)   target working memory pop  [dlPFC / FEF]
-    mem_trust: jnp.ndarray   # scalar memory confidence          [dlPFC]
+    mem_trust: jnp.ndarray   # scalar memory confidence ∈ [0,1]  [dlPFC]
 
 
-def read_activations(x_target_mem):
-    """Project target-memory raw state → Activations."""
-    return Activations(
-        mem_pos   = x_target_mem[_IDX_MEM_POS],
-        mem_trust = x_target_mem[_IDX_MEM_TRUST],
-    )
+# State == Activations: working-memory pop is itself a firing-rate signal.
+Activations = State
 
 
-def step(x_target_mem,
+def rest_state():
+    """Zero state — used for SimState initialisation."""
+    return State(mem_pos=jnp.zeros(3), mem_trust=jnp.float32(0.0))
+
+
+def read_activations(state):
+    """Working-memory IS the activation — identity projection."""
+    return state
+
+
+def step(state,
          target_slip, target_visible, target_pos,
          ec_d_target,
          brain_params):
     """Single ODE step for target-side perception.
 
     Args:
-        x_target_mem:    (4,)    state: x_mem_pos(3) | trust(1)
+        state:           pt.State   working memory (mem_pos(3) | mem_trust scalar)
         target_slip:     (3,)    raw delayed retinal target velocity (eye frame, deg/s)
         target_visible:  scalar  delayed cyclopean target visibility gate ∈ [0,1]
         target_pos:      (3,)    delayed cyclopean retinal target position (eye frame, deg)
@@ -80,7 +80,7 @@ def step(x_target_mem,
                                        alpha_ec_dir, bias_ec_dir
 
     Returns:
-        dx_target_mem:           (4,)
+        dstate:                  pt.State  derivative
         target_slip_for_pursuit: (3,)  EC-corrected + gated → pursuit
         tgt_pos_eff:             (3,)  effective target position → SG
         tgt_vis_eff:             scalar effective target visibility → SG
@@ -114,8 +114,8 @@ def step(x_target_mem,
     # retinal error. No efference copy: if a saccade lands accurately, the
     # next flash will reset the memory to ~0; otherwise the residual error
     # drives a corrective saccade.
-    x_mem = x_target_mem[0:3]
-    trust = x_target_mem[3]
+    x_mem = state.mem_pos
+    trust = state.mem_trust
 
     # Memory drain proportional to delayed-EC magnitude. Whenever the eye is
     # moving (saccade burst, fast pursuit overshoot, head-impulse fast-phase),
@@ -133,7 +133,7 @@ def step(x_target_mem,
     inv_decay  = 1.0 / _TAU_TARGET_MEM_TRUST_DECAY
     gain_trust = target_visible * inv_rise + (1.0 - target_visible) * inv_decay
     dx_trust   = gain_trust * (target_visible - trust)
-    dx_target_mem = jnp.concatenate([dx_mem, jnp.array([dx_trust])])
+    dstate     = State(mem_pos=dx_mem, mem_trust=dx_trust)
 
     # Memory commits to "saccade mode" once trust crosses a small threshold,
     # binarising via a steep sigmoid so brief flashes accumulate evidence and
@@ -142,4 +142,19 @@ def step(x_target_mem,
     tgt_pos_eff = target_visible * target_pos + (1.0 - target_visible) * mem_active * x_mem
     tgt_vis_eff = jnp.maximum(target_visible, mem_active)
 
-    return dx_target_mem, target_slip_for_pursuit, tgt_pos_eff, tgt_vis_eff
+    return dstate, target_slip_for_pursuit, tgt_pos_eff, tgt_vis_eff
+
+
+# ── Legacy flat-array adapters (deleted once brain_model migrates to BrainState) ─
+
+N_STATES = 4   # 3-D last-seen position + 1 trust scalar
+
+
+def from_array(x_target_mem):
+    """(4,) flat array → pt.State."""
+    return State(mem_pos=x_target_mem[0:3], mem_trust=x_target_mem[3])
+
+
+def to_array(state):
+    """pt.State → (4,) flat array."""
+    return jnp.concatenate([state.mem_pos, jnp.array([state.mem_trust])])

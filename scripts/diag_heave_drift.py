@@ -14,9 +14,8 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 
-from oculomotor.sim.simulator import PARAMS_DEFAULT, simulate, _IDX_GRAV
+from oculomotor.sim.simulator import PARAMS_DEFAULT, simulate
 from oculomotor.sim import kinematics as km
-from oculomotor.models.brain_models.brain_model import _IDX_HEAD, _IDX_VS, _IDX_VS_L, _IDX_VS_R
 from oculomotor.models.sensory_models import sensory_model
 from oculomotor.models.sensory_models.canal import PINV_SENS as CANAL_PINV
 
@@ -48,10 +47,10 @@ st = simulate(PARAMS_DEFAULT, t, head=head, target=target,
               return_states=True, key=jax.random.PRNGKey(0))
 
 # Read brain states
-g_est_arr = np.asarray(st.brain[:, _IDX_GRAV])[:, :3]      # (T, 3)
-v_lin_arr = np.asarray(st.brain[:, _IDX_HEAD])             # (T, 3)
-vs_L = np.asarray(st.brain[:, _IDX_VS_L])
-vs_R = np.asarray(st.brain[:, _IDX_VS_R])
+g_est_arr = np.asarray(st.brain.sm.g_est)
+v_lin_arr = np.asarray(st.brain.sm.v_lin)
+vs_L = np.asarray(st.brain.sm.vs_L)
+vs_R = np.asarray(st.brain.sm.vs_R)
 w_est_net = vs_L - vs_R                                    # (T, 3) yaw/pitch/roll
 
 # Read sensory outputs (canal + delayed scene_slip) per timestep
@@ -71,8 +70,8 @@ slip_arr  = np.asarray(slip_arr)
 w_canal = (CANAL_PINV @ canal_arr.T).T   # (T, 3)
 
 # Plant eye position and velocity
-eye_L = np.asarray(st.plant[:, :3])   # (T, 3) yaw/pitch/roll
-eye_R = np.asarray(st.plant[:, 3:])
+eye_L = np.asarray(st.plant.left)   # (T, 3) yaw/pitch/roll
+eye_R = np.asarray(st.plant.right)
 eye_version = (eye_L + eye_R) / 2.0
 eye_vel = np.gradient(eye_version, DT, axis=0)   # (T, 3)
 

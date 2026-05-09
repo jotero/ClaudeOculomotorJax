@@ -56,6 +56,26 @@ ORIENTATIONS = jnp.array([
 N_CANALS  = ORIENTATIONS.shape[0]   # 6
 N_STATES  = N_CANALS * 2            # 12  [x1 (6) | x2 (6)]
 
+
+# ── State NamedTuple ──────────────────────────────────────────────────────────
+from typing import NamedTuple
+
+
+class State(NamedTuple):
+    """Canal state — bandpass two-stage SSM (Steinhausen)."""
+    x1: jnp.ndarray   # (N_CANALS,) first stage
+    x2: jnp.ndarray   # (N_CANALS,) second stage (drives nonlinearity)
+
+
+def rest_state():
+    """Zero state — used for SimState initialisation."""
+    return State(x1=jnp.zeros(N_CANALS), x2=jnp.zeros(N_CANALS))
+
+
+def to_array(state):
+    """canal.State → (12,) flat array — legacy adapter; SimState uses the NT directly."""
+    return jnp.concatenate([state.x1, state.x2])
+
 FLOOR     = 80.0   # deg/s — default resting discharge (Goldberg & Fernandez 1971); used as SensoryParams default
 _SOFTNESS = 0.5    # nonlinearity sharpness (s/deg)
 
@@ -97,36 +117,30 @@ def nonlinearity(x_c, gains, floor):
 
 # ── SSM step ───────────────────────────────────────────────────────────────────
 
-def step(x_c, w_head, sensory_params):
+def step(state, w_head, sensory_params):
     """Single ODE step: canal state derivative + afferent output.
 
     Args:
-        x_c:    (12,)   canal state [x1 (6) | x2 (6)]
-        w_head: (3,)    head angular velocity (deg/s)
-        theta:  Params  model parameters (reads phys.tau_c, phys.tau_s, phys.canal_gains)
+        state:  canal.State  (x1, x2) two-stage bandpass states
+        w_head: (3,)         head angular velocity (deg/s)
+        theta:  Params       model parameters (reads phys.tau_c, phys.tau_s, phys.canal_gains)
 
     Returns:
-        dx_c:     (12,)        dx_c/dt
-        y_canals: (N_CANALS,)  afferent firing rates
+        dstate:   canal.State   state derivative
+        y_canals: (N_CANALS,)   afferent firing rates
     """
     tau_c = sensory_params.tau_c
     tau_s = sensory_params.tau_s
-    I     = jnp.eye(N_CANALS)
-    Z     = jnp.zeros((N_CANALS, N_CANALS))
 
     # H(s) = tau_c*s / [(1+tau_c*s)(1+tau_s*s)]  — bandpass, zero at DC ✓
-    A = jnp.concatenate([
-        jnp.concatenate([-I/tau_c,  Z       ], axis=1),   # dx1 = -x1/tau_c + w/tau_c
-        jnp.concatenate([-I/tau_s, -I/tau_s  ], axis=1),  # dx2 = -(x1+x2)/tau_s + w/tau_s
-    ], axis=0)                                              # (12, 12)
-    B = jnp.concatenate([ORIENTATIONS/tau_c,
-                         ORIENTATIONS/tau_s], axis=0)       # (12, 3)
+    # dx1 = -x1/tau_c + ORIENTATIONS·w/tau_c
+    # dx2 = -(x1+x2)/tau_s + ORIENTATIONS·w/tau_s
+    dx1 = (-state.x1 + ORIENTATIONS @ w_head) / tau_c
+    dx2 = (-(state.x1 + state.x2) + ORIENTATIONS @ w_head) / tau_s
 
-    dx_c     = A @ x_c + B @ w_head
-    y_canals = nonlinearity(x_c, sensory_params.canal_gains, sensory_params.canal_floor)
-    # Excitatory ceiling — sensor-side saturation. Symmetric clip; the lower
-    # bound is well below the firing-rate range (canals never fire negatively
-    # because of FLOOR / softplus rectification), so effectively this is a
-    # one-sided cap on the afferent rate.
+    # nonlinearity reads x2 internally; reuse via flat-vector convention for now
+    y_canals = nonlinearity(jnp.concatenate([state.x1, state.x2]),
+                             sensory_params.canal_gains, sensory_params.canal_floor)
+    # Excitatory ceiling — sensor-side saturation
     y_canals = jnp.clip(y_canals, -sensory_params.canal_v_max, sensory_params.canal_v_max)
-    return dx_c, y_canals
+    return State(x1=dx1, x2=dx2), y_canals

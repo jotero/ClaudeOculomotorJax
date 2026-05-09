@@ -19,7 +19,7 @@ import numpy as np
 import jax
 
 from oculomotor.sim.simulator import (
-    PARAMS_DEFAULT, simulate, _IDX_VERG, _IDX_ACC,
+    PARAMS_DEFAULT, simulate,
     with_brain, SimConfig
 )
 from oculomotor.sim import kinematics as km
@@ -48,19 +48,16 @@ st = simulate(p, t, target=km.build_target(t, lin_pos=pt),
               return_states=True, key=jax.random.PRNGKey(0),
               sim_config=cfg)
 
-eye_L    = np.array(st.plant[:, 0])   # left eye yaw (deg)
-eye_R    = np.array(st.plant[:, 3])   # right eye yaw (deg)
+eye_L    = np.array(st.plant.left[:, 0])   # left eye yaw (deg)
+eye_R    = np.array(st.plant.right[:, 0])   # right eye yaw (deg)
 vergence = eye_L - eye_R              # positive = converged
 
-# Brain state: first element of _IDX_VERG is x_verg[0] (horizontal integrator)
-x_verg0  = np.array(st.brain[:, _IDX_VERG.start])   # x_verg horizontal state
+# Brain state: horizontal vergence integrator
+x_verg0  = np.array(st.brain.va.verg_fast)[:, 0]   # x_verg horizontal state
 acc_plant= np.array(st.acc_plant[:, 0])
 
-# Cyclopean delayed disparity now lives in brain state at _IDX_CYC_BRAIN.
-from oculomotor.models.brain_models.perception_cyclopean import C_target_disp
-from oculomotor.models.brain_models.brain_model         import _IDX_CYC_BRAIN
-x_cyc    = np.array(st.brain[:, _IDX_CYC_BRAIN])
-disp_del = (C_target_disp @ x_cyc.T).T   # (T, 3) — delayed disparity
+# Cyclopean delayed disparity — 1-pole LP buffer, shape (T, 3); take H component
+disp_del = np.array(st.brain.pc.target_disparity)   # (T, 3)
 
 print()
 print(f"{'t':>6} | {'vergence':>9} | {'x_verg[0]':>10} | {'disp_del[0]':>12} | {'eye_L':>7} | {'eye_R':>7} | {'acc':>7}")

@@ -54,8 +54,8 @@ for col, (axis, sign, name, dir_descr) in enumerate(AXES):
         target_present_array=np.zeros(T),
         return_states=True, key=KEY)
 
-    eye_L = np.array(st.plant[:, :3])
-    eye_R = np.array(st.plant[:, 3:])
+    eye_L = np.array(st.plant.left)
+    eye_R = np.array(st.plant.right)
     eye_version = (eye_L + eye_R) / 2.0
     eye_verg    = eye_L[:, 0] - eye_R[:, 0]
 

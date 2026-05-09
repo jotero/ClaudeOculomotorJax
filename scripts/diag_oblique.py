@@ -7,7 +7,6 @@ import jax.numpy as jnp
 import jax
 
 from oculomotor.sim.simulator import PARAMS_DEFAULT, with_brain, with_sensory, simulate
-from oculomotor.sim.simulator import _IDX_VIS
 from oculomotor.sim import kinematics as km
 from oculomotor.analysis import extract_sg
 
@@ -35,8 +34,8 @@ st = simulate(THETA, jnp.array(t_np),
               return_states=True, key=jax.random.PRNGKey(0))
 
 sg  = extract_sg(st, THETA)
-eye_L = np.array(st.plant[:, :3])
-eye_R = np.array(st.plant[:, 3:6])
+eye_L = np.array(st.plant.left)
+eye_R = np.array(st.plant.right)
 eye   = (eye_L + eye_R) / 2.0
 
 z_acc  = np.array(sg['z_acc'])

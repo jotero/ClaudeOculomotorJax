@@ -17,10 +17,10 @@ the velocity would push it further outside.  This keeps x_p within [−L, +L]
 so q_eye = x_p directly, and w_true = dx_p is always consistent with q_eye.
 
 Binocular layout:
-    N_STATES = 6: [x_p_L (3) | x_p_R (3)]  — left eye followed by right eye.
-    step() operates on a single (3,) eye; the simulator calls it twice and
-    concatenates.  _IDX_P_L / _IDX_P_R are convenience slices for the
-    combined (6,) plant state.
+    The top-level `State` NamedTuple has `left` and `right` fields, each a
+    (3,) eye rotation vector.  `step()` operates on a single (3,) eye; the
+    simulator calls it twice (once per eye field) and packs both into a
+    fresh `State`.
 
 State:   x_p  (3,)  eye rotation vector (deg), bounded within ±orbital_limit
 Input:   motor_cmd  (3,)  pulse-step motor command from NI
@@ -53,13 +53,29 @@ class PlantParams(NamedTuple):
 
 # ── State layout ───────────────────────────────────────────────────────────────
 
-N_STATES  = 6           # [x_p_L (3) | x_p_R (3)]  — binocular
+N_STATES  = 6           # 3 axes per eye × 2 eyes — binocular
 N_INPUTS  = 6           # muscle activation vector from brain_model (6,)
-N_OUTPUTS = 3   # q_eye (position, per eye)
+N_OUTPUTS = 3           # q_eye (position, per eye)
 
-# Index constants for the combined (6,) plant state
-_IDX_P_L = slice(0, 3)  # left  eye rotation vector
-_IDX_P_R = slice(3, 6)  # right eye rotation vector
+
+# ── State NamedTuple ──────────────────────────────────────────────────────────
+from typing import NamedTuple
+
+
+class State(NamedTuple):
+    """Binocular plant state — per-eye rotation vectors (deg, head frame)."""
+    left:  jnp.ndarray   # (3,) left  eye rotation vector
+    right: jnp.ndarray   # (3,) right eye rotation vector
+
+
+def rest_state():
+    """Zero state — both eyes at primary position."""
+    return State(left=jnp.zeros(3), right=jnp.zeros(3))
+
+
+def to_array(state):
+    """plant.State → (6,) flat array — legacy adapter."""
+    return jnp.concatenate([state.left, state.right])
 
 
 def step(x_p, motor_cmd, plant_params, decode_matrix=None):

@@ -207,7 +207,7 @@ def _simulate_column(theta, t_jnp, target, tL_jnp, tR_jnp, ts_jnp, lens_jnp):
         return_states          = True,
         sim_config             = SimConfig(warmup_s=WARMUP_S),
     )
-    return states.plant[:, 0], states.plant[:, 3]   # eye_L_yaw, eye_R_yaw
+    return states.plant.left[:, 0], states.plant.right[:, 0]   # eye_L_yaw, eye_R_yaw
 
 
 def forward(p: dict, stim_arrays: dict):

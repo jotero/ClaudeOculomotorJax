@@ -92,65 +92,73 @@ _GE_IDX_G  = slice(0, 3)   # g_est  — gravity estimate
 _GE_IDX_A  = slice(3, 6)   # a_lin  — linear-acc estimate
 _GE_IDX_RF = slice(6, 9)   # rf     — rotational feedback state
 
-# Top-level state slices (relative to x_self_motion)
-N_STATES  = 9 + 9 + 3   # 21
-_IDX_VS   = slice(0, 9)
-_IDX_GRAV = slice(9, 18)
-_IDX_HEAD = slice(18, 21)
-
-
-# ── Local registries (Phase-2 contract) ──────────────────────────────────────
-# Naming: VS pops are called A/B internally (population A=preferred, B=opposite),
-# but exposed externally as L/R to match the codebase-wide convention
+# ── State + registries ────────────────────────────────────────────────────────
+# VS pops are called A/B internally (population A=preferred, B=opposite), but
+# exposed externally as L/R to match the codebase-wide convention
 # (model L pop ≡ A; net = L − R = A − B).
 
+class State(NamedTuple):
+    """Self-motion state: VS pops + null + GE observer + heading."""
+    vs_L:    jnp.ndarray   # (3,)  left  VN pop  [≡ internal pop A]
+    vs_R:    jnp.ndarray   # (3,)  right VN pop  [≡ internal pop B]
+    vs_null: jnp.ndarray   # (3,)  VS adaptation register (slow null drift)
+    g_est:   jnp.ndarray   # (3,)  gravity estimate (head frame)  [VN/cb gravity cells]
+    a_lin:   jnp.ndarray   # (3,)  linear-accel estimate          [VN linear-accel cells]
+    rf:      jnp.ndarray   # (3,)  rotational feedback            [Laurens observer]
+    v_lin:   jnp.ndarray   # (3,)  head linear velocity estimate  [MST / heading cells]
+
+
 class Activations(NamedTuple):
-    """Self-motion firing rates: VS pops + GE observer + heading."""
-    # VS — bilateral push-pull
-    vs_R:  jnp.ndarray   # (3,)  right VN pop                  [vestibular nuclei]
-    vs_L:  jnp.ndarray   # (3,)  left  VN pop                  [vestibular nuclei]
-    # GE — Laurens observer (anatomy plausible but not anchored)
-    g_est: jnp.ndarray   # (3,)  gravity estimate (head frame) [VN/cb gravity cells]
-    a_lin: jnp.ndarray   # (3,)  linear-accel estimate         [VN linear-accel cells]
-    rf:    jnp.ndarray   # (3,)  rotational feedback           [Laurens observer; cb circuit]
-    # HE — heading
-    v_lin: jnp.ndarray   # (3,)  head linear velocity estimate [MST / heading cells]
+    """Self-motion firing rates (VS pops + GE/HE observer)."""
+    vs_R:  jnp.ndarray
+    vs_L:  jnp.ndarray
+    g_est: jnp.ndarray
+    a_lin: jnp.ndarray
+    rf:    jnp.ndarray
+    v_lin: jnp.ndarray
 
 
 class Decoded(NamedTuple):
-    """Self-motion decoded readout — head angular velocity from VS pops."""
+    """VS net head angular velocity readout."""
     vs_net: jnp.ndarray   # (3,) signed = vs_L − vs_R   head ang vel estimate (deg/s)
 
 
 class Weights(NamedTuple):
-    """Self-motion tonic / null / setpoint registers (long-term: learned weights)."""
-    vs_null: jnp.ndarray   # (3,) signed   VS adaptation register (slow drift of "zero")
+    """VS adaptation register (long-term: learned weight)."""
+    vs_null: jnp.ndarray   # (3,) signed slow-null
 
 
-def read_activations(x_self_motion):
-    """Project self-motion raw state → Activations."""
-    x_vs   = x_self_motion[_IDX_VS]
-    x_grav = x_self_motion[_IDX_GRAV]
-    x_head = x_self_motion[_IDX_HEAD]
+def rest_state():
+    """Initial state — VS pops at b_vs equilibrium, GE at gravity vertical."""
+    return State(
+        vs_L    = jnp.zeros(3),
+        vs_R    = jnp.zeros(3),
+        vs_null = jnp.zeros(3),
+        g_est   = X0[_GE_IDX_G] if 'X0' in globals() else jnp.array([G0, 0.0, 0.0]),
+        a_lin   = jnp.zeros(3),
+        rf      = jnp.zeros(3),
+        v_lin   = jnp.zeros(3),
+    )
+
+
+def read_activations(state):
+    """Project self-motion State → Activations (firing rates only)."""
     return Activations(
-        vs_L  = x_vs[_VS_IDX_A],   # convention: L ≡ A
-        vs_R  = x_vs[_VS_IDX_B],   # convention: R ≡ B
-        g_est = x_grav[_GE_IDX_G],
-        a_lin = x_grav[_GE_IDX_A],
-        rf    = x_grav[_GE_IDX_RF],
-        v_lin = x_head,
+        vs_R  = state.vs_R,
+        vs_L  = state.vs_L,
+        g_est = state.g_est,
+        a_lin = state.a_lin,
+        rf    = state.rf,
+        v_lin = state.v_lin,
     )
 
 
 def decode_states(acts):
-    """VS net head ang vel from bilateral pops."""
     return Decoded(vs_net=acts.vs_L - acts.vs_R)
 
 
-def read_weights(x_self_motion):
-    """VS null adaptation register."""
-    x_vs = x_self_motion[_IDX_VS]
-    return Weights(vs_null=x_vs[_VS_IDX_NULL])
+def read_weights(state):
+    return Weights(vs_null=state.vs_null)
 
 # Bundled-input layout (length 19) — RAW sensory inputs + ec_d_scene; gating
 # (post-delay EC subtraction + magnitude/directional gate on scene slip and
@@ -336,7 +344,7 @@ def _he_step(x_head, a_lin, scene_lin_vel, scene_visible, brain_params):
 # Public step() — orchestrates VS → GE → HE
 # ─────────────────────────────────────────────────────────────────────────────
 
-def step(x_self_motion, u, brain_params):
+def step(state, u, brain_params):
     """Single ODE step for the unified self-motion observer.
 
     Internal sequencing (matches Laurens & Angelaki 2017):
@@ -349,7 +357,7 @@ def step(x_self_motion, u, brain_params):
          leaky integration toward v_lin.
 
     Args:
-        x_self_motion: (21,) bundled state — see _IDX_VS / _IDX_GRAV / _IDX_HEAD
+        state:         sm.State  bundled state (vs_L/R/null + g_est + a_lin + rf + v_lin)
         u:             (19,) bundled input  — see _IDX_INPUT_* above
                               [canal | scene_slip(raw) | gia | scene_lin_vel(raw)
                                | scene_visible | ec_d_scene]
@@ -357,20 +365,20 @@ def step(x_self_motion, u, brain_params):
                                       n_ec_gate, alpha_ec_dir, bias_ec_dir
 
     Returns:
-        dx_self_motion : (21,) state derivative
+        dstate         : sm.State  state derivative
         w_est          : (3,)  angular velocity estimate (deg/s)
         g_est          : (3,)  gravity estimate (m/s², head frame)
         v_lin          : (3,)  head linear velocity (m/s, head frame)
         a_lin_est      : (3,)  linear-acc estimate (m/s², head frame) — for T-VOR direct
     """
-    # State split
-    x_vs   = x_self_motion[_IDX_VS]
-    x_grav = x_self_motion[_IDX_GRAV]
-    x_head = x_self_motion[_IDX_HEAD]
+    # Repack state into the flat sub-blocks the internal helpers expect.
+    x_vs   = jnp.concatenate([state.vs_L, state.vs_R, state.vs_null])
+    x_grav = jnp.concatenate([state.g_est, state.a_lin, state.rf])
+    x_head = state.v_lin
 
     # GE state read (rf and a_lin are 1-step delayed via ODE state)
-    rf_state  = x_grav[_GE_IDX_RF]
-    a_lin_est = x_grav[_GE_IDX_A]
+    rf_state  = state.rf
+    a_lin_est = state.a_lin
 
     # Input split — RAW sensory + delayed EC
     canal         = u[_IDX_INPUT_CANAL]
@@ -402,12 +410,55 @@ def step(x_self_motion, u, brain_params):
     #         needing the freshly-computed â here)
     dx_head, v_lin = _he_step(x_head, a_lin_est, scene_lin_gated, scene_visible, brain_params)
 
-    dx_self_motion = jnp.concatenate([dx_vs, dx_grav, dx_head])
-    return dx_self_motion, w_est, g_est, v_lin, a_lin_est
+    dstate = State(
+        vs_L    = dx_vs[_VS_IDX_A],
+        vs_R    = dx_vs[_VS_IDX_B],
+        vs_null = dx_vs[_VS_IDX_NULL],
+        g_est   = dx_grav[_GE_IDX_G],
+        a_lin   = dx_grav[_GE_IDX_A],
+        rf      = dx_grav[_GE_IDX_RF],
+        v_lin   = dx_head,
+    )
+    return dstate, w_est, g_est, v_lin, a_lin_est
+
+
+# ── Legacy flat-array adapters (deleted once brain_model migrates to BrainState) ─
+
+N_STATES  = 9 + 9 + 3   # 21
+_IDX_VS   = slice(0, 9)
+_IDX_GRAV = slice(9, 18)
+_IDX_HEAD = slice(18, 21)
+
+
+def from_array(x_self_motion):
+    """(21,) flat array → sm.State."""
+    x_vs   = x_self_motion[_IDX_VS]
+    x_grav = x_self_motion[_IDX_GRAV]
+    return State(
+        vs_L    = x_vs[_VS_IDX_A],
+        vs_R    = x_vs[_VS_IDX_B],
+        vs_null = x_vs[_VS_IDX_NULL],
+        g_est   = x_grav[_GE_IDX_G],
+        a_lin   = x_grav[_GE_IDX_A],
+        rf      = x_grav[_GE_IDX_RF],
+        v_lin   = x_self_motion[_IDX_HEAD],
+    )
+
+
+def to_array(state):
+    """sm.State → (21,) flat array."""
+    return jnp.concatenate([
+        state.vs_L, state.vs_R, state.vs_null,
+        state.g_est, state.a_lin, state.rf,
+        state.v_lin,
+    ])
 
 
 __all__ = [
-    "step", "X0", "GRAV_X0", "G0",
+    "step", "State", "Activations", "Decoded", "Weights",
+    "rest_state", "read_activations", "decode_states", "read_weights",
+    "from_array", "to_array",
+    "X0", "GRAV_X0", "G0",
     "N_STATES", "N_INPUTS", "N_OUTPUTS",
     "_IDX_VS", "_IDX_GRAV", "_IDX_HEAD",
     "_IDX_INPUT_CANAL", "_IDX_INPUT_SLIP", "_IDX_INPUT_GIA",

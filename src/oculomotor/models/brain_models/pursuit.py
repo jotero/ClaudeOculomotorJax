@@ -65,22 +65,20 @@ from typing import NamedTuple
 import jax.numpy as jnp
 
 
-# ── State layout ───────────────────────────────────────────────────────────────
-# x_pursuit shape (6,) = [x_R (3) | x_L (3)]
-N_STATES  = 6   # bilateral push-pull: 3 axes × 2 pops
-N_INPUTS  = 6   # target_slip_ec(3) + eye_pos(3) — see _IDX_INPUT_* below
-N_OUTPUTS = 3   # u_pursuit: net velocity command → NI
+# ── State + registries ────────────────────────────────────────────────────────
 
-_IDX_PURSUIT_R = slice(0, 3)   # rightward / upward / extorting pop
-_IDX_PURSUIT_L = slice(3, 6)   # leftward  / downward / intorting pop
+class State(NamedTuple):
+    """Pursuit state — bilateral push-pull integrator pops.
 
-
-# ── Local registries (Phase-2 contract) ──────────────────────────────────────
-
-class Activations(NamedTuple):
-    """Pursuit firing rates — bilateral push-pull pops."""
+    Pops are non-negative by integration construction (rectified drives),
+    so `State` is also `Activations` (no separate projection needed).
+    """
     R: jnp.ndarray   # (3,) right MT/MST pop  (rightward / upward / extorting)
     L: jnp.ndarray   # (3,) left  MT/MST pop  (leftward  / downward / intorting)
+
+
+# State == Activations: pops are rectified by integration construction.
+Activations = State
 
 
 class Decoded(NamedTuple):
@@ -88,47 +86,37 @@ class Decoded(NamedTuple):
     net: jnp.ndarray   # (3,) signed = R − L   pursuit velocity (deg/s)
 
 
-def read_activations(x_pursuit):
-    """Project pursuit raw state → Activations.
+def rest_state():
+    """Zero state — used for SimState initialisation."""
+    return State(R=jnp.zeros(3), L=jnp.zeros(3))
 
-    Pops are non-negative by integration construction (rectified drives), so
-    state == activation here.  No `max(0, ·)` needed.
-    """
-    return Activations(R=x_pursuit[_IDX_PURSUIT_R], L=x_pursuit[_IDX_PURSUIT_L])
+
+def read_activations(state):
+    """Pursuit pops ARE rectified firing rates by construction — identity projection."""
+    return state
 
 
 def decode_states(acts):
     """Pursuit net velocity from bilateral pops."""
     return Decoded(net=acts.R - acts.L)
 
-# Bundled-input layout — match the SSM convention: step(x, u, theta).
-_IDX_INPUT_TARGET_SLIP_EC = slice(0, 3)   # EC-corrected target slip (deg/s)
-_IDX_INPUT_EYE_POS        = slice(3, 6)   # current eye position [H, V, T] deg (NI net)
 
-
-def step(x_pursuit, u, brain_params):
+def step(state, target_slip_ec, brain_params):
     """Single ODE step: bilateral pursuit integrator with Smith predictor.
 
     Args:
-        x_pursuit:    (6,)  pursuit state [x_R (3) | x_L (3)] — non-negative pops
-        u:            (6,)  bundled input vector:
-                            [_IDX_INPUT_TARGET_SLIP_EC] = EC-corrected target slip (3,)
-                                                          (target_slip + motor_ec · target_motion_visible)
-                            [_IDX_INPUT_EYE_POS]        = current eye position (3,) [H, V, T] (deg)
-        brain_params: BrainParams  (reads K_pursuit, K_phasic_pursuit, tau_pursuit)
+        state:           pursuit.State  — non-negative pops (R, L) each (3,)
+        target_slip_ec:  (3,)  EC-corrected target slip (deg/s)
+                                = target_slip + motor_ec · target_motion_visible
+        brain_params:    BrainParams  (K_pursuit, K_phasic_pursuit, tau_pursuit)
 
     Returns:
-        dx_pursuit: (6,)  state derivative [dx_R (3) | dx_L (3)]
-        u_pursuit:  (3,)  net pursuit velocity command (deg/s) → NI
+        dstate:    pursuit.State  state derivative (dR, dL)
+        u_pursuit: (3,)           net pursuit velocity command (deg/s) → NI
     """
-    target_slip_ec = u[_IDX_INPUT_TARGET_SLIP_EC]
-    eye_pos        = u[_IDX_INPUT_EYE_POS]
+    x_net = state.R - state.L
+    K_ph  = brain_params.K_phasic_pursuit
 
-    x_R = x_pursuit[_IDX_PURSUIT_R]
-    x_L = x_pursuit[_IDX_PURSUIT_L]
-    x_net = x_R - x_L                                          # signed pursuit memory
-
-    K_ph = brain_params.K_phasic_pursuit
     # Smith predictor on the NET memory (preserves single-integrator dynamics).
     e_pred = (target_slip_ec - x_net) / (1.0 + K_ph)
 
@@ -137,16 +125,31 @@ def step(x_pursuit, u, brain_params):
     drive_L = jnp.maximum(-e_pred, 0.0)
 
     leak = -1.0 / brain_params.tau_pursuit
-    dx_R = leak * x_R + brain_params.K_pursuit * drive_R
-    dx_L = leak * x_L + brain_params.K_pursuit * drive_L
-    dx_pursuit = jnp.concatenate([dx_R, dx_L])
+    dstate = State(
+        R = leak * state.R + brain_params.K_pursuit * drive_R,
+        L = leak * state.L + brain_params.K_pursuit * drive_L,
+    )
 
     # Net activation sent downstream (NI / EC).  Identical to old single-state output.
     u_pursuit = x_net + K_ph * e_pred
 
-    # eye_pos kept in the interface for symmetry / future use (Listing's torsion
-    # is now applied centrally in brain_model.step on the SUMMED velocity command).
-    _ = eye_pos
-    return dx_pursuit, u_pursuit
+    return dstate, u_pursuit
+
+
+# ── Legacy flat-array adapters (deleted once brain_model migrates to BrainState) ─
+
+N_STATES  = 6
+N_INPUTS  = 3
+N_OUTPUTS = 3
+
+
+def from_array(x_pursuit):
+    """(6,) flat array → pursuit.State."""
+    return State(R=x_pursuit[0:3], L=x_pursuit[3:6])
+
+
+def to_array(state):
+    """pursuit.State → (6,) flat array."""
+    return jnp.concatenate([state.R, state.L])
 
 

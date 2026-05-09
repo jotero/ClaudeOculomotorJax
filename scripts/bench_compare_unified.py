@@ -99,12 +99,12 @@ def bench_pursuit(theta_base):
     simulator.set_brain_step(brain_model.step)   # restore
 
     # Compare key quantities
-    eye_b = (np.array(st_b.plant[:, 0]) + np.array(st_b.plant[:, 3])) / 2.0
-    eye_u = (np.array(st_u.plant[:, 0]) + np.array(st_u.plant[:, 3])) / 2.0
-    pu_b  = np.array(st_b.brain[:, simulator._IDX_PURSUIT])
-    pu_u  = np.array(st_u.brain[:, simulator._IDX_PURSUIT])
-    ni_b  = np.array(st_b.brain[:, simulator._IDX_NI])
-    ni_u  = np.array(st_u.brain[:, simulator._IDX_NI])
+    eye_b = (np.array(st_b.plant.left[:, 0]) + np.array(st_b.plant.right[:, 0])) / 2.0
+    eye_u = (np.array(st_u.plant.left[:, 0]) + np.array(st_u.plant.right[:, 0])) / 2.0
+    pu_b  = np.concatenate([np.array(st_b.brain.pu.R), np.array(st_b.brain.pu.L)], axis=1)
+    pu_u  = np.concatenate([np.array(st_u.brain.pu.R), np.array(st_u.brain.pu.L)], axis=1)
+    ni_b  = np.concatenate([np.array(st_b.brain.ni.L), np.array(st_b.brain.ni.R), np.array(st_b.brain.ni.null)], axis=1)
+    ni_u  = np.concatenate([np.array(st_u.brain.ni.L), np.array(st_u.brain.ni.R), np.array(st_u.brain.ni.null)], axis=1)
 
     _max_diff('eye position (cyclop)', eye_b, eye_u)
     _max_diff('pursuit state',         pu_b, pu_u)
@@ -152,10 +152,18 @@ def bench_saccade(theta_base):
     st_u = _run_with(unified_brain.step, theta, t_np, target_traj)
     simulator.set_brain_step(brain_model.step)   # restore
 
-    eye_b = (np.array(st_b.plant[:, 0]) + np.array(st_b.plant[:, 3])) / 2.0
-    eye_u = (np.array(st_u.plant[:, 0]) + np.array(st_u.plant[:, 3])) / 2.0
-    sg_b  = np.array(st_b.brain[:, simulator._IDX_SG])
-    sg_u  = np.array(st_u.brain[:, simulator._IDX_SG])
+    eye_b = (np.array(st_b.plant.left[:, 0]) + np.array(st_b.plant.right[:, 0])) / 2.0
+    eye_u = (np.array(st_u.plant.left[:, 0]) + np.array(st_u.plant.right[:, 0])) / 2.0
+    def _sg_flat(st):
+        sg = st.brain.sg
+        return np.concatenate([
+            np.array(sg.e_held), np.array(sg.z_opn)[:, None],
+            np.array(sg.z_acc)[:, None], np.array(sg.z_trig)[:, None],
+            np.array(sg.ebn_R), np.array(sg.ebn_L),
+            np.array(sg.ibn_R), np.array(sg.ibn_L),
+        ], axis=1)
+    sg_b  = _sg_flat(st_b)
+    sg_u  = _sg_flat(st_u)
 
     _max_diff('eye position (cyclop)', eye_b, eye_u)
     _max_diff('SG state',              sg_b, sg_u)
@@ -223,12 +231,14 @@ def bench_vor(theta_base):
     st_u = _run_with_head(unified_brain.step)
     simulator.set_brain_step(brain_model.step)
 
-    eye_b = (np.array(st_b.plant[:, 0]) + np.array(st_b.plant[:, 3])) / 2.0
-    eye_u = (np.array(st_u.plant[:, 0]) + np.array(st_u.plant[:, 3])) / 2.0
-    vs_b  = np.array(st_b.brain[:, simulator._IDX_VS])
-    vs_u  = np.array(st_u.brain[:, simulator._IDX_VS])
-    grav_b = np.array(st_b.brain[:, simulator._IDX_GRAV])
-    grav_u = np.array(st_u.brain[:, simulator._IDX_GRAV])
+    eye_b = (np.array(st_b.plant.left[:, 0]) + np.array(st_b.plant.right[:, 0])) / 2.0
+    eye_u = (np.array(st_u.plant.left[:, 0]) + np.array(st_u.plant.right[:, 0])) / 2.0
+    def _vs_flat(st):
+        return np.concatenate([np.array(st.brain.sm.vs_L), np.array(st.brain.sm.vs_R), np.array(st.brain.sm.vs_null)], axis=1)
+    def _grav_flat(st):
+        return np.concatenate([np.array(st.brain.sm.g_est), np.array(st.brain.sm.a_lin), np.array(st.brain.sm.rf)], axis=1)
+    vs_b   = _vs_flat(st_b);   vs_u   = _vs_flat(st_u)
+    grav_b = _grav_flat(st_b); grav_u = _grav_flat(st_u)
 
     _max_diff('eye position (cyclop)', eye_b, eye_u)
     _max_diff('VS state',              vs_b, vs_u)
@@ -293,12 +303,14 @@ def bench_tilt(theta_base):
     st_u = _run_with_head(unified_brain.step)
     simulator.set_brain_step(brain_model.step)
 
-    eye_torsion_b = (np.array(st_b.plant[:, 2]) + np.array(st_b.plant[:, 5])) / 2.0
-    eye_torsion_u = (np.array(st_u.plant[:, 2]) + np.array(st_u.plant[:, 5])) / 2.0
-    grav_b = np.array(st_b.brain[:, simulator._IDX_GRAV])
-    grav_u = np.array(st_u.brain[:, simulator._IDX_GRAV])
-    vs_b   = np.array(st_b.brain[:, simulator._IDX_VS])
-    vs_u   = np.array(st_u.brain[:, simulator._IDX_VS])
+    eye_torsion_b = (np.array(st_b.plant.left[:, 2]) + np.array(st_b.plant.right[:, 2])) / 2.0
+    eye_torsion_u = (np.array(st_u.plant.left[:, 2]) + np.array(st_u.plant.right[:, 2])) / 2.0
+    def _vs_flat2(st):
+        return np.concatenate([np.array(st.brain.sm.vs_L), np.array(st.brain.sm.vs_R), np.array(st.brain.sm.vs_null)], axis=1)
+    def _grav_flat2(st):
+        return np.concatenate([np.array(st.brain.sm.g_est), np.array(st.brain.sm.a_lin), np.array(st.brain.sm.rf)], axis=1)
+    grav_b = _grav_flat2(st_b); grav_u = _grav_flat2(st_u)
+    vs_b   = _vs_flat2(st_b);   vs_u   = _vs_flat2(st_u)
 
     _max_diff('eye torsion (cyclop)', eye_torsion_b, eye_torsion_u)
     _max_diff('VS state',             vs_b, vs_u)
@@ -357,13 +369,13 @@ def bench_tvor(theta_base):
     st_u = _run(unified_brain.step)
     simulator.set_brain_step(brain_model.step)
 
-    eye_b = (np.array(st_b.plant[:, 0]) + np.array(st_b.plant[:, 3])) / 2.0
-    eye_u = (np.array(st_u.plant[:, 0]) + np.array(st_u.plant[:, 3])) / 2.0
-    from oculomotor.models.brain_models.brain_model import _IDX_HEAD
-    head_b = np.array(st_b.brain[:, _IDX_HEAD])
-    head_u = np.array(st_u.brain[:, _IDX_HEAD])
-    verg_b = np.array(st_b.brain[:, simulator._IDX_VERG])
-    verg_u = np.array(st_u.brain[:, simulator._IDX_VERG])
+    eye_b = (np.array(st_b.plant.left[:, 0]) + np.array(st_b.plant.right[:, 0])) / 2.0
+    eye_u = (np.array(st_u.plant.left[:, 0]) + np.array(st_u.plant.right[:, 0])) / 2.0
+    head_b = np.array(st_b.brain.sm.v_lin)
+    head_u = np.array(st_u.brain.sm.v_lin)
+    def _verg_flat(st):
+        return np.concatenate([np.array(st.brain.va.verg_fast), np.array(st.brain.va.verg_tonic), np.array(st.brain.va.verg_copy)], axis=1)
+    verg_b = _verg_flat(st_b); verg_u = _verg_flat(st_u)
 
     _max_diff('eye position',     eye_b, eye_u)
     _max_diff('HEAD (v_lin)',     head_b, head_u)

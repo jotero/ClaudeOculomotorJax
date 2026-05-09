@@ -4,9 +4,8 @@ import numpy as np
 import jax.numpy as jnp
 import jax
 
-from oculomotor.sim.simulator import PARAMS_DEFAULT, simulate, _IDX_GRAV
+from oculomotor.sim.simulator import PARAMS_DEFAULT, simulate
 from oculomotor.sim import kinematics as km
-from oculomotor.models.brain_models.brain_model import _IDX_HEAD, _IDX_VS, _IDX_VS_L, _IDX_VS_R
 from oculomotor.models.sensory_models import sensory_model
 
 DT = 0.001
@@ -57,10 +56,10 @@ scene_lin_vel_arr = jax.vmap(read_one)(st.sensory, q_head_arr, a_head_arr)
 scene_lin_vel_arr = np.asarray(scene_lin_vel_arr)
 
 # Brain state extraction
-g_est = np.asarray(st.brain[:, _IDX_GRAV])[:, :3]
-v_lin = np.asarray(st.brain[:, _IDX_HEAD])
-vs_L = np.asarray(st.brain[:, _IDX_VS_L])
-vs_R = np.asarray(st.brain[:, _IDX_VS_R])
+g_est = np.asarray(st.brain.sm.g_est)
+v_lin = np.asarray(st.brain.sm.v_lin)
+vs_L  = np.asarray(st.brain.sm.vs_L)
+vs_R  = np.asarray(st.brain.sm.vs_R)
 vs_net = vs_L - vs_R
 
 # Sample at key times

@@ -19,13 +19,11 @@ import matplotlib.pyplot as plt
 
 from oculomotor.sim.simulator import (
     PARAMS_DEFAULT, with_brain, with_sensory, simulate,
-    _IDX_C, _IDX_VS, _IDX_NI, _IDX_VIS,
 )
 from oculomotor.models.sensory_models.sensory_model import (
     N_CANALS, FLOOR, _SOFTNESS, PINV_SENS,
 )
 from oculomotor.models.brain_models.perception_cyclopean import C_slip
-from oculomotor.models.brain_models.brain_model         import _IDX_CYC_BRAIN
 from oculomotor.sim import kinematics as km
 from oculomotor.analysis import ax_fmt, extract_canal, vs_net, vs_null, ni_net, fit_tc, extract_spv_states
 
@@ -81,12 +79,12 @@ def _raphan(show):
     st_vor  = _simulate(theta, jnp.array(t_vor), head_vel=jnp.array(hv_full),
                         scene_present=jnp.zeros(T_vor),
                         target_present=jnp.zeros(T_vor), key=0)
-    ev_vor    = np.gradient(np.array(st_vor.plant[:, 0]), DT)
+    ev_vor    = np.gradient(np.array(st_vor.plant.left[:, 0]), DT)
     spv_vor_d = -extract_spv_states(st_vor, t_vor)[:, 0]   # negate: compensatory = positive
     cup_vor   = extract_canal(st_vor)
     int_vor   = vs_net(st_vor)[:, 0]                     # x_L−x_R > 0 during rightward VOR
     ni_vor    = ni_net(st_vor)[:, 0]
-    eye_vor   = np.array(st_vor.plant[:, 0])
+    eye_vor   = np.array(st_vor.plant.left[:, 0])
     hv_1d     = hv_full[:, 0]
 
     tau_vor, t_fit_vor, y_fit_vor = fit_tc(
@@ -103,11 +101,11 @@ def _raphan(show):
     sp = jnp.where((t_okn_j >= 0.0) & (t_okn_j < ON_DUR), 1.0, 0.0)
     st_okn  = _simulate(theta, t_okn_j, scene_vel=sv,
                         scene_present=sp, target_present=jnp.zeros(T_okn), key=1)
-    ev_okn    = np.gradient(np.array(st_okn.plant[:, 0]), DT)
+    ev_okn    = np.gradient(np.array(st_okn.plant.left[:, 0]), DT)
     spv_okn_d = extract_spv_states(st_okn, t_okn)[:, 0]    # positive: eye tracks scene
     int_okn   = -vs_net(st_okn)[:, 0]                    # x_L−x_R < 0 → negate for display
     ni_okn    = ni_net(st_okn)[:, 0]
-    eye_okn   = np.array(st_okn.plant[:, 0])
+    eye_okn   = np.array(st_okn.plant.left[:, 0])
 
     tau_okan, t_fit_okan, y_fit_okan = fit_tc(
         t_okn, spv_okn_d, t_start=ON_DUR + 1.0, t_end=TOTAL - 5.0,
@@ -125,12 +123,12 @@ def _raphan(show):
                           scene_present=scene_vvor,
                           target_present=jnp.zeros(T_vor),
                           key=2)
-    ev_vvor    = np.gradient(np.array(st_vvor.plant[:, 0]), DT)
+    ev_vvor    = np.gradient(np.array(st_vvor.plant.left[:, 0]), DT)
     spv_vvor_d = -extract_spv_states(st_vvor, t_vor)[:, 0]
     cup_vvor   = extract_canal(st_vvor)
     int_vvor   = vs_net(st_vvor)[:, 0]
     ni_vvor    = ni_net(st_vvor)[:, 0]
-    eye_vvor   = np.array(st_vvor.plant[:, 0])
+    eye_vvor   = np.array(st_vvor.plant.left[:, 0])
 
     mask_ss   = (t_vor > 10.0) & (t_vor < 25.0)
     vvor_gain = (np.mean(np.abs(spv_vvor_d[mask_ss])) /
@@ -241,7 +239,7 @@ def _okn_zoom(show):
 
     st     = _simulate(THETA, t_arr, scene_vel=sv,
                        scene_present=sp, target_present=jnp.zeros(T), key=3)
-    eye    = np.array(st.plant[:, 0])
+    eye    = np.array(st.plant.left[:, 0])
     ev  = np.gradient(eye, DT)
     spv = extract_spv_states(st, t_np)[:, 0]
 
@@ -289,14 +287,13 @@ def _cascade(show):
                       target_present=jnp.zeros(T_vor), key=5)
 
     hv_1d  = np.array(hv_3d)[:, 0]
-    x_c    = np.array(st_v.sensory[:, _IDX_C])
-    x2     = x_c[:, N_CANALS:]
+    x2     = np.array(st_v.sensory.canal.x2)
     k, f   = float(_SOFTNESS), float(FLOOR)
     y_c    = -f + _spf(k * (x2 + f)) / k + _spf(k * (x2 - f)) / k
     u_can  = (np.array(PINV_SENS) @ y_c.T).T[:, 0]
     x_vs_v = vs_net(st_v)[:, 0]
     x_ni_v = ni_net(st_v)[:, 0]
-    eye_v  = np.array(st_v.plant[:, 0])
+    eye_v  = np.array(st_v.plant.left[:, 0])
     ev_v   = np.gradient(eye_v, DT)
 
     # ── OKR cascade ───────────────────────────────────────────────────────────
@@ -306,11 +303,11 @@ def _cascade(show):
     st_o   = _simulate(THETA_NOISELESS, t_okn, scene_vel=sv,
                        scene_present=sp, target_present=jnp.zeros(T_okn), key=6)
 
-    x_cyc  = np.array(st_o.brain[:, _IDX_CYC_BRAIN])
-    slip   = (np.array(C_slip) @ x_cyc.T)[0, :]
+    # Delayed cyclopean scene slip — 1-pole LP buffer, shape (T, 3); take yaw.
+    slip   = np.array(st_o.brain.pc.scene_angular_vel)[:, 0]
     x_vs_o = vs_net(st_o)[:, 0]
     x_ni_o = ni_net(st_o)[:, 0]
-    eye_o  = np.array(st_o.plant[:, 0])
+    eye_o  = np.array(st_o.plant.left[:, 0])
     ev_o   = np.gradient(eye_o, DT)
 
     ZOOM_T0, ZOOM_T1 = 5.0, 10.0   # 5-second window for nystagmus zoom rows
@@ -368,7 +365,7 @@ def _cascade(show):
     # ── Nystagmus zoom rows (rows 5–6): 5-second window, ±100 deg/s ──────────
     # VOR zoom: t=[5, 10] s — during rotation, fast phases visible
     zm_v = (t_vor >= ZOOM_T0) & (t_vor <= ZOOM_T1)
-    eye_v_pos = np.array(st_v.plant[:, 0])
+    eye_v_pos = np.array(st_v.plant.left[:, 0])
     axes[5, 0].plot(t_vor[zm_v], eye_v_pos[zm_v], color=utils.C['eye'], lw=1.0)
     axes[5, 0].set_xlim(ZOOM_T0, ZOOM_T1); ax_fmt(axes[5, 0])
     axes[5, 0].set_xlabel('Time (s)', fontsize=8)
@@ -381,7 +378,7 @@ def _cascade(show):
 
     # OKR zoom: t=[5, 10] s — during steady-state OKN nystagmus
     zm_o = (t_okn_np >= ZOOM_T0) & (t_okn_np <= ZOOM_T1)
-    eye_o_pos = np.array(st_o.plant[:, 0])
+    eye_o_pos = np.array(st_o.plant.left[:, 0])
     axes[5, 1].plot(t_okn_np[zm_o], eye_o_pos[zm_o], color=utils.C['eye'], lw=1.0)
     axes[5, 1].set_xlim(ZOOM_T0, ZOOM_T1); ax_fmt(axes[5, 1])
     axes[5, 1].set_xlabel('Time (s)', fontsize=8)

@@ -15,7 +15,6 @@ import jax.numpy as jnp
 from oculomotor.sim.simulator import (PARAMS_DEFAULT, simulate, with_brain, with_sensory,
                                        SimConfig)
 from oculomotor.sim import kinematics as km
-from oculomotor.models.brain_models.brain_model import _IDX_HEAD
 
 DT = 0.001
 PEAK = 0.20    # 20 cm/s
@@ -77,11 +76,11 @@ for name, kg, kl, ta, th in combos:
                   target_present_array=np.zeros(T),
                   return_states=True,
                   sim_config=SimConfig(warmup_s=0.0))
-    eye_yaw_L = np.array(st.plant[:, 0])
-    eye_yaw_R = np.array(st.plant[:, 3])
+    eye_yaw_L = np.array(st.plant.left[:, 0])
+    eye_yaw_R = np.array(st.plant.right[:, 0])
     eye_yaw = (eye_yaw_L + eye_yaw_R) / 2.0
     eye_yaw_vel = np.gradient(eye_yaw, DT)
-    v_lin = np.array(st.brain[:, _IDX_HEAD])
+    v_lin = np.array(st.brain.sm.v_lin)
 
     plateau_mask = (t_rel >= RAMP + 0.3) & (t_rel < RAMP + HOLD)
     peak_v_lin = float(np.linalg.norm(v_lin[plateau_mask], axis=1).max())

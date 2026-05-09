@@ -6,7 +6,6 @@ import numpy as np
 import jax
 from oculomotor.sim.simulator import (
     PARAMS_DEFAULT, with_sensory, simulate, SimConfig,
-    _IDX_SG,
 )
 from oculomotor.sim import kinematics as km
 
@@ -31,13 +30,12 @@ for amp in [5, 20]:
                       return_states=True,
                       key=jax.random.PRNGKey(0))
 
-    x_sg = np.array(states.brain[:, _IDX_SG])
-    # New layout: [e_held(0:3) | z_opn(3) | z_acc(4) | x_ebn_R(5:8) | x_ebn_L(8:11) | x_ibn_R(11:14) | x_ibn_L(14:17)]
-    e_held = x_sg[:, 0]   # yaw component (= e_res)
-    z_opn  = x_sg[:, 3]
-    z_acc  = x_sg[:, 4]
-    x_ebn_R = x_sg[:, 5]  # yaw
-    x_ibn_R = x_sg[:, 11] # yaw
+    sg_st  = states.brain.sg
+    e_held = np.array(sg_st.e_held)[:, 0]   # yaw
+    z_opn  = np.array(sg_st.z_opn)
+    z_acc  = np.array(sg_st.z_acc)
+    x_ebn_R = np.array(sg_st.ebn_R)[:, 0]
+    x_ibn_R = np.array(sg_st.ibn_R)[:, 0]
 
     # Find saccade window
     sac_mask = z_opn < 50

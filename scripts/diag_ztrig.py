@@ -29,7 +29,7 @@ for amp in [0.5, 2.0, 5.0, 15.0]:
                   key=jax.random.PRNGKey(0))
 
     sg_dict = extract_sg(st, THETA)
-    eye = (np.array(st.plant[:, 0]) + np.array(st.plant[:, 3])) / 2.0
+    eye = (np.array(st.plant.left[:, 0]) + np.array(st.plant.right[:, 0])) / 2.0
 
     z_acc  = sg_dict['z_acc']
     z_opn  = sg_dict['z_opn']

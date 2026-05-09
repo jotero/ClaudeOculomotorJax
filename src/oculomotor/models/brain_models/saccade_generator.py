@@ -122,36 +122,33 @@ import jax
 
 from oculomotor.models.brain_models import listing
 
-N_STATES  = 18  # e_held(3) + z_opn(1) + z_acc(1) + z_trig(1) + x_ebn_R(3) + x_ebn_L(3) + x_ibn_R(3) + x_ibn_L(3)
-N_INPUTS  = 9   # pos_delayed(3) + target_visible(1) + x_ni(3)
-N_OUTPUTS = 3   # u_burst (3,)
-
-
-# ── Sub-state slices (relative to x_sg) ──────────────────────────────────────
-_IDX_E_HELD = slice(0, 3)
-_IDX_Z_OPN  = 3
-_IDX_Z_ACC  = 4
-_IDX_Z_TRIG = 5
-_IDX_EBN_R  = slice(6, 9)
-_IDX_EBN_L  = slice(9, 12)
-_IDX_IBN_R  = slice(12, 15)
-_IDX_IBN_L  = slice(15, 18)
-
 # OPN tonic firing ≈ 100 sp/s; paused ≈ 0.  Gate output = z_opn / 100, clipped.
 _OPN_TONIC = 100.0
 
 
-# ── Local registries (Phase-2 contract) ──────────────────────────────────────
+# ── State + registries ────────────────────────────────────────────────────────
+
+class State(NamedTuple):
+    """SG state — Robinson held error + OPN/accumulator scalars + EBN/IBN pops."""
+    e_held: jnp.ndarray   # (3,)    signed  Robinson local-feedback held error / setpoint
+    z_opn:  jnp.ndarray   # scalar          OPN membrane (≈100 tonic, ≈0 paused)
+    z_acc:  jnp.ndarray   # scalar          rise-to-bound accumulator
+    z_trig: jnp.ndarray   # scalar          trigger membrane (charges from acc)
+    ebn_R:  jnp.ndarray   # (3,)            right EBN membrane potentials
+    ebn_L:  jnp.ndarray   # (3,)            left  EBN membrane potentials
+    ibn_R:  jnp.ndarray   # (3,)            right IBN membrane potentials
+    ibn_L:  jnp.ndarray   # (3,)            left  IBN membrane potentials
+
 
 class Activations(NamedTuple):
     """SG firing rates."""
-    gate_opn:  jnp.ndarray   # scalar  OPN gate output (1=tonic, 0=paused)  [nucleus raphe interpositus]
-    z_acc:     jnp.ndarray   # scalar  rise-to-bound accumulator            [SC build-up cells, plausible]
-    z_trig:    jnp.ndarray   # scalar  trigger membrane                     [SC burst cells, plausible]
-    ebn_R:     jnp.ndarray   # (3,)    right EBN burst                      [PPRF | riMLF]
-    ebn_L:     jnp.ndarray   # (3,)    left  EBN burst                      [PPRF | riMLF]
-    ibn_R:     jnp.ndarray   # (3,)    right IBN burst                      [PPRF | riMLF (inhib)]
-    ibn_L:     jnp.ndarray   # (3,)    left  IBN burst                      [PPRF | riMLF (inhib)]
+    gate_opn: jnp.ndarray   # scalar  OPN gate output (1=tonic, 0=paused)  [nucleus raphe interpositus]
+    z_acc:    jnp.ndarray   # scalar  rise-to-bound accumulator            [SC build-up cells, plausible]
+    z_trig:   jnp.ndarray   # scalar  trigger membrane                     [SC burst cells, plausible]
+    ebn_R:    jnp.ndarray   # (3,)    right EBN burst                      [PPRF | riMLF]
+    ebn_L:    jnp.ndarray   # (3,)    left  EBN burst                      [PPRF | riMLF]
+    ibn_R:    jnp.ndarray   # (3,)    right IBN burst                      [PPRF | riMLF (inhib)]
+    ibn_L:    jnp.ndarray   # (3,)    left  IBN burst                      [PPRF | riMLF (inhib)]
 
 
 class Weights(NamedTuple):
@@ -159,22 +156,36 @@ class Weights(NamedTuple):
     e_held: jnp.ndarray   # (3,) signed   Robinson local-feedback held error / setpoint
 
 
-def read_activations(x_sg):
-    """Project SG raw state → SG Activations."""
-    return Activations(
-        gate_opn = jnp.clip(x_sg[_IDX_Z_OPN] / _OPN_TONIC, 0.0, 1.0),
-        z_acc    = x_sg[_IDX_Z_ACC],
-        z_trig   = x_sg[_IDX_Z_TRIG],
-        ebn_R    = x_sg[_IDX_EBN_R],
-        ebn_L    = x_sg[_IDX_EBN_L],
-        ibn_R    = x_sg[_IDX_IBN_R],
-        ibn_L    = x_sg[_IDX_IBN_L],
+def rest_state():
+    """Zero state (z_opn = 100 = OPN tonic, blocking burst)."""
+    return State(
+        e_held = jnp.zeros(3),
+        z_opn  = jnp.float32(_OPN_TONIC),
+        z_acc  = jnp.float32(0.0),
+        z_trig = jnp.float32(0.0),
+        ebn_R  = jnp.zeros(3),
+        ebn_L  = jnp.zeros(3),
+        ibn_R  = jnp.zeros(3),
+        ibn_L  = jnp.zeros(3),
     )
 
 
-def read_weights(x_sg):
+def read_activations(state):
+    """Project SG state → SG Activations."""
+    return Activations(
+        gate_opn = jnp.clip(state.z_opn / _OPN_TONIC, 0.0, 1.0),
+        z_acc    = state.z_acc,
+        z_trig   = state.z_trig,
+        ebn_R    = state.ebn_R,
+        ebn_L    = state.ebn_L,
+        ibn_R    = state.ibn_R,
+        ibn_L    = state.ibn_L,
+    )
+
+
+def read_weights(state):
     """SG Robinson held-error setpoint."""
-    return Weights(e_held=x_sg[_IDX_E_HELD])
+    return Weights(e_held=state.e_held)
 
 
 # ── Burst velocity (magnitude + direction) ────────────────────────────────────
@@ -199,7 +210,7 @@ def burst_velocity(e, p):
 
 # ── SSM step ──────────────────────────────────────────────────────────────────
 
-def step(x_sg, pos_delayed, target_visible, x_ni, ocr, w_est, p, noise_acc=0.0):
+def step(state, pos_delayed, target_visible, x_ni, ocr, w_est, p, noise_acc=0.0):
     """Single ODE step: target selection + burst dynamics + burst output.
 
     Target selection (inside step — uses brain-internal x_ni, not plant state):
@@ -210,7 +221,7 @@ def step(x_sg, pos_delayed, target_visible, x_ni, ocr, w_est, p, noise_acc=0.0):
             Predictive centripetal quick phase.
 
     Args:
-        x_sg:          (N_STATES,)  SG state vector (see module docstring)
+        state:         sg.State     SG state (see module docstring)
         pos_delayed:   (3,)         delayed retinal position error (deg)
         target_visible: scalar       visual-field gate (≈1 in-field, ≈0 out-of-field)
         x_ni:          (3,)         NI net state — brain's eye-position estimate (deg)
@@ -222,22 +233,22 @@ def step(x_sg, pos_delayed, target_visible, x_ni, ocr, w_est, p, noise_acc=0.0):
         noise_acc:     scalar        pre-generated accumulator diffusion term
 
     Returns:
-        dx_sg:   (N_STATES,)  state derivative
-        u_burst: (3,)         saccade velocity command (deg/s)
+        dstate:  sg.State    state derivative
+        u_burst: (3,)        saccade velocity command (deg/s)
     """
     # Listing's law is applied centrally in brain_model.step (added to the
     # summed velocity command before NI integration), so SG aims at H/V only
     # and torsion drops out of the velocity-level rule here.
 
     # ── State extraction ──────────────────────────────────────────────────────
-    e_held  = x_sg[0:3]    # (3,) error estimator = residual error (e_res = e_held)
-    z_opn   = x_sg[3]      # scalar OPN: 100=tonic (blocked), ≈0 or negative=paused (active)
-    z_acc   = x_sg[4]      # scalar rise-to-bound accumulator
-    z_trig  = x_sg[5]      # scalar intermediate trigger: charges from acc, drained by IBN
-    x_ebn_R = x_sg[6:9]    # (3,) right EBN membrane potentials
-    x_ebn_L = x_sg[9:12]   # (3,) left  EBN membrane potentials
-    x_ibn_R = x_sg[12:15]  # (3,) right IBN membrane potentials
-    x_ibn_L = x_sg[15:18]  # (3,) left  IBN membrane potentials
+    e_held  = state.e_held
+    z_opn   = state.z_opn
+    z_acc   = state.z_acc
+    z_trig  = state.z_trig
+    x_ebn_R = state.ebn_R
+    x_ebn_L = state.ebn_L
+    x_ibn_R = state.ibn_R
+    x_ibn_L = state.ibn_L
 
     # ── Target selection ──────────────────────────────────────────────────────
     # In-field: saccade aims at the landed gaze (current x_ni + retinal error
@@ -337,7 +348,44 @@ def step(x_sg, pos_delayed, target_visible, x_ni, ocr, w_est, p, noise_acc=0.0):
               - (z_opn + p.g_opn_pause) * z_trig
               - p.g_ibn_opn * ibn_total) / p.tau_sac
 
-    dx_sg = jnp.concatenate([de_held,
-                              jnp.array([dz_opn, dz_acc, dz_trig]),
-                              dx_ebn_R, dx_ebn_L, dx_ibn_R, dx_ibn_L])
-    return dx_sg, u_burst
+    dstate = State(
+        e_held = de_held,
+        z_opn  = dz_opn,
+        z_acc  = dz_acc,
+        z_trig = dz_trig,
+        ebn_R  = dx_ebn_R,
+        ebn_L  = dx_ebn_L,
+        ibn_R  = dx_ibn_R,
+        ibn_L  = dx_ibn_L,
+    )
+    return dstate, u_burst
+
+
+# ── Legacy flat-array adapters (deleted once brain_model migrates to BrainState) ─
+
+N_STATES  = 18
+N_INPUTS  = 9
+N_OUTPUTS = 3
+
+
+def from_array(x_sg):
+    """(18,) flat array → sg.State."""
+    return State(
+        e_held = x_sg[0:3],
+        z_opn  = x_sg[3],
+        z_acc  = x_sg[4],
+        z_trig = x_sg[5],
+        ebn_R  = x_sg[6:9],
+        ebn_L  = x_sg[9:12],
+        ibn_R  = x_sg[12:15],
+        ibn_L  = x_sg[15:18],
+    )
+
+
+def to_array(state):
+    """sg.State → (18,) flat array."""
+    return jnp.concatenate([
+        state.e_held,
+        jnp.array([state.z_opn, state.z_acc, state.z_trig]),
+        state.ebn_R, state.ebn_L, state.ibn_R, state.ibn_L,
+    ])

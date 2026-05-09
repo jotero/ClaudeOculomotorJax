@@ -69,7 +69,7 @@ C_NOD     = '#1a9641'
 # ── Shared helpers ─────────────────────────────────────────────────────────────
 
 def _eye_pos(states):
-    return np.array(states.plant[:, 0])
+    return np.array(states.plant.left[:, 0])
 
 def _eye_vel(states, dt=DT):
     return np.gradient(_eye_pos(states), dt)

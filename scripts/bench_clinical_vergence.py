@@ -88,8 +88,8 @@ def _run_cover(t, d_m, tonic_verg, T_COVER, T_UNCOVER):
         scene_present_array=np.ones(T, dtype=np.float32),
         return_states=True,
     )
-    eL = np.array(st.plant[:, 0])
-    eR = np.array(st.plant[:, 3])
+    eL = np.array(st.plant.left[:, 0])
+    eR = np.array(st.plant.right[:, 0])
     return eL, eR
 
 

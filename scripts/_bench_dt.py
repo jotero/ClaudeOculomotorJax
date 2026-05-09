@@ -13,7 +13,6 @@ import matplotlib.pyplot as plt
 from oculomotor.sim.simulator import PARAMS_DEFAULT, with_brain, with_sensory, simulate
 from oculomotor.analysis import extract_burst, ni_net
 from oculomotor.models.brain_models.perception_cyclopean import C_pos  # noqa: F401
-from oculomotor.sim.simulator import _IDX_SG, _IDX_VIS
 
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), '..', 'outputs')
 os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -69,7 +68,7 @@ def run_summary(dt, suffix, timed=False):
     states = simulate(THETA_SAC, t, p_target_array=pt3_obl,
                       scene_present_array=jnp.ones(T),
                       max_steps=max_s, return_states=True, key=jax.random.PRNGKey(0))
-    eye_pos = np.array(states.plant[:, :3])
+    eye_pos = np.array(states.plant.left)
     u_burst = extract_burst(states, THETA_SAC)
 
     # Eye traces (re-simulate each amplitude)

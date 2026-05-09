@@ -4,7 +4,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 import numpy as np
 import jax
-from oculomotor.sim.simulator import PARAMS_DEFAULT, with_sensory, simulate, SimConfig, _IDX_SG, _IDX_NI_L, _IDX_NI_R, _IDX_VS_L, _IDX_VS_R
+from oculomotor.sim.simulator import PARAMS_DEFAULT, with_sensory, simulate, SimConfig
 from oculomotor.sim import kinematics as km
 
 DT = 0.001
@@ -24,20 +24,20 @@ states = simulate(THETA, t,
                   return_states=True,
                   key=jax.random.PRNGKey(0))
 
-x_sg = np.array(states.brain[:, _IDX_SG])
-ni_L = np.array(states.brain[:, _IDX_NI_L])
-ni_R = np.array(states.brain[:, _IDX_NI_R])
-vs_L = np.array(states.brain[:, _IDX_VS_L])
-vs_R = np.array(states.brain[:, _IDX_VS_R])
+sg_st = states.brain.sg
+ni_L  = np.array(states.brain.ni.L)
+ni_R  = np.array(states.brain.ni.R)
+vs_L  = np.array(states.brain.sm.vs_L)
+vs_R  = np.array(states.brain.sm.vs_R)
 
-z_opn  = x_sg[:, 6]
-z_acc  = x_sg[:, 7]
-x_copy = x_sg[:, 0]
-e_held = x_sg[:, 3]
+z_opn  = np.array(sg_st.z_opn)
+z_acc  = np.array(sg_st.z_acc)
+e_held = np.array(sg_st.e_held)[:, 0]   # yaw
+x_copy = e_held                          # legacy alias
 x_ni_net = (ni_L - ni_R)[:, 0]
 w_est_yaw = (vs_L - vs_R)[:, 0]  # VS net = head velocity estimate (yaw)
 
-eye_yaw = np.array(states.plant[:, 3])
+eye_yaw = np.array(states.plant.right[:, 0])
 eye_vel = np.gradient(eye_yaw, DT)
 
 print("Tracing VOR quick-phase generator:")

@@ -28,12 +28,10 @@ from oculomotor.sim.kinematics import TargetTrajectory
 from oculomotor.llm_pipeline.scenario import SimulationScenario, SimulationComparison, Patient
 from oculomotor.sim.simulator import (
     PARAMS_DEFAULT, with_brain, with_sensory, simulate,
-    _IDX_VS, _IDX_VS_L, _IDX_VS_R, _IDX_NI, _IDX_SG, _IDX_VIS, _IDX_VIS_L, _IDX_PURSUIT,
-    _IDX_VERG,
 )
 from oculomotor.models.brain_models import saccade_generator as sg_mod
 from oculomotor.models.brain_models.perception_cyclopean import C_slip, C_pos, C_vel, C_target_visible
-from oculomotor.models.brain_models.brain_model           import _IDX_CYC_BRAIN
+from oculomotor.models.brain_models import perception_cyclopean as _pc_mod
 
 
 # ── Stimulus builder ──────────────────────────────────────────────────────────
@@ -154,48 +152,55 @@ def _extract_signals(states, params, t_np: np.ndarray) -> dict:
     """Extract named signals from a SimState trajectory."""
     dt = t_np[1] - t_np[0]
 
-    eye_pos_L = np.array(states.plant[:, :3])      # (T, 3) left  eye rotation (deg)
-    eye_pos_R = np.array(states.plant[:, 3:])       # (T, 3) right eye rotation (deg)
+    eye_pos_L = np.array(states.plant.left)        # (T, 3) left  eye rotation (deg)
+    eye_pos_R = np.array(states.plant.right)       # (T, 3) right eye rotation (deg)
     version   = 0.5 * (eye_pos_L + eye_pos_R)       # (T, 3) conjugate (version)
     vergence  = eye_pos_L - eye_pos_R               # (T, 3) vergence angle (deg, + = converged)
 
-    x_vs_raw  = np.array(states.brain[:, _IDX_VS])           # (T, 9) x_L + x_R + x_null
-    x_ni_raw  = np.array(states.brain[:, _IDX_NI])           # (T, 9) x_L + x_R + x_null
-    x_sg      = np.array(states.brain[:, _IDX_SG])
-    # Pursuit is bilateral push-pull (R, L pops); expose NET signed signal (T, 3)
-    # so downstream plots and consumers stay shape-compatible with the prior API.
-    x_pursuit_raw = np.array(states.brain[:, _IDX_PURSUIT])      # (T, 6)
-    x_pursuit     = x_pursuit_raw[:, :3] - x_pursuit_raw[:, 3:6]  # (T, 3) NET
-    x_verg    = np.array(states.brain[:, _IDX_VERG])   # (T, 3) vergence integrator state
-    x_vis     = np.array(states.brain[:, _IDX_CYC_BRAIN])  # (T, 43) cyclopean brain LP block
+    # ── BrainState field reads ───────────────────────────────────────────────
+    sm_st = states.brain.sm
+    ni_st = states.brain.ni
+    sg_st = states.brain.sg
+    pu_st = states.brain.pu
+    va_st = states.brain.va
+    pc_st = states.brain.pc
+
+    # Vergence integrator (yaw component, signed)
+    x_verg = np.array(va_st.verg_fast)            # (T, 3) full vergence integrator state
+
+    # Pursuit NET signed signal (T, 3) — push-pull difference
+    x_pursuit = np.array(pu_st.R - pu_st.L)        # (T, 3) NET
+
+    # Cyclopean LP block (T, 43) — only used here for legacy compatibility with
+    # the C_pos readout matrix; safe to flatten via pc.to_array.
+    x_vis = np.array(jax.vmap(_pc_mod.to_array)(pc_st))   # (T, 43)
 
     # Eye velocity (version derivative — same as L eye vel when version ≈ L)
     w_eye = np.gradient(version, dt, axis=0)
 
-    # VS and NI nets: x_L − x_R (x_null at [6:9] excluded)
-    w_est = x_vs_raw[:, :3] - x_vs_raw[:, 3:6]   # VS net  (T, 3)
-    x_ni  = x_ni_raw[:, :3] - x_ni_raw[:, 3:6]   # NI net  (T, 3)
+    # VS and NI nets: x_L − x_R
+    w_est = np.array(sm_st.vs_L - sm_st.vs_R)   # VS net  (T, 3)
+    x_ni  = np.array(ni_st.L - ni_st.R)         # NI net  (T, 3)
 
     # Retinal signals — cyclopean (single cascade, pre-fused)
     e_pos_delayed = x_vis @ np.array(C_pos).T   # (T, 3)
 
     # Saccade burst (re-compute from SG state + cyclopean delayed retinal signals)
     def _burst_at(state):
-        x_vis_ = state.brain[_IDX_CYC_BRAIN]
-        e_pd   = C_pos @ x_vis_
-        gate   = jnp.clip((C_target_visible @ x_vis_)[0], 0.0, 1.0)
-        x_ni_     = state.brain[_IDX_NI]
-        x_ni_net  = x_ni_[:3] - x_ni_[3:6]   # bilateral → net (x_L − x_R), (3,)
-        _, u  = sg_mod.step(state.brain[_IDX_SG], e_pd, gate, x_ni_net,
-                            jnp.zeros(3), jnp.zeros(3), params.brain)
+        x_vis_   = _pc_mod.to_array(state.brain.pc)
+        e_pd     = C_pos @ x_vis_
+        gate     = jnp.clip((C_target_visible @ x_vis_)[0], 0.0, 1.0)
+        x_ni_net = state.brain.ni.L - state.brain.ni.R   # (3,)
+        _, u     = sg_mod.step(state.brain.sg, e_pd, gate, x_ni_net,
+                                jnp.zeros(3), jnp.zeros(3), params.brain)
         return u
     u_burst = np.array(jax.vmap(_burst_at)(states))  # (T, 3)
 
-    # SG sub-states — layout: [e_held(3)|z_opn(1)|z_acc(1)|z_trig(1)|x_ebn_R(3)|x_ebn_L(3)|x_ibn_R(3)|x_ibn_L(3)]
-    e_held = x_sg[:, 0:3]
-    z_opn  = x_sg[:, 3]
-    z_acc  = x_sg[:, 4]
-    z_trig = x_sg[:, 5]
+    # SG sub-states — direct field access on (T, ...) leaves
+    e_held = np.array(sg_st.e_held)
+    z_opn  = np.array(sg_st.z_opn)
+    z_acc  = np.array(sg_st.z_acc)
+    z_trig = np.array(sg_st.z_trig)
 
     return dict(
         eye_pos        = version,          # conjugate version — used by most panels

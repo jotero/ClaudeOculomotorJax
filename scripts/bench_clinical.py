@@ -145,7 +145,7 @@ def _npc_and_cover(show):
         st_npc = simulate(params, t_npc, target=target_npc,
                           scene_present_array=np.ones(Tn),
                           return_states=True, key=KEY)
-        eL = np.array(st_npc.plant[:, 0]); eR = np.array(st_npc.plant[:, 3])
+        eL = np.array(st_npc.plant.left[:, 0]); eR = np.array(st_npc.plant.right[:, 0])
         verg_npc = eL - eR
 
         ax = axes[0, col]
@@ -173,7 +173,7 @@ def _npc_and_cover(show):
                             target_present_L_array=target_present_L,
                             target_present_R_array=target_present_R,
                             return_states=True, key=KEY)
-        eL_f = np.array(st_cov_f.plant[:, 0]); eR_f = np.array(st_cov_f.plant[:, 3])
+        eL_f = np.array(st_cov_f.plant.left[:, 0]); eR_f = np.array(st_cov_f.plant.right[:, 0])
 
         ax = axes[1, col]
         ax.plot(t_cov, eL_f, color='#1f77b4', lw=1.3, label='L eye (fixating)')
@@ -197,7 +197,7 @@ def _npc_and_cover(show):
                             target_present_L_array=target_present_L,
                             target_present_R_array=target_present_R,
                             return_states=True, key=KEY)
-        eL_n = np.array(st_cov_n.plant[:, 0]); eR_n = np.array(st_cov_n.plant[:, 3])
+        eL_n = np.array(st_cov_n.plant.left[:, 0]); eR_n = np.array(st_cov_n.plant.right[:, 0])
 
         ax = axes[2, col]
         ax.plot(t_cov, eL_n, color='#1f77b4', lw=1.3, label='L eye (fixating)')
@@ -280,7 +280,7 @@ def _fusional_ranges(show):
                              scene_present_array=np.ones(T),
                              prism_R_array=prism_R_BO,
                              return_states=True, key=KEY)
-            eL_BO = np.array(st_BO.plant[:, 0]); eR_BO = np.array(st_BO.plant[:, 3])
+            eL_BO = np.array(st_BO.plant.left[:, 0]); eR_BO = np.array(st_BO.plant.right[:, 0])
             verg_BO  = eL_BO - eR_BO
 
             prism_R_BI = np.zeros((T, 3), dtype=np.float32)
@@ -289,7 +289,7 @@ def _fusional_ranges(show):
                              scene_present_array=np.ones(T),
                              prism_R_array=prism_R_BI,
                              return_states=True, key=KEY)
-            eL_BI = np.array(st_BI.plant[:, 0]); eR_BI = np.array(st_BI.plant[:, 3])
+            eL_BI = np.array(st_BI.plant.left[:, 0]); eR_BI = np.array(st_BI.plant.right[:, 0])
             verg_BI  = eL_BI - eR_BI
 
             # Identify break: where vergence stops following the ramp
@@ -547,8 +547,8 @@ def _ac_a_measurement(show):
                            target_present_L_array=target_present_L,
                            target_present_R_array=target_present_R,
                            return_states=True, key=KEY)
-        eL_f, eR_f = np.array(st_far.plant[:, 0]),  np.array(st_far.plant[:, 3])
-        eL_n, eR_n = np.array(st_near.plant[:, 0]), np.array(st_near.plant[:, 3])
+        eL_f, eR_f = np.array(st_far.plant.left[:, 0]),  np.array(st_far.plant.right[:, 0])
+        eL_n, eR_n = np.array(st_near.plant.left[:, 0]), np.array(st_near.plant.right[:, 0])
         # Phoria = R − L when R is dissociated (positive = R drifted right relative to L = exo)
         idx_ss = slice(int(0.85 * T), T)
         phoria_f_deg = float((eR_f[idx_ss] - eL_f[idx_ss]).mean())

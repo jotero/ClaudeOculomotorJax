@@ -26,7 +26,7 @@ if '--show' not in sys.argv:
 import matplotlib.pyplot as plt
 
 from oculomotor.sim.simulator import (
-    PARAMS_DEFAULT, with_brain, simulate, SimConfig, _IDX_GRAV,
+    PARAMS_DEFAULT, with_brain, simulate, SimConfig,
 )
 from oculomotor.sim import kinematics as km
 from oculomotor.analysis import ax_fmt, extract_burst
@@ -79,9 +79,9 @@ def _listing_plane(show):
                           scene_present_array=np.zeros(T_arr),
                           sim_config=cfg, return_states=True)
 
-            eye_h    = (np.array(st.plant[:, 0]) + np.array(st.plant[:, 3])) / 2.0
-            eye_v    = (np.array(st.plant[:, 1]) + np.array(st.plant[:, 4])) / 2.0
-            eye_roll = (np.array(st.plant[:, 2]) + np.array(st.plant[:, 5])) / 2.0
+            eye_h    = (np.array(st.plant.left[:, 0]) + np.array(st.plant.right[:, 0])) / 2.0
+            eye_v    = (np.array(st.plant.left[:, 1]) + np.array(st.plant.right[:, 1])) / 2.0
+            eye_roll = (np.array(st.plant.left[:, 2]) + np.array(st.plant.right[:, 2])) / 2.0
 
             T_final = float(np.mean(eye_roll[-int(0.2/DT):]))
             T_exp   = float(-H * V * HALF_ANGLE)
@@ -215,9 +215,9 @@ def _listing_ocr(show):
     st_no  = simulate(params_no_sac,   t, **common)
     st_sac = simulate(params_with_sac, t, **common)
 
-    eye_roll_no  = (np.array(st_no.plant[:, 2])  + np.array(st_no.plant[:, 5]))  / 2.0
-    eye_roll_sac = (np.array(st_sac.plant[:, 2]) + np.array(st_sac.plant[:, 5])) / 2.0
-    g_est_sac    = np.array(st_sac.brain[:, _IDX_GRAV])
+    eye_roll_no  = (np.array(st_no.plant.left[:, 2])  + np.array(st_no.plant.right[:, 2]))  / 2.0
+    eye_roll_sac = (np.array(st_sac.plant.left[:, 2]) + np.array(st_sac.plant.right[:, 2])) / 2.0
+    g_est_sac    = np.array(st_sac.brain.sm.g_est)
 
     # OCR target: negative for positive head roll (left-ear-down).
     # g_est[1] < 0 for left-ear-down; OCR = g_ocr * g_est[1] < 0.
@@ -305,9 +305,9 @@ def _listing_pursuit(show):
 
     st = simulate(params, t, **common)
 
-    eye_h    = (np.array(st.plant[:, 0]) + np.array(st.plant[:, 3])) / 2.0
-    eye_v    = (np.array(st.plant[:, 1]) + np.array(st.plant[:, 4])) / 2.0
-    eye_roll = (np.array(st.plant[:, 2]) + np.array(st.plant[:, 5])) / 2.0
+    eye_h    = (np.array(st.plant.left[:, 0]) + np.array(st.plant.right[:, 0])) / 2.0
+    eye_v    = (np.array(st.plant.left[:, 1]) + np.array(st.plant.right[:, 1])) / 2.0
+    eye_roll = (np.array(st.plant.left[:, 2]) + np.array(st.plant.right[:, 2])) / 2.0
 
     T_expected = -eye_h * V_DEG * float(HALF_ANGLE)
     T_error    = eye_roll - T_expected

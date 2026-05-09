@@ -30,7 +30,7 @@ def saccade_test():
                           sim_config=SimConfig(warmup_s=2.0),
                           return_states=True,
                           key=jax.random.PRNGKey(0))
-        eye_yaw = np.array(states.plant[:, 3])  # right eye yaw
+        eye_yaw = np.array(states.plant.right[:, 0])  # right eye yaw
         vel = np.gradient(eye_yaw, DT)
         pv = np.max(np.abs(vel))
         fp = eye_yaw[-1]
@@ -57,7 +57,7 @@ def vor_test():
                       sim_config=SimConfig(warmup_s=0.0),
                       return_states=True,
                       key=jax.random.PRNGKey(0))
-    eye_yaw = np.array(states.plant[:, 3])
+    eye_yaw = np.array(states.plant.right[:, 0])
     vel = np.gradient(eye_yaw, DT)
     for ti in [0.1, 0.5, 1.0, 2.0, 2.9]:
         idx = int(ti / DT)

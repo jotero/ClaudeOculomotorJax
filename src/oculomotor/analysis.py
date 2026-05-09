@@ -51,16 +51,10 @@ import jax.numpy as jnp
 from scipy.ndimage import binary_dilation
 from scipy.optimize import curve_fit
 
-from oculomotor.sim.simulator import (
-    _IDX_VS, _IDX_VS_L, _IDX_VS_R, _IDX_VS_NULL,
-    _IDX_NI, _IDX_NI_L, _IDX_NI_R, _IDX_NI_NULL,
-    _IDX_SG, _IDX_VIS, _IDX_VIS_L,
-)
 from oculomotor.models.sensory_models.sensory_model import (
     N_CANALS, FLOOR, _SOFTNESS, PINV_SENS,
 )
 from oculomotor.models.brain_models.perception_cyclopean import C_pos, C_target_visible
-from oculomotor.models.brain_models.brain_model         import _IDX_CYC_BRAIN
 from oculomotor.models.brain_models import saccade_generator as sg_mod
 
 try:
@@ -74,24 +68,22 @@ except ImportError:  # fallback
 
 def vs_net(states):
     """Net velocity storage signal: x_L − x_R, shape (T, 3), deg/s."""
-    return (np.array(states.brain[:, _IDX_VS_L]) -
-            np.array(states.brain[:, _IDX_VS_R]))
+    return np.array(states.brain.sm.vs_L - states.brain.sm.vs_R)
 
 
 def ni_net(states):
     """Net neural integrator signal: x_L − x_R, shape (T, 3), deg."""
-    return (np.array(states.brain[:, _IDX_NI_L]) -
-            np.array(states.brain[:, _IDX_NI_R]))
+    return np.array(states.brain.ni.L - states.brain.ni.R)
 
 
 def vs_null(states):
     """VS null-adaptation state, shape (T, 3), deg/s."""
-    return np.array(states.brain[:, _IDX_VS_NULL])
+    return np.array(states.brain.sm.vs_null)
 
 
 def ni_null(states):
     """NI null-adaptation state, shape (T, 3), deg."""
-    return np.array(states.brain[:, _IDX_NI_NULL])
+    return np.array(states.brain.ni.null)
 
 
 # ── Canal ──────────────────────────────────────────────────────────────────────
@@ -109,8 +101,7 @@ def extract_canal(states, params=None):
     Returns:
         (T,) array  yaw canal estimate (deg/s); positive = head rotating right.
     """
-    x_c  = np.array(states.sensory[:, :N_CANALS * 2])   # (T, 12)
-    x2   = x_c[:, N_CANALS:]                             # inertia states
+    x2   = np.array(states.sensory.canal.x2)             # (T, 6) inertia states
     k    = float(_SOFTNESS)
     f    = float(params.sensory.canal_floor) if params is not None else float(FLOOR)
     y_c  = -f + _sp_softplus(k * (x2 + f)) / k + _sp_softplus(k * (x2 - f)) / k
@@ -134,14 +125,16 @@ def extract_burst(states, theta):
         (T, 3) float array  saccade burst command (yaw, pitch, roll) in deg/s.
         Slice [:, 0] for yaw only.
     """
+    # The cyclopean readout matrices C_pos / C_target_visible expect a flat
+    # (43,) cyclopean state — convert via pc.to_array.
+    from oculomotor.models.brain_models import perception_cyclopean as pc_mod
     def _at(state):
-        x_vis = state.brain[_IDX_CYC_BRAIN]
-        e_pd  = C_pos @ x_vis
-        gate  = (C_target_visible @ x_vis)[0]
-        x_ni_   = state.brain[_IDX_NI]
-        x_ni_net = x_ni_[:3] - x_ni_[3:6]   # net: x_L − x_R (3,)
-        _, u    = sg_mod.step(state.brain[_IDX_SG], e_pd, gate, x_ni_net,
-                              jnp.zeros(3), jnp.zeros(3), theta.brain)
+        x_vis    = pc_mod.to_array(state.brain.pc)
+        e_pd     = C_pos @ x_vis
+        gate     = (C_target_visible @ x_vis)[0]
+        x_ni_net = state.brain.ni.L - state.brain.ni.R   # (3,)
+        _, u     = sg_mod.step(state.brain.sg, e_pd, gate, x_ni_net,
+                                jnp.zeros(3), jnp.zeros(3), theta.brain)
         return u
     return np.array(jax.vmap(_at)(states))   # (T, 3)
 
@@ -165,19 +158,21 @@ def extract_sg(states, theta):
             u_burst (T, 3)  recomputed saccade burst command
             x_ni    (T, 3)  neural integrator state (eye-position proxy)
     """
-    x_sg  = np.array(states.brain[:, _IDX_SG])
-    x_vis = np.array(states.brain[:, _IDX_CYC_BRAIN])
-    x_ni  = np.array(states.brain[:, _IDX_NI])
+    sg_st = states.brain.sg
+    e_held  = np.array(sg_st.e_held)
+    z_opn   = np.array(sg_st.z_opn)
+    z_acc   = np.array(sg_st.z_acc)
+    z_trig  = np.array(sg_st.z_trig)
+    x_ebn_R = np.array(sg_st.ebn_R)
+    x_ebn_L = np.array(sg_st.ebn_L)
+    x_ibn_R = np.array(sg_st.ibn_R)
+    x_ibn_L = np.array(sg_st.ibn_L)
 
-    e_held  = x_sg[:, 0:3]
-    z_opn   = x_sg[:, 3]
-    z_acc   = x_sg[:, 4]
-    z_trig  = x_sg[:, 5]
-    x_ebn_R = x_sg[:, 6:9]
-    x_ebn_L = x_sg[:, 9:12]
-    x_ibn_R = x_sg[:, 12:15]
-    x_ibn_L = x_sg[:, 15:18]
-    e_pd   = x_vis @ np.array(C_pos).T   # (T, 3) cyclopean delayed position error
+    # Eye-position estimate (NI net) and delayed position error (cyclopean)
+    x_ni  = np.array(states.brain.ni.L - states.brain.ni.R)
+    from oculomotor.models.brain_models import perception_cyclopean as pc_mod
+    x_vis = np.array(jax.vmap(pc_mod.to_array)(states.brain.pc))   # (T, 43)
+    e_pd  = x_vis @ np.array(C_pos).T   # (T, 3) cyclopean delayed position error
 
     u_burst = extract_burst(states, theta)
 
@@ -199,7 +194,7 @@ def extract_z_opn(states):
     Returns:
         (T,) z_opn array
     """
-    return np.array(states.brain[:, _IDX_SG])[:, 3]
+    return np.array(states.brain.sg.z_opn)
 
 
 def extract_spv_states(states, t, margin_s=0.05, eye='left'):
@@ -223,8 +218,8 @@ def extract_spv_states(states, t, margin_s=0.05, eye='left'):
     """
     dt    = float(t[1] - t[0])
     z_opn = extract_z_opn(states)
-    ep_L  = np.array(states.plant[:, :3])   # left-eye rotation vector (T, 3)
-    ep_R  = np.array(states.plant[:, 3:6])  # right-eye rotation vector (T, 3)
+    ep_L  = np.array(states.plant.left)    # left-eye rotation vector (T, 3)
+    ep_R  = np.array(states.plant.right)   # right-eye rotation vector (T, 3)
     if eye == 'left':
         ep = ep_L
     elif eye == 'right':

@@ -124,18 +124,37 @@ _N_RETINA_PER_EYE= _retina.N_STATES_PER_EYE       # 90
 _N_VIS_STATES    = 2 * _N_RETINA_PER_EYE          # 90+90 = 180
 N_STATES         = _N_CANAL_STATES + _N_OTO_STATES + _N_VIS_STATES  # 12+6+180 = 198
 
-# Index constants — relative to x_sensory
-_o_canal = 0
-_o_oto   = _o_canal + _N_CANAL_STATES             # 12
-_o_retL  = _o_oto   + _N_OTO_STATES               # 18
-_o_retR  = _o_retL  + _N_RETINA_PER_EYE           # 108
 
-_IDX_C         = slice(_o_canal, _o_canal + _N_CANAL_STATES)     # (12,)
-_IDX_OTO       = slice(_o_oto,   _o_oto   + _N_OTO_STATES)       #  (6,)
-_IDX_RETINA_L  = slice(_o_retL,  _o_retL  + _N_RETINA_PER_EYE)   # (90,)
-_IDX_RETINA_R  = slice(_o_retR,  _o_retR  + _N_RETINA_PER_EYE)   # (90,)
-_IDX_VIS       = slice(_o_retL,  _o_retR  + _N_RETINA_PER_EYE)   # (180,) full per-eye retina block
-_IDX_VIS_L     = _IDX_RETINA_L   # backward-compat alias
+# ── State NamedTuple ──────────────────────────────────────────────────────────
+
+class State(NamedTuple):
+    """Top-level sensory state — canal + otolith + per-eye retina."""
+    canal:    _canal.State    # (12,)  bandpass two-stage SSM
+    otolith:  _otolith.State  #  (6,)  bilateral LP adaptation
+    retina_L: _retina.State   # (90,)  per-eye sharp cascade — left eye
+    retina_R: _retina.State   # (90,)  per-eye sharp cascade — right eye
+
+
+def rest_state():
+    """Initial sensory state (otolith starts settled to gravity, others zero)."""
+    return State(
+        canal    = _canal.rest_state(),
+        otolith  = _otolith.rest_state(),
+        retina_L = _retina.rest_state(),
+        retina_R = _retina.rest_state(),
+    )
+
+
+# Legacy flat-array adapters retained for any external callers that still hold
+# (T,) trajectory arrays predating the SimState NT migration.
+def to_array(state):
+    """sensory_model.State → (198,) flat array."""
+    return jnp.concatenate([
+        _canal.to_array(state.canal),
+        _otolith.to_array(state.otolith),
+        _retina.to_array(state.retina_L),
+        _retina.to_array(state.retina_R),
+    ])
 
 
 # ── Bundled sensory output ──────────────────────────────────────────────────────
@@ -167,28 +186,23 @@ class SensoryOutput(NamedTuple):
     retina_R: RetinaOut              # delayed per-eye signals — right eye
 
 
-def read_outputs(x_sensory, sensory_params, q_head, a_head):
+def read_outputs(state, sensory_params, q_head, a_head):
     """Read all sensory outputs from the current state (pure state readout).
 
-    Cyclopean signals come from the post-fusion brain LP block (x_cyc_brain);
-    per-eye sharp cascade states sit in x_retina_L / x_retina_R but are not
-    surfaced through SensoryOutput — they're consumed inside step() by the
-    perception_cyclopean fusion logic.
-
     Args:
-        x_sensory:      (241,)  sensory state
+        state:          sensory_model.State
         sensory_params: SensoryParams
         q_head:         (3,)    head rotation vector [yaw,pitch,roll] (deg) — for GIA
         a_head:         (3,)    head linear acceleration (m/s², world frame) — for GIA
 
     Returns:
-        SensoryOutput with cyclopean delayed signals.
+        SensoryOutput with delayed per-eye signals.
     """
-    x_c        = x_sensory[_IDX_C]
-    x_retina_L = x_sensory[_IDX_RETINA_L]
-    x_retina_R = x_sensory[_IDX_RETINA_R]
-
-    canal_out = _canal.nonlinearity(x_c, sensory_params.canal_gains, sensory_params.canal_floor)
+    # Concatenate (x1, x2) to apply canal nonlinearity (reads x2 internally).
+    canal_flat = jnp.concatenate([state.canal.x1, state.canal.x2])
+    canal_out  = _canal.nonlinearity(canal_flat,
+                                      sensory_params.canal_gains,
+                                      sensory_params.canal_floor)
     canal_out = jnp.clip(canal_out, -sensory_params.canal_v_max, sensory_params.canal_v_max)
 
     # Instantaneous GIA in head frame — same formula as otolith.step().
@@ -199,14 +213,14 @@ def read_outputs(x_sensory, sensory_params, q_head, a_head):
     return SensoryOutput(
         canal    = canal_out,
         otolith  = f_gia,
-        retina_L = _retina.read_outputs(x_retina_L),
-        retina_R = _retina.read_outputs(x_retina_R),
+        retina_L = _retina.read_outputs(state.retina_L),
+        retina_R = _retina.read_outputs(state.retina_R),
     )
 
 
 # ── Combined step ───────────────────────────────────────────────────────────────
 
-def step(x_sensory,
+def step(state,
          # ── Head kinematics ───────────────────────────────────────────────────
          q_head, w_head, x_head, v_head, a_head,
          # ── Eye kinematics (prism-shifted by ODE before this call) ────────────
@@ -222,51 +236,38 @@ def step(x_sensory,
          # ── Visibility flags ──────────────────────────────────────────────────
          scene_present_L, scene_present_R,
          target_present_L, target_present_R, target_strobed,
-         # ── Efference copy (from brain) ───────────────────────────────────────
+         # ── Efference copy (from brain) — unused here, kept for API stability ─
          ec_vel, ec_pos, ec_verg,
          # ── Parameters ───────────────────────────────────────────────────────
          sensory_params):
-    """Single ODE step for the sensory subsystem (canal + otolith + visual delay).
+    """Single ODE step for the sensory subsystem (canal + otolith + per-eye retina).
 
-    Projects each eye's retina via world_to_retina, fuses per-eye signals into a
-    cyclopean representation via binocular_fusion_policy, then advances the canal,
-    otolith, and single cyclopean visual delay cascade.
-
-    All per-eye scene/target inputs are pre-transformed by the ODE layer before
-    this call — optical interventions (prisms, stereo displays) are invisible here.
-
-    World frame is LEFT-HANDED: x=right, y=up, z=forward  (x × y = −z).
+    Args:
+        state: sensory_model.State (canal + otolith + retina_L + retina_R)
 
     Returns:
-        dx_sensory: (818,)  dx_sensory/dt
+        dstate: sensory_model.State  state derivative
     """
-    x_c         = x_sensory[_IDX_C]
-    x_oto       = x_sensory[_IDX_OTO]
-    x_retina_L  = x_sensory[_IDX_RETINA_L]
-    x_retina_R  = x_sensory[_IDX_RETINA_R]
-
     ipd_half  = sensory_params.ipd * 0.5
     eye_off_L = jnp.array([-ipd_half, 0.0, 0.0])
     eye_off_R = jnp.array([ ipd_half, 0.0, 0.0])
 
-    dx_c,   _ = _canal.step(x_c,   w_head, sensory_params)
-    dx_oto, _ = _otolith.step(x_oto, jnp.concatenate([a_head, q_head]), sensory_params)
+    dcanal,   _ = _canal.step(state.canal,     w_head, sensory_params)
+    dotolith, _ = _otolith.step(state.otolith, jnp.concatenate([a_head, q_head]), sensory_params)
 
-    # ── Per-eye retina step: world_to_retina + saturation + sharp cascade ────
-    # Cyclopean fusion + brain LP smoothing happen in the brain (perception_cyclopean
-    # in brain_models). Sensory step exposes the per-eye delayed signals via
-    # SensoryOutput.retina_L / retina_R for the brain to consume.
+    # Per-eye retina cascades (cyclopean fusion happens in brain).
     # ec_vel / ec_pos / ec_verg are no longer used here.
     _ = ec_vel, ec_pos, ec_verg
-    dx_retina_L, _ = _retina.step(
-        x_retina_L, eye_off_L, q_head, w_head, x_head, v_head,
+    dretina_L, _ = _retina.step(
+        state.retina_L, eye_off_L, q_head, w_head, x_head, v_head,
         q_eye_L, w_eye_L, w_scene_L, v_scene_L, p_target_L, dp_dt_L,
         defocus_L, scene_present_L, target_present_L, target_strobed,
         sensory_params)
-    dx_retina_R, _ = _retina.step(
-        x_retina_R, eye_off_R, q_head, w_head, x_head, v_head,
+    dretina_R, _ = _retina.step(
+        state.retina_R, eye_off_R, q_head, w_head, x_head, v_head,
         q_eye_R, w_eye_R, w_scene_R, v_scene_R, p_target_R, dp_dt_R,
         defocus_R, scene_present_R, target_present_R, target_strobed,
         sensory_params)
 
-    return jnp.concatenate([dx_c, dx_oto, dx_retina_L, dx_retina_R])
+    return State(canal=dcanal, otolith=dotolith,
+                  retina_L=dretina_L, retina_R=dretina_R)

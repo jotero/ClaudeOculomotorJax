@@ -36,7 +36,7 @@ st = simulate(PARAMS_DEFAULT, t, head=head, target=target,
               target_present_array=np.zeros(T),
               return_states=True, key=jax.random.PRNGKey(0))
 
-eye_L = np.array(st.plant[:, :3])
+eye_L = np.array(st.plant.left)
 z_opn = extract_z_opn(st)
 vel_yaw_raw = np.gradient(eye_L[:, 0], DT)
 

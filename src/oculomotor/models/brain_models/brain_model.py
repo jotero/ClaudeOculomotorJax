@@ -172,31 +172,123 @@ _IDX_VERG    = slice(_o_va,     _o_va + 9)        # (9,)
 _IDX_ACC     = slice(_o_va + 9, _o_va + 11)       # (2,)
 
 
+# ── Brain state (nested NamedTuple) ───────────────────────────────────────────
+# Each subsystem owns its `State` NamedTuple.  `BrainState` aggregates them
+# under per-subsystem fields, eliminating the flat-array layout and the
+# `_IDX_*` slice constants.
+#
+# Diffrax handles arbitrary PyTrees natively — `BrainState` is just a deeper
+# tree.  EC cascades (ec_scene, ec_target) stay as flat arrays since they're
+# pure delay buffers with no internal sub-structure to surface.
+
+class BrainState(NamedTuple):
+    """Top-level brain state — one field per subsystem.
+
+    Ordered perception → cognition → motor → efference:
+        pc        perception_cyclopean (binocular fusion + brain LP)
+        sm        self-motion observer (VS + GE + HE)
+        pt        target working memory (FEF/dlPFC)
+        sg        saccade generator
+        pu        smooth pursuit
+        va        vergence + accommodation
+        ni        neural integrator (final premotor stage)
+        fcp       motor neurons (final common pathway)
+        ec_scene  scene-path efference copy cascade (post-motor delay buffer)
+        ec_target target-path efference copy cascade
+    """
+    # Perception
+    pc:        pc.State              # perception_cyclopean brain LP
+    sm:        sm.State              # self-motion (VS + GE + HE)
+    pt:        pt.State              # target perception working memory
+    # Motor planning + execution
+    sg:        sg.State              # saccade generator
+    pu:        pu.State              # smooth pursuit
+    va:        va.State              # vergence + accommodation
+    ni:        ni.State              # neural integrator
+    fcp:       fcp.State             # motor neurons
+    # Efference copy
+    ec_scene:  jnp.ndarray           # (_EC_VEL_SCENE_N,)  scene-path EC cascade
+    ec_target: jnp.ndarray           # (_EC_VEL_TARGET_N,) target-path EC cascade
+
+
+def rest_brain_state():
+    """Initial BrainState — all zeros for cascade buffers and pops."""
+    return BrainState(
+        pc        = pc.rest_state(),
+        sm        = sm.rest_state(),
+        pt        = pt.rest_state(),
+        sg        = sg.rest_state(),
+        pu        = pu.rest_state(),
+        va        = va.rest_state(),
+        ni        = ni.rest_state(),
+        fcp       = fcp.zero_state(),
+        ec_scene  = jnp.zeros(_EC_VEL_SCENE_N),
+        ec_target = jnp.zeros(_EC_VEL_TARGET_N),
+    )
+
+
+# ── Legacy flat-array adapters (deleted once simulator migrates to BrainState) ─
+
+def from_array(x_brain):
+    """(N_STATES,) flat array → BrainState.
+
+    Note: the flat-array layout follows the *original* offset order (sm, ni,
+    sg, pu, va, pt, pc, ec_scene, ec_target, fcp) for legacy compatibility.
+    The BrainState NT field order (perception → motor) is independent.
+    """
+    return BrainState(
+        pc        = pc.from_array(x_brain[_IDX_CYC_BRAIN]),
+        sm        = sm.from_array(x_brain[_IDX_SELF_MOTION]),
+        pt        = pt.from_array(x_brain[_IDX_TARGET_MEM]),
+        sg        = sg.from_array(x_brain[_IDX_SG]),
+        pu        = pu.from_array(x_brain[_IDX_PURSUIT]),
+        va        = va.from_array(x_brain[_IDX_VA]),
+        ni        = ni.from_array(x_brain[_IDX_NI]),
+        fcp       = fcp.from_array(x_brain[_IDX_MN]),
+        ec_scene  = x_brain[_IDX_EC_VEL_SCENE],
+        ec_target = x_brain[_IDX_EC_VEL_TARGET],
+    )
+
+
+def to_array(state):
+    """BrainState → (N_STATES,) flat array (original offset order)."""
+    return jnp.concatenate([
+        sm.to_array(state.sm),
+        ni.to_array(state.ni),
+        sg.to_array(state.sg),
+        pu.to_array(state.pu),
+        va.to_array(state.va),
+        pt.to_array(state.pt),
+        pc.to_array(state.pc),
+        state.ec_scene,
+        state.ec_target,
+        fcp.to_array(state.fcp),
+    ])
+
+
 # ── Phase-2 registries (Activations / Decoded / Weights) ─────────────────────
 # Aggregator over per-module registries.  Each subsystem owns its local
 # Activations / Decoded / Weights NamedTuples and reader functions; this
 # module just collects them under named subsystem fields.
-#
-# Subsystem step contract (Phase 2b):
-#     step(x_self, acts, decoded, weights, u, theta) -> (dx_self, output)
-# where acts/decoded/weights are these aggregate registries.
 
 class Activations(NamedTuple):
-    """Brain-wide firing rates — one entry per subsystem module."""
+    """Brain-wide firing rates — perception → motor order."""
+    # Perception
     sm:  sm.Activations    # VS + GE + HE
-    ni:  ni.Activations    # bilateral NI
-    pu:  pu.Activations    # bilateral pursuit
-    sg:  sg.Activations    # saccade generator
-    va:  va.Activations    # vergence + accommodation
     pt:  pt.Activations    # target memory
+    # Motor
+    sg:  sg.Activations    # saccade generator
+    pu:  pu.Activations    # bilateral pursuit
+    va:  va.Activations    # vergence + accommodation
+    ni:  ni.Activations    # bilateral NI
     fcp: fcp.Activations   # motor neurons
 
 
 class Decoded(NamedTuple):
-    """Brain-wide push-pull decoded nets — only subsystems with bilateral pops."""
-    sm: sm.Decoded   # vs_net
-    ni: ni.Decoded   # ni_net
-    pu: pu.Decoded   # pu_net
+    """Brain-wide push-pull decoded nets — perception → motor order."""
+    sm: sm.Decoded   # vs_net  (perception)
+    pu: pu.Decoded   # pu_net  (motor)
+    ni: ni.Decoded   # ni_net  (motor)
 
 
 class Weights(NamedTuple):
@@ -206,19 +298,20 @@ class Weights(NamedTuple):
     sg: sg.Weights   # e_held
 
 
-def read_activations(x_brain):
+def read_activations(brain_state):
     """Aggregate per-module activations into the brain-wide registry.
 
     Single canonical state→firing-rate projection; called once per ODE step.
+    Accepts a BrainState NT.
     """
     return Activations(
-        sm  = sm.read_activations(x_brain[_IDX_SELF_MOTION]),
-        ni  = ni.read_activations(x_brain[_IDX_NI]),
-        pu  = pu.read_activations(x_brain[_IDX_PURSUIT]),
-        sg  = sg.read_activations(x_brain[_IDX_SG]),
-        va  = va.read_activations(x_brain[_IDX_VA]),
-        pt  = pt.read_activations(x_brain[_IDX_TARGET_MEM]),
-        fcp = fcp.read_activations(x_brain[_IDX_MN]),
+        sm  = sm.read_activations(brain_state.sm),
+        pt  = pt.read_activations(brain_state.pt),
+        sg  = sg.read_activations(brain_state.sg),
+        pu  = pu.read_activations(brain_state.pu),
+        va  = va.read_activations(brain_state.va),
+        ni  = ni.read_activations(brain_state.ni),
+        fcp = fcp.read_activations(brain_state.fcp),
     )
 
 
@@ -229,17 +322,17 @@ def decode_states(acts):
     """
     return Decoded(
         sm = sm.decode_states(acts.sm),
-        ni = ni.decode_states(acts.ni),
         pu = pu.decode_states(acts.pu),
+        ni = ni.decode_states(acts.ni),
     )
 
 
-def read_weights(x_brain):
+def read_weights(brain_state):
     """Aggregate per-module tonic/null/setpoint registers."""
     return Weights(
-        sm = sm.read_weights(x_brain[_IDX_SELF_MOTION]),
-        ni = ni.read_weights(x_brain[_IDX_NI]),
-        sg = sg.read_weights(x_brain[_IDX_SG]),
+        sm = sm.read_weights(brain_state.sm),
+        ni = ni.read_weights(brain_state.ni),
+        sg = sg.read_weights(brain_state.sg),
     )
 
 
@@ -661,7 +754,7 @@ class BrainParams(NamedTuple):
 # ── Initialization ─────────────────────────────────────────────────────────────
 
 def make_x0(brain_params=None):
-    """Default initial brain state.
+    """Default initial BrainState.
 
     VS populations initialised to b_vs (bilateral equilibrium — both pops at resting bias).
     VS/NI null adaptation states initialised to 0 (no initial adaptation).
@@ -669,112 +762,130 @@ def make_x0(brain_params=None):
     Gravity estimator initialised pointing down (upright head).
 
     Args:
-        brain_params: BrainParams NamedTuple.  If None, uses b_vs=0 (zero bias; old behaviour).
+        brain_params: BrainParams NamedTuple.  If None, uses b_vs=0 (zero bias).
+
+    Returns:
+        BrainState — nested NamedTuple with each subsystem's initial state.
     """
-    x0 = jnp.zeros(N_STATES)
-    x0 = x0.at[_IDX_GRAV].set(sm.GRAV_X0)   # [G0,0,0, 0,0,0] — upright gravity, zero linear accel
+    # Self-motion: VS at b_vs equilibrium, GE pointing down (upright gravity).
     if brain_params is not None:
-        # VS: both populations start at resting bias; null starts at 0.
-        # b_vs is (6,) float32 — normalised by simulate() before this is called.
-        x0 = x0.at[_IDX_VS_L].set(brain_params.b_vs[:3])
-        x0 = x0.at[_IDX_VS_R].set(brain_params.b_vs[3:])
-        # _IDX_VS_NULL stays at 0 (no initial adaptation)
-        # NI: b_ni populations (b_ni=0 default → stays zero)
-        # _IDX_NI_L/R/NULL all stay at 0
-        # OPN: initialise to tonic firing rate (100); stays there between saccades.
-        x0 = x0.at[_IDX_SG.start + 3].set(100.0)
-        # Vergence: x_fast=0 at rest; x_slow holds the tonic baseline (setpoint
-        # is now baked into the slow integrator dynamics in va.step). Init H slot
-        # of x_slow to tonic_verg so u_verg = tonic_verg at rest.  x_copy stays 0.
-        x0 = x0.at[_IDX_VERG.start + 3].set(brain_params.tonic_verg)   # x_slow[H]
-        # Accommodation: x_fast=0; x_slow holds tonic_acc baseline (same pattern).
-        # Neural command at rest = 0 + 0 + tonic_acc + 0 = tonic_acc → plant settles.
-        # acc_plant initial state lives in SimState.acc_plant (set in simulate()).
-        x0 = x0.at[_IDX_ACC].set(jnp.array([0.0, brain_params.tonic_acc]))
-        # MN: start on the slow manifold for centre-gaze + tonic vergence so the
-        # nerves have their resting bias from t=0 (skips a ~5·tau_mn start-up
-        # transient at the very beginning of every simulation).
+        vs_L = brain_params.b_vs[:3]
+        vs_R = brain_params.b_vs[3:]
+    else:
+        vs_L = jnp.zeros(3)
+        vs_R = jnp.zeros(3)
+    sm_state = sm.State(
+        vs_L    = vs_L,
+        vs_R    = vs_R,
+        vs_null = jnp.zeros(3),
+        g_est   = sm.GRAV_X0[0:3],
+        a_lin   = sm.GRAV_X0[3:6],
+        rf      = sm.GRAV_X0[6:9],
+        v_lin   = jnp.zeros(3),
+    )
+
+    # SG: OPN tonic = 100 (blocks burst between saccades).
+    sg_state = sg.State(
+        e_held = jnp.zeros(3),
+        z_opn  = jnp.float32(100.0),
+        z_acc  = jnp.float32(0.0),
+        z_trig = jnp.float32(0.0),
+        ebn_R  = jnp.zeros(3),
+        ebn_L  = jnp.zeros(3),
+        ibn_R  = jnp.zeros(3),
+        ibn_L  = jnp.zeros(3),
+    )
+
+    # Vergence: x_slow[H] holds tonic_verg so u_verg = tonic_verg at rest.
+    # Accommodation: x_slow holds tonic_acc baseline.
+    if brain_params is not None:
+        verg_tonic_init = jnp.zeros(3).at[0].set(brain_params.tonic_verg)
+        acc_slow_init   = jnp.float32(brain_params.tonic_acc)
+    else:
+        verg_tonic_init = jnp.zeros(3)
+        acc_slow_init   = jnp.float32(0.0)
+    va_state = va.State(
+        verg_fast  = jnp.zeros(3),
+        verg_tonic = verg_tonic_init,
+        verg_copy  = jnp.zeros(3),
+        acc_fast   = jnp.float32(0.0),
+        acc_slow   = acc_slow_init,
+    )
+
+    # MN: start on the slow manifold for centre-gaze + tonic vergence so the
+    # nerves have their resting bias from t=0 (skips a ~5·tau_mn start-up
+    # transient at the very beginning of every simulation).
+    if brain_params is not None:
         vv_rest = jnp.array([0.0, 0.0, 0.0, brain_params.tonic_verg, 0.0, 0.0])
-        x0 = x0.at[_IDX_MN].set(fcp.rest_state(vv_rest, brain_params))
-    return x0
+        fcp_state = fcp.State(rates=fcp.rest_state(vv_rest, brain_params))
+    else:
+        fcp_state = fcp.zero_state()
+
+    return BrainState(
+        pc        = pc.rest_state(),
+        sm        = sm_state,
+        pt        = pt.rest_state(),
+        sg        = sg_state,
+        pu        = pu.rest_state(),
+        va        = va_state,
+        ni        = ni.rest_state(),
+        fcp       = fcp_state,
+        ec_scene  = jnp.zeros(_EC_VEL_SCENE_N),
+        ec_target = jnp.zeros(_EC_VEL_TARGET_N),
+    )
 
 
 # ── Step function ──────────────────────────────────────────────────────────────
 
-def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
+def step(brain_state, sensory_out, brain_params, noise_acc=0.0):
     """Single ODE step for the brain subsystem.
 
     Args:
-        x_brain:      (163,)  brain state — see top-of-file layout (self_motion | NI | SG | pursuit | va | target_mem | cyc_brain | EC_scene | EC_target | MN)
+        brain_state:  BrainState NamedTuple — one field per subsystem
         sensory_out:  SensoryOutput bundled canal afferents + cyclopean delayed signals
                         .canal            (6,)    canal afferent rates
                         .otolith          (3,)    specific force in head frame (m/s²)
-                        .scene_slip       (3,)    delayed cyclopean scene angular velocity
-                        .scene_linear_vel (3,)    delayed cyclopean scene linear velocity
-                        .target_pos       (3,)    delayed cyclopean target position
-                        .target_slip      (3,)    delayed cyclopean target velocity
-                        .target_disparity (3,)    delayed cyclopean vergence disparity
-                        .scene_visible    scalar  delay(scene_present)
-                        .target_visible   scalar  delay(target_present × target_in_vf)
-                        .target_motion_visible scalar delay(target_visible × (1−strobe))
-                        .defocus          scalar  delayed defocus (D) = delay(1/z+RE−x_plant)
+                        .retina_L         RetinaOut for left eye
+                        .retina_R         RetinaOut for right eye
         brain_params: BrainParams   model parameters
         noise_acc:    scalar  accumulator diffusion noise sample (pre-scaled)
 
     Returns:
-        dx_brain: (163,) dx_brain/dt
-        nerves:   (12,)  per-muscle nerve activations [L6 | R6] → plant (= x_mn)
-        ec_vel:   (3,)   version velocity efference (head frame, deg/s)
-        ec_pos:   (3,)   eye position efference
-        ec_verg:  (3,)   vergence efference
-        u_acc:    scalar total lens-plant input (D) — neural + CA/C, drives acc_plant
+        dbrain_state: BrainState  state derivative
+        nerves:       (12,)  per-muscle nerve activations [L6 | R6] → plant
+        ec_vel:       (3,)   version velocity efference (head frame, deg/s)
+        ec_pos:       (3,)   eye position efference
+        ec_verg:      (3,)   vergence efference
+        u_acc:        scalar total lens-plant input (D) — neural + CA/C, drives acc_plant
     """
     # ── Activation / Decoded / Weights registries ────────────────────────────
-    # Built once per step.  Cross-subsystem reads MUST go through these — not
-    # via raw x_brain[_IDX_*] slicing.  `weights` is currently exposed for
-    # contract uniformity (long-term: setpoints become learnable parameters).
-    acts     = read_activations(x_brain)
+    # Built once per step.  Cross-subsystem reads MUST go through these.
+    # `weights` is exposed for contract uniformity (long-term: setpoints
+    # become learnable parameters).
+    acts     = read_activations(brain_state)
     decoded  = decode_states(acts)
-    weights  = read_weights(x_brain)
+    weights  = read_weights(brain_state)
     del weights   # not yet consumed by any subsystem; kept above for the contract
 
-    # ── Subsystem own-state pass-throughs ────────────────────────────────────
-    # Each subsystem still takes its own raw state slice into step() — its
-    # own state is needed to compute the derivative.  These are NOT cross-
-    # subsystem reads.  Cross-subsystem reads above use acts / decoded.
-    x_self_motion = x_brain[_IDX_SELF_MOTION]      # (21,) VS + GE + HE
-    x_ni          = x_brain[_IDX_NI]               #  (9,) bilateral NI + null
-    x_ni_net      = decoded.ni.net                 #  (3,) net eye position via registry
-    x_sg          = x_brain[_IDX_SG]               # (18,) saccade generator
-    x_pursuit     = x_brain[_IDX_PURSUIT]          #  (6,) bilateral pursuit memory: x_R(3) | x_L(3)
-    x_va          = x_brain[_IDX_VA]               # (11,) vergence + accommodation
-    x_target_mem  = x_brain[_IDX_TARGET_MEM]       #  (4,) target memory: x_mem_pos(3) | trust(1)
-    x_cyc_brain   = x_brain[_IDX_CYC_BRAIN]        # (43,) cyclopean brain LP block
-    x_ec_scene    = x_brain[_IDX_EC_VEL_SCENE]     # (21,) scene EC cascade
-    x_ec_target   = x_brain[_IDX_EC_VEL_TARGET]    # (21,) target EC cascade
-    x_mn          = x_brain[_IDX_MN]               # (12,) motor neuron firing rates
-
-    ec_d_scene    = x_ec_scene[-3:]
-    ec_d_target   = x_ec_target[-3:]
+    x_ni_net    = decoded.ni.net
+    ec_d_scene  = brain_state.ec_scene[-3:]
+    ec_d_target = brain_state.ec_target[-3:]
 
     # ── Cyclopean perception: binocular fusion + brain LP smoothing ──────────
-    # Fuses per-eye DELAYED retina signals into cyclopean delayed signals.
     # Uses ec_pos = x_ni_net (current) and a lagged ec_verg approximation from
     # the vergence integrator state (avoids the va↔cyclopean circular dependency
     # — exact ec_verg from this step's va.step isn't available yet).
     ec_pos_lagged  = decoded.ni.net
     ec_verg_lagged = acts.va.verg_fast + acts.va.verg_tonic \
                      + jnp.array([brain_params.tonic_verg, 0.0, 0.0])
-    dx_cyc_brain, cyc = pc.step(
-        x_cyc_brain, sensory_out.retina_L, sensory_out.retina_R,
+    dpc, cyc = pc.step(
+        brain_state.pc, sensory_out.retina_L, sensory_out.retina_R,
         ec_pos_lagged, ec_verg_lagged, brain_params,
     )
 
     # ── Target path: encapsulated in perception_target.step ───────────────────
-    # Memory drain is driven by |ec_d_target| (no z_act needed) — small saccades
-    # still drain memory fast because the delayed EC is in deg/s.
-    dx_target_mem, target_slip_for_pursuit, tgt_pos_eff, tgt_vis_eff = pt.step(
-        x_target_mem,
+    dpt, target_slip_for_pursuit, tgt_pos_eff, tgt_vis_eff = pt.step(
+        brain_state.pt,
         cyc.target_vel,
         cyc.target_visible,
         cyc.target_pos,
@@ -783,9 +894,8 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
     )
 
     # ── Self-motion observer (VS + GE + HE) — single unified step ────────────
-    # Receives the cyclopean fused + brain-LP-smoothed scene signals.
-    dx_self_motion, w_est, g_est, v_lin, a_lin_est = sm.step(
-        x_self_motion,
+    dsm, w_est, g_est, v_lin, a_lin_est = sm.step(
+        brain_state.sm,
         jnp.concatenate([
             sensory_out.canal,
             cyc.scene_angular_vel,
@@ -802,12 +912,11 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
     ocr = jnp.array([0.0, 0.0, -brain_params.g_ocr * g_est[0]])
 
     # ── Pursuit on EC-corrected, gated target slip (from perception_target) ─
-    dx_pursuit, u_pursuit = pu.step(x_pursuit,
-                                      jnp.concatenate([target_slip_for_pursuit, x_ni_net]),
-                                     brain_params)
+    dpu, u_pursuit = pu.step(brain_state.pu, target_slip_for_pursuit, brain_params)
 
-    # ── Saccade generator (target selection + Listing's corrections handled internally) ──
-    dx_sg, u_burst = sg.step(x_sg, tgt_pos_eff, tgt_vis_eff, x_ni_net, ocr, w_est, brain_params, noise_acc)
+    # ── Saccade generator (target selection + Listing's corrections internal) ──
+    dsg, u_burst = sg.step(brain_state.sg, tgt_pos_eff, tgt_vis_eff,
+                            x_ni_net, ocr, w_est, brain_params, noise_acc)
 
     # ── Translational VOR (T-VOR): vestibular + visual fusion, distance-scaled ───
     # Uses heading_estimator's v_lin (already gravity-corrected, τ_head ≈ 2 s) as the
@@ -857,7 +966,7 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
     # Both shift the NI's leak target so x_net leaks toward the correct torsion
     # at SS without relying purely on velocity-level corrections to maintain it.
     u_tonic = ocr.at[2].add(brain_params.listing_gain * cyc_torsion_target)
-    dx_ni, motor_cmd_ni = ni.step(x_ni, u_ni_in, brain_params, u_tonic=u_tonic)
+    dni, motor_cmd_ni = ni.step(brain_state.ni, u_ni_in, brain_params, u_tonic=u_tonic)
 
     # ── Vergence + Accommodation — single unified step ────────────────────────
     # Internal sequencing (state-based AC/A & CA/C → vergence → accommodation)
@@ -865,8 +974,8 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
     # Cross-couplings happen one-step-delayed via integrator state, matching
     # synaptic latency and avoiding intra-step iteration.
     z_act_verg = 1.0 - acts.sg.gate_opn
-    dx_va, u_verg, u_acc = va.step(
-        x_va,
+    dva, u_verg, u_acc = va.step(
+        brain_state.va,
         jnp.concatenate([
             jnp.array([cyc.defocus]),
             cyc.target_disparity,
@@ -877,7 +986,9 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
     )
 
     # ── Final common pathway: nucleus encode → MN low-pass → nerve activations ─
-    dx_mn, nerves = fcp.step(x_mn, jnp.concatenate([motor_cmd_ni, u_verg]), brain_params)  # (12,) [L6|R6]
+    dfcp, nerves = fcp.step(brain_state.fcp,
+                             jnp.concatenate([motor_cmd_ni, u_verg]),
+                             brain_params)
 
     # ── Efference copy signals returned for the simulator + EC cascades ──────
     # ec_vel feeds the matched-cascade EC blocks at the end of step (rotation to
@@ -897,17 +1008,27 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
     R_eye_ec       = rotation_matrix(ypr_to_xyz(ec_pos))
     ec_vel_eye     = xyz_to_ypr(R_eye_ec.T @ ypr_to_xyz(ec_vel))
     ec_vel_eye_in  = velocity_saturation(ec_vel_eye, brain_params.v_max_okr)
-    dx_ec_scene    = cascade_lp_step(x_ec_scene, ec_vel_eye_in,
+    dx_ec_scene    = cascade_lp_step(brain_state.ec_scene, ec_vel_eye_in,
                                      brain_params.tau_vis_sharp,
                                      brain_params.tau_vis_smooth_motion,
                                      _EC_VEL_N_SHARP, 3, _EC_VEL_N_LP)
-    dx_ec_target   = cascade_lp_step(x_ec_target, ec_vel_eye_in,
+    dx_ec_target   = cascade_lp_step(brain_state.ec_target, ec_vel_eye_in,
                                      brain_params.tau_vis_sharp,
                                      brain_params.tau_vis_smooth_target_vel,
                                      _EC_VEL_N_SHARP, 3, _EC_VEL_N_LP)
 
     # ── Pack state derivative ─────────────────────────────────────────────────
-    dx_brain = jnp.concatenate([dx_self_motion, dx_ni, dx_sg, dx_pursuit, dx_va, dx_target_mem,
-                                dx_cyc_brain, dx_ec_scene, dx_ec_target, dx_mn])
+    dbrain = BrainState(
+        pc        = dpc,
+        sm        = dsm,
+        pt        = dpt,
+        sg        = dsg,
+        pu        = dpu,
+        va        = dva,
+        ni        = dni,
+        fcp       = dfcp,
+        ec_scene  = dx_ec_scene,
+        ec_target = dx_ec_target,
+    )
 
-    return dx_brain, nerves, ec_vel, ec_pos, ec_verg, u_acc
+    return dbrain, nerves, ec_vel, ec_pos, ec_verg, u_acc

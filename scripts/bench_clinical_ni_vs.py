@@ -117,7 +117,7 @@ def _gen(show):
 
     for label, theta, col, ls in conds:
         st = _sim_lit(theta, t_arr, pt)
-        ep  = np.array(st.plant[:, 0])
+        ep  = np.array(st.plant.left[:, 0])
         ev  = np.gradient(ep, DT)
         spv = extract_spv_states(st, t_arr)[:, 0]
         ni    = ni_net(st)[:, 0]
@@ -192,7 +192,7 @@ def _rebound(show):
 
     ax = axes[0]
     ax.plot(t_arr, np.array(st_null.plant[:,   0]), color=C_GEN,     lw=1.5, label='With null adaptation (rebound)')
-    ax.plot(t_arr, np.array(st_nonull.plant[:, 0]), color='#888888', lw=1.5, ls='--', label='No null adaptation')
+    ax.plot(t_arr, np.array(st_nonull.plant.left[:, 0]), color='#888888', lw=1.5, ls='--', label='No null adaptation')
     ax.axhline(20, color='gray', lw=0.7, ls=':', alpha=0.5, label='Target 20°')
     ax.axvline(HOLD_DUR, color='k', lw=0.8, ls='--', alpha=0.5)
     ax_fmt(ax, ylabel='Eye yaw (deg)')
@@ -274,7 +274,7 @@ def _alexander_law(show):
                   'Center', '−20° ipsi\n(left — slow phase dir.)']
 
     ax = axes[0]
-    ax.plot(t_arr, np.array(st.plant[:, 0]), color=C_BRUNS, lw=1.2, label='Eye pos')
+    ax.plot(t_arr, np.array(st.plant.left[:, 0]), color=C_BRUNS, lw=1.2, label='Eye pos')
     ax.plot(t_arr, np.degrees(np.arctan(tx)), color='gray', lw=0.8, ls='--', alpha=0.7, label='Target')
     ax_fmt(ax, ylabel='Eye yaw (deg)')
     ax.set_title("Eye position — Alexander's law: nystagmus larger in fast-phase direction (rightward gaze)")

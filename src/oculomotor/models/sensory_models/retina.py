@@ -94,21 +94,51 @@ for name, N, n in _RETINA_PER_EYE_LAYOUT:
     _offset += _RETINA_PER_EYE_SIZES[name]
 N_STATES_PER_EYE = _offset   # 90 — sharp cascade states per eye
 
-_RET_OFF_SCENE_ANGULAR_VEL = _RETINA_PER_EYE_OFFSETS['scene_angular_vel']
-_RET_OFF_SCENE_LINEAR      = _RETINA_PER_EYE_OFFSETS['scene_linear_vel']
-_RET_OFF_TARGET_POS        = _RETINA_PER_EYE_OFFSETS['target_pos']
-_RET_OFF_TARGET_VEL        = _RETINA_PER_EYE_OFFSETS['target_vel']
-_RET_OFF_SCENE_VIS         = _RETINA_PER_EYE_OFFSETS['scene_visible']
-_RET_OFF_TARGET_VIS        = _RETINA_PER_EYE_OFFSETS['target_visible']
-_RET_OFF_DEFOCUS           = _RETINA_PER_EYE_OFFSETS['defocus']
+# Per-channel offsets / lengths still useful for the State NamedTuple field
+# sizes (rest_state, etc.); the `_RET_END_*` slice ends are no longer needed
+# now that step() reads NT fields directly.
 
-_RET_END_SCENE_ANGULAR_VEL = _RET_OFF_SCENE_ANGULAR_VEL + _RETINA_PER_EYE_SIZES['scene_angular_vel']
-_RET_END_SCENE_LINEAR      = _RET_OFF_SCENE_LINEAR      + _RETINA_PER_EYE_SIZES['scene_linear_vel']
-_RET_END_TARGET_POS        = _RET_OFF_TARGET_POS        + _RETINA_PER_EYE_SIZES['target_pos']
-_RET_END_TARGET_VEL        = _RET_OFF_TARGET_VEL        + _RETINA_PER_EYE_SIZES['target_vel']
-_RET_END_SCENE_VIS         = _RET_OFF_SCENE_VIS         + _RETINA_PER_EYE_SIZES['scene_visible']
-_RET_END_TARGET_VIS        = _RET_OFF_TARGET_VIS        + _RETINA_PER_EYE_SIZES['target_visible']
-_RET_END_DEFOCUS           = _RET_OFF_DEFOCUS           + _RETINA_PER_EYE_SIZES['defocus']
+
+# ── Per-eye State NamedTuple ──────────────────────────────────────────────────
+from typing import NamedTuple
+
+
+class State(NamedTuple):
+    """Per-eye retina state — sharp gamma cascades for 7 signal channels.
+
+    Each cascade buffer is N=_N_STAGES_OTHER stages × n_axes.  The cascade
+    output (delayed signal) is the last n_axes elements.
+    """
+    scene_angular_vel: jnp.ndarray   # (N*3,) cascade buffer
+    scene_linear_vel:  jnp.ndarray   # (N*3,)
+    target_pos:        jnp.ndarray   # (N*3,)
+    target_vel:        jnp.ndarray   # (N*3,)
+    scene_visible:     jnp.ndarray   # (N,)
+    target_visible:    jnp.ndarray   # (N,)
+    defocus:           jnp.ndarray   # (N,)
+
+
+def rest_state():
+    """Zero state (all cascade buffers zero)."""
+    N = _N_STAGES_OTHER
+    return State(
+        scene_angular_vel = jnp.zeros(N * 3),
+        scene_linear_vel  = jnp.zeros(N * 3),
+        target_pos        = jnp.zeros(N * 3),
+        target_vel        = jnp.zeros(N * 3),
+        scene_visible     = jnp.zeros(N),
+        target_visible    = jnp.zeros(N),
+        defocus           = jnp.zeros(N),
+    )
+
+
+def to_array(state):
+    """retina.State → (N_STATES_PER_EYE,) flat array — legacy adapter."""
+    return jnp.concatenate([
+        state.scene_angular_vel, state.scene_linear_vel, state.target_pos,
+        state.target_vel, state.scene_visible, state.target_visible,
+        state.defocus,
+    ])
 
 _N_SCALAR = _N_STAGES_OTHER     # used in retina geometry below for scaling — keeps
                                 # the visual-field gate sigmoid the same as before
@@ -431,7 +461,7 @@ class RetinaOut(NamedTuple):
     defocus:           jnp.ndarray  # scalar — delayed defocus (D)
 
 
-def step(x_retina_eye,
+def step(state,
          eye_offset_head, q_head, w_head, x_head, v_head,
          q_eye, w_eye,
          w_scene, v_scene, p_target, dp_dt,
@@ -445,7 +475,7 @@ def step(x_retina_eye,
     so this function knows nothing about the other eye.
 
     Args:
-        x_retina_eye:    (N_STATES_PER_EYE,) per-eye retina cascade state
+        state:           retina.State   per-eye retina cascade state
         eye_offset_head: (3,) this eye's anatomical offset in head frame (m)
         q_head, w_head, x_head, v_head: head pose / velocity (world frame)
         q_eye, w_eye:    eye pose / velocity (head frame)
@@ -457,8 +487,8 @@ def step(x_retina_eye,
                          v_max_target_vel, visual_field_limit, k_visual_field
 
     Returns:
-        dx_retina_eye: (N_STATES_PER_EYE,) state derivative
-        retina_out:    RetinaOut bundle of delayed per-eye signals
+        dstate:     retina.State  state derivative (same NT shape as state)
+        retina_out: RetinaOut    delayed per-eye signals
     """
     # ── 1. Geometry — world_to_retina projection ─────────────────────────────
     target_pos, scene_angular_vel, scene_linear_vel, target_vel, scene_vis, target_vis = \
@@ -479,57 +509,45 @@ def step(x_retina_eye,
     target_pos_in      = target_pos * target_vis
     defocus_in         = defocus_eye
 
-    # ── 3. Slice per-eye cascade state ───────────────────────────────────────
-    x_scene_ang  = x_retina_eye[_RET_OFF_SCENE_ANGULAR_VEL : _RET_END_SCENE_ANGULAR_VEL]
-    x_scene_lin  = x_retina_eye[_RET_OFF_SCENE_LINEAR      : _RET_END_SCENE_LINEAR]
-    x_target_pos = x_retina_eye[_RET_OFF_TARGET_POS        : _RET_END_TARGET_POS]
-    x_target_vel = x_retina_eye[_RET_OFF_TARGET_VEL        : _RET_END_TARGET_VEL]
-    x_scene_vis  = x_retina_eye[_RET_OFF_SCENE_VIS         : _RET_END_SCENE_VIS]
-    x_target_vis = x_retina_eye[_RET_OFF_TARGET_VIS        : _RET_END_TARGET_VIS]
-    x_defocus    = x_retina_eye[_RET_OFF_DEFOCUS           : _RET_END_DEFOCUS]
-
-    # ── 4. Advance sharp cascades (N stages × τ_retina, per signal) ──────────
+    # ── 3. Advance sharp cascades (N stages × τ_retina, per signal) ──────────
     tau_retina = sensory_params.tau_vis_sharp
     N          = _N_STAGES_OTHER
-    dx_scene_ang  = delay_cascade_step(x_scene_ang,  scene_angular_in, tau_retina, N=N)
-    dx_scene_lin  = delay_cascade_step(x_scene_lin,  scene_linear_in,  tau_retina, N=N)
-    dx_target_pos = delay_cascade_step(x_target_pos, target_pos_in,    tau_retina, N=N)
-    dx_target_vel = delay_cascade_step(x_target_vel, target_vel_in,    tau_retina, N=N)
-    dx_scene_vis  = delay_cascade_step(x_scene_vis,  scene_vis,        tau_retina, N=N)
-    dx_target_vis = delay_cascade_step(x_target_vis, target_vis,       tau_retina, N=N)
-    dx_defocus    = delay_cascade_step(x_defocus,    defocus_in,       tau_retina, N=N)
-
-    dx_retina_eye = jnp.concatenate([
-        dx_scene_ang, dx_scene_lin, dx_target_pos, dx_target_vel,
-        dx_scene_vis, dx_target_vis, dx_defocus,
-    ])
-
-    # ── 5. Read delayed signals (last n_axes of each cascade) ────────────────
-    out = RetinaOut(
-        scene_angular_vel = x_scene_ang[-3:],
-        scene_linear_vel  = x_scene_lin[-3:],
-        target_pos        = x_target_pos[-3:],
-        target_vel        = x_target_vel[-3:],
-        scene_visible     = x_scene_vis[-1],
-        target_visible    = x_target_vis[-1],
-        defocus           = x_defocus[-1],
+    dstate = State(
+        scene_angular_vel = delay_cascade_step(state.scene_angular_vel, scene_angular_in, tau_retina, N=N),
+        scene_linear_vel  = delay_cascade_step(state.scene_linear_vel,  scene_linear_in,  tau_retina, N=N),
+        target_pos        = delay_cascade_step(state.target_pos,        target_pos_in,    tau_retina, N=N),
+        target_vel        = delay_cascade_step(state.target_vel,        target_vel_in,    tau_retina, N=N),
+        scene_visible     = delay_cascade_step(state.scene_visible,     scene_vis,        tau_retina, N=N),
+        target_visible    = delay_cascade_step(state.target_visible,    target_vis,       tau_retina, N=N),
+        defocus           = delay_cascade_step(state.defocus,           defocus_in,       tau_retina, N=N),
     )
-    return dx_retina_eye, out
+
+    # ── 4. Read delayed signals (last n_axes of each cascade) ────────────────
+    out = RetinaOut(
+        scene_angular_vel = state.scene_angular_vel[-3:],
+        scene_linear_vel  = state.scene_linear_vel[-3:],
+        target_pos        = state.target_pos[-3:],
+        target_vel        = state.target_vel[-3:],
+        scene_visible     = state.scene_visible[-1],
+        target_visible    = state.target_visible[-1],
+        defocus           = state.defocus[-1],
+    )
+    return dstate, out
 
 
-def read_outputs(x_retina_eye):
-    """Pure state readout — returns RetinaOut from a per-eye cascade state.
+def read_outputs(state):
+    """Pure state readout — returns RetinaOut from a per-eye retina.State.
 
-    Last n_axes of each block = sharp-cascade output (delayed per-eye signal).
+    Last n_axes of each cascade buffer = sharp-cascade output (delayed signal).
     """
     return RetinaOut(
-        scene_angular_vel = x_retina_eye[_RET_END_SCENE_ANGULAR_VEL - 3 : _RET_END_SCENE_ANGULAR_VEL],
-        scene_linear_vel  = x_retina_eye[_RET_END_SCENE_LINEAR      - 3 : _RET_END_SCENE_LINEAR],
-        target_pos        = x_retina_eye[_RET_END_TARGET_POS        - 3 : _RET_END_TARGET_POS],
-        target_vel        = x_retina_eye[_RET_END_TARGET_VEL        - 3 : _RET_END_TARGET_VEL],
-        scene_visible     = x_retina_eye[_RET_END_SCENE_VIS         - 1],
-        target_visible    = x_retina_eye[_RET_END_TARGET_VIS        - 1],
-        defocus           = x_retina_eye[_RET_END_DEFOCUS           - 1],
+        scene_angular_vel = state.scene_angular_vel[-3:],
+        scene_linear_vel  = state.scene_linear_vel[-3:],
+        target_pos        = state.target_pos[-3:],
+        target_vel        = state.target_vel[-3:],
+        scene_visible     = state.scene_visible[-1],
+        target_visible    = state.target_visible[-1],
+        defocus           = state.defocus[-1],
     )
 
 

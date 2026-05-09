@@ -56,8 +56,6 @@ def _cascade(show):
           the visual contribution to T-VOR slow phase from any saccadic catch-up.
     DARK = scene off, target off — pure vestibular T-VOR.
     """
-    from oculomotor.sim.simulator import _IDX_GRAV
-    from oculomotor.models.brain_models.brain_model import _IDX_HEAD
 
     AXES   = [(0, +1, 'Sway',  'rightward'),
               (1, +1, 'Heave', 'upward'),
@@ -123,10 +121,10 @@ def _cascade(show):
                 target_present_array = np.zeros(T),
                 return_states=True, key=KEY)
 
-            g_est = np.array(st.brain[:, _IDX_GRAV])[:, :3]
-            v_lin = np.array(st.brain[:, _IDX_HEAD])
-            eye_L = np.array(st.plant[:, :3])
-            eye_R = np.array(st.plant[:, 3:])
+            g_est = np.array(st.brain.sm.g_est)
+            v_lin = np.array(st.brain.sm.v_lin)
+            eye_L = np.array(st.plant.left)
+            eye_R = np.array(st.plant.right)
             eye_version = (eye_L + eye_R) / 2.0
             eye_verg    = eye_L[:, 0] - eye_R[:, 0]
 

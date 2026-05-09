@@ -39,8 +39,8 @@ def _columns():
 def _collect(columns_data, t_np):
     by_cond = {'continuous': [], 'pulsed': [], 'dark': []}
     for (_title, cond, occ), st in columns_data:
-        eye_L = np.array(st.plant[:, 0])
-        eye_R = np.array(st.plant[:, 3])
+        eye_L = np.array(st.plant.left[:, 0])
+        eye_R = np.array(st.plant.right[:, 0])
         verg = eye_L - eye_R
         spv_L = extract_spv_states(st, np.array(t_np), eye='left')[:, 0]
         spv_R = extract_spv_states(st, np.array(t_np), eye='right')[:, 0]

@@ -33,8 +33,7 @@ if '--show' not in sys.argv:
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 
-from oculomotor.sim.simulator import PARAMS_DEFAULT, simulate, _IDX_VERG, with_brain
-from oculomotor.models.brain_models.brain_model import _IDX_ACC
+from oculomotor.sim.simulator import PARAMS_DEFAULT, simulate, with_brain
 from oculomotor.sim import kinematics as km
 from oculomotor.sim.stimuli import build_cover_flags
 from oculomotor.analysis import ax_fmt
@@ -296,8 +295,8 @@ def _near_step(show):
                   scene_present_array=np.ones(T),
                   return_states=True, key=KEY)
 
-    eye_L   = np.array(st.plant[:, 0])   # L yaw (deg)
-    eye_R   = np.array(st.plant[:, 3])   # R yaw (deg)
+    eye_L   = np.array(st.plant.left[:, 0])   # L yaw (deg)
+    eye_R   = np.array(st.plant.right[:, 0])   # R yaw (deg)
     vergence = eye_L - eye_R             # positive = converged
     acc_plant= np.array(st.acc_plant[:, 0])   # actual lens acc (D)
 
@@ -402,7 +401,7 @@ def _lens_aca(show):
                         return_states=True, key=KEY)
 
     def _verg(st):
-        return np.array(st.plant[:, 0] - st.plant[:, 3])
+        return np.array(st.plant.left[:, 0] - st.plant.right[:, 0])
     def _acc(st):
         return np.array(st.acc_plant[:, 0])
 
@@ -495,7 +494,7 @@ def _prism_cac(show):
                         prism_L_array=prism_L, prism_R_array=prism_R,
                         return_states=True, key=KEY)
 
-    def _verg(st): return np.array(st.plant[:, 0] - st.plant[:, 3])
+    def _verg(st): return np.array(st.plant.left[:, 0] - st.plant.right[:, 0])
     def _acc(st):  return np.array(st.acc_plant[:, 0])
 
     # Stimulus trace: prism power (right eye)
@@ -575,8 +574,8 @@ def _lens_step_response(show):
                   return_states=True, key=KEY)
 
     # Neural command: x_fast + x_slow + tonic_acc
-    x_fast  = np.array(st.brain[:, _IDX_ACC.start])
-    x_slow  = np.array(st.brain[:, _IDX_ACC.start + 1])
+    x_fast  = np.array(st.brain.va.acc_fast)
+    x_slow  = np.array(st.brain.va.acc_slow)
     tonic   = float(PARAMS_DEFAULT.brain.tonic_acc)
     u_neural = x_fast + x_slow + tonic
 
@@ -788,7 +787,7 @@ def _refractive_error(show):
     for (label, p), col, ls in zip(groups.items(), colors, styles):
         st = simulate(p, t, target=tgt, scene_present_array=np.ones(T),
                       return_states=True, key=KEY)
-        verg = np.array(st.plant[:, 0] - st.plant[:, 3])
+        verg = np.array(st.plant.left[:, 0] - st.plant.right[:, 0])
         acc  = np.array(st.acc_plant[:, 0])
         ax_verg.plot(t, verg, color=col, ls=ls, lw=1.4, label=label)
         ax_acc.plot(t, acc,  color=col, ls=ls, lw=1.4, label=label)
@@ -886,7 +885,7 @@ def _gradient_aca_cac(show):
                       target_present_R_array=tgt_R,
                       lens_L_array=lens_arr, lens_R_array=lens_arr,
                       return_states=True, key=KEY)
-        verg = np.array(st.plant[:, 0] - st.plant[:, 3])
+        verg = np.array(st.plant.left[:, 0] - st.plant.right[:, 0])
         acc  = np.array(st.acc_plant[:, 0])
         aca_verg_traces.append(verg)
         aca_acc_traces.append(acc)
@@ -913,7 +912,7 @@ def _gradient_aca_cac(show):
                       scene_present_array=scene,
                       prism_L_array=prism_L_arr, prism_R_array=prism_R_arr,
                       return_states=True, key=KEY)
-        verg = np.array(st.plant[:, 0] - st.plant[:, 3])
+        verg = np.array(st.plant.left[:, 0] - st.plant.right[:, 0])
         acc  = np.array(st.acc_plant[:, 0])
         cac_verg_traces.append(verg)
         cac_acc_traces.append(acc)

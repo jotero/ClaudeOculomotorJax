@@ -23,12 +23,10 @@ import matplotlib.pyplot as plt
 
 from oculomotor.sim.simulator import (
     PARAMS_DEFAULT, SimConfig, simulate, with_brain, with_sensory,
-    _IDX_ACC, _IDX_NI_L, _IDX_NI_R, _IDX_VERG, _IDX_VIS,
 )
 from oculomotor.models.brain_models.perception_cyclopean import (
     C_vel as _C_vel, C_target_disp as _C_disp, C_defocus as _C_defocus,
 )
-from oculomotor.models.brain_models.brain_model import _IDX_CYC_BRAIN
 from oculomotor.sim import kinematics as km
 from oculomotor.sim.kinematics import build_target
 from oculomotor.analysis import extract_spv_states
@@ -168,28 +166,25 @@ def _occlusion(show, *, save_name, plot_title, dist_m, lens_d, theta_base, dark_
         axes[0, ci].set_title(title, fontsize=9)
         axes[N_ROWS - 1, ci].set_xlabel('Time (s)', fontsize=8)
 
-        eye_L    = np.array(st.plant[:, 0])
-        eye_R    = np.array(st.plant[:, 3])
+        eye_L    = np.array(st.plant.left[:, 0])
+        eye_R    = np.array(st.plant.right[:, 0])
         spv_L_yaw    = extract_spv_states(st, np.array(t_np), eye='left')[:, 0]
         spv_R_yaw    = extract_spv_states(st, np.array(t_np), eye='right')[:, 0]
         vers_spv_yaw = extract_spv_states(st, np.array(t_np), eye='version')[:, 0]
         verg_spv_yaw = spv_L_yaw - spv_R_yaw   # vergence slow-phase velocity
         # Accommodation: lens optical power (D) + phasic/tonic neural states
         acc_lens  = np.array(st.acc_plant[:, 0])                     # lens (D)
-        acc_brain = np.array(st.brain[:, _IDX_ACC])                  # (T, 2) — fast, slow
-        acc_fast  = acc_brain[:, 0]
-        acc_slow  = acc_brain[:, 1]
+        acc_fast  = np.array(st.brain.va.acc_fast)
+        acc_slow  = np.array(st.brain.va.acc_slow)
         # ACA drive in deg: AC_A (pd/D) × 0.5729 (deg/pd) × x_acc_fast (D)
         aca_drive = float(theta_base.brain.AC_A) * 0.5729 * acc_fast
         # CAC drive in D: CA_C (D/pd) × (x_verg_fast[H] / 0.5729 deg/pd)
-        # x_verg layout = [x_fast(3) | x_slow(3) | x_copy(3)]; [H] component is index 0.
-        x_verg_v_h = np.array(st.brain[:, _IDX_VERG])[:, 0]
+        x_verg_v_h = np.array(st.brain.va.verg_fast)[:, 0]
         cac_drive  = float(theta_base.brain.CA_C) * (x_verg_v_h / 0.5729)
-        # Cyclopean cascade outputs (post-fusion brain LP, lives in brain state)
-        x_cyc      = np.array(st.brain[:, _IDX_CYC_BRAIN])
-        cyc_motion  = (x_cyc @ np.array(_C_vel).T)[:, 0]      # H component (deg/s)
-        cyc_disp    = (x_cyc @ np.array(_C_disp).T)[:, 0]     # H component (deg)
-        cyc_defocus = (x_cyc @ np.array(_C_defocus).T)[:, 0]  # scalar (D)
+        # Cyclopean cascade outputs (post-fusion brain LP) — read tail of each cascade buffer
+        cyc_motion  = np.array(st.brain.pc.target_vel)[:, 0]            # 1-pole LP: full buffer is the output, take H
+        cyc_disp    = np.array(st.brain.pc.target_disparity)[:, 0]      # H disparity
+        cyc_defocus = np.array(st.brain.pc.defocus)[:, -1]              # 1-pole LP scalar
 
         # Row 0: target visibility per eye as colored patches (L on top, R on bottom)
         tL_flag, tR_flag, _ts = flag_arrays[ci]
@@ -500,8 +495,8 @@ def _occlusion_summary(show, conv_columns, div_columns, t_np):
         # viewing so they're averaged without a flip.
         by_cond = {'continuous': [], 'pulsed': [], 'dark': []}
         for (_title, cond, occ), st in columns_data:
-            eye_L = np.array(st.plant[:, 0])
-            eye_R = np.array(st.plant[:, 3])
+            eye_L = np.array(st.plant.left[:, 0])
+            eye_R = np.array(st.plant.right[:, 0])
             verg = eye_L - eye_R
             spv_L = extract_spv_states(st, np.array(t_np), eye='left')[:, 0]
             spv_R = extract_spv_states(st, np.array(t_np), eye='right')[:, 0]
