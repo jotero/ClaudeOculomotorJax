@@ -351,7 +351,30 @@ Each module exposes:
 |--------|------|-----------------|
 | `N_STATES`, `N_INPUTS`, `N_OUTPUTS` | `int` constants | never |
 | `step(x, u, theta)` → `(dx, y)` | pure function | — |
+| `Activations` NamedTuple + `read_activations(x_self)` | firing-rate registry | — |
+| `Decoded` NamedTuple + `decode_states(acts)` | push-pull L−R nets (only subsystems with bilateral pops) | — |
+| `Weights` NamedTuple + `read_weights(x_self)` | tonic / null / setpoint registers (only when applicable) | — |
 | Module-level constants (e.g. `C_slip`, `PINV_SENS`) | only when used externally | — |
+
+### Activation / Decoded / Weights registries
+
+Every brain subsystem exposes three local registries (where applicable):
+
+| Registry | Holds | Built by |
+|---|---|---|
+| `Activations` | population firing rates (rectified pops, signed firing rates, OPN gate, …) | `read_activations(x_self)` |
+| `Decoded` | push-pull L−R nets (`vs_net`, `ni_net`, `pu_net`) — what downstream pops physically read | `decode_states(acts)` |
+| `Weights` | tonic / null / setpoint registers (`vs_null`, `ni_null`, `e_held`) — long-term: learned weights | `read_weights(x_self)` |
+
+`brain_model.py` aggregates them under per-subsystem fields:
+
+```python
+acts     = brain_model.read_activations(x_brain)   # acts.ni.R, acts.sg.gate_opn, ...
+decoded  = brain_model.decode_states(acts)         # decoded.ni.net, decoded.pu.net
+weights  = brain_model.read_weights(x_brain)       # weights.sg.e_held, weights.ni.null
+```
+
+**Cross-subsystem reads inside `brain_model.step` MUST go through these registries** — not via raw `x_brain[_IDX_*]` slicing. A subsystem reads its own state slice as before for derivative computation; cross-subsystem signals come from `acts` / `decoded` / `weights`.
 
 ### `step()` contract
 

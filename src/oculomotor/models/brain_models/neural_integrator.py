@@ -51,6 +51,8 @@ Parameters:
     orbital_limit (deg) — oculomotor range half-width.  Default 50 deg.
 """
 
+from typing import NamedTuple
+
 import jax.numpy as jnp
 
 N_STATES  = 9   # x_L(3) + x_R(3) + x_null(3)
@@ -61,6 +63,41 @@ N_OUTPUTS = 3
 _IDX_L    = slice(0, 3)
 _IDX_R    = slice(3, 6)
 _IDX_NULL = slice(6, 9)
+
+
+# ── Local registries (Phase-2 contract) ──────────────────────────────────────
+# Per-module Activations / Decoded / Weights — aggregated centrally by
+# `brain_models.activations.read_activations`.
+
+class Activations(NamedTuple):
+    """NI firing rates — bilateral push-pull pops."""
+    R: jnp.ndarray   # (3,) right NPH/INC pop  [NPH (yaw) | INC (vert/tors)]
+    L: jnp.ndarray   # (3,) left  NPH/INC pop
+
+
+class Decoded(NamedTuple):
+    """NI decoded readout — net eye position consumed by FCP."""
+    net: jnp.ndarray   # (3,) signed = L − R   eye position estimate (deg)
+
+
+class Weights(NamedTuple):
+    """NI tonic / null / setpoint registers (long-term: learned weights)."""
+    null: jnp.ndarray   # (3,) signed   slow null adaptation register
+
+
+def read_activations(x_ni):
+    """Project NI raw state → NI Activations."""
+    return Activations(R=x_ni[_IDX_R], L=x_ni[_IDX_L])
+
+
+def decode_states(acts):
+    """NI net eye position from bilateral pops."""
+    return Decoded(net=acts.L - acts.R)
+
+
+def read_weights(x_ni):
+    """NI null adaptation register."""
+    return Weights(null=x_ni[_IDX_NULL])
 
 
 def step(x_ni, u_vel, brain_params, u_tonic=0.0):

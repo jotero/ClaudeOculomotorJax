@@ -27,6 +27,8 @@ Outputs of step():
     tgt_vis_eff              scalar  blended visibility → SG
 """
 
+from typing import NamedTuple
+
 import jax
 import jax.numpy as jnp
 
@@ -41,6 +43,25 @@ _TAU_TARGET_MEM_TRUST_DECAY  = 5.0     # trust decay TC when target is unseen (s
 _TARGET_MEM_TRUST_THRESHOLD  = 0.2     # trust level above which SG commits to saccade mode
 
 N_STATES = 4   # 3-D last-seen position + 1 trust scalar
+
+_IDX_MEM_POS   = slice(0, 3)
+_IDX_MEM_TRUST = 3
+
+
+# ── Local registries (Phase-2 contract) ──────────────────────────────────────
+
+class Activations(NamedTuple):
+    """Target-perception working-memory firing rates."""
+    mem_pos:   jnp.ndarray   # (3,)   target working memory pop  [dlPFC / FEF]
+    mem_trust: jnp.ndarray   # scalar memory confidence          [dlPFC]
+
+
+def read_activations(x_target_mem):
+    """Project target-memory raw state → Activations."""
+    return Activations(
+        mem_pos   = x_target_mem[_IDX_MEM_POS],
+        mem_trust = x_target_mem[_IDX_MEM_TRUST],
+    )
 
 
 def step(x_target_mem,

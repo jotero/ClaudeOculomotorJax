@@ -31,7 +31,8 @@ def run_trial(seed, sigma_pos=0.3, sigma_vel=5.0, amp=5):
     x_sg = np.array(states.brain[:, _IDX_SG])
     ni_L = np.array(states.brain[:, _IDX_NI_L])
     ni_R = np.array(states.brain[:, _IDX_NI_R])
-    x_pursuit = np.array(states.brain[:, _IDX_PURSUIT])
+    _xp = np.array(states.brain[:, _IDX_PURSUIT])           # (T, 6) bilateral
+    x_pursuit = _xp[:, :3] - _xp[:, 3:6]                    # (T, 3) NET
     z_opn = x_sg[:, 6]
     x_copy_yaw = x_sg[:, 0]
     e_held_yaw = x_sg[:, 3]

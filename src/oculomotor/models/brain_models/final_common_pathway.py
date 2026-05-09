@@ -48,6 +48,8 @@ Parameters (in BrainParams):
     tau_mn           MN membrane LP TC (s). Default 0.005.
 """
 
+from typing import NamedTuple
+
 import jax
 import jax.numpy as jnp
 
@@ -57,7 +59,8 @@ from oculomotor.models.plant_models.muscle_geometry import (
     AIN_L, AIN_R, MR_L, MR_R, CN3_MR_L, CN3_MR_R,
 )
 
-__all__ = ['G_NUCLEUS_DEFAULT', 'G_NERVE_DEFAULT', 'N_STATES', 'step', 'rest_state']
+__all__ = ['G_NUCLEUS_DEFAULT', 'G_NERVE_DEFAULT', 'N_STATES', 'step', 'rest_state',
+           'Activations', 'read_activations']
 
 # State count: 14 motor neurons in nucleus order — 12 muscle-MNs that project
 # via cranial nerves to extraocular muscles, plus 2 abducens internuclear
@@ -85,6 +88,24 @@ def _smooth_clip(z, g_max):
     Knee width ~1 deg/s, negligible at typical firing-rate scales.
     """
     return jax.nn.softplus(z) - jax.nn.softplus(z - g_max)
+
+
+# ── Local registry (Phase-2 contract) ─────────────────────────────────────────
+
+class Activations(NamedTuple):
+    """FCP firing rates — motor neuron rates (= raw state, MN states ARE rates)."""
+    mn_rates: jnp.ndarray   # (12,) per-muscle MN firing rates  [oculomotor / trochlear / abducens]
+
+
+def read_activations(x_mn):
+    """Project motor-neuron raw state → Activations.
+
+    MN states ARE firing rates by construction (LP dynamics with smooth-clip
+    f-I curve), so the projection is identity.  Note: x_mn has 14 states (12
+    muscle-MNs + AIN_L + AIN_R); only the 12 muscle-MN rates are exposed —
+    AINs project internally to MR via the MLF and aren't a downstream signal.
+    """
+    return Activations(mn_rates=x_mn[:12])
 
 
 def step(x_mn, premotor_activity, brain_params):

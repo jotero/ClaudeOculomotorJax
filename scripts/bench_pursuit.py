@@ -79,7 +79,8 @@ def _velocity_range(show):
         eye_nop = (np.array(st_nop.plant[:, 0]) + np.array(st_nop.plant[:, 3])) / 2.0
         ev_pur  = np.gradient(eye_pur, DT)
         ev_nop  = np.gradient(eye_nop, DT)
-        u_pur   = np.array(st_pur.brain[:, _IDX_PURSUIT])[:, 0]
+        _xp     = np.array(st_pur.brain[:, _IDX_PURSUIT])         # (T, 6) bilateral
+        u_pur   = (_xp[:, 0] - _xp[:, 3])                         # NET yaw (deg/s)
 
         axes[0, ci].set_title(f'{vel:.0f} deg/s', fontsize=10)
         for ax in axes[:, ci]:
@@ -227,7 +228,8 @@ def _cascade(show):
     sg  = extract_sg(st, THETA)
     eye = (np.array(st.plant[:, 0]) + np.array(st.plant[:, 3])) / 2.0
     ev  = np.gradient(eye, DT)
-    x_pur = np.array(st.brain[:, _IDX_PURSUIT])[:, 0]
+    _xp   = np.array(st.brain[:, _IDX_PURSUIT])                 # (T, 6) bilateral
+    x_pur = (_xp[:, 0] - _xp[:, 3])                             # NET yaw memory
 
     n_rows = 7
     fig, axes = plt.subplots(n_rows, 1, figsize=(12, 2.5 * n_rows))

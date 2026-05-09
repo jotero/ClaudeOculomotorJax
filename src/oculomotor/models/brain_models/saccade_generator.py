@@ -115,6 +115,8 @@ Parameters
     g_opn_pause    OPN inhibitory overshoot           default 500.0
 """
 
+from typing import NamedTuple
+
 import jax.numpy as jnp
 import jax
 
@@ -123,6 +125,56 @@ from oculomotor.models.brain_models import listing
 N_STATES  = 18  # e_held(3) + z_opn(1) + z_acc(1) + z_trig(1) + x_ebn_R(3) + x_ebn_L(3) + x_ibn_R(3) + x_ibn_L(3)
 N_INPUTS  = 9   # pos_delayed(3) + target_visible(1) + x_ni(3)
 N_OUTPUTS = 3   # u_burst (3,)
+
+
+# ── Sub-state slices (relative to x_sg) ──────────────────────────────────────
+_IDX_E_HELD = slice(0, 3)
+_IDX_Z_OPN  = 3
+_IDX_Z_ACC  = 4
+_IDX_Z_TRIG = 5
+_IDX_EBN_R  = slice(6, 9)
+_IDX_EBN_L  = slice(9, 12)
+_IDX_IBN_R  = slice(12, 15)
+_IDX_IBN_L  = slice(15, 18)
+
+# OPN tonic firing ≈ 100 sp/s; paused ≈ 0.  Gate output = z_opn / 100, clipped.
+_OPN_TONIC = 100.0
+
+
+# ── Local registries (Phase-2 contract) ──────────────────────────────────────
+
+class Activations(NamedTuple):
+    """SG firing rates."""
+    gate_opn:  jnp.ndarray   # scalar  OPN gate output (1=tonic, 0=paused)  [nucleus raphe interpositus]
+    z_acc:     jnp.ndarray   # scalar  rise-to-bound accumulator            [SC build-up cells, plausible]
+    z_trig:    jnp.ndarray   # scalar  trigger membrane                     [SC burst cells, plausible]
+    ebn_R:     jnp.ndarray   # (3,)    right EBN burst                      [PPRF | riMLF]
+    ebn_L:     jnp.ndarray   # (3,)    left  EBN burst                      [PPRF | riMLF]
+    ibn_R:     jnp.ndarray   # (3,)    right IBN burst                      [PPRF | riMLF (inhib)]
+    ibn_L:     jnp.ndarray   # (3,)    left  IBN burst                      [PPRF | riMLF (inhib)]
+
+
+class Weights(NamedTuple):
+    """SG tonic / null / setpoint registers (long-term: learned weights)."""
+    e_held: jnp.ndarray   # (3,) signed   Robinson local-feedback held error / setpoint
+
+
+def read_activations(x_sg):
+    """Project SG raw state → SG Activations."""
+    return Activations(
+        gate_opn = jnp.clip(x_sg[_IDX_Z_OPN] / _OPN_TONIC, 0.0, 1.0),
+        z_acc    = x_sg[_IDX_Z_ACC],
+        z_trig   = x_sg[_IDX_Z_TRIG],
+        ebn_R    = x_sg[_IDX_EBN_R],
+        ebn_L    = x_sg[_IDX_EBN_L],
+        ibn_R    = x_sg[_IDX_IBN_R],
+        ibn_L    = x_sg[_IDX_IBN_L],
+    )
+
+
+def read_weights(x_sg):
+    """SG Robinson held-error setpoint."""
+    return Weights(e_held=x_sg[_IDX_E_HELD])
 
 
 # ── Burst velocity (magnitude + direction) ────────────────────────────────────

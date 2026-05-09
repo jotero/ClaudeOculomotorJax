@@ -68,6 +68,17 @@ tr:last-child { border-bottom: none; }
 .encodes-cell { color: #1d3a8a; font-weight: 500; line-height: 1.4; }
 .frame-cell   { font-size: 11px; color: #5a7090; font-style: italic;
                 margin-top: 3px; }
+.repr-tag     { display: inline-block; padding: 1px 6px; border-radius: 3px;
+                font-size: 10px; font-weight: 600; margin-bottom: 4px; }
+.repr-firing-rate          { background: #d4edda; color: #155724; }
+.repr-firing-rate-bias     { background: #cfe2ef; color: #0c5460; }
+.repr-rectified            { background: #d6f1d6; color: #1d3a1d; }
+.repr-position             { background: #e8e0f5; color: #4a2671; }
+.repr-bookkeeping          { background: #efe8d8; color: #6b5520; }
+.activation-cell { font-family: 'SF Mono', Consolas, monospace;
+                   font-size: 10.5px; color: #6a3da6; line-height: 1.4;
+                   margin-top: 4px; }
+.baseline-cell   { font-size: 10.5px; color: #888; margin-top: 2px; }
 .desc-cell   { color: #333; line-height: 1.45; }
 .anatomy-cell { font-size: 11px; color: #666; line-height: 1.45; }
 .anatomy-cell .ax-tag {
@@ -183,6 +194,29 @@ def _row_html(field):
         f'<div class="frame-cell">frame: {frame}</div>' if frame else ''
     )
 
+    # Representation / activation / baseline block
+    repr_str = field.get('representation', '')
+    repr_class_map = {
+        'linear-firing-rate':       'repr-firing-rate',
+        'firing-rate-around-bias':  'repr-firing-rate-bias',
+        'rectified-firing-rate':    'repr-rectified',
+        'position-equivalent':      'repr-position',
+        'scalar-bookkeeping':       'repr-bookkeeping',
+    }
+    repr_html = (
+        f'<span class="repr-tag {repr_class_map.get(repr_str, "")}">{repr_str}</span>'
+        if repr_str else ''
+    )
+    act_html = (
+        f'<div class="activation-cell">activation: {field["activation"]}</div>'
+        if field.get('activation') else ''
+    )
+    base_html = (
+        f'<div class="baseline-cell">baseline: {field["baseline"]}</div>'
+        if field.get('baseline') else ''
+    )
+    repr_block = repr_html + act_html + base_html
+
     return f"""
         <tr>
           <td class="signal-name">{name}{(' ' + badge_html) if badge_html else ''}</td>
@@ -190,6 +224,7 @@ def _row_html(field):
           <td class="axes-cell">{_format_axes(field.get('axes', []))}</td>
           <td class="units">{field.get('units', '')}</td>
           <td>{encodes_block}</td>
+          <td>{repr_block}</td>
           <td class="desc-cell">{desc_html}{population_html}{_refs_html(field.get('references'))}</td>
           <td class="anatomy-cell">{_anatomy_html(field.get('anatomy'))}</td>
           <td>{source_html}</td>
@@ -209,14 +244,15 @@ def _subsection_html(class_label, group_key, fields):
       <h3>{_group_label(group_key)} <small style="font-size:11px;font-weight:400;color:#888">({n} signal{'s' if n != 1 else ''})</small></h3>
       <table>
         <thead><tr>
-          <th style="width:160px">Signal</th>
-          <th style="width:55px">Shape</th>
-          <th style="width:170px">Axes</th>
-          <th style="width:75px">Units</th>
-          <th style="width:230px">Encodes / frame</th>
+          <th style="width:140px">Signal</th>
+          <th style="width:50px">Shape</th>
+          <th style="width:140px">Axes</th>
+          <th style="width:65px">Units</th>
+          <th style="width:200px">Encodes / frame</th>
+          <th style="width:220px">Representation / activation</th>
           <th>Description</th>
-          <th style="width:180px">Anatomical locus</th>
-          <th style="width:210px">Source / computation</th>
+          <th style="width:170px">Anatomical locus</th>
+          <th style="width:170px">Source</th>
         </tr></thead>
         <tbody>{rows}
         </tbody>

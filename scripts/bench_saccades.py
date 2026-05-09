@@ -369,7 +369,8 @@ def _cascade(show, noisy=False):
         x_cyc        = np.array(st.brain[:, _IDX_CYC_BRAIN])         # (T, 43) cyclopean brain LP block
         vel_del      = x_cyc @ np.array(C_vel_sm).T                  # (T, 3) delayed target vel (cyclopean)
         slip_del     = x_cyc @ np.array(C_slip_sm).T                 # (T, 3) delayed scene slip (cyclopean)
-        x_purs       = np.array(st.brain[:, _IDX_PURSUIT])           # (T, 3) pursuit memory
+        _xp_raw      = np.array(st.brain[:, _IDX_PURSUIT])           # (T, 6) bilateral memory
+        x_purs       = _xp_raw[:, :3] - _xp_raw[:, 3:6]              # (T, 3) NET pursuit memory
 
         # Row 5: raw delayed velocities
         axes[5, ci].plot(t_np, vel_del[:, 0],  color='darkorange', lw=1.2, label='tgt_vel')

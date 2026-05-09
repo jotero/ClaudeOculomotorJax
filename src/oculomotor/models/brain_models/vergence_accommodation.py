@@ -46,6 +46,8 @@ References:
     Hofstetter, Hung & Semmlow                   — clinical AC/A and CA/C ratios
 """
 
+from typing import NamedTuple
+
 import jax.numpy as jnp
 
 
@@ -96,6 +98,30 @@ _ACC_IDX_SLOW = 1
 N_STATES  = 9 + 2   # 11
 _IDX_VERG = slice(0, 9)
 _IDX_ACC  = slice(9, 11)
+
+
+# ── Local registries (Phase-2 contract) ──────────────────────────────────────
+
+class Activations(NamedTuple):
+    """Vergence + Accommodation firing rates."""
+    verg_fast:  jnp.ndarray   # (3,)    phasic vergence neurons   [supraoculomotor area]
+    verg_tonic: jnp.ndarray   # (3,)    tonic vergence neurons    [supraoculomotor area]
+    verg_copy:  jnp.ndarray   # (3,)    saccadic-vergence EC pop  [supraoculomotor area; vestigial]
+    acc_fast:   jnp.ndarray   # scalar  fast accommodation pop    [NRTP / EW]
+    acc_slow:   jnp.ndarray   # scalar  slow accommodation pop    [NRTP / EW]
+
+
+def read_activations(x_va):
+    """Project vergence+accommodation raw state → Activations."""
+    x_verg = x_va[_IDX_VERG]
+    x_acc  = x_va[_IDX_ACC]
+    return Activations(
+        verg_fast  = x_verg[_VG_IDX_VERG],
+        verg_tonic = x_verg[_VG_IDX_TONIC],
+        verg_copy  = x_verg[_VG_IDX_COPY],
+        acc_fast   = x_acc[_ACC_IDX_FAST],
+        acc_slow   = x_acc[_ACC_IDX_SLOW],
+    )
 
 # Bundled-input layout
 N_INPUTS  = 1 + 3 + 3 + 1   # 8

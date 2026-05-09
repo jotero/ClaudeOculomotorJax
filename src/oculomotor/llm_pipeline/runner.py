@@ -162,7 +162,10 @@ def _extract_signals(states, params, t_np: np.ndarray) -> dict:
     x_vs_raw  = np.array(states.brain[:, _IDX_VS])           # (T, 9) x_L + x_R + x_null
     x_ni_raw  = np.array(states.brain[:, _IDX_NI])           # (T, 9) x_L + x_R + x_null
     x_sg      = np.array(states.brain[:, _IDX_SG])
-    x_pursuit = np.array(states.brain[:, _IDX_PURSUIT])
+    # Pursuit is bilateral push-pull (R, L pops); expose NET signed signal (T, 3)
+    # so downstream plots and consumers stay shape-compatible with the prior API.
+    x_pursuit_raw = np.array(states.brain[:, _IDX_PURSUIT])      # (T, 6)
+    x_pursuit     = x_pursuit_raw[:, :3] - x_pursuit_raw[:, 3:6]  # (T, 3) NET
     x_verg    = np.array(states.brain[:, _IDX_VERG])   # (T, 3) vergence integrator state
     x_vis     = np.array(states.brain[:, _IDX_CYC_BRAIN])  # (T, 43) cyclopean brain LP block
 

@@ -44,6 +44,17 @@ tr:last-child { border-bottom: none; }
 .encodes-cell { color: #1d3a8a; font-weight: 500; line-height: 1.4; }
 .frame-cell   { font-size: 11px; color: #5a7090; font-style: italic;
                 margin-top: 3px; }
+.repr-tag     { display: inline-block; padding: 1px 6px; border-radius: 3px;
+                font-size: 10px; font-weight: 600; margin-bottom: 4px; }
+.repr-firing-rate          { background: #d4edda; color: #155724; }
+.repr-firing-rate-bias     { background: #cfe2ef; color: #0c5460; }
+.repr-rectified            { background: #d6f1d6; color: #1d3a1d; }
+.repr-position             { background: #e8e0f5; color: #4a2671; }
+.repr-bookkeeping          { background: #efe8d8; color: #6b5520; }
+.activation-cell { font-family: 'SF Mono', Consolas, monospace;
+                   font-size: 10.5px; color: #6a3da6; line-height: 1.4;
+                   margin-top: 4px; }
+.baseline-cell   { font-size: 10.5px; color: #888; margin-top: 2px; }
 .desc-cell   { color: #333; line-height: 1.45; }
 .anatomy-cell { font-size: 11px; color: #666; line-height: 1.45; }
 .anatomy-cell .ax-tag {
@@ -122,14 +133,15 @@ tr:last-child { border-bottom: none; }
       <h3>Vestibular Periphery <small style="font-size:11px;font-weight:400;color:#888">(3 signals)</small></h3>
       <table>
         <thead><tr>
-          <th style="width:160px">Signal</th>
-          <th style="width:55px">Shape</th>
-          <th style="width:170px">Axes</th>
-          <th style="width:75px">Units</th>
-          <th style="width:230px">Encodes / frame</th>
+          <th style="width:140px">Signal</th>
+          <th style="width:50px">Shape</th>
+          <th style="width:140px">Axes</th>
+          <th style="width:65px">Units</th>
+          <th style="width:200px">Encodes / frame</th>
+          <th style="width:220px">Representation / activation</th>
           <th>Description</th>
-          <th style="width:180px">Anatomical locus</th>
-          <th style="width:210px">Source / computation</th>
+          <th style="width:170px">Anatomical locus</th>
+          <th style="width:170px">Source</th>
         </tr></thead>
         <tbody>
         <tr>
@@ -138,6 +150,7 @@ tr:last-child { border-bottom: none; }
           <td class="axes-cell">L_HC, L_AC, L_PC, R_HC, R_AC, R_PC</td>
           <td class="units">deg/s</td>
           <td><div class="encodes-cell">head angular velocity (push-pull canal pairs)</div><div class="frame-cell">frame: canal-aligned (HC ≈ yaw, AC/PC ≈ pitch + roll)</div></td>
+          <td><span class="repr-tag repr-rectified">rectified-firing-rate</span><div class="activation-cell">activation: state  (already smooth-saturated nonlinearity in canal.step)</div></td>
           <td class="desc-cell"><p>Cupula-deflection-derived afferent firing rate per canal, push-pull pairs (L_HC ↔ R_HC, L_AC ↔ R_PC, L_PC ↔ R_AC) feed the vestibular nuclei.  Steinhausen second-order dynamics with smooth saturation at high velocity.</p><div class="population">Primary canal afferents (regular + irregular pop)</div><div class="refs">Steinhausen (1933) · Goldberg & Fernandez (1971)</div></td>
           <td class="anatomy-cell">Vestibular nerve afferents (CN VIII)</td>
           <td><span class="computation">sensory.canal[ y from canal.nonlinearity ]</span></td>
@@ -149,6 +162,7 @@ tr:last-child { border-bottom: none; }
           <td class="axes-cell">HC_L_x1, HC_L_x2, AC_L_x1, AC_L_x2, PC_L_x1, … (+7)</td>
           <td class="units">—</td>
           <td><div class="encodes-cell">cupula deflection + inertia (internal Steinhausen state)</div><div class="frame-cell">frame: per-canal</div></td>
+          <td><span class="repr-tag repr-bookkeeping">scalar-bookkeeping</span><div class="activation-cell">activation: n/a — internal Steinhausen pendulum; afferent rate computed externally</div></td>
           <td class="desc-cell"><p>Two-state SSM per canal: x1 = cupula deflection, x2 = inertia state. Internal model state — usually plot the rectified afferent (canal_afferents) instead.</p></td>
           <td class="anatomy-cell">Cupula mechanics (Steinhausen pendulum, per canal)</td>
           <td><span class="computation">sensory[_IDX_C]</span></td>
@@ -160,6 +174,7 @@ tr:last-child { border-bottom: none; }
           <td class="axes-cell">L_x1, L_x2, L_x3, R_x1, R_x2, R_x3</td>
           <td class="units">m/s²</td>
           <td><div class="encodes-cell">specific force (linear acceleration + gravity, LP-adapted)</div><div class="frame-cell">frame: head</div></td>
+          <td><span class="repr-tag repr-rectified">rectified-firing-rate</span><div class="activation-cell">activation: state  (LP-adapter output, already non-negative for compressive force range)</div></td>
           <td class="desc-cell"><p>Bilateral linear-acceleration afferents (specific force in head frame). LP-adapter dynamics; output drives gravity / heading observers.</p><div class="population">Otolithic primary afferents</div><div class="refs">Fernandez & Goldberg (1976)</div></td>
           <td class="anatomy-cell">Utricular + saccular afferents (CN VIII)</td>
           <td><span class="computation">sensory[_IDX_OTO]</span></td>
@@ -172,14 +187,15 @@ tr:last-child { border-bottom: none; }
       <h3>Visual Periphery <small style="font-size:11px;font-weight:400;color:#888">(2 signals)</small></h3>
       <table>
         <thead><tr>
-          <th style="width:160px">Signal</th>
-          <th style="width:55px">Shape</th>
-          <th style="width:170px">Axes</th>
-          <th style="width:75px">Units</th>
-          <th style="width:230px">Encodes / frame</th>
+          <th style="width:140px">Signal</th>
+          <th style="width:50px">Shape</th>
+          <th style="width:140px">Axes</th>
+          <th style="width:65px">Units</th>
+          <th style="width:200px">Encodes / frame</th>
+          <th style="width:220px">Representation / activation</th>
           <th>Description</th>
-          <th style="width:180px">Anatomical locus</th>
-          <th style="width:210px">Source / computation</th>
+          <th style="width:170px">Anatomical locus</th>
+          <th style="width:170px">Source</th>
         </tr></thead>
         <tbody>
         <tr>
@@ -188,6 +204,7 @@ tr:last-child { border-bottom: none; }
           <td class="axes-cell"></td>
           <td class="units">various</td>
           <td><div class="encodes-cell">multi-channel visual signals (slip / target / visibility / defocus, delayed)</div><div class="frame-cell">frame: left retina (foveal-centred)</div></td>
+          <td><span class="repr-tag repr-bookkeeping">scalar-bookkeeping</span><div class="activation-cell">activation: n/a — multi-channel LP cascade; per-channel activations exposed via cyclopean readouts</div></td>
           <td class="desc-cell"><p>6-stage gamma cascade per signal channel: scene_angular_vel (3), scene_linear_vel (3), target_pos (3), target_vel (3), scene_visible (1), target_visible (1), defocus (1).  Total 90 states; the last stage of each cascade is the post-delay readout.</p></td>
           <td class="anatomy-cell">Left-eye visual processing (retina → V1 / MT / MST)</td>
           <td><span class="computation">sensory[_IDX_RETINA_L]</span></td>
@@ -199,6 +216,7 @@ tr:last-child { border-bottom: none; }
           <td class="axes-cell"></td>
           <td class="units">various</td>
           <td><div class="encodes-cell">multi-channel visual signals (slip / target / visibility / defocus, delayed)</div><div class="frame-cell">frame: right retina (foveal-centred)</div></td>
+          <td><span class="repr-tag repr-bookkeeping">scalar-bookkeeping</span><div class="activation-cell">activation: n/a — multi-channel LP cascade; per-channel activations exposed via cyclopean readouts</div></td>
           <td class="desc-cell"><p>Same structure as retina_L.  See per-channel readouts in derived signals.</p></td>
           <td class="anatomy-cell">Right-eye visual processing (retina → V1 / MT / MST)</td>
           <td><span class="computation">sensory[_IDX_RETINA_R]</span></td>
@@ -215,14 +233,15 @@ tr:last-child { border-bottom: none; }
       <h3>Cyclopean Perception <small style="font-size:11px;font-weight:400;color:#888">(1 signal)</small></h3>
       <table>
         <thead><tr>
-          <th style="width:160px">Signal</th>
-          <th style="width:55px">Shape</th>
-          <th style="width:170px">Axes</th>
-          <th style="width:75px">Units</th>
-          <th style="width:230px">Encodes / frame</th>
+          <th style="width:140px">Signal</th>
+          <th style="width:50px">Shape</th>
+          <th style="width:140px">Axes</th>
+          <th style="width:65px">Units</th>
+          <th style="width:200px">Encodes / frame</th>
+          <th style="width:220px">Representation / activation</th>
           <th>Description</th>
-          <th style="width:180px">Anatomical locus</th>
-          <th style="width:210px">Source / computation</th>
+          <th style="width:170px">Anatomical locus</th>
+          <th style="width:170px">Source</th>
         </tr></thead>
         <tbody>
         <tr>
@@ -231,6 +250,7 @@ tr:last-child { border-bottom: none; }
           <td class="axes-cell"></td>
           <td class="units">various</td>
           <td><div class="encodes-cell">binocular-fused, brain-LP-smoothed visual signals (multi-channel buffer)</div><div class="frame-cell">frame: cyclopean retina</div></td>
+          <td><span class="repr-tag repr-bookkeeping">scalar-bookkeeping</span><div class="activation-cell">activation: n/a — multi-channel LP buffer; per-channel readouts in derived signals</div></td>
           <td class="desc-cell"><p>Cyclopean (binocular-fused) versions of scene velocity, target position, target velocity, target disparity, defocus, and visibility flags — each smoothed by an additional brain-side LP cascade after fusion.  Block layout:  scene_angular_vel(3) | scene_linear_vel(3) | target_pos(3×N) | target_vel(3) | target_disparity(3) | scene_visible(N) | target_visible(N) | defocus(1).  N = N_STAGES_OTHER = 6.</p><div class="refs">Cumming & DeAngelis (2001)</div></td>
           <td class="anatomy-cell">Post-fusion LP smoothing (V1+ / MT+ / MST+ / V2+ stereo)</td>
           <td><span class="computation">brain[_IDX_CYC_BRAIN]</span></td>
@@ -243,14 +263,15 @@ tr:last-child { border-bottom: none; }
       <h3>Efference Copy <small style="font-size:11px;font-weight:400;color:#888">(2 signals)</small></h3>
       <table>
         <thead><tr>
-          <th style="width:160px">Signal</th>
-          <th style="width:55px">Shape</th>
-          <th style="width:170px">Axes</th>
-          <th style="width:75px">Units</th>
-          <th style="width:230px">Encodes / frame</th>
+          <th style="width:140px">Signal</th>
+          <th style="width:50px">Shape</th>
+          <th style="width:140px">Axes</th>
+          <th style="width:65px">Units</th>
+          <th style="width:200px">Encodes / frame</th>
+          <th style="width:220px">Representation / activation</th>
           <th>Description</th>
-          <th style="width:180px">Anatomical locus</th>
-          <th style="width:210px">Source / computation</th>
+          <th style="width:170px">Anatomical locus</th>
+          <th style="width:170px">Source</th>
         </tr></thead>
         <tbody>
         <tr>
@@ -259,6 +280,7 @@ tr:last-child { border-bottom: none; }
           <td class="axes-cell"></td>
           <td class="units">deg/s</td>
           <td><div class="encodes-cell">delayed eye-velocity efference copy (matched to scene-slip cascade)</div><div class="frame-cell">frame: eye</div></td>
+          <td><span class="repr-tag repr-bookkeeping">scalar-bookkeeping</span><div class="activation-cell">activation: state[-3:]  (last cascade tap is the delayed efference copy)</div></td>
           <td class="desc-cell"><p>Cascade-LP delay of ec_vel_eye matched to the scene_angular_vel slip cascade (sharp 6 stages × 3 axes + 1 LP × 3 = 21 states).  Subtracted from delayed scene slip → cancels self-induced slip during smooth pursuit / VOR.</p><div class="refs">von Helmholtz (1867) · Sperry (1950)</div></td>
           <td class="anatomy-cell">Efference copy of eye velocity, scene-cascade-matched</td>
           <td><span class="computation">brain[_IDX_EC_VEL_SCENE]</span></td>
@@ -270,6 +292,7 @@ tr:last-child { border-bottom: none; }
           <td class="axes-cell"></td>
           <td class="units">deg/s</td>
           <td><div class="encodes-cell">delayed eye-velocity efference copy (matched to target-slip cascade)</div><div class="frame-cell">frame: eye</div></td>
+          <td><span class="repr-tag repr-bookkeeping">scalar-bookkeeping</span><div class="activation-cell">activation: state[-3:]</div></td>
           <td class="desc-cell"><p>Same as ec_scene_cascade but matched to the slower target_vel slip cascade for pursuit Smith-predictor cancellation.</p></td>
           <td class="anatomy-cell">Efference copy of eye velocity, target-cascade-matched</td>
           <td><span class="computation">brain[_IDX_EC_VEL_TARGET]</span></td>
@@ -282,14 +305,15 @@ tr:last-child { border-bottom: none; }
       <h3>Final Common Pathway <small style="font-size:11px;font-weight:400;color:#888">(1 signal)</small></h3>
       <table>
         <thead><tr>
-          <th style="width:160px">Signal</th>
-          <th style="width:55px">Shape</th>
-          <th style="width:170px">Axes</th>
-          <th style="width:75px">Units</th>
-          <th style="width:230px">Encodes / frame</th>
+          <th style="width:140px">Signal</th>
+          <th style="width:50px">Shape</th>
+          <th style="width:140px">Axes</th>
+          <th style="width:65px">Units</th>
+          <th style="width:200px">Encodes / frame</th>
+          <th style="width:220px">Representation / activation</th>
           <th>Description</th>
-          <th style="width:180px">Anatomical locus</th>
-          <th style="width:210px">Source / computation</th>
+          <th style="width:170px">Anatomical locus</th>
+          <th style="width:170px">Source</th>
         </tr></thead>
         <tbody>
         <tr>
@@ -298,6 +322,7 @@ tr:last-child { border-bottom: none; }
           <td class="axes-cell">LR_L, MR_L, SR_L, IR_L, SO_L, … (+9)</td>
           <td class="units">deg/s equivalent</td>
           <td><div class="encodes-cell">motor neuron firing rates (12 muscle-MNs + 2 abducens internuclear)</div><div class="frame-cell">frame: per-MN (firing rate, deg/s equiv)</div></td>
+          <td><span class="repr-tag repr-rectified">rectified-firing-rate</span><div class="activation-cell">activation: state  (LP-tracks the f-I curve target; already rectified + saturated by smooth_clip)</div></td>
           <td class="desc-cell"><p>14 motor neuron firing rates: 12 muscle-driving MNs (in nucleus order) + 2 abducens internuclear (AIN) populations whose axons cross via the MLF to contralateral CN3_MR.  Output `nerves[12]` is the MN firing rate clipped by g_nerve · NERVE_MAX (axon conduction cap).</p><div class="population">ABN MNs, AIN, CN3 subnuclei (MR/SR/IR/IO), CN4 MNs</div><div class="refs">Robinson (1981) · Sylvestre & Cullen (1999)</div></td>
           <td class="anatomy-cell">Motor neurons in CN VI / III / IV nuclei + AIN</td>
           <td><span class="computation">brain[_IDX_MN]</span></td>
@@ -310,14 +335,15 @@ tr:last-child { border-bottom: none; }
       <h3>Neural Integrator <small style="font-size:11px;font-weight:400;color:#888">(3 signals)</small></h3>
       <table>
         <thead><tr>
-          <th style="width:160px">Signal</th>
-          <th style="width:55px">Shape</th>
-          <th style="width:170px">Axes</th>
-          <th style="width:75px">Units</th>
-          <th style="width:230px">Encodes / frame</th>
+          <th style="width:140px">Signal</th>
+          <th style="width:50px">Shape</th>
+          <th style="width:140px">Axes</th>
+          <th style="width:65px">Units</th>
+          <th style="width:200px">Encodes / frame</th>
+          <th style="width:220px">Representation / activation</th>
           <th>Description</th>
-          <th style="width:180px">Anatomical locus</th>
-          <th style="width:210px">Source / computation</th>
+          <th style="width:170px">Anatomical locus</th>
+          <th style="width:170px">Source</th>
         </tr></thead>
         <tbody>
         <tr>
@@ -326,6 +352,7 @@ tr:last-child { border-bottom: none; }
           <td class="axes-cell">yaw, pitch, roll</td>
           <td class="units">deg</td>
           <td><div class="encodes-cell">eye-position equivalent (left pop, integrated velocity)</div><div class="frame-cell">frame: head</div></td>
+          <td><span class="repr-tag repr-firing-rate-bias">firing-rate-around-bias</span><div class="activation-cell">activation: max(0, state)  (NPH/INC neurons rectified; bias b_ni absorbs floor)</div><div class="baseline-cell">baseline: b_ni (default 0)</div></td>
           <td class="desc-cell"><p>Left NI population — eye-position equivalent.  Net eye position = ni_left − ni_right.  Tau_i ~25 s; short tau_i → centripetal drift (gaze-evoked nystagmus).  Horizontal integration in NPH; vertical and torsional integration in INC (Crawford & Vilis 1991).</p><div class="population">Bilateral leaky integrator (Robinson 1975)</div><div class="refs">Cannon & Robinson (1985) · Crawford & Vilis (1991)</div></td>
           <td class="anatomy-cell"><div><span class="ax-tag">yaw</span> Left NPH (nucleus prepositus hypoglossi)</div>
 <div><span class="ax-tag">pitch · roll</span> INC (interstitial nucleus of Cajal)</div></td>
@@ -338,6 +365,7 @@ tr:last-child { border-bottom: none; }
           <td class="axes-cell">yaw, pitch, roll</td>
           <td class="units">deg</td>
           <td><div class="encodes-cell">eye-position equivalent (right pop, integrated velocity)</div><div class="frame-cell">frame: head</div></td>
+          <td><span class="repr-tag repr-firing-rate-bias">firing-rate-around-bias</span><div class="activation-cell">activation: max(0, state)</div><div class="baseline-cell">baseline: b_ni</div></td>
           <td class="desc-cell"><p>Right NI population, push-pull with ni_left.  NPH for yaw, INC for pitch/roll.</p></td>
           <td class="anatomy-cell"><div><span class="ax-tag">yaw</span> Right NPH (nucleus prepositus hypoglossi)</div>
 <div><span class="ax-tag">pitch · roll</span> INC (interstitial nucleus of Cajal)</div></td>
@@ -350,6 +378,7 @@ tr:last-child { border-bottom: none; }
           <td class="axes-cell">yaw, pitch, roll</td>
           <td class="units">deg</td>
           <td><div class="encodes-cell">slow NI bilateral-imbalance adapter (rebound nystagmus substrate)</div><div class="frame-cell">frame: head</div></td>
+          <td><span class="repr-tag repr-firing-rate">linear-firing-rate</span><div class="activation-cell">activation: state  (signed adapter on bilateral imbalance)</div><div class="baseline-cell">baseline: 0</div></td>
           <td class="desc-cell"><p>Slow adapter on NI bilateral imbalance.  Drives rebound nystagmus after sustained eccentric gaze (tau_ni_adapt ~20 s).  Cerebellar tone rebalances the integrator; lesions here abolish or extend rebound.</p><div class="refs">Zee, Yamazaki, Butler, Gücer (1981)</div></td>
           <td class="anatomy-cell"><div><span class="ax-tag">yaw</span> Cerebellar floc/paraflocculus → NPH (yaw adapter)</div>
 <div><span class="ax-tag">pitch · roll</span> Cerebellar projection → INC (vertical/torsional adapter)</div></td>
@@ -363,14 +392,15 @@ tr:last-child { border-bottom: none; }
       <h3>Pursuit <small style="font-size:11px;font-weight:400;color:#888">(1 signal)</small></h3>
       <table>
         <thead><tr>
-          <th style="width:160px">Signal</th>
-          <th style="width:55px">Shape</th>
-          <th style="width:170px">Axes</th>
-          <th style="width:75px">Units</th>
-          <th style="width:230px">Encodes / frame</th>
+          <th style="width:140px">Signal</th>
+          <th style="width:50px">Shape</th>
+          <th style="width:140px">Axes</th>
+          <th style="width:65px">Units</th>
+          <th style="width:200px">Encodes / frame</th>
+          <th style="width:220px">Representation / activation</th>
           <th>Description</th>
-          <th style="width:180px">Anatomical locus</th>
-          <th style="width:210px">Source / computation</th>
+          <th style="width:170px">Anatomical locus</th>
+          <th style="width:170px">Source</th>
         </tr></thead>
         <tbody>
         <tr>
@@ -379,6 +409,7 @@ tr:last-child { border-bottom: none; }
           <td class="axes-cell">yaw, pitch, roll</td>
           <td class="units">deg/s</td>
           <td><div class="encodes-cell">pursuit eye-velocity command (Smith-predictor integrator)</div><div class="frame-cell">frame: head</div></td>
+          <td><span class="repr-tag repr-firing-rate">linear-firing-rate</span><div class="activation-cell">activation: state  (signed; downstream consumers read directly — bilateral split deferred to Phase 3)</div></td>
           <td class="desc-cell"><p>Leaky pursuit integrator state — eye-velocity command for smooth pursuit.  K_pursuit controls rise TC; tau_pursuit the leak.  Smith predictor cancels saccadic contamination via efference copy.</p><div class="refs">Lisberger (1988) · Krauzlis & Lisberger (1994)</div></td>
           <td class="anatomy-cell">Pursuit integrator (cerebellar floc/paraflocculus + MST)</td>
           <td><span class="computation">brain[_IDX_PURSUIT]</span></td>
@@ -391,14 +422,15 @@ tr:last-child { border-bottom: none; }
       <h3>Saccade Generator <small style="font-size:11px;font-weight:400;color:#888">(8 signals)</small></h3>
       <table>
         <thead><tr>
-          <th style="width:160px">Signal</th>
-          <th style="width:55px">Shape</th>
-          <th style="width:170px">Axes</th>
-          <th style="width:75px">Units</th>
-          <th style="width:230px">Encodes / frame</th>
+          <th style="width:140px">Signal</th>
+          <th style="width:50px">Shape</th>
+          <th style="width:140px">Axes</th>
+          <th style="width:65px">Units</th>
+          <th style="width:200px">Encodes / frame</th>
+          <th style="width:220px">Representation / activation</th>
           <th>Description</th>
-          <th style="width:180px">Anatomical locus</th>
-          <th style="width:210px">Source / computation</th>
+          <th style="width:170px">Anatomical locus</th>
+          <th style="width:170px">Source</th>
         </tr></thead>
         <tbody>
         <tr>
@@ -407,6 +439,7 @@ tr:last-child { border-bottom: none; }
           <td class="axes-cell">yaw, pitch, roll</td>
           <td class="units">deg</td>
           <td><div class="encodes-cell">held motor error during saccade (target − current eye position)</div><div class="frame-cell">frame: head</div></td>
+          <td><span class="repr-tag repr-position">position-equivalent</span><div class="activation-cell">activation: state  (signed motor error vector; sign = direction)</div></td>
           <td class="desc-cell"><p>Held motor-error command for the current saccade.  Frozen at saccade onset (when z_opn / OPN drops); drives the burst's amplitude until saccade stops.  Used in Robinson's local-feedback architecture.</p><div class="refs">Robinson (1975) · Sparks (2002)</div></td>
           <td class="anatomy-cell">Saccade target latch — superior colliculus / FEF readout</td>
           <td><span class="computation">brain[_IDX_SG][0:3]</span></td>
@@ -418,6 +451,7 @@ tr:last-child { border-bottom: none; }
           <td class="axes-cell"></td>
           <td class="units">fr (~100 = tonic)</td>
           <td><div class="encodes-cell">saccade gate (tonic between saccades, paused during burst)</div><div class="frame-cell">frame: scalar (firing-rate fraction)</div></td>
+          <td><span class="repr-tag repr-rectified">rectified-firing-rate</span><div class="activation-cell">activation: clip(state, [0, 100])  (firing rate fraction of tonic max)</div><div class="baseline-cell">baseline: 100  (tonic OPN firing between saccades)</div></td>
           <td class="desc-cell"><p>Tonically-active neurons that gate the saccadic burst.  Drop to 0 during a saccade (paused by IBN inhibition); recover via tonic drive between saccades.  z_opn = 100 = full tonic.</p><div class="population">OPNs — pause during saccade, tonic between</div><div class="refs">Cohen & Henn (1972) · Hepp et al. (1989)</div></td>
           <td class="anatomy-cell">Omnipause neurons (rostral nucleus raphe interpositus)</td>
           <td><span class="computation">brain[_IDX_SG][3]</span></td>
@@ -429,6 +463,7 @@ tr:last-child { border-bottom: none; }
           <td class="axes-cell"></td>
           <td class="units">—</td>
           <td><div class="encodes-cell">saccade-trigger accumulator (rise-to-bound)</div><div class="frame-cell">frame: scalar</div></td>
+          <td><span class="repr-tag repr-bookkeeping">scalar-bookkeeping</span><div class="activation-cell">activation: state  (rise-to-bound accumulator; threshold-crossing triggers OPN pause)</div><div class="baseline-cell">baseline: acc_burst_floor (default −0.5)</div></td>
           <td class="desc-cell"><p>Accumulator state that crosses threshold to trigger a saccade.  Models SC build-up neurons + diffusion noise → realistic saccade RT distribution.</p><div class="refs">Carpenter (1981) LATER model</div></td>
           <td class="anatomy-cell">SC rostral / caudal accumulator (rise-to-bound)</td>
           <td><span class="computation">brain[_IDX_SG][4]</span></td>
@@ -440,6 +475,7 @@ tr:last-child { border-bottom: none; }
           <td class="axes-cell"></td>
           <td class="units">—</td>
           <td><div class="encodes-cell">OPN-suppression latch state</div><div class="frame-cell">frame: scalar</div></td>
+          <td><span class="repr-tag repr-bookkeeping">scalar-bookkeeping</span><div class="activation-cell">activation: state  (latch signal, smoothed)</div></td>
           <td class="desc-cell"><p>Smooth trigger state — converts the accumulator threshold crossing into a sustained OPN-pause signal during the saccadic burst.</p></td>
           <td class="anatomy-cell">OPN-suppression trigger latch</td>
           <td><span class="computation">brain[_IDX_SG][5]</span></td>
@@ -451,6 +487,7 @@ tr:last-child { border-bottom: none; }
           <td class="axes-cell">yaw, pitch, roll</td>
           <td class="units">deg/s</td>
           <td><div class="encodes-cell">saccade burst-velocity command (right pop, agonist for leftward gaze)</div><div class="frame-cell">frame: head</div></td>
+          <td><span class="repr-tag repr-rectified">rectified-firing-rate</span><div class="activation-cell">activation: gate · state  (gated by OPN pause + IBN inhibition; ≥ 0)</div></td>
           <td class="desc-cell"><p>Right EBN firing rate during saccades.  Drives ipsilateral motoneurons (LR_R via ABN_R, MR_L via MLF/AIN_R).  Horizontal cells live in PPRF; vertical and torsional cells in riMLF — clinically distinct lesion syndromes.</p><div class="population">EBN — right-side burst pop</div><div class="refs">Strassman et al. (1986) · Büttner-Ennever & Büttner (1978)</div></td>
           <td class="anatomy-cell"><div><span class="ax-tag">yaw</span> Right PPRF (paramedian pontine reticular formation)</div>
 <div><span class="ax-tag">pitch · roll</span> riMLF (rostral interstitial nucleus of MLF)</div></td>
@@ -463,6 +500,7 @@ tr:last-child { border-bottom: none; }
           <td class="axes-cell">yaw, pitch, roll</td>
           <td class="units">deg/s</td>
           <td><div class="encodes-cell">saccade burst-velocity command (left pop, agonist for rightward gaze)</div><div class="frame-cell">frame: head</div></td>
+          <td><span class="repr-tag repr-rectified">rectified-firing-rate</span><div class="activation-cell">activation: gate · state</div></td>
           <td class="desc-cell"><p>Left EBN firing rate; symmetric to ebn_R.  Horizontal cells in PPRF, vertical / torsional in riMLF.</p></td>
           <td class="anatomy-cell"><div><span class="ax-tag">yaw</span> Left PPRF (paramedian pontine reticular formation)</div>
 <div><span class="ax-tag">pitch · roll</span> riMLF (rostral interstitial nucleus of MLF)</div></td>
@@ -475,6 +513,7 @@ tr:last-child { border-bottom: none; }
           <td class="axes-cell">yaw, pitch, roll</td>
           <td class="units">deg/s</td>
           <td><div class="encodes-cell">right inhibitory burst (contralateral antagonist + OPN suppression)</div><div class="frame-cell">frame: head</div></td>
+          <td><span class="repr-tag repr-rectified">rectified-firing-rate</span><div class="activation-cell">activation: gate · state</div></td>
           <td class="desc-cell"><p>Right IBN — inhibits contralateral antagonist motoneurons AND OPNs (driving the OPN pause that gates saccadic bursts).  Horizontal IBNs in PPRF, vertical / torsional in riMLF.</p><div class="population">IBN — paused-state output to OPN</div><div class="refs">Strassman, Highstein & McCrea (1986)</div></td>
           <td class="anatomy-cell"><div><span class="ax-tag">yaw</span> Right PPRF (IBN — caudal subgroup)</div>
 <div><span class="ax-tag">pitch · roll</span> riMLF (paraventricular IBN cluster)</div></td>
@@ -487,6 +526,7 @@ tr:last-child { border-bottom: none; }
           <td class="axes-cell">yaw, pitch, roll</td>
           <td class="units">deg/s</td>
           <td><div class="encodes-cell">left inhibitory burst (contralateral antagonist + OPN suppression)</div><div class="frame-cell">frame: head</div></td>
+          <td><span class="repr-tag repr-rectified">rectified-firing-rate</span><div class="activation-cell">activation: gate · state</div></td>
           <td class="desc-cell"><p>Left IBN; symmetric to ibn_R.</p></td>
           <td class="anatomy-cell"><div><span class="ax-tag">yaw</span> Left PPRF (IBN — caudal subgroup)</div>
 <div><span class="ax-tag">pitch · roll</span> riMLF (paraventricular IBN cluster)</div></td>
@@ -500,14 +540,15 @@ tr:last-child { border-bottom: none; }
       <h3>Self Motion Observer <small style="font-size:11px;font-weight:400;color:#888">(4 signals)</small></h3>
       <table>
         <thead><tr>
-          <th style="width:160px">Signal</th>
-          <th style="width:55px">Shape</th>
-          <th style="width:170px">Axes</th>
-          <th style="width:75px">Units</th>
-          <th style="width:230px">Encodes / frame</th>
+          <th style="width:140px">Signal</th>
+          <th style="width:50px">Shape</th>
+          <th style="width:140px">Axes</th>
+          <th style="width:65px">Units</th>
+          <th style="width:200px">Encodes / frame</th>
+          <th style="width:220px">Representation / activation</th>
           <th>Description</th>
-          <th style="width:180px">Anatomical locus</th>
-          <th style="width:210px">Source / computation</th>
+          <th style="width:170px">Anatomical locus</th>
+          <th style="width:170px">Source</th>
         </tr></thead>
         <tbody>
         <tr>
@@ -516,6 +557,7 @@ tr:last-child { border-bottom: none; }
           <td class="axes-cell">x, y, z</td>
           <td class="units">m/s²</td>
           <td><div class="encodes-cell">estimated gravity vector (somatogravic prior)</div><div class="frame-cell">frame: head</div></td>
+          <td><span class="repr-tag repr-firing-rate">linear-firing-rate</span><div class="activation-cell">activation: state  (vector estimate; no rectification — direction-encoded)</div></td>
           <td class="desc-cell"><p>Internal gravity vector estimate in head frame.  Cross-product transport by canal velocity; correction toward delayed otolith.  Drives OCR (g_ocr) and tilt-suppression (K_gd).</p><div class="refs">Laurens & Angelaki (2011, 2017)</div></td>
           <td class="anatomy-cell">Brainstem / cerebellar gravity-vector observer (Laurens 2017)</td>
           <td><span class="computation">brain[_IDX_GRAV][0:3]</span></td>
@@ -527,6 +569,7 @@ tr:last-child { border-bottom: none; }
           <td class="axes-cell">x, y, z</td>
           <td class="units">m/s²</td>
           <td><div class="encodes-cell">linear-acceleration estimate (otolith − gravity prediction)</div><div class="frame-cell">frame: head</div></td>
+          <td><span class="repr-tag repr-firing-rate">linear-firing-rate</span><div class="activation-cell">activation: state  (signed vector; encodes acceleration direction + magnitude)</div></td>
           <td class="desc-cell"><p>Brain's estimate of linear acceleration — what the otolith reports minus the gravity prediction.  Drives the heading estimator's velocity update.</p></td>
           <td class="anatomy-cell">Linear-acceleration estimate (otolith − gravity prediction)</td>
           <td><span class="computation">brain[_IDX_GRAV][3:6]</span></td>
@@ -538,6 +581,7 @@ tr:last-child { border-bottom: none; }
           <td class="axes-cell">x, y, z</td>
           <td class="units">—</td>
           <td><div class="encodes-cell">rotating-frame bookkeeping for gravity transport (internal)</div><div class="frame-cell">frame: head</div></td>
+          <td><span class="repr-tag repr-bookkeeping">scalar-bookkeeping</span><div class="activation-cell">activation: n/a — internal frame tracking</div></td>
           <td class="desc-cell"><p>Auxiliary state for the gravity observer — tracks the orientation of the rotating frame for cross-product transport of the gravity vector. Internal; rarely useful to plot.</p></td>
           <td class="anatomy-cell">Internal rotation-frame state (gravity transport bookkeeping)</td>
           <td><span class="computation">brain[_IDX_GRAV][6:9]</span></td>
@@ -549,6 +593,7 @@ tr:last-child { border-bottom: none; }
           <td class="axes-cell">x, y, z</td>
           <td class="units">m/s</td>
           <td><div class="encodes-cell">head-fixed linear velocity (heading)</div><div class="frame-cell">frame: head</div></td>
+          <td><span class="repr-tag repr-firing-rate">linear-firing-rate</span><div class="activation-cell">activation: state  (signed vector)</div></td>
           <td class="desc-cell"><p>Linear velocity in head frame (gravity-corrected, ~2 s integration TC). Consumed by translational VOR (T-VOR) for distance-scaled compensation.</p><div class="refs">Paige & Tomko (1991)</div></td>
           <td class="anatomy-cell">Heading estimator (head-fixed linear velocity)</td>
           <td><span class="computation">brain[_IDX_HEAD]</span></td>
@@ -561,14 +606,15 @@ tr:last-child { border-bottom: none; }
       <h3>Target Memory <small style="font-size:11px;font-weight:400;color:#888">(2 signals)</small></h3>
       <table>
         <thead><tr>
-          <th style="width:160px">Signal</th>
-          <th style="width:55px">Shape</th>
-          <th style="width:170px">Axes</th>
-          <th style="width:75px">Units</th>
-          <th style="width:230px">Encodes / frame</th>
+          <th style="width:140px">Signal</th>
+          <th style="width:50px">Shape</th>
+          <th style="width:140px">Axes</th>
+          <th style="width:65px">Units</th>
+          <th style="width:200px">Encodes / frame</th>
+          <th style="width:220px">Representation / activation</th>
           <th>Description</th>
-          <th style="width:180px">Anatomical locus</th>
-          <th style="width:210px">Source / computation</th>
+          <th style="width:170px">Anatomical locus</th>
+          <th style="width:170px">Source</th>
         </tr></thead>
         <tbody>
         <tr>
@@ -577,6 +623,7 @@ tr:last-child { border-bottom: none; }
           <td class="axes-cell">yaw, pitch, roll</td>
           <td class="units">deg</td>
           <td><div class="encodes-cell">remembered target position (working-memory blank-fill)</div><div class="frame-cell">frame: head (foveal offset)</div></td>
+          <td><span class="repr-tag repr-position">position-equivalent</span><div class="activation-cell">activation: trust · state  (gated by memory confidence)</div></td>
           <td class="desc-cell"><p>Remembered target position when target_visible drops (e.g. blink). Drains slowly; trust scalar gates how much pursuit/saccade systems use it.</p><div class="refs">Barborica & Ferrera (2003)</div></td>
           <td class="anatomy-cell">Visual working memory (FEF / SC / parietal)</td>
           <td><span class="computation">brain[_IDX_TARGET_MEM][0:3]</span></td>
@@ -588,6 +635,7 @@ tr:last-child { border-bottom: none; }
           <td class="axes-cell"></td>
           <td class="units">—</td>
           <td><div class="encodes-cell">memory-confidence modulator (gates downstream consumers)</div><div class="frame-cell">frame: scalar [0,1]</div></td>
+          <td><span class="repr-tag repr-bookkeeping">scalar-bookkeeping</span><div class="activation-cell">activation: clip(state, [0, 1])</div></td>
           <td class="desc-cell"><p>[0,1] confidence in the memory; rises when target visible, decays when not.  Multiplies memory output before downstream consumption.</p></td>
           <td class="anatomy-cell">Memory-trust modulator</td>
           <td><span class="computation">brain[_IDX_TARGET_MEM][3]</span></td>
@@ -600,14 +648,15 @@ tr:last-child { border-bottom: none; }
       <h3>Velocity Storage <small style="font-size:11px;font-weight:400;color:#888">(3 signals)</small></h3>
       <table>
         <thead><tr>
-          <th style="width:160px">Signal</th>
-          <th style="width:55px">Shape</th>
-          <th style="width:170px">Axes</th>
-          <th style="width:75px">Units</th>
-          <th style="width:230px">Encodes / frame</th>
+          <th style="width:140px">Signal</th>
+          <th style="width:50px">Shape</th>
+          <th style="width:140px">Axes</th>
+          <th style="width:65px">Units</th>
+          <th style="width:200px">Encodes / frame</th>
+          <th style="width:220px">Representation / activation</th>
           <th>Description</th>
-          <th style="width:180px">Anatomical locus</th>
-          <th style="width:210px">Source / computation</th>
+          <th style="width:170px">Anatomical locus</th>
+          <th style="width:170px">Source</th>
         </tr></thead>
         <tbody>
         <tr>
@@ -616,6 +665,7 @@ tr:last-child { border-bottom: none; }
           <td class="axes-cell">yaw, pitch, roll</td>
           <td class="units">deg/s</td>
           <td><div class="encodes-cell">head angular velocity (compensatory drive, left pop)</div><div class="frame-cell">frame: head</div></td>
+          <td><span class="repr-tag repr-firing-rate-bias">firing-rate-around-bias</span><div class="activation-cell">activation: max(0, state)  (real Type-I VN cells are rectified at 0; bias absorbs the floor in healthy operation)</div><div class="baseline-cell">baseline: b_vs (default 100 deg/s)</div></td>
           <td class="desc-cell"><p>Left VN firing rate (deg/s equiv).  Net VS velocity = vs_left − vs_right. Drives leftward yaw / pitch / roll on this side.  Horizontal velocity storage primarily in MVN; vertical and torsional in SVN/LVN.</p><div class="population">Type-I VN, push-pull with vs_right</div><div class="refs">Raphan, Matsuo & Cohen (1979) · Angelaki & Hess (1994)</div></td>
           <td class="anatomy-cell"><div><span class="ax-tag">yaw</span> Left MVN (medial vestibular nucleus)</div>
 <div><span class="ax-tag">pitch · roll</span> Left SVN + LVN (superior + lateral VN, vertical/torsional)</div></td>
@@ -628,6 +678,7 @@ tr:last-child { border-bottom: none; }
           <td class="axes-cell">yaw, pitch, roll</td>
           <td class="units">deg/s</td>
           <td><div class="encodes-cell">head angular velocity (compensatory drive, right pop)</div><div class="frame-cell">frame: head</div></td>
+          <td><span class="repr-tag repr-firing-rate-bias">firing-rate-around-bias</span><div class="activation-cell">activation: max(0, state)</div><div class="baseline-cell">baseline: b_vs (default 100 deg/s)</div></td>
           <td class="desc-cell"><p>Right VN firing rate; net VS = vs_left − vs_right.  MVN for yaw, SVN/LVN for vertical/torsional.</p><div class="population">Type-I VN, push-pull with vs_left</div></td>
           <td class="anatomy-cell"><div><span class="ax-tag">yaw</span> Right MVN (medial vestibular nucleus)</div>
 <div><span class="ax-tag">pitch · roll</span> Right SVN + LVN (superior + lateral VN)</div></td>
@@ -640,6 +691,7 @@ tr:last-child { border-bottom: none; }
           <td class="axes-cell">yaw, pitch, roll</td>
           <td class="units">deg/s</td>
           <td><div class="encodes-cell">slow VS bilateral-imbalance adapter (PAN substrate)</div><div class="frame-cell">frame: head</div></td>
+          <td><span class="repr-tag repr-firing-rate">linear-firing-rate</span><div class="activation-cell">activation: state  (slow adapter on bilateral imbalance; signed)</div><div class="baseline-cell">baseline: 0</div></td>
           <td class="desc-cell"><p>Slow null-adaptation state for VS push-pull.  Drives PAN-like (periodic alternating nystagmus) when tau_vs_adapt is reduced.</p></td>
           <td class="anatomy-cell">Cerebellar slow-time-scale adapter on VS (nodulus / uvula)</td>
           <td><span class="computation">brain[_IDX_VS_NULL]</span></td>
@@ -652,14 +704,15 @@ tr:last-child { border-bottom: none; }
       <h3>Vergence Accommodation <small style="font-size:11px;font-weight:400;color:#888">(5 signals)</small></h3>
       <table>
         <thead><tr>
-          <th style="width:160px">Signal</th>
-          <th style="width:55px">Shape</th>
-          <th style="width:170px">Axes</th>
-          <th style="width:75px">Units</th>
-          <th style="width:230px">Encodes / frame</th>
+          <th style="width:140px">Signal</th>
+          <th style="width:50px">Shape</th>
+          <th style="width:140px">Axes</th>
+          <th style="width:65px">Units</th>
+          <th style="width:200px">Encodes / frame</th>
+          <th style="width:220px">Representation / activation</th>
           <th>Description</th>
-          <th style="width:180px">Anatomical locus</th>
-          <th style="width:210px">Source / computation</th>
+          <th style="width:170px">Anatomical locus</th>
+          <th style="width:170px">Source</th>
         </tr></thead>
         <tbody>
         <tr>
@@ -668,6 +721,7 @@ tr:last-child { border-bottom: none; }
           <td class="axes-cell">horizontal, vertical, torsional</td>
           <td class="units">deg</td>
           <td><div class="encodes-cell">phasic vergence position (fast disparity-driven integrator)</div><div class="frame-cell">frame: binocular vergence angle</div></td>
+          <td><span class="repr-tag repr-position">position-equivalent</span><div class="activation-cell">activation: state  (signed; positive = convergence, negative = divergence — bilateral split deferred to Phase 3)</div></td>
           <td class="desc-cell"><p>Fast vergence integrator state (Schor 1986 'phasic' integrator, tau_verg ~5 s).  Drives binocular fusion via convergence command.</p><div class="refs">Schor (1986) · Read & Schor (2022)</div></td>
           <td class="anatomy-cell">Supraoculomotor area / midbrain vergence neurons (fast pop)</td>
           <td><span class="computation">brain[_IDX_VERG][0:3]</span></td>
@@ -679,6 +733,7 @@ tr:last-child { border-bottom: none; }
           <td class="axes-cell">horizontal, vertical, torsional</td>
           <td class="units">deg</td>
           <td><div class="encodes-cell">tonic vergence (slow adapter, dark vergence baseline)</div><div class="frame-cell">frame: binocular vergence angle</div></td>
+          <td><span class="repr-tag repr-position">position-equivalent</span><div class="activation-cell">activation: state</div></td>
           <td class="desc-cell"><p>Slow tonic-vergence integrator (tau_verg_tonic ~20 s).  Adapts to sustained convergence demand; drives dark-vergence.</p><div class="refs">Schor (1986)</div></td>
           <td class="anatomy-cell">Tonic vergence adapter (slow population)</td>
           <td><span class="computation">brain[_IDX_VERG][3:6]</span></td>
@@ -690,6 +745,7 @@ tr:last-child { border-bottom: none; }
           <td class="axes-cell">horizontal, vertical, torsional</td>
           <td class="units">deg</td>
           <td><div class="encodes-cell">saccadic vergence burst efference copy (SVBN)</div><div class="frame-cell">frame: binocular vergence angle</div></td>
+          <td><span class="repr-tag repr-bookkeeping">scalar-bookkeeping</span><div class="activation-cell">activation: state  (efference copy of saccadic vergence burst)</div></td>
           <td class="desc-cell"><p>Saccadic-vergence-burst (SVBN) efference copy state.  Models the fast Zee 1992 vergence burst that fires during OPN pauses.</p><div class="refs">Zee, Fitzgibbon & Optican (1992)</div></td>
           <td class="anatomy-cell">SVBN saccadic-vergence-burst efference copy</td>
           <td><span class="computation">brain[_IDX_VERG][6:9]</span></td>
@@ -701,6 +757,7 @@ tr:last-child { border-bottom: none; }
           <td class="axes-cell"></td>
           <td class="units">diopters</td>
           <td><div class="encodes-cell">phasic accommodation drive (fast lens controller)</div><div class="frame-cell">frame: focus distance (diopters)</div></td>
+          <td><span class="repr-tag repr-firing-rate">linear-firing-rate</span><div class="activation-cell">activation: state  (signed; positive = increase optical power)</div></td>
           <td class="desc-cell"><p>Fast accommodation integrator (Schor 1986 'phasic' lens controller). Drives sub-second focus changes.</p><div class="refs">Schor (1979, 1986) · Read et al. (2022)</div></td>
           <td class="anatomy-cell">Phasic accommodation integrator (Edinger-Westphal nucleus)</td>
           <td><span class="computation">brain[_IDX_ACC][0]</span></td>
@@ -712,6 +769,7 @@ tr:last-child { border-bottom: none; }
           <td class="axes-cell"></td>
           <td class="units">diopters</td>
           <td><div class="encodes-cell">tonic accommodation (dark focus / sustained near work)</div><div class="frame-cell">frame: focus distance (diopters)</div></td>
+          <td><span class="repr-tag repr-firing-rate">linear-firing-rate</span><div class="activation-cell">activation: state</div></td>
           <td class="desc-cell"><p>Slow accommodation adapter (tau_acc_slow ~20 s).  Drives dark focus and sustained near work.</p></td>
           <td class="anatomy-cell">Tonic accommodation adapter</td>
           <td><span class="computation">brain[_IDX_ACC][1]</span></td>
@@ -728,14 +786,15 @@ tr:last-child { border-bottom: none; }
       <h3>Plant <small style="font-size:11px;font-weight:400;color:#888">(3 signals)</small></h3>
       <table>
         <thead><tr>
-          <th style="width:160px">Signal</th>
-          <th style="width:55px">Shape</th>
-          <th style="width:170px">Axes</th>
-          <th style="width:75px">Units</th>
-          <th style="width:230px">Encodes / frame</th>
+          <th style="width:140px">Signal</th>
+          <th style="width:50px">Shape</th>
+          <th style="width:140px">Axes</th>
+          <th style="width:65px">Units</th>
+          <th style="width:200px">Encodes / frame</th>
+          <th style="width:220px">Representation / activation</th>
           <th>Description</th>
-          <th style="width:180px">Anatomical locus</th>
-          <th style="width:210px">Source / computation</th>
+          <th style="width:170px">Anatomical locus</th>
+          <th style="width:170px">Source</th>
         </tr></thead>
         <tbody>
         <tr>
@@ -744,6 +803,7 @@ tr:last-child { border-bottom: none; }
           <td class="axes-cell">yaw, pitch, roll</td>
           <td class="units">deg</td>
           <td><div class="encodes-cell">left globe orientation (rotation vector)</div><div class="frame-cell">frame: head</div></td>
+          <td><span class="repr-tag repr-position">position-equivalent</span><div class="activation-cell">activation: state  (rotation vector — direction-encoded; no rectification)</div></td>
           <td class="desc-cell"><p>Left eye position (rotation vector, deg).  First-order Robinson 1964 plant integrates motor command (via M_PLANT_EYE @ nerves) toward target.</p><div class="refs">Robinson (1964)</div></td>
           <td class="anatomy-cell">Left globe orientation in head frame</td>
           <td><span class="computation">plant[_IDX_P_L]</span></td>
@@ -755,6 +815,7 @@ tr:last-child { border-bottom: none; }
           <td class="axes-cell">yaw, pitch, roll</td>
           <td class="units">deg</td>
           <td><div class="encodes-cell">right globe orientation (rotation vector)</div><div class="frame-cell">frame: head</div></td>
+          <td><span class="repr-tag repr-position">position-equivalent</span><div class="activation-cell">activation: state</div></td>
           <td class="desc-cell"><p>Right eye position; symmetric to eye_pos_L.</p></td>
           <td class="anatomy-cell">Right globe orientation in head frame</td>
           <td><span class="computation">plant[_IDX_P_R]</span></td>
@@ -766,6 +827,7 @@ tr:last-child { border-bottom: none; }
           <td class="axes-cell"></td>
           <td class="units">diopters</td>
           <td><div class="encodes-cell">lens optical power (accommodation plant output)</div><div class="frame-cell">frame: focus distance (diopters)</div></td>
+          <td><span class="repr-tag repr-firing-rate">linear-firing-rate</span><div class="activation-cell">activation: state  (lens optical power; positive = more accommodated)</div></td>
           <td class="desc-cell"><p>Lens-driven accommodation state (diopters).  First-order plant with tau_acc_plant ~0.16 s (Schor & Bharadwaj 2006).</p><div class="refs">Schor & Bharadwaj (2006)</div></td>
           <td class="anatomy-cell">Lens / ciliary muscle (accommodation plant)</td>
           <td><span class="computation">acc_plant</span></td>
@@ -782,14 +844,15 @@ tr:last-child { border-bottom: none; }
       <h3>Cyclopean Perception <small style="font-size:11px;font-weight:400;color:#888">(4 signals)</small></h3>
       <table>
         <thead><tr>
-          <th style="width:160px">Signal</th>
-          <th style="width:55px">Shape</th>
-          <th style="width:170px">Axes</th>
-          <th style="width:75px">Units</th>
-          <th style="width:230px">Encodes / frame</th>
+          <th style="width:140px">Signal</th>
+          <th style="width:50px">Shape</th>
+          <th style="width:140px">Axes</th>
+          <th style="width:65px">Units</th>
+          <th style="width:200px">Encodes / frame</th>
+          <th style="width:220px">Representation / activation</th>
           <th>Description</th>
-          <th style="width:180px">Anatomical locus</th>
-          <th style="width:210px">Source / computation</th>
+          <th style="width:170px">Anatomical locus</th>
+          <th style="width:170px">Source</th>
         </tr></thead>
         <tbody>
         <tr>
@@ -798,6 +861,7 @@ tr:last-child { border-bottom: none; }
           <td class="axes-cell">yaw, pitch, roll</td>
           <td class="units">deg</td>
           <td><div class="encodes-cell">cyclopean target position (foveal offset, post-delay + post-fusion)</div><div class="frame-cell">frame: cyclopean retina</div></td>
+          <td><span class="repr-tag repr-position">position-equivalent</span><div class="activation-cell">activation: state  (foveal offset; signed)</div></td>
           <td class="desc-cell"><p>Foveal target offset in cyclopean visual field, post-retinal-delay + post-fusion brain LP smoothing.  Drives saccade trigger and vergence.</p></td>
           <td class="anatomy-cell">Cyclopean target position (binocular fused, delayed)</td>
           <td><span class="computation">perception_cyclopean.step → cyc.target_pos</span></td>
@@ -809,6 +873,7 @@ tr:last-child { border-bottom: none; }
           <td class="axes-cell">yaw, pitch, roll</td>
           <td class="units">deg/s</td>
           <td><div class="encodes-cell">scene retinal slip (post-EC residual = self-motion-corrected slip)</div><div class="frame-cell">frame: cyclopean retina (eye frame)</div></td>
+          <td><span class="repr-tag repr-firing-rate">linear-firing-rate</span><div class="activation-cell">activation: state  (post-EC residual = self-motion-prediction error)</div></td>
           <td class="desc-cell"><p>Full-field optic flow used by OKR / VS.  Cyclopean fusion of per-eye delayed scene slips.</p></td>
           <td class="anatomy-cell">Cyclopean scene angular velocity on retina</td>
           <td><span class="computation">perception_cyclopean.step → cyc.scene_angular_vel</span></td>
@@ -820,6 +885,7 @@ tr:last-child { border-bottom: none; }
           <td class="axes-cell">horizontal, vertical, torsional</td>
           <td class="units">deg</td>
           <td><div class="encodes-cell">binocular target disparity (vergence error signal)</div><div class="frame-cell">frame: cyclopean disparity</div></td>
+          <td><span class="repr-tag repr-position">position-equivalent</span><div class="activation-cell">activation: state  (binocular mismatch; signed)</div></td>
           <td class="desc-cell"><p>Inter-ocular target-position mismatch; drives the vergence integrator. Vergence range gates (npc, div_max, vert_max, tors_max) close fusion when this exceeds physiological reserves.</p></td>
           <td class="anatomy-cell">Binocular disparity (vergence drive)</td>
           <td><span class="computation">raw_disp = bino_raw · (target_pos_L − target_pos_R)</span></td>
@@ -831,6 +897,7 @@ tr:last-child { border-bottom: none; }
           <td class="axes-cell"></td>
           <td class="units">diopters</td>
           <td><div class="encodes-cell">retinal blur (defocus error → accommodation drive)</div><div class="frame-cell">frame: focus distance (diopters)</div></td>
+          <td><span class="repr-tag repr-firing-rate">linear-firing-rate</span><div class="activation-cell">activation: state  (signed defocus error)</div></td>
           <td class="desc-cell"><p>Defocus signal (1/z + RE − x_acc_plant) seen post-retinal delay; drives accommodation phasic / tonic integrators.</p></td>
           <td class="anatomy-cell">Retinal blur signal (delayed)</td>
           <td><span class="computation">perception_cyclopean.step → cyc.defocus</span></td>
@@ -843,14 +910,15 @@ tr:last-child { border-bottom: none; }
       <h3>Final Common Pathway <small style="font-size:11px;font-weight:400;color:#888">(1 signal)</small></h3>
       <table>
         <thead><tr>
-          <th style="width:160px">Signal</th>
-          <th style="width:55px">Shape</th>
-          <th style="width:170px">Axes</th>
-          <th style="width:75px">Units</th>
-          <th style="width:230px">Encodes / frame</th>
+          <th style="width:140px">Signal</th>
+          <th style="width:50px">Shape</th>
+          <th style="width:140px">Axes</th>
+          <th style="width:65px">Units</th>
+          <th style="width:200px">Encodes / frame</th>
+          <th style="width:220px">Representation / activation</th>
           <th>Description</th>
-          <th style="width:180px">Anatomical locus</th>
-          <th style="width:210px">Source / computation</th>
+          <th style="width:170px">Anatomical locus</th>
+          <th style="width:170px">Source</th>
         </tr></thead>
         <tbody>
         <tr>
@@ -859,6 +927,7 @@ tr:last-child { border-bottom: none; }
           <td class="axes-cell">LR_L, MR_L, SR_L, IR_L, SO_L, … (+7)</td>
           <td class="units">deg/s equivalent</td>
           <td><div class="encodes-cell">cranial-nerve axonal firing rates (post conduction-cap clip)</div><div class="frame-cell">frame: per-muscle (12)</div></td>
+          <td><span class="repr-tag repr-rectified">rectified-firing-rate</span><div class="activation-cell">activation: state  (post axon-conduction-clip; ≥ 0 by construction)</div></td>
           <td class="desc-cell"><p>Per-muscle nerve firing rates after the axonal conduction cap (g_nerve · NERVE_MAX).  Plant decodes via M_PLANT_EYE = pinv(M_NERVE).</p></td>
           <td class="anatomy-cell">Cranial-nerve axon outputs to extraocular muscles</td>
           <td><span class="computation">smooth_clip(M_NERVE_PROJ @ x_mn, g_nerve · NERVE_MAX)</span></td>
@@ -871,14 +940,15 @@ tr:last-child { border-bottom: none; }
       <h3>Neural Integrator <small style="font-size:11px;font-weight:400;color:#888">(1 signal)</small></h3>
       <table>
         <thead><tr>
-          <th style="width:160px">Signal</th>
-          <th style="width:55px">Shape</th>
-          <th style="width:170px">Axes</th>
-          <th style="width:75px">Units</th>
-          <th style="width:230px">Encodes / frame</th>
+          <th style="width:140px">Signal</th>
+          <th style="width:50px">Shape</th>
+          <th style="width:140px">Axes</th>
+          <th style="width:65px">Units</th>
+          <th style="width:200px">Encodes / frame</th>
+          <th style="width:220px">Representation / activation</th>
           <th>Description</th>
-          <th style="width:180px">Anatomical locus</th>
-          <th style="width:210px">Source / computation</th>
+          <th style="width:170px">Anatomical locus</th>
+          <th style="width:170px">Source</th>
         </tr></thead>
         <tbody>
         <tr>
@@ -887,6 +957,7 @@ tr:last-child { border-bottom: none; }
           <td class="axes-cell">yaw, pitch, roll</td>
           <td class="units">deg</td>
           <td><div class="encodes-cell">net eye-position command (integrator output)</div><div class="frame-cell">frame: head</div></td>
+          <td><span class="repr-tag repr-position">position-equivalent</span><div class="activation-cell">activation: state</div></td>
           <td class="desc-cell"><p>Net eye-position equivalent — what the plant uses for tonic position hold.  Equal to ni_left − ni_right.</p></td>
           <td class="anatomy-cell">Net eye-position command (NPH bilateral diff)</td>
           <td><span class="computation">ni_left − ni_right</span></td>
@@ -899,14 +970,15 @@ tr:last-child { border-bottom: none; }
       <h3>Plant <small style="font-size:11px;font-weight:400;color:#888">(2 signals)</small></h3>
       <table>
         <thead><tr>
-          <th style="width:160px">Signal</th>
-          <th style="width:55px">Shape</th>
-          <th style="width:170px">Axes</th>
-          <th style="width:75px">Units</th>
-          <th style="width:230px">Encodes / frame</th>
+          <th style="width:140px">Signal</th>
+          <th style="width:50px">Shape</th>
+          <th style="width:140px">Axes</th>
+          <th style="width:65px">Units</th>
+          <th style="width:200px">Encodes / frame</th>
+          <th style="width:220px">Representation / activation</th>
           <th>Description</th>
-          <th style="width:180px">Anatomical locus</th>
-          <th style="width:210px">Source / computation</th>
+          <th style="width:170px">Anatomical locus</th>
+          <th style="width:170px">Source</th>
         </tr></thead>
         <tbody>
         <tr>
@@ -915,6 +987,7 @@ tr:last-child { border-bottom: none; }
           <td class="axes-cell">yaw, pitch, roll</td>
           <td class="units">deg/s</td>
           <td><div class="encodes-cell">instantaneous left-eye angular velocity</div><div class="frame-cell">frame: head</div></td>
+          <td><span class="repr-tag repr-firing-rate">linear-firing-rate</span><div class="activation-cell">activation: state</div></td>
           <td class="desc-cell"><p>Algebraic eye velocity = M_PLANT_EYE_L @ nerves_L − x_p_L/tau_p. Used by retina (slip), efference copy, and plotting.</p></td>
           <td class="anatomy-cell">Left eye angular velocity (instantaneous)</td>
           <td><span class="computation">M_PLANT_EYE_L @ nerves[0:6] − eye_pos_L / tau_p</span></td>
@@ -926,6 +999,7 @@ tr:last-child { border-bottom: none; }
           <td class="axes-cell">yaw, pitch, roll</td>
           <td class="units">deg/s</td>
           <td><div class="encodes-cell">instantaneous right-eye angular velocity</div><div class="frame-cell">frame: head</div></td>
+          <td><span class="repr-tag repr-firing-rate">linear-firing-rate</span><div class="activation-cell">activation: state</div></td>
           <td class="desc-cell"><p>Symmetric to eye_vel_L.</p></td>
           <td class="anatomy-cell">Right eye angular velocity (instantaneous)</td>
           <td><span class="computation">M_PLANT_EYE_R @ nerves[6:12] − eye_pos_R / tau_p</span></td>
@@ -938,14 +1012,15 @@ tr:last-child { border-bottom: none; }
       <h3>Pursuit <small style="font-size:11px;font-weight:400;color:#888">(1 signal)</small></h3>
       <table>
         <thead><tr>
-          <th style="width:160px">Signal</th>
-          <th style="width:55px">Shape</th>
-          <th style="width:170px">Axes</th>
-          <th style="width:75px">Units</th>
-          <th style="width:230px">Encodes / frame</th>
+          <th style="width:140px">Signal</th>
+          <th style="width:50px">Shape</th>
+          <th style="width:140px">Axes</th>
+          <th style="width:65px">Units</th>
+          <th style="width:200px">Encodes / frame</th>
+          <th style="width:220px">Representation / activation</th>
           <th>Description</th>
-          <th style="width:180px">Anatomical locus</th>
-          <th style="width:210px">Source / computation</th>
+          <th style="width:170px">Anatomical locus</th>
+          <th style="width:170px">Source</th>
         </tr></thead>
         <tbody>
         <tr>
@@ -954,6 +1029,7 @@ tr:last-child { border-bottom: none; }
           <td class="axes-cell">yaw, pitch, roll</td>
           <td class="units">deg/s</td>
           <td><div class="encodes-cell">pursuit velocity command (integrator + phasic feed-through)</div><div class="frame-cell">frame: head</div></td>
+          <td><span class="repr-tag repr-firing-rate">linear-firing-rate</span><div class="activation-cell">activation: state</div></td>
           <td class="desc-cell"><p>Smooth-pursuit eye-velocity command.  Sum of leaky integrator (x_pursuit) and phasic direct-path feed-through (K_phasic_pursuit · target_slip).</p></td>
           <td class="anatomy-cell">Pursuit velocity drive (integrator + phasic feed-through)</td>
           <td><span class="computation">x_pursuit + K_phasic_pursuit · e_vel_pred</span></td>
@@ -966,14 +1042,15 @@ tr:last-child { border-bottom: none; }
       <h3>Saccade Generator <small style="font-size:11px;font-weight:400;color:#888">(1 signal)</small></h3>
       <table>
         <thead><tr>
-          <th style="width:160px">Signal</th>
-          <th style="width:55px">Shape</th>
-          <th style="width:170px">Axes</th>
-          <th style="width:75px">Units</th>
-          <th style="width:230px">Encodes / frame</th>
+          <th style="width:140px">Signal</th>
+          <th style="width:50px">Shape</th>
+          <th style="width:140px">Axes</th>
+          <th style="width:65px">Units</th>
+          <th style="width:200px">Encodes / frame</th>
+          <th style="width:220px">Representation / activation</th>
           <th>Description</th>
-          <th style="width:180px">Anatomical locus</th>
-          <th style="width:210px">Source / computation</th>
+          <th style="width:170px">Anatomical locus</th>
+          <th style="width:170px">Source</th>
         </tr></thead>
         <tbody>
         <tr>
@@ -982,6 +1059,7 @@ tr:last-child { border-bottom: none; }
           <td class="axes-cell">yaw, pitch, roll</td>
           <td class="units">deg/s</td>
           <td><div class="encodes-cell">saccade burst velocity (net EBN minus IBN inhibition, OPN-gated)</div><div class="frame-cell">frame: head</div></td>
+          <td><span class="repr-tag repr-firing-rate">linear-firing-rate</span><div class="activation-cell">activation: state  (signed; from net EBN/IBN balance, OPN-gated)</div></td>
           <td class="desc-cell"><p>Net saccadic burst velocity command.  Drives NI + plant during a saccade, gated by OPN pause.  Peak ~700 deg/s (g_burst).</p></td>
           <td class="anatomy-cell">Saccadic burst command (EBN_R − EBN_L − ipsi_IBN inhibition)</td>
           <td><span class="computation">from saccade_generator.step (EBN/IBN balance)</span></td>
@@ -994,14 +1072,15 @@ tr:last-child { border-bottom: none; }
       <h3>Self Motion Observer <small style="font-size:11px;font-weight:400;color:#888">(2 signals)</small></h3>
       <table>
         <thead><tr>
-          <th style="width:160px">Signal</th>
-          <th style="width:55px">Shape</th>
-          <th style="width:170px">Axes</th>
-          <th style="width:75px">Units</th>
-          <th style="width:230px">Encodes / frame</th>
+          <th style="width:140px">Signal</th>
+          <th style="width:50px">Shape</th>
+          <th style="width:140px">Axes</th>
+          <th style="width:65px">Units</th>
+          <th style="width:200px">Encodes / frame</th>
+          <th style="width:220px">Representation / activation</th>
           <th>Description</th>
-          <th style="width:180px">Anatomical locus</th>
-          <th style="width:210px">Source / computation</th>
+          <th style="width:170px">Anatomical locus</th>
+          <th style="width:170px">Source</th>
         </tr></thead>
         <tbody>
         <tr>
@@ -1010,6 +1089,7 @@ tr:last-child { border-bottom: none; }
           <td class="axes-cell">yaw, pitch, roll</td>
           <td class="units">deg/s</td>
           <td><div class="encodes-cell">translational-VOR compensation velocity (1/distance scaled)</div><div class="frame-cell">frame: head</div></td>
+          <td><span class="repr-tag repr-firing-rate">linear-firing-rate</span><div class="activation-cell">activation: state</div></td>
           <td class="desc-cell"><p>T-VOR compensatory eye velocity from heading × gaze geometry, scaled by 1/distance (vergence-derived).  Adds to NI input alongside −w_est.</p><div class="refs">Paige & Tomko (1991)</div></td>
           <td class="anatomy-cell">Translational VOR (T-VOR) version output</td>
           <td><span class="computation">g_tvor · (v_lin × ec_d_unit) / distance</span></td>
@@ -1021,6 +1101,7 @@ tr:last-child { border-bottom: none; }
           <td class="axes-cell">yaw, pitch, roll</td>
           <td class="units">deg</td>
           <td><div class="encodes-cell">gravity-driven static torsion set-point (ocular counter-roll)</div><div class="frame-cell">frame: head</div></td>
+          <td><span class="repr-tag repr-position">position-equivalent</span><div class="activation-cell">activation: state</div></td>
           <td class="desc-cell"><p>Static torsion command from gravity estimate (gravity_estimate[0] → roll set-point).  Drives ~10° eye torsion at 90° head tilt (Diamond, Markham et al.).</p><div class="refs">Diamond, Markham, Furuya, Melvill Jones (1979)</div></td>
           <td class="anatomy-cell">Ocular counter-roll (gravity-driven static torsion)</td>
           <td><span class="computation">[0, 0, −g_ocr · gravity_estimate[0]]</span></td>
@@ -1033,14 +1114,15 @@ tr:last-child { border-bottom: none; }
       <h3>Velocity Storage <small style="font-size:11px;font-weight:400;color:#888">(1 signal)</small></h3>
       <table>
         <thead><tr>
-          <th style="width:160px">Signal</th>
-          <th style="width:55px">Shape</th>
-          <th style="width:170px">Axes</th>
-          <th style="width:75px">Units</th>
-          <th style="width:230px">Encodes / frame</th>
+          <th style="width:140px">Signal</th>
+          <th style="width:50px">Shape</th>
+          <th style="width:140px">Axes</th>
+          <th style="width:65px">Units</th>
+          <th style="width:200px">Encodes / frame</th>
+          <th style="width:220px">Representation / activation</th>
           <th>Description</th>
-          <th style="width:180px">Anatomical locus</th>
-          <th style="width:210px">Source / computation</th>
+          <th style="width:170px">Anatomical locus</th>
+          <th style="width:170px">Source</th>
         </tr></thead>
         <tbody>
         <tr>
@@ -1049,6 +1131,7 @@ tr:last-child { border-bottom: none; }
           <td class="axes-cell">yaw, pitch, roll</td>
           <td class="units">deg/s</td>
           <td><div class="encodes-cell">net VS estimate of head angular velocity</div><div class="frame-cell">frame: head</div></td>
+          <td><span class="repr-tag repr-firing-rate">linear-firing-rate</span><div class="activation-cell">activation: state  (population-difference output already encodes signed velocity)</div></td>
           <td class="desc-cell"><p>Net VS angular-velocity estimate that drives NI + plant.  Decayed copy of vestibular afferents + visual slip integrand.</p><div class="refs">Raphan, Matsuo & Cohen (1979)</div></td>
           <td class="anatomy-cell">Net velocity-storage estimate (Type-I VN bilateral diff)</td>
           <td><span class="computation">vs_left − vs_right</span></td>
@@ -1061,14 +1144,15 @@ tr:last-child { border-bottom: none; }
       <h3>Vergence Accommodation <small style="font-size:11px;font-weight:400;color:#888">(1 signal)</small></h3>
       <table>
         <thead><tr>
-          <th style="width:160px">Signal</th>
-          <th style="width:55px">Shape</th>
-          <th style="width:170px">Axes</th>
-          <th style="width:75px">Units</th>
-          <th style="width:230px">Encodes / frame</th>
+          <th style="width:140px">Signal</th>
+          <th style="width:50px">Shape</th>
+          <th style="width:140px">Axes</th>
+          <th style="width:65px">Units</th>
+          <th style="width:200px">Encodes / frame</th>
+          <th style="width:220px">Representation / activation</th>
           <th>Description</th>
-          <th style="width:180px">Anatomical locus</th>
-          <th style="width:210px">Source / computation</th>
+          <th style="width:170px">Anatomical locus</th>
+          <th style="width:170px">Source</th>
         </tr></thead>
         <tbody>
         <tr>
@@ -1077,6 +1161,7 @@ tr:last-child { border-bottom: none; }
           <td class="axes-cell">horizontal, vertical, torsional</td>
           <td class="units">deg</td>
           <td><div class="encodes-cell">total vergence command (phasic + tonic + SVBN + direct)</div><div class="frame-cell">frame: binocular vergence angle</div></td>
+          <td><span class="repr-tag repr-position">position-equivalent</span><div class="activation-cell">activation: state</div></td>
           <td class="desc-cell"><p>Total vergence command sent to the FCP.  Sum of tonic vergence baseline, fast and slow integrator outputs, SVBN burst, and direct phasic path.</p></td>
           <td class="anatomy-cell">Vergence command (sum of phasic / tonic / SVBN paths)</td>
           <td><span class="computation">tonic_verg + verg_fast + verg_tonic + tau_p · K_phasic · disparity</span></td>

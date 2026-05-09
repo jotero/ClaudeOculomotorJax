@@ -22,6 +22,21 @@
 #   population:   neural population type (e.g. "Type-I VN")
 #   state_slice:  how to extract from SimState (for stored state)
 #   computation:  symbolic expression (for derived signals)
+#   representation:  how the state is parameterized in code.  Values:
+#                  - "linear-firing-rate"        : raw membrane / drive-equiv;
+#                                                  may be signed; activation differs
+#                  - "firing-rate-around-bias"   : tonic baseline absorbs floor;
+#                                                  activation ≈ state in healthy operation
+#                  - "rectified-firing-rate"     : non-negative by construction;
+#                                                  activation = state
+#                  - "position-equivalent"       : eye-position-like; signed bias-shifted
+#                  - "scalar-bookkeeping"        : auxiliary state, no biological activation
+#   activation:   formula mapping state → biological firing rate / output:
+#                  e.g. "max(0, state)"       (rectified)
+#                       "state"               (no further nonlinearity)
+#                       "smooth_clip(2·state, NERVE_MAX)"   (f-I curve clip)
+#                  Documents the nonlinearity wrapping the linear dynamics.
+#   baseline:     resting / tonic value (matches `representation` baseline if any)
 #   references:   list of citation strings
 #   llm_plottable: true → expose as a candidate for LLM custom-panel signals
 
@@ -33,6 +48,8 @@ sensory.canal_afferents:
   group: vestibular_periphery
   encodes:    "head angular velocity (push-pull canal pairs)"
   frame:      "canal-aligned (HC ≈ yaw, AC/PC ≈ pitch + roll)"
+  representation: "rectified-firing-rate"
+  activation:     "state  (already smooth-saturated nonlinearity in canal.step)"
   shape: [6]
   axes:  [L_HC, L_AC, L_PC, R_HC, R_AC, R_PC]
   units: "deg/s"
@@ -53,6 +70,8 @@ sensory.canal_state:
   group: vestibular_periphery
   encodes:    "cupula deflection + inertia (internal Steinhausen state)"
   frame:      "per-canal"
+  representation: "scalar-bookkeeping"
+  activation:     "n/a — internal Steinhausen pendulum; afferent rate computed externally"
   shape: [12]
   axes:  [HC_L_x1, HC_L_x2, AC_L_x1, AC_L_x2, PC_L_x1, PC_L_x2,
           HC_R_x1, HC_R_x2, AC_R_x1, AC_R_x2, PC_R_x1, PC_R_x2]
@@ -73,6 +92,8 @@ sensory.otolith:
   group: vestibular_periphery
   encodes:    "specific force (linear acceleration + gravity, LP-adapted)"
   frame:      "head"
+  representation: "rectified-firing-rate"
+  activation:     "state  (LP-adapter output, already non-negative for compressive force range)"
   shape: [6]
   axes:  [L_x1, L_x2, L_x3, R_x1, R_x2, R_x3]
   units: "m/s²"
@@ -93,6 +114,8 @@ sensory.retina_L:
   group: visual_periphery
   encodes:    "multi-channel visual signals (slip / target / visibility / defocus, delayed)"
   frame:      "left retina (foveal-centred)"
+  representation: "scalar-bookkeeping"
+  activation:     "n/a — multi-channel LP cascade; per-channel activations exposed via cyclopean readouts"
   shape: [90]
   units: "various"
   anatomy:    "Left-eye visual processing (retina → V1 / MT / MST)"
@@ -108,6 +131,8 @@ sensory.retina_R:
   group: visual_periphery
   encodes:    "multi-channel visual signals (slip / target / visibility / defocus, delayed)"
   frame:      "right retina (foveal-centred)"
+  representation: "scalar-bookkeeping"
+  activation:     "n/a — multi-channel LP cascade; per-channel activations exposed via cyclopean readouts"
   shape: [90]
   units: "various"
   anatomy:    "Right-eye visual processing (retina → V1 / MT / MST)"
@@ -124,6 +149,9 @@ brain.vs_left:
   group: velocity_storage
   encodes:    "head angular velocity (compensatory drive, left pop)"
   frame:      "head"
+  representation: "firing-rate-around-bias"
+  activation:     "max(0, state)  (real Type-I VN cells are rectified at 0; bias absorbs the floor in healthy operation)"
+  baseline:       "b_vs (default 100 deg/s)"
   shape: [3]
   axes:  [yaw, pitch, roll]
   units: "deg/s"
@@ -143,6 +171,9 @@ brain.vs_right:
   group: velocity_storage
   encodes:    "head angular velocity (compensatory drive, right pop)"
   frame:      "head"
+  representation: "firing-rate-around-bias"
+  activation:     "max(0, state)"
+  baseline:       "b_vs (default 100 deg/s)"
   shape: [3]
   axes:  [yaw, pitch, roll]
   units: "deg/s"
@@ -158,6 +189,9 @@ brain.vs_null:
   group: velocity_storage
   encodes:    "slow VS bilateral-imbalance adapter (PAN substrate)"
   frame:      "head"
+  representation: "linear-firing-rate"
+  activation:     "state  (slow adapter on bilateral imbalance; signed)"
+  baseline:       "0"
   shape: [3]
   axes:  [yaw, pitch, roll]
   units: "deg/s"
@@ -176,6 +210,8 @@ brain.gravity_estimate:
   group: self_motion_observer
   encodes:    "estimated gravity vector (somatogravic prior)"
   frame:      "head"
+  representation: "linear-firing-rate"
+  activation:     "state  (vector estimate; no rectification — direction-encoded)"
   shape: [3]
   axes:  [x, y, z]
   units: "m/s²"
@@ -192,6 +228,8 @@ brain.linear_accel_estimate:
   group: self_motion_observer
   encodes:    "linear-acceleration estimate (otolith − gravity prediction)"
   frame:      "head"
+  representation: "linear-firing-rate"
+  activation:     "state  (signed vector; encodes acceleration direction + magnitude)"
   shape: [3]
   axes:  [x, y, z]
   units: "m/s²"
@@ -206,6 +244,8 @@ brain.rotation_frame:
   group: self_motion_observer
   encodes:    "rotating-frame bookkeeping for gravity transport (internal)"
   frame:      "head"
+  representation: "scalar-bookkeeping"
+  activation:     "n/a — internal frame tracking"
   shape: [3]
   axes:  [x, y, z]
   units: "—"
@@ -221,6 +261,8 @@ brain.linear_velocity_estimate:
   group: self_motion_observer
   encodes:    "head-fixed linear velocity (heading)"
   frame:      "head"
+  representation: "linear-firing-rate"
+  activation:     "state  (signed vector)"
   shape: [3]
   axes:  [x, y, z]
   units: "m/s"
@@ -240,6 +282,9 @@ brain.ni_left:
   group: neural_integrator
   encodes:    "eye-position equivalent (left pop, integrated velocity)"
   frame:      "head"
+  representation: "firing-rate-around-bias"
+  activation:     "max(0, state)  (NPH/INC neurons rectified; bias b_ni absorbs floor)"
+  baseline:       "b_ni (default 0)"
   shape: [3]
   axes:  [yaw, pitch, roll]
   units: "deg"
@@ -260,6 +305,9 @@ brain.ni_right:
   group: neural_integrator
   encodes:    "eye-position equivalent (right pop, integrated velocity)"
   frame:      "head"
+  representation: "firing-rate-around-bias"
+  activation:     "max(0, state)"
+  baseline:       "b_ni"
   shape: [3]
   axes:  [yaw, pitch, roll]
   units: "deg"
@@ -274,6 +322,9 @@ brain.ni_null:
   group: neural_integrator
   encodes:    "slow NI bilateral-imbalance adapter (rebound nystagmus substrate)"
   frame:      "head"
+  representation: "linear-firing-rate"
+  activation:     "state  (signed adapter on bilateral imbalance)"
+  baseline:       "0"
   shape: [3]
   axes:  [yaw, pitch, roll]
   units: "deg"
@@ -296,6 +347,8 @@ brain.e_held:
   group: saccade_generator
   encodes:    "held motor error during saccade (target − current eye position)"
   frame:      "head"
+  representation: "position-equivalent"
+  activation:     "state  (signed motor error vector; sign = direction)"
   shape: [3]
   axes:  [yaw, pitch, roll]
   units: "deg"
@@ -312,6 +365,9 @@ brain.opn_act:
   group: saccade_generator
   encodes:    "saccade gate (tonic between saccades, paused during burst)"
   frame:      "scalar (firing-rate fraction)"
+  representation: "rectified-firing-rate"
+  activation:     "clip(state, [0, 100])  (firing rate fraction of tonic max)"
+  baseline:       "100  (tonic OPN firing between saccades)"
   shape: [1]
   units: "fr (~100 = tonic)"
   anatomy:    "Omnipause neurons (rostral nucleus raphe interpositus)"
@@ -328,6 +384,9 @@ brain.acc_buildup:
   group: saccade_generator
   encodes:    "saccade-trigger accumulator (rise-to-bound)"
   frame:      "scalar"
+  representation: "scalar-bookkeeping"
+  activation:     "state  (rise-to-bound accumulator; threshold-crossing triggers OPN pause)"
+  baseline:       "acc_burst_floor (default −0.5)"
   shape: [1]
   units: "—"
   anatomy:    "SC rostral / caudal accumulator (rise-to-bound)"
@@ -342,6 +401,8 @@ brain.trig_state:
   group: saccade_generator
   encodes:    "OPN-suppression latch state"
   frame:      "scalar"
+  representation: "scalar-bookkeeping"
+  activation:     "state  (latch signal, smoothed)"
   shape: [1]
   units: "—"
   anatomy:    "OPN-suppression trigger latch"
@@ -355,6 +416,8 @@ brain.ebn_R:
   group: saccade_generator
   encodes:    "saccade burst-velocity command (right pop, agonist for leftward gaze)"
   frame:      "head"
+  representation: "rectified-firing-rate"
+  activation:     "gate · state  (gated by OPN pause + IBN inhibition; ≥ 0)"
   shape: [3]
   axes:  [yaw, pitch, roll]
   units: "deg/s"
@@ -375,6 +438,8 @@ brain.ebn_L:
   group: saccade_generator
   encodes:    "saccade burst-velocity command (left pop, agonist for rightward gaze)"
   frame:      "head"
+  representation: "rectified-firing-rate"
+  activation:     "gate · state"
   shape: [3]
   axes:  [yaw, pitch, roll]
   units: "deg/s"
@@ -391,6 +456,8 @@ brain.ibn_R:
   group: saccade_generator
   encodes:    "right inhibitory burst (contralateral antagonist + OPN suppression)"
   frame:      "head"
+  representation: "rectified-firing-rate"
+  activation:     "gate · state"
   shape: [3]
   axes:  [yaw, pitch, roll]
   units: "deg/s"
@@ -410,6 +477,8 @@ brain.ibn_L:
   group: saccade_generator
   encodes:    "left inhibitory burst (contralateral antagonist + OPN suppression)"
   frame:      "head"
+  representation: "rectified-firing-rate"
+  activation:     "gate · state"
   shape: [3]
   axes:  [yaw, pitch, roll]
   units: "deg/s"
@@ -424,19 +493,69 @@ brain.ibn_L:
 # BRAIN — Smooth pursuit
 # ─────────────────────────────────────────────────────────────────────────────
 
-brain.pursuit:
+brain.pursuit_R:
   group: pursuit
-  encodes:    "pursuit eye-velocity command (Smith-predictor integrator)"
+  encodes:    "rightward / upward / extorting pursuit memory (push-pull pop)"
   frame:      "head"
+  representation: "rectified-firing-rate"
+  activation:     "max(state, 0)  — non-negative directional firing rate"
+  shape: [3]
+  axes:  [yaw, pitch, roll]
+  units: "deg/s (firing-rate equivalent)"
+  anatomy:
+    - {axes: yaw,   region: "Right MT/MST + cerebellar flocculus (rightward-preferring)"}
+    - {axes: pitch, region: "Right MT/MST (upward-preferring)"}
+    - {axes: roll,  region: "Right MT/MST (extorting-preferring)"}
+  population: "ipsi-direction-preferring MT/MST"
+  description: |
+    Rightward/upward/extorting half of the bilateral pursuit integrator.
+    Each axis integrates only the rectified positive part of the Smith
+    predictor error  e_pred = (target_slip_ec − x_net) / (1 + K_phasic).
+    Identity  max(0, e) − max(0, −e) = e  preserves the net Smith dynamics
+    of the pre-bilateral single-integrator model.
+  state_slice: "brain[_IDX_PURSUIT][0:3]"
+  baseline: "0 deg/s (rest)"
+  references: ["Lisberger (1988)", "Krauzlis & Lisberger (1994)"]
+  llm_plottable: true
+
+brain.pursuit_L:
+  group: pursuit
+  encodes:    "leftward / downward / intorting pursuit memory (push-pull pop)"
+  frame:      "head"
+  representation: "rectified-firing-rate"
+  activation:     "max(state, 0)  — non-negative directional firing rate"
+  shape: [3]
+  axes:  [yaw, pitch, roll]
+  units: "deg/s (firing-rate equivalent)"
+  anatomy:
+    - {axes: yaw,   region: "Left MT/MST + cerebellar flocculus (leftward-preferring)"}
+    - {axes: pitch, region: "Left MT/MST (downward-preferring)"}
+    - {axes: roll,  region: "Left MT/MST (intorting-preferring)"}
+  population: "contra-direction-preferring MT/MST"
+  description: |
+    Leftward/downward/intorting half of the bilateral pursuit integrator.
+    Mirror of pursuit_R — integrates the rectified negative part of the
+    Smith predictor error.
+  state_slice: "brain[_IDX_PURSUIT][3:6]"
+  baseline: "0 deg/s (rest)"
+  references: ["Lisberger (1988)", "Krauzlis & Lisberger (1994)"]
+  llm_plottable: true
+
+brain.pursuit_net:
+  group: pursuit
+  encodes:    "signed pursuit memory (NET = pursuit_R − pursuit_L)"
+  frame:      "head"
+  representation: "linear-firing-rate"
+  activation:     "x_R − x_L  (signed)"
   shape: [3]
   axes:  [yaw, pitch, roll]
   units: "deg/s"
-  anatomy:    "Pursuit integrator (cerebellar floc/paraflocculus + MST)"
+  anatomy:    "Pursuit integrator NET (downstream readout to NI / EC cascade)"
   description: |
-    Leaky pursuit integrator state — eye-velocity command for smooth
-    pursuit.  K_pursuit controls rise TC; tau_pursuit the leak.  Smith
-    predictor cancels saccadic contamination via efference copy.
-  state_slice: "brain[_IDX_PURSUIT]"
+    Net signed pursuit memory — what the eye actually receives.  Identical
+    in dynamics to the pre-bilateral single-integrator state, by construction
+    (push-pull populations preserve the linear Smith predictor exactly).
+  computation: "pursuit.decode_states(acts).net = acts.R − acts.L"
   references: ["Lisberger (1988)", "Krauzlis & Lisberger (1994)"]
   llm_plottable: true
 
@@ -448,6 +567,8 @@ brain.verg_fast:
   group: vergence_accommodation
   encodes:    "phasic vergence position (fast disparity-driven integrator)"
   frame:      "binocular vergence angle"
+  representation: "position-equivalent"
+  activation:     "state  (signed; positive = convergence, negative = divergence — bilateral split deferred to Phase 3)"
   shape: [3]
   axes:  [horizontal, vertical, torsional]
   units: "deg"
@@ -463,6 +584,8 @@ brain.verg_tonic:
   group: vergence_accommodation
   encodes:    "tonic vergence (slow adapter, dark vergence baseline)"
   frame:      "binocular vergence angle"
+  representation: "position-equivalent"
+  activation:     "state"
   shape: [3]
   axes:  [horizontal, vertical, torsional]
   units: "deg"
@@ -478,6 +601,8 @@ brain.verg_copy:
   group: vergence_accommodation
   encodes:    "saccadic vergence burst efference copy (SVBN)"
   frame:      "binocular vergence angle"
+  representation: "scalar-bookkeeping"
+  activation:     "state  (efference copy of saccadic vergence burst)"
   shape: [3]
   axes:  [horizontal, vertical, torsional]
   units: "deg"
@@ -493,6 +618,8 @@ brain.acc_fast:
   group: vergence_accommodation
   encodes:    "phasic accommodation drive (fast lens controller)"
   frame:      "focus distance (diopters)"
+  representation: "linear-firing-rate"
+  activation:     "state  (signed; positive = increase optical power)"
   shape: [1]
   units: "diopters"
   anatomy:    "Phasic accommodation integrator (Edinger-Westphal nucleus)"
@@ -507,6 +634,8 @@ brain.acc_slow:
   group: vergence_accommodation
   encodes:    "tonic accommodation (dark focus / sustained near work)"
   frame:      "focus distance (diopters)"
+  representation: "linear-firing-rate"
+  activation:     "state"
   shape: [1]
   units: "diopters"
   anatomy:    "Tonic accommodation adapter"
@@ -524,6 +653,8 @@ brain.target_mem_pos:
   group: target_memory
   encodes:    "remembered target position (working-memory blank-fill)"
   frame:      "head (foveal offset)"
+  representation: "position-equivalent"
+  activation:     "trust · state  (gated by memory confidence)"
   shape: [3]
   axes:  [yaw, pitch, roll]
   units: "deg"
@@ -539,6 +670,8 @@ brain.target_mem_trust:
   group: target_memory
   encodes:    "memory-confidence modulator (gates downstream consumers)"
   frame:      "scalar [0,1]"
+  representation: "scalar-bookkeeping"
+  activation:     "clip(state, [0, 1])"
   shape: [1]
   units: "—"
   anatomy:    "Memory-trust modulator"
@@ -556,6 +689,8 @@ brain.cyclopean_signals:
   group: cyclopean_perception
   encodes:    "binocular-fused, brain-LP-smoothed visual signals (multi-channel buffer)"
   frame:      "cyclopean retina"
+  representation: "scalar-bookkeeping"
+  activation:     "n/a — multi-channel LP buffer; per-channel readouts in derived signals"
   shape: [43]
   units: "various"
   anatomy:    "Post-fusion LP smoothing (V1+ / MT+ / MST+ / V2+ stereo)"
@@ -578,6 +713,8 @@ brain.ec_scene_cascade:
   group: efference_copy
   encodes:    "delayed eye-velocity efference copy (matched to scene-slip cascade)"
   frame:      "eye"
+  representation: "scalar-bookkeeping"
+  activation:     "state[-3:]  (last cascade tap is the delayed efference copy)"
   shape: [21]
   units: "deg/s"
   anatomy:    "Efference copy of eye velocity, scene-cascade-matched"
@@ -594,6 +731,8 @@ brain.ec_target_cascade:
   group: efference_copy
   encodes:    "delayed eye-velocity efference copy (matched to target-slip cascade)"
   frame:      "eye"
+  representation: "scalar-bookkeeping"
+  activation:     "state[-3:]"
   shape: [21]
   units: "deg/s"
   anatomy:    "Efference copy of eye velocity, target-cascade-matched"
@@ -611,6 +750,8 @@ brain.mn:
   group: final_common_pathway
   encodes:    "motor neuron firing rates (12 muscle-MNs + 2 abducens internuclear)"
   frame:      "per-MN (firing rate, deg/s equiv)"
+  representation: "rectified-firing-rate"
+  activation:     "state  (LP-tracks the f-I curve target; already rectified + saturated by smooth_clip)"
   shape: [14]
   axes:  [LR_L, MR_L, SR_L, IR_L, SO_L, IO_L,
           LR_R, MR_R, SR_R, IR_R, SO_R, IO_R, AIN_L, AIN_R]
@@ -634,6 +775,8 @@ plant.eye_pos_L:
   group: plant
   encodes:    "left globe orientation (rotation vector)"
   frame:      "head"
+  representation: "position-equivalent"
+  activation:     "state  (rotation vector — direction-encoded; no rectification)"
   shape: [3]
   axes:  [yaw, pitch, roll]
   units: "deg"
@@ -649,6 +792,8 @@ plant.eye_pos_R:
   group: plant
   encodes:    "right globe orientation (rotation vector)"
   frame:      "head"
+  representation: "position-equivalent"
+  activation:     "state"
   shape: [3]
   axes:  [yaw, pitch, roll]
   units: "deg"
@@ -661,6 +806,8 @@ plant.acc_plant:
   group: plant
   encodes:    "lens optical power (accommodation plant output)"
   frame:      "focus distance (diopters)"
+  representation: "linear-firing-rate"
+  activation:     "state  (lens optical power; positive = more accommodated)"
   shape: [1]
   units: "diopters"
   anatomy:    "Lens / ciliary muscle (accommodation plant)"
@@ -679,6 +826,8 @@ derived.vs_net:
   group: velocity_storage
   encodes:    "net VS estimate of head angular velocity"
   frame:      "head"
+  representation: "linear-firing-rate"
+  activation:     "state  (population-difference output already encodes signed velocity)"
   shape: [3]
   axes:  [yaw, pitch, roll]
   units: "deg/s"
@@ -694,6 +843,8 @@ derived.ni_net:
   group: neural_integrator
   encodes:    "net eye-position command (integrator output)"
   frame:      "head"
+  representation: "position-equivalent"
+  activation:     "state"
   shape: [3]
   axes:  [yaw, pitch, roll]
   units: "deg"
@@ -708,6 +859,8 @@ derived.u_burst:
   group: saccade_generator
   encodes:    "saccade burst velocity (net EBN minus IBN inhibition, OPN-gated)"
   frame:      "head"
+  representation: "linear-firing-rate"
+  activation:     "state  (signed; from net EBN/IBN balance, OPN-gated)"
   shape: [3]
   axes:  [yaw, pitch, roll]
   units: "deg/s"
@@ -722,20 +875,24 @@ derived.u_pursuit:
   group: pursuit
   encodes:    "pursuit velocity command (integrator + phasic feed-through)"
   frame:      "head"
+  representation: "linear-firing-rate"
+  activation:     "state"
   shape: [3]
   axes:  [yaw, pitch, roll]
   units: "deg/s"
   anatomy:    "Pursuit velocity drive (integrator + phasic feed-through)"
   description: |
-    Smooth-pursuit eye-velocity command.  Sum of leaky integrator (x_pursuit)
-    and phasic direct-path feed-through (K_phasic_pursuit · target_slip).
-  computation: "x_pursuit + K_phasic_pursuit · e_vel_pred"
+    Smooth-pursuit eye-velocity command.  Sum of NET pursuit memory
+    (x_R − x_L) and phasic direct-path feed-through (K_phasic_pursuit · e_pred).
+  computation: "(x_pursuit_R − x_pursuit_L) + K_phasic_pursuit · e_vel_pred"
   llm_plottable: true
 
 derived.u_verg:
   group: vergence_accommodation
   encodes:    "total vergence command (phasic + tonic + SVBN + direct)"
   frame:      "binocular vergence angle"
+  representation: "position-equivalent"
+  activation:     "state"
   shape: [3]
   axes:  [horizontal, vertical, torsional]
   units: "deg"
@@ -750,6 +907,8 @@ derived.omega_tvor:
   group: self_motion_observer
   encodes:    "translational-VOR compensation velocity (1/distance scaled)"
   frame:      "head"
+  representation: "linear-firing-rate"
+  activation:     "state"
   shape: [3]
   axes:  [yaw, pitch, roll]
   units: "deg/s"
@@ -765,6 +924,8 @@ derived.ocr:
   group: self_motion_observer
   encodes:    "gravity-driven static torsion set-point (ocular counter-roll)"
   frame:      "head"
+  representation: "position-equivalent"
+  activation:     "state"
   shape: [3]
   axes:  [yaw, pitch, roll]
   units: "deg"
@@ -781,6 +942,8 @@ derived.nerves:
   group: final_common_pathway
   encodes:    "cranial-nerve axonal firing rates (post conduction-cap clip)"
   frame:      "per-muscle (12)"
+  representation: "rectified-firing-rate"
+  activation:     "state  (post axon-conduction-clip; ≥ 0 by construction)"
   shape: [12]
   axes:  [LR_L, MR_L, SR_L, IR_L, SO_L, IO_L, LR_R, MR_R, SR_R, IR_R, SO_R, IO_R]
   units: "deg/s equivalent"
@@ -795,6 +958,8 @@ derived.eye_vel_L:
   group: plant
   encodes:    "instantaneous left-eye angular velocity"
   frame:      "head"
+  representation: "linear-firing-rate"
+  activation:     "state"
   shape: [3]
   axes:  [yaw, pitch, roll]
   units: "deg/s"
@@ -809,6 +974,8 @@ derived.eye_vel_R:
   group: plant
   encodes:    "instantaneous right-eye angular velocity"
   frame:      "head"
+  representation: "linear-firing-rate"
+  activation:     "state"
   shape: [3]
   axes:  [yaw, pitch, roll]
   units: "deg/s"
@@ -821,6 +988,8 @@ derived.cyclopean_target_pos:
   group: cyclopean_perception
   encodes:    "cyclopean target position (foveal offset, post-delay + post-fusion)"
   frame:      "cyclopean retina"
+  representation: "position-equivalent"
+  activation:     "state  (foveal offset; signed)"
   shape: [3]
   axes:  [yaw, pitch, roll]
   units: "deg"
@@ -835,6 +1004,8 @@ derived.cyclopean_scene_slip:
   group: cyclopean_perception
   encodes:    "scene retinal slip (post-EC residual = self-motion-corrected slip)"
   frame:      "cyclopean retina (eye frame)"
+  representation: "linear-firing-rate"
+  activation:     "state  (post-EC residual = self-motion-prediction error)"
   shape: [3]
   axes:  [yaw, pitch, roll]
   units: "deg/s"
@@ -849,6 +1020,8 @@ derived.cyclopean_target_disparity:
   group: cyclopean_perception
   encodes:    "binocular target disparity (vergence error signal)"
   frame:      "cyclopean disparity"
+  representation: "position-equivalent"
+  activation:     "state  (binocular mismatch; signed)"
   shape: [3]
   axes:  [horizontal, vertical, torsional]
   units: "deg"
@@ -864,6 +1037,8 @@ derived.cyclopean_defocus:
   group: cyclopean_perception
   encodes:    "retinal blur (defocus error → accommodation drive)"
   frame:      "focus distance (diopters)"
+  representation: "linear-firing-rate"
+  activation:     "state  (signed defocus error)"
   shape: [1]
   units: "diopters"
   anatomy:    "Retinal blur signal (delayed)"

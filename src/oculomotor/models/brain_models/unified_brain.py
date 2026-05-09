@@ -710,7 +710,14 @@ def f_motor(x_fast, x_slow, u_proc, theta):
 def _pack_subset(x_brain):
     """Map 66-dim brain layout → (x_fast, x_slow) for the unified subset."""
     x_fast = jnp.zeros(N_FAST)
-    x_fast = x_fast.at[_F_PU      ].set(x_brain[_IDX_PURSUIT])
+    # TODO(bilateral pursuit): unified_brain treats pursuit as a single signed
+    # integrator (linear).  Bilateral pursuit (x_R, x_L with rectified drives)
+    # cannot be projected losslessly into the linear unified form; we collapse
+    # to NET (x_R − x_L) here and re-distribute symmetrically in scatter.
+    # bench_compare_unified.py will diverge from the bilateral path in lesion
+    # scenarios that break L/R symmetry.
+    _xpu = x_brain[_IDX_PURSUIT]
+    x_fast = x_fast.at[_F_PU      ].set(_xpu[:3] - _xpu[3:6])
     x_fast = x_fast.at[_F_NI_L    ].set(x_brain[_IDX_NI_L])
     x_fast = x_fast.at[_F_NI_R    ].set(x_brain[_IDX_NI_R])
     x_fast = x_fast.at[_F_V       ].set(x_brain[_IDX_VERG.start    : _IDX_VERG.start + 3])
@@ -744,7 +751,11 @@ def _pack_subset(x_brain):
 
 def _scatter_subset(dx_brain, dx_fast, dx_slow):
     """Map (dx_fast, dx_slow) → 66-dim brain derivative slots."""
-    dx_brain = dx_brain.at[_IDX_PURSUIT].set(dx_fast[_F_PU])
+    # TODO(bilateral pursuit): split NET dx_pu evenly across (R, L).  Lossy —
+    # only correct in the linear regime where x_R, x_L track ±NET/2.
+    _dxpu_net = dx_fast[_F_PU]
+    dx_brain = dx_brain.at[_IDX_PURSUIT.start    : _IDX_PURSUIT.start + 3].set( 0.5 * _dxpu_net)
+    dx_brain = dx_brain.at[_IDX_PURSUIT.start + 3: _IDX_PURSUIT.start + 6].set(-0.5 * _dxpu_net)
     dx_brain = dx_brain.at[_IDX_NI_L   ].set(dx_fast[_F_NI_L])
     dx_brain = dx_brain.at[_IDX_NI_R   ].set(dx_fast[_F_NI_R])
     dx_brain = dx_brain.at[_IDX_NI_NULL].set(dx_slow[_S_NI_NULL])

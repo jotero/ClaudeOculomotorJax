@@ -44,6 +44,8 @@ References:
     Paige & Tomko (1991) JN       — empirical T-VOR dark gain.
 """
 
+from typing import NamedTuple
+
 import jax
 import jax.numpy as jnp
 
@@ -95,6 +97,60 @@ N_STATES  = 9 + 9 + 3   # 21
 _IDX_VS   = slice(0, 9)
 _IDX_GRAV = slice(9, 18)
 _IDX_HEAD = slice(18, 21)
+
+
+# ── Local registries (Phase-2 contract) ──────────────────────────────────────
+# Naming: VS pops are called A/B internally (population A=preferred, B=opposite),
+# but exposed externally as L/R to match the codebase-wide convention
+# (model L pop ≡ A; net = L − R = A − B).
+
+class Activations(NamedTuple):
+    """Self-motion firing rates: VS pops + GE observer + heading."""
+    # VS — bilateral push-pull
+    vs_R:  jnp.ndarray   # (3,)  right VN pop                  [vestibular nuclei]
+    vs_L:  jnp.ndarray   # (3,)  left  VN pop                  [vestibular nuclei]
+    # GE — Laurens observer (anatomy plausible but not anchored)
+    g_est: jnp.ndarray   # (3,)  gravity estimate (head frame) [VN/cb gravity cells]
+    a_lin: jnp.ndarray   # (3,)  linear-accel estimate         [VN linear-accel cells]
+    rf:    jnp.ndarray   # (3,)  rotational feedback           [Laurens observer; cb circuit]
+    # HE — heading
+    v_lin: jnp.ndarray   # (3,)  head linear velocity estimate [MST / heading cells]
+
+
+class Decoded(NamedTuple):
+    """Self-motion decoded readout — head angular velocity from VS pops."""
+    vs_net: jnp.ndarray   # (3,) signed = vs_L − vs_R   head ang vel estimate (deg/s)
+
+
+class Weights(NamedTuple):
+    """Self-motion tonic / null / setpoint registers (long-term: learned weights)."""
+    vs_null: jnp.ndarray   # (3,) signed   VS adaptation register (slow drift of "zero")
+
+
+def read_activations(x_self_motion):
+    """Project self-motion raw state → Activations."""
+    x_vs   = x_self_motion[_IDX_VS]
+    x_grav = x_self_motion[_IDX_GRAV]
+    x_head = x_self_motion[_IDX_HEAD]
+    return Activations(
+        vs_L  = x_vs[_VS_IDX_A],   # convention: L ≡ A
+        vs_R  = x_vs[_VS_IDX_B],   # convention: R ≡ B
+        g_est = x_grav[_GE_IDX_G],
+        a_lin = x_grav[_GE_IDX_A],
+        rf    = x_grav[_GE_IDX_RF],
+        v_lin = x_head,
+    )
+
+
+def decode_states(acts):
+    """VS net head ang vel from bilateral pops."""
+    return Decoded(vs_net=acts.vs_L - acts.vs_R)
+
+
+def read_weights(x_self_motion):
+    """VS null adaptation register."""
+    x_vs = x_self_motion[_IDX_VS]
+    return Weights(vs_null=x_vs[_VS_IDX_NULL])
 
 # Bundled-input layout (length 19) — RAW sensory inputs + ec_d_scene; gating
 # (post-delay EC subtraction + magnitude/directional gate on scene slip and

@@ -47,7 +47,7 @@ Internal flow:
     GE  →  g_est (gravity estimate, cross-product dynamics)
     Vergence → u_verg → split ±½ to L/R motor commands
 
-State vector  x_brain = [x_self_motion (21) | x_ni (9) | x_sg (18) | x_pursuit (3) | x_va (11)
+State vector  x_brain = [x_self_motion (21) | x_ni (9) | x_sg (18) | x_pursuit (6) | x_va (11)
                           | x_target_mem (4) | x_cyc_brain (43) | x_ec_scene (21) | x_ec_target (21)
                           | x_mn (12)]
 N_STATES = computed dynamically (sm.N_STATES + ni.N_STATES + sg.N_STATES + ... + fcp.N_STATES)
@@ -64,7 +64,7 @@ Index constants (relative to x_brain):
     _IDX_SG       — saccade generator states  (18,) = e_held(3)+z_opn(1)+z_acc(1)+z_trig(1)+x_ebn_R(3)+x_ebn_L(3)+x_ibn_R(3)+x_ibn_L(3)
     _IDX_GRAV     — gravity estimator states  (9,)
     _IDX_HEAD     — heading estimator states  (3,)
-    _IDX_PURSUIT  — pursuit velocity memory   (3,)
+    _IDX_PURSUIT  — pursuit velocity memory   (6,)  = right(3) + left(3)  (push-pull)
     _IDX_VERG     — vergence position memory  (9,)
     _IDX_EC_VEL_SCENE  — cascade_lp_step delay of ec_vel_eye matched to scene_angular_vel (21,)
     _IDX_EC_VEL_TARGET — cascade_lp_step delay of ec_vel_eye matched to target_vel (21,)
@@ -170,6 +170,77 @@ _IDX_NI_NULL = slice(_o_ni + 6, _o_ni + 9)        # (3,) null adaptation
 # Vergence + accommodation sub-slices (within va block)
 _IDX_VERG    = slice(_o_va,     _o_va + 9)        # (9,)
 _IDX_ACC     = slice(_o_va + 9, _o_va + 11)       # (2,)
+
+
+# ── Phase-2 registries (Activations / Decoded / Weights) ─────────────────────
+# Aggregator over per-module registries.  Each subsystem owns its local
+# Activations / Decoded / Weights NamedTuples and reader functions; this
+# module just collects them under named subsystem fields.
+#
+# Subsystem step contract (Phase 2b):
+#     step(x_self, acts, decoded, weights, u, theta) -> (dx_self, output)
+# where acts/decoded/weights are these aggregate registries.
+
+class Activations(NamedTuple):
+    """Brain-wide firing rates — one entry per subsystem module."""
+    sm:  sm.Activations    # VS + GE + HE
+    ni:  ni.Activations    # bilateral NI
+    pu:  pu.Activations    # bilateral pursuit
+    sg:  sg.Activations    # saccade generator
+    va:  va.Activations    # vergence + accommodation
+    pt:  pt.Activations    # target memory
+    fcp: fcp.Activations   # motor neurons
+
+
+class Decoded(NamedTuple):
+    """Brain-wide push-pull decoded nets — only subsystems with bilateral pops."""
+    sm: sm.Decoded   # vs_net
+    ni: ni.Decoded   # ni_net
+    pu: pu.Decoded   # pu_net
+
+
+class Weights(NamedTuple):
+    """Brain-wide tonic/null/setpoint registers (long-term: learned weights)."""
+    sm: sm.Weights   # vs_null
+    ni: ni.Weights   # ni_null
+    sg: sg.Weights   # e_held
+
+
+def read_activations(x_brain):
+    """Aggregate per-module activations into the brain-wide registry.
+
+    Single canonical state→firing-rate projection; called once per ODE step.
+    """
+    return Activations(
+        sm  = sm.read_activations(x_brain[_IDX_SELF_MOTION]),
+        ni  = ni.read_activations(x_brain[_IDX_NI]),
+        pu  = pu.read_activations(x_brain[_IDX_PURSUIT]),
+        sg  = sg.read_activations(x_brain[_IDX_SG]),
+        va  = va.read_activations(x_brain[_IDX_VA]),
+        pt  = pt.read_activations(x_brain[_IDX_TARGET_MEM]),
+        fcp = fcp.read_activations(x_brain[_IDX_MN]),
+    )
+
+
+def decode_states(acts):
+    """Aggregate per-module decoded readouts (push-pull nets).
+
+    Pure function of `acts` — no raw state involvement.
+    """
+    return Decoded(
+        sm = sm.decode_states(acts.sm),
+        ni = ni.decode_states(acts.ni),
+        pu = pu.decode_states(acts.pu),
+    )
+
+
+def read_weights(x_brain):
+    """Aggregate per-module tonic/null/setpoint registers."""
+    return Weights(
+        sm = sm.read_weights(x_brain[_IDX_SELF_MOTION]),
+        ni = ni.read_weights(x_brain[_IDX_NI]),
+        sg = sg.read_weights(x_brain[_IDX_SG]),
+    )
 
 
 # ── Brain parameters ────────────────────────────────────────────────────────────
@@ -658,12 +729,24 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
         ec_verg:  (3,)   vergence efference
         u_acc:    scalar total lens-plant input (D) — neural + CA/C, drives acc_plant
     """
-    # ── State reads ──────────────────────────────────────────────────────────
+    # ── Activation / Decoded / Weights registries ────────────────────────────
+    # Built once per step.  Cross-subsystem reads MUST go through these — not
+    # via raw x_brain[_IDX_*] slicing.  `weights` is currently exposed for
+    # contract uniformity (long-term: setpoints become learnable parameters).
+    acts     = read_activations(x_brain)
+    decoded  = decode_states(acts)
+    weights  = read_weights(x_brain)
+    del weights   # not yet consumed by any subsystem; kept above for the contract
+
+    # ── Subsystem own-state pass-throughs ────────────────────────────────────
+    # Each subsystem still takes its own raw state slice into step() — its
+    # own state is needed to compute the derivative.  These are NOT cross-
+    # subsystem reads.  Cross-subsystem reads above use acts / decoded.
     x_self_motion = x_brain[_IDX_SELF_MOTION]      # (21,) VS + GE + HE
     x_ni          = x_brain[_IDX_NI]               #  (9,) bilateral NI + null
-    x_ni_net      = x_ni[:3] - x_ni[3:6]           #  (3,) net eye position (L pop − R pop)
+    x_ni_net      = decoded.ni.net                 #  (3,) net eye position via registry
     x_sg          = x_brain[_IDX_SG]               # (18,) saccade generator
-    x_pursuit     = x_brain[_IDX_PURSUIT]          #  (3,) pursuit velocity memory
+    x_pursuit     = x_brain[_IDX_PURSUIT]          #  (6,) bilateral pursuit memory: x_R(3) | x_L(3)
     x_va          = x_brain[_IDX_VA]               # (11,) vergence + accommodation
     x_target_mem  = x_brain[_IDX_TARGET_MEM]       #  (4,) target memory: x_mem_pos(3) | trust(1)
     x_cyc_brain   = x_brain[_IDX_CYC_BRAIN]        # (43,) cyclopean brain LP block
@@ -679,8 +762,8 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
     # Uses ec_pos = x_ni_net (current) and a lagged ec_verg approximation from
     # the vergence integrator state (avoids the va↔cyclopean circular dependency
     # — exact ec_verg from this step's va.step isn't available yet).
-    ec_pos_lagged  = x_ni_net
-    ec_verg_lagged = x_va[0:3] + x_va[3:6] \
+    ec_pos_lagged  = decoded.ni.net
+    ec_verg_lagged = acts.va.verg_fast + acts.va.verg_tonic \
                      + jnp.array([brain_params.tonic_verg, 0.0, 0.0])
     dx_cyc_brain, cyc = pc.step(
         x_cyc_brain, sensory_out.retina_L, sensory_out.retina_R,
@@ -736,8 +819,8 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
     # x_tonic still near +15° tonic → T-VOR thought distance was 24 cm).
     # Direct phasic path (τ_p·disp) is dropped — small and not state-computable.
     _DEG_PER_PD = 0.5729
-    aca_term = brain_params.AC_A * _DEG_PER_PD * x_va[9]   # AC_A · 0.5729 · x_acc_fast
-    current_vergence_yaw = x_va[0] + x_va[3] + aca_term
+    aca_term = brain_params.AC_A * _DEG_PER_PD * acts.va.acc_fast
+    current_vergence_yaw = acts.va.verg_fast[0] + acts.va.verg_tonic[0] + aca_term
     omega_tvor, verg_rate_tvor = tv.step(
         jnp.concatenate([v_lin,
                          a_lin_est,
@@ -781,7 +864,7 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
     # and CA/C application to the lens plant are all owned by va.step.
     # Cross-couplings happen one-step-delayed via integrator state, matching
     # synaptic latency and avoiding intra-step iteration.
-    z_act_verg = 1.0 - jnp.clip(x_sg[3], 0.0, 100.0) / 100.0
+    z_act_verg = 1.0 - acts.sg.gate_opn
     dx_va, u_verg, u_acc = va.step(
         x_va,
         jnp.concatenate([
