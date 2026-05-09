@@ -1,59 +1,51 @@
-"""Final common pathway — motor neuron states with smooth-saturating activation.
+"""Final common pathway — version+vergence  →  motor neurons  →  output nerves.
 
-Implements the lower motor neuron chain from brainstem nuclei to extraocular muscles:
+Anatomically faithful chain:
 
-    Stage 1 — nucleus encode (algebraic, signed):
-        [version (3,) | vergence (3,)]  →  nuclei (14,)  via M_NUCLEUS
-        Includes ABN motoneurons + AIN (abducens internuclear neurons) + CN3
-        + CN4 sub-populations.  g_nucleus (14,) scales each nucleus output
-        (nuclear lesion gain).
+    version_vergence (6,)
+        ↓ M_NUCLEUS                  (signed nucleus drives)
+        ↓ × g_nucleus                (nuclear lesion: multiplicative cell-count gain)
+        ↓ MLF tract (axon)           (AIN MN → contralateral CN3_MR MN; cap = g_mlf · NERVE_MAX)
+        ↓ M_NERVE_PROJ × 2           (nucleus → MN target firing rate)
+        ↓ MN intrinsic f-I curve     (biophysical max NERVE_MAX, not a lesion knob)
+    motor neurons (12 dynamic states, x_mn)
+        ↓ tau_mn LP dynamics         (~5 ms membrane TC)
+        ↓ axonal conduction clip     (cap = g_nerve · NERVE_MAX, frequency-selective)
+    output nerves (12,) → extraocular muscles
 
-    Stage 2 — nerve drive + smooth clip (algebraic):
-        nuclei (14,)  →  nerve_drive (12,)  via M_NERVE_PROJ × 2
-        MR motoneurons receive convergent input from CN3_MR (vergence) and
-        contralateral AIN (version, via MLF).  g_mlf_L/R scale the AIN→MR
-        synaptic weights in M_NERVE_PROJ — INO is a one-line lesion now.
+The MLF is a motor-neuron-to-motor-neuron connection: abducens internuclear
+neurons (AIN) fire as ordinary MNs (intrinsic NERVE_MAX), their axons enter
+the contralateral MLF tract (conduction-capped), and they synapse onto CN3_MR
+motoneurons in the oculomotor nucleus.  CN3_MR motoneurons sum vergence drive
+(direct from supraoculomotor area) with MLF input → fire → drive MR muscle.
 
-        Smooth clip into [0, g_nerve · NERVE_MAX] via
-            softplus(x) - softplus(x - g_ceil)
-        zero floor at left, exponential saturation at right, ~1-unit knee width.
-        Gradients are continuous everywhere — no relu/min kinks.
+Lesion semantics:
 
-    Stage 3 — MN low-pass (dynamic, 12 states):
-            dx_mn / dt = (drive_clipped - x_mn) / tau_mn
-            nerves     = x_mn
-        x_mn is the per-nerve motor-neuron firing rate (deg/s equivalent).
-        tau_mn ~5 ms (oculomotor MN membrane TC; Robinson 1981; Sylvestre &
-        Cullen 1999). Adds a small lag between brainstem command and muscle
-        drive — well below plant TC (~150–200 ms), so behaviorally invisible
-        in healthy subjects, but a clean hook for MN-level pathologies and
-        smooth gradients near the activation kinks.
+    g_nucleus (12,)  Multiplicative gain on signed nucleus drive.
+                     Models cell loss in a nucleus (% of cells surviving).
+                     Burst AND tonic both attenuated proportionally.
+                     ABN gain shared with co-located AIN (intermingled populations).
 
-Nerve order (12,):  [LR_L, MR_L, SR_L, IR_L, SO_L, IO_L,
-                      LR_R, MR_R, SR_R, IR_R, SO_R, IO_R]
+    g_mlf_L/R (2,)   Conduction cap on the MLF axon tract (axon-level clip).
+                     Models demyelination / conduction block in the MLF.
+                     Frequency-selective: tonic AIN drive (small) gets through;
+                     saccadic burst (large) is capped → slow adducting saccades.
+                     Vergence preserved (delivered via CN3_MR direct, bypasses MLF).
 
-g_nerve models nerve / MLF conduction block (frequency-selective, via ceiling):
-    g_nerve = 1.0  →  ceiling = NERVE_MAX (1000 deg/s equiv.) — above normal
-                       burst peak → transparent in health
-    g_nerve < 1.0  →  burst is clipped → slow saccades; tonic stays below ceiling
-                       → fixation preserved (INO, CN palsy, partial demyelination)
+    g_nerve (12,)    Conduction cap on the cranial-nerve axon (axon-level clip).
+                     Models nerve demyelination / fascicular lesion.
+                     Frequency-selective: fixation hold preserved, burst clipped
+                     → limited-motility ophthalmoplegia.  At g_nerve=0 the axon
+                     transmits nothing → complete muscle paralysis.
 
-g_nucleus models nuclear / fascicular lesions (gain reduction at all frequencies).
-
-INO is now a clean lesion at the MLF synapse on the MR motoneuron pool:
-    g_mlf_L = 0  →  left  MLF cut: AIN_R → MR_L blocked → left MR fails to
-                     adduct on rightward gaze (vergence preserved via CN3_MR_L)
-    g_mlf_R = 0  →  right MLF cut: AIN_L → MR_R blocked → right MR fails to
-                     adduct on leftward  gaze (vergence preserved via CN3_MR_R)
+Nerve / MN ordering (12,):  [LR_L, MR_L, SR_L, IR_L, SO_L, IO_L,
+                              LR_R, MR_R, SR_R, IR_R, SO_R, IO_R]
 
 Parameters (in BrainParams):
-    g_nucleus (12,)  nuclear gains [0, 1].  One gain per anatomical nucleus;
-                     AIN_L/R share the gain of ABN_L/R since motoneurons and
-                     internuclear neurons are intermingled and any real lesion
-                     hits both. Default: all ones.
-    g_nerve   (12,)  nerve ceiling fractions [0, 1]. Default: all ones.
-    g_mlf_L/R        per-side MLF synaptic gain on AIN→MR connection.
-    tau_mn           MN membrane TC (s). Default 0.005.
+    g_nucleus (12,)  nuclear gains [0, 1]. Default: all ones.
+    g_mlf_L/R        MLF axon conduction cap fractions [0, 1]. Default: 1.
+    g_nerve   (12,)  cranial-nerve axon conduction cap fractions [0, 1]. Default: all ones.
+    tau_mn           MN membrane LP TC (s). Default 0.005.
 """
 
 import jax
@@ -62,77 +54,116 @@ import jax.numpy as jnp
 from oculomotor.models.plant_models.muscle_geometry import (
     M_NUCLEUS, M_NERVE_PROJ,
     G_NUCLEUS_DEFAULT, G_NERVE_DEFAULT,
-    AIN_L, AIN_R, MR_L, MR_R,
+    AIN_L, AIN_R, MR_L, MR_R, CN3_MR_L, CN3_MR_R,
 )
 
 __all__ = ['G_NUCLEUS_DEFAULT', 'G_NERVE_DEFAULT', 'N_STATES', 'step', 'rest_state']
 
-# State count: per-nerve MN firing rate.
-N_STATES = 12
+# State count: 14 motor neurons in nucleus order — 12 muscle-MNs that project
+# via cranial nerves to extraocular muscles, plus 2 abducens internuclear
+# neurons (AIN_L, AIN_R) whose axons enter the MLF tract and synapse onto
+# contralateral CN3_MR motoneurons (no cranial-nerve output).
+N_STATES = 14
 
-# Nerve firing rate ceiling (deg/s equivalent).
-# Above the normal burst peak (~700 deg/s) → g_nerve=1 is transparent in health.
-_NERVE_MAX = 1000.0
+# Biophysical maximum firing rate (deg/s equivalent), used for the premotor
+# f-I curve, MLF axon conduction cap, and cranial-nerve axon conduction cap.
+# Calibrated so that healthy peak MN firing during a 50° saccade (~240 deg/s,
+# limited by the upstream saccade-generator burst saturation) sits just below
+# the cap, while partial lesion gains in the clinically meaningful range
+# (g_mlf, g_nerve in [0.3, 0.85]) actually engage the clip → graded slowing
+# of saccades that matches the clinical INO / partial palsy spectrum.
+_NERVE_MAX = 250.0
 
+def _smooth_clip(z, g_max):
+    """Smooth one-sided clip into [0, g_max] via softplus difference.
 
-def _smooth_clip(x, g):
-    """Smooth one-sided clip into [0, g].
-
-    softplus(x) - softplus(x - g) ≈ clip(x, 0, g) with ~1-unit knee at each end.
-    For g >> 1 (ceiling ~1000) the knee is negligible relative to the range.
+    softplus(z) − softplus(z − g_max):
+        - z ≤ 0:    ≈ 0          (rectification floor)
+        - 0 < z < g_max:  ≈ z    (linear regime)
+        - z > g_max: ≈ g_max     (saturation)
+        - g_max = 0:  identically 0 everywhere  (full palsy → cell silent)
+    Knee width ~1 deg/s, negligible at typical firing-rate scales.
     """
-    return jax.nn.softplus(x) - jax.nn.softplus(x - g)
+    return jax.nn.softplus(z) - jax.nn.softplus(z - g_max)
 
 
-def _nerve_drive(version_vergence, brain_params):
-    """Algebraic stages 1+2: signed brain command → smooth-clipped nerve drive.
+def step(x_mn, premotor_activity, brain_params):
+    """Single ODE step: premotor activity → motor neurons → output nerves.
 
-    g_mlf_L/R inject directly into the AIN→MR entries of M_NERVE_PROJ:
-        MR_L gets contralateral AIN_R input scaled by g_mlf_L (left  MLF)
-        MR_R gets contralateral AIN_L input scaled by g_mlf_R (right MLF)
-    INO is now a one-line synaptic lesion, not a column-scaling hack on M_NUCLEUS.
-    """
-    # MLF synaptic gains live on the AIN→MR entries of the projection matrix.
-    m_proj = M_NERVE_PROJ \
-        .at[MR_L, AIN_R].set(brain_params.g_mlf_L) \
-        .at[MR_R, AIN_L].set(brain_params.g_mlf_R)
+        dx_mn  =  (premotor + mlf  −  x_mn) / tau_mn
 
-    # g_nucleus is (12,); expand to (14,) by sharing ABN_L/R gain with AIN_L/R
-    # (motoneurons and internuclear neurons are anatomically intermingled —
-    # any real abducens nucleus lesion hits both populations together).
-    g_nuc12 = brain_params.g_nucleus
-    g_nuc14 = jnp.concatenate([g_nuc12, g_nuc12[:2]])    # AIN_L ← ABN_L gain, AIN_R ← ABN_R gain
-
-    nuclei = g_nuc14 * (M_NUCLEUS @ version_vergence)                            # (14,)
-
-    # Project to nerves and apply smooth one-sided clip into [0, g_nerve·NERVE_MAX].
-    nerve_signed = (m_proj @ nuclei) * 2.0                                       # (12,)
-    g_ceil       = brain_params.g_nerve * _NERVE_MAX                             # (12,)
-    return _smooth_clip(nerve_signed, g_ceil)
-
-
-def step(x_mn, version_vergence, brain_params):
-    """Single ODE step: brain command → MN low-pass → nerve activations.
+    MLF is a motor-neuron-to-motor-neuron connection: AIN MN axons enter the
+    MLF tract (conduction cap = g_mlf · NERVE_MAX), terminate on contralateral
+    CN3_MR motoneurons.  Only CN3_MR_L and CN3_MR_R receive MLF input; for
+    every other MN the MLF term is zero.
 
     Args:
-        x_mn:             (12,) MN firing rates [LR_L..IO_L, LR_R..IO_R]
-        version_vergence: (6,) [version (3,) | vergence (3,)]
-        brain_params:     BrainParams (reads g_nucleus, g_nerve, g_mlf_L/R, tau_mn)
+        x_mn:               (14,) MN firing rates in nucleus order
+                             [ABN_L, ABN_R, CN4_L, CN4_R, CN3_MR_L, CN3_MR_R,
+                              CN3_SR_L, CN3_SR_R, CN3_IR_L, CN3_IR_R,
+                              CN3_IO_L, CN3_IO_R, AIN_L, AIN_R]
+        premotor_activity:  (6,) [version (3,) | vergence (3,)] — output of NI +
+                             saccade burst + pursuit + vergence integrators
+        brain_params:       BrainParams (g_nucleus, g_nerve, g_mlf_L/R, tau_mn)
 
     Returns:
-        dx_mn:  (12,) state derivative
-        nerves: (12,) per-muscle nerve activations (= x_mn)
+        dx_mn:  (14,) MN state derivative
+        nerves: (12,) axonal firing rates to extraocular muscles
+                 [LR_L, MR_L, SR_L, IR_L, SO_L, IO_L,
+                  LR_R, MR_R, SR_R, IR_R, SO_R, IO_R]
     """
-    drive_clipped = _nerve_drive(version_vergence, brain_params)
-    dx_mn  = (drive_clipped - x_mn) / brain_params.tau_mn
-    nerves = x_mn
+    # Premotor input arriving at each MN's synapses: linear projection of the
+    # upstream brain command via M_NUCLEUS, scaled by g_nucleus (cell-loss
+    # gain; AIN_L/R inherit ABN_L/R gain — intermingled populations), then
+    # rectified and capped at the premotor neurons' biophysical max NERVE_MAX.
+    # The ×2 doubling compensates for the antagonist sitting at the rectified
+    # zero floor — agonist alone has to carry the full push-pull amplitude.
+    g_nuc12  = brain_params.g_nucleus
+    g_nuc14  = jnp.concatenate([g_nuc12, g_nuc12[:2]])
+    premotor = _smooth_clip(g_nuc14 * (M_NUCLEUS @ premotor_activity) * 2.0,
+                            _NERVE_MAX)                                          # (14,)
+
+    # MLF input: AIN MN firing rates feed contralateral CN3_MR MNs through the
+    # MLF axon tract.  Conduction cap (g_mlf · NERVE_MAX) is frequency-selective —
+    # tonic AIN drive (small) gets through; saccade burst (large) is capped.
+    # Zero everywhere except CN3_MR_L and CN3_MR_R.
+    mlf = jnp.zeros(N_STATES) \
+        .at[CN3_MR_L].set(_smooth_clip(x_mn[AIN_R], brain_params.g_mlf_L * _NERVE_MAX)) \
+        .at[CN3_MR_R].set(_smooth_clip(x_mn[AIN_L], brain_params.g_mlf_R * _NERVE_MAX))
+
+    # MN dynamics: linear LP integrating premotor + MLF inputs.
+    dx_mn = (premotor + mlf - x_mn) / brain_params.tau_mn
+
+    # Output nerves: muscle-MN firing rates permuted to nerve order via
+    # M_NERVE_PROJ (with AIN→MR stripped — AIN reaches MR through MLF, not
+    # directly).  The per-nucleus tonic baseline is scaled by the same
+    # g_nucleus that scales dynamic firing, so a partial nuclear lesion
+    # (e.g. g_nucleus[ABN_R]=0.5) reduces the surviving population's tone
+    # AND its active response equally — half-lesion produces both slowed
+    # saccades AND tonic strabismus from the now-asymmetric baseline.
+    # Uniform symmetric baseline (default) is invisible at the plant
+    # (zero-sum decode columns); asymmetry — whether intrinsic or induced
+    # by lesion gains — produces tonic eye drift.
+    # Axon conduction cap (g_nerve · NERVE_MAX) acts on the output.
+    m_proj   = M_NERVE_PROJ \
+        .at[MR_L, AIN_R].set(0.0) \
+        .at[MR_R, AIN_L].set(0.0)
+    r_base12 = brain_params.r_baseline
+    r_base14 = jnp.concatenate([r_base12, jnp.zeros(2)])    # AIN doesn't project to nerves
+    nerves   = _smooth_clip(m_proj @ (x_mn + g_nuc14 * r_base14),
+                            brain_params.g_nerve * _NERVE_MAX)                   # (12,)
     return dx_mn, nerves
 
 
-def rest_state(version_vergence, brain_params):
-    """Steady-state MN firing rates for a given resting brain command.
+def rest_state(premotor_activity, brain_params):
+    """Steady-state MN firing rates for a given resting premotor command.
 
-    Used to initialise x_mn so the model starts on the slow manifold
-    (otherwise there is a ~5·tau_mn warmup transient at t=0).
+    At rest there is no version drive → AIN MNs silent → MLF input is zero,
+    so steady state equals the rectified, capped premotor input.  Used to
+    initialise x_mn so the model starts on the slow manifold (skips a
+    ~5·tau_mn warmup transient at t=0).
     """
-    return _nerve_drive(version_vergence, brain_params)
+    g_nuc12 = brain_params.g_nucleus
+    g_nuc14 = jnp.concatenate([g_nuc12, g_nuc12[:2]])
+    return _smooth_clip(g_nuc14 * (M_NUCLEUS @ premotor_activity) * 2.0,
+                        _NERVE_MAX)

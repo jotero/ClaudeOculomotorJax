@@ -239,5 +239,12 @@ N_GAINS_NUCLEUS   = 12
 G_NUCLEUS_DEFAULT = jnp.ones(N_GAINS_NUCLEUS, dtype=jnp.float32)  # healthy: all = 1
 G_NERVE_DEFAULT   = jnp.ones(N_NERVES, dtype=jnp.float32)         # healthy: all = 1
 
+# Per-nucleus tonic baseline firing rate (deg/s equivalent).  Each motoneuron
+# pool fires at this rate at primary position (no version drive).  Symmetric
+# defaults give zero plant effect (uniform baseline → zero-sum decode), but
+# asymmetric values produce tonic strabismus — e.g. raising R_baseline[ABN_R]
+# above L_baseline[ABN_L] pulls the right eye into abduction at rest (exo).
+R_BASELINE_DEFAULT = jnp.full(N_GAINS_NUCLEUS, 50.0, dtype=jnp.float32)
+
 # Backward-compat alias (was used in previous g_muscle_L/R architecture)
 G_MUSCLE_DEFAULT  = jnp.ones(6, dtype=jnp.float32)

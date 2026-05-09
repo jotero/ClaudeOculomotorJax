@@ -116,7 +116,20 @@ class CyclopeanOut(NamedTuple):
 def binocular_fusion_policy(target_pos_L, target_vel_L, target_vis_L,
                             target_pos_R, target_vel_R, target_vis_R,
                             ec_pos, ec_verg, brain_params):
-    """NPC gate + eye-dominance weighting → blend weights for target signals."""
+    """NPC gate + motor-integrity gate + eye-dominance weighting → blend weights.
+
+    Three independent gates can suppress fusion:
+        - Disparity gates (NPC, divergence, vertical, torsion): geometry-based.
+          Close when current/forecast disparity exceeds physiological limits.
+        - Motor-integrity gate: weakest-link product over the horizontal
+          motor pathways for both eyes (nerves, nuclei, MLF).  Models tropia:
+          if either eye can't be aimed properly because of muscle/nerve/MLF
+          weakness, the brain stops trying to fuse and falls back to dominance
+          (clinical suppression).  Even when the current target happens to
+          land near the fovea on both eyes (small instantaneous disparity),
+          a known motor deficit means the brain has long-term-adapted to
+          unreliable alignment → diplopia avoidance → suppression.
+    """
     _ = target_vel_L, target_vel_R, ec_pos   # reserved for future extensions
 
     bino_raw = target_vis_L * target_vis_R
@@ -129,12 +142,38 @@ def binocular_fusion_policy(target_pos_L, target_vel_L, target_vis_L,
     gate_div  = jax.nn.sigmoid(100.0 * (brain_params.div_max  + total_demand_h ))
     gate_vert = jax.nn.sigmoid(100.0 * (brain_params.vert_max - jnp.abs(total_demand_v)))
     gate_tors = jax.nn.sigmoid(100.0 * (brain_params.tors_max - jnp.abs(total_demand_t)))
-    bino_fusable    = gate_conv * gate_div * gate_vert * gate_tors
+
+    # Motor-integrity gate (tropia model).  Per-eye weakest link across the
+    # horizontal motor pathways; the overall gate is the product, so any one
+    # eye being motorically compromised blocks fusion.
+    #   L eye yaw: ABN_L motoneurons → LR_L; AIN_R → MR_L via left  MLF; CN3_MR_L
+    #   R eye yaw: ABN_R motoneurons → LR_R; AIN_L → MR_R via right MLF; CN3_MR_R
+    g_nuc = brain_params.g_nucleus
+    g_nrv = brain_params.g_nerve
+    motor_L = jnp.minimum(jnp.minimum(g_nuc[0], g_nuc[4]),                       # ABN_L, CN3_MR_L
+              jnp.minimum(jnp.minimum(g_nrv[0], g_nrv[1]), brain_params.g_mlf_L))  # LR_L, MR_L, left MLF
+    motor_R = jnp.minimum(jnp.minimum(g_nuc[1], g_nuc[5]),                       # ABN_R, CN3_MR_R
+              jnp.minimum(jnp.minimum(g_nrv[6], g_nrv[7]), brain_params.g_mlf_R))  # LR_R, MR_R, right MLF
+    # Sharp transition around 0.5: full integrity → 1, half integrity → 0.5,
+    # ≤0.3 → essentially 0.  Clinically partial palsy still tries to fuse a
+    # little; severe palsy gives up.
+    motor_integrity = motor_L * motor_R
+    gate_motor      = jax.nn.sigmoid(20.0 * (motor_integrity - 0.5))
+
+    bino_fusable    = gate_conv * gate_div * gate_vert * gate_tors * gate_motor
     target_fusable  = bino_raw * bino_fusable
     _equal_weight   = jnp.maximum(target_fusable, 1.0 - bino_raw)
 
-    dom_L = 1.0 - brain_params.eye_dominant
-    dom_R = brain_params.eye_dominant
+    # Dominance override: when fusion fails, the healthier eye fixates while
+    # the worse eye is suppressed (clinical fixation preference).  The
+    # user-set brain_params.eye_dominant only applies when motor integrity
+    # is symmetric — any asymmetry shifts dominance to the healthier eye.
+    asym            = motor_R - motor_L
+    auto_dom_R      = jax.nn.sigmoid(15.0 * asym)                        # 0 if L healthier, 1 if R healthier
+    asym_weight     = 1.0 - jnp.exp(-50.0 * asym * asym)                  # 0 if symmetric, 1 if asymmetric
+    eye_dom_eff     = (1.0 - asym_weight) * brain_params.eye_dominant + asym_weight * auto_dom_R
+    dom_L = 1.0 - eye_dom_eff
+    dom_R = eye_dom_eff
     w_L = target_vis_L * (_equal_weight + (1.0 - _equal_weight) * dom_L)
     w_R = target_vis_R * (_equal_weight + (1.0 - _equal_weight) * dom_R)
 

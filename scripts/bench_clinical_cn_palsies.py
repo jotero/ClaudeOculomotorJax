@@ -181,6 +181,19 @@ def _nine_position(show):
         L = np.array([results[n][0] for n in names])  # (9, 2)
         R = np.array([results[n][1] for n in names])  # (9, 2)
 
+        # Subtract per-eye center-fixation baseline so eyes that are correctly
+        # aligned overlap on the plot.  At the central target a healthy pair
+        # has a small vergence-driven offset (L at +1.85°, R at -1.85°);
+        # subtracting those baselines puts both eyes at (0, 0) when fused, so
+        # any residual gap reflects motor misalignment rather than resting
+        # vergence.  For lesioned conditions, the center-gaze esotropia /
+        # exotropia is the baseline → other gaze positions show how far each
+        # eye actually MOVED from its starting point.
+        L_center = np.array(results['Center'][0])  # (2,)
+        R_center = np.array(results['Center'][1])
+        L = L - L_center
+        R = R - R_center
+
         # Connect L–R pairs with a thin line (shows diplopia gap)
         for j in range(len(names)):
             ax.plot([L[j, 0], R[j, 0]], [L[j, 1], R[j, 1]],
@@ -333,7 +346,10 @@ def _graded_palsy(show):
     """
     print('  Running graded CN VI / INO recovery series...')
 
-    gains  = [1.0, 0.75, 0.5, 0.25, 0.0]
+    # Non-linear gain spacing — concentrate samples in the clinically interesting
+    # low-gain range where the FCP clip starts to engage and saccade dynamics
+    # change visibly (cap = g · NERVE_MAX vs. ~190 deg/s peak premotor drive).
+    gains  = [1.0, 0.5, 0.2, 0.1, 0.0]
     colors = plt.cm.plasma(np.linspace(0.15, 0.85, len(gains)))
 
     # Continuous trace: centre → ipsilateral (+H_DEG) → contralateral (−H_DEG)

@@ -93,6 +93,7 @@ from oculomotor.models.brain_models  import listing
 
 from oculomotor.models.sensory_models.sensory_model import SensoryOutput
 from oculomotor.models.brain_models.final_common_pathway import G_NUCLEUS_DEFAULT, G_NERVE_DEFAULT
+from oculomotor.models.plant_models.muscle_geometry           import R_BASELINE_DEFAULT
 from oculomotor.models.plant_models.readout         import rotation_matrix
 from oculomotor.models.sensory_models.retina        import ypr_to_xyz, xyz_to_ypr, cascade_lp_step
 from oculomotor.models.sensory_models.retina               import velocity_saturation
@@ -557,6 +558,14 @@ class BrainParams(NamedTuple):
     # Healthy default: all ones → transparent round-trip through plant.
     g_nucleus:             jnp.ndarray  = G_NUCLEUS_DEFAULT  # (12,) motor nucleus gains (one per side)
     g_nerve:               jnp.ndarray  = G_NERVE_DEFAULT    # (12,) per-nerve ceiling fraction: clips nerve at g_nerve×_NERVE_MAX
+    # Per-nucleus tonic baseline firing rate (deg/s equiv).  Symmetric default
+    # (50 across all 12) gives zero plant effect (uniform → zero-sum decode).
+    # Asymmetric values produce tonic strabismus without lesioning gains:
+    #   r_baseline[ABN_R] > r_baseline[ABN_L]  →  R eye drifts abducted (exo)
+    #   r_baseline[CN3_MR_R] > r_baseline[CN3_MR_L]  →  R eye drifts adducted
+    # Indices match g_nucleus: [ABN_L, ABN_R, CN4_L, CN4_R, CN3_MR_L, CN3_MR_R,
+    # CN3_SR_L, CN3_SR_R, CN3_IR_L, CN3_IR_R, CN3_IO_L, CN3_IO_R]
+    r_baseline:            jnp.ndarray  = R_BASELINE_DEFAULT  # (12,) tonic firing rate at primary position
     tau_mn:                float        = 0.005              # MN membrane TC (s); per-nerve low-pass on the
                                                               # smooth-clipped brainstem drive. ~5 ms matches
                                                               # oculomotor MN membrane TCs (Robinson 1981; Sylvestre
