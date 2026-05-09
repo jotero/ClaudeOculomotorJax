@@ -47,8 +47,10 @@ Internal flow:
     GE  →  g_est (gravity estimate, cross-product dynamics)
     Vergence → u_verg → split ±½ to L/R motor commands
 
-State vector  x_brain = [x_vs (9) | x_ni (9) | x_sg (18) | x_grav (9) | x_head (3) | x_pursuit (3) | x_verg (9) | x_acc (2)]
-N_STATES = computed dynamically (vs.N_STATES + ni.N_STATES + sg.N_STATES + ...)
+State vector  x_brain = [x_self_motion (21) | x_ni (9) | x_sg (18) | x_pursuit (3) | x_va (11)
+                          | x_target_mem (4) | x_cyc_brain (43) | x_ec_scene (21) | x_ec_target (21)
+                          | x_mn (12)]
+N_STATES = computed dynamically (sm.N_STATES + ni.N_STATES + sg.N_STATES + ... + fcp.N_STATES)
 
 Index constants (relative to x_brain):
     _IDX_VS       — velocity storage states   (9,)  = left(3) + right(3) + null(3)
@@ -66,6 +68,7 @@ Index constants (relative to x_brain):
     _IDX_VERG     — vergence position memory  (9,)
     _IDX_EC_VEL_SCENE  — cascade_lp_step delay of ec_vel_eye matched to scene_angular_vel (21,)
     _IDX_EC_VEL_TARGET — cascade_lp_step delay of ec_vel_eye matched to target_vel (21,)
+    _IDX_MN            — motor neuron firing rates [LR_L..IO_L, LR_R..IO_R] (12,)
 
 Outputs of step():
     dx_brain     (156,)  state derivative
@@ -117,8 +120,8 @@ _EC_VEL_N_LP      = 1                                       # smoothing LP stage
 _EC_VEL_SCENE_N   = (_EC_VEL_N_SHARP + _EC_VEL_N_LP) * 3    # 21 states — scene path EC
 _EC_VEL_TARGET_N  = (_EC_VEL_N_SHARP + _EC_VEL_N_LP) * 3    # 21 states — target path EC
 
-N_STATES = sm.N_STATES + ni.N_STATES + sg.N_STATES + pu.N_STATES + va.N_STATES + pt.N_STATES + pc.N_STATES + _EC_VEL_SCENE_N + _EC_VEL_TARGET_N
-#        = 21 + 9 + 18 + 3 + 11 + 4 + 43 + 21 + 21 = 151
+N_STATES = sm.N_STATES + ni.N_STATES + sg.N_STATES + pu.N_STATES + va.N_STATES + pt.N_STATES + pc.N_STATES + _EC_VEL_SCENE_N + _EC_VEL_TARGET_N + fcp.N_STATES
+#        = 21 + 9 + 18 + 3 + 11 + 4 + 43 + 21 + 21 + 12 = 163
 
 # ── Top-level offsets ─────────────────────────────────────────────────────────
 _o_sm    = 0
@@ -130,6 +133,7 @@ _o_tm    = _o_va   + va.N_STATES         # 62
 _o_pc    = _o_tm   + pt.N_STATES         # 66  (perception_cyclopean brain LP block)
 _o_ec_s  = _o_pc   + pc.N_STATES         # 109 (scene EC start)
 _o_ec_t  = _o_ec_s + _EC_VEL_SCENE_N     # 130 (target EC start)
+_o_mn    = _o_ec_t + _EC_VEL_TARGET_N    # 151 (motor neuron states start)
 
 _IDX_SELF_MOTION   = slice(_o_sm,    _o_sm    + sm.N_STATES)      # (21,)
 _IDX_NI            = slice(_o_ni,    _o_ni    + ni.N_STATES)      #  (9,)
@@ -140,6 +144,7 @@ _IDX_TARGET_MEM    = slice(_o_tm,    _o_tm    + pt.N_STATES)      #  (4,) percep
 _IDX_CYC_BRAIN     = slice(_o_pc,    _o_pc    + pc.N_STATES)      # (43,) perception_cyclopean brain LP
 _IDX_EC_VEL_SCENE  = slice(_o_ec_s,  _o_ec_s  + _EC_VEL_SCENE_N)  # (21,) scene EC cascade
 _IDX_EC_VEL_TARGET = slice(_o_ec_t,  _o_ec_t  + _EC_VEL_TARGET_N) # (21,) target EC cascade
+_IDX_MN            = slice(_o_mn,    _o_mn    + fcp.N_STATES)     # (12,) motor neuron firing rates
 
 # ── Backward-compat aliases for sub-states ────────────────────────────────────
 # External code (benches, llm_pipeline) still references the per-module slices.
@@ -542,26 +547,35 @@ class BrainParams(NamedTuple):
     #   Nucleus order: ABN_L(0), ABN_R(1), CN4_L(2), CN4_R(3),
     #                  CN3_MR_L(4), CN3_MR_R(5), CN3_SR_L(6), CN3_SR_R(7),
     #                  CN3_IR_L(8), CN3_IR_R(9), CN3_IO_L(10), CN3_IO_R(11)
-    #   ABN nucleus lesion isolates ipsilateral LR only (MLF not modelled separately).
+    #   ABN gain is shared with the co-located AIN (abducens internuclear neurons)
+    #   on the same side: any real abducens-nucleus lesion silences BOTH
+    #   ipsilateral LR motoneurons AND the MLF outflow to contralateral MR
+    #   (textbook horizontal gaze palsy — neither eye saccades to that side).
     # Stage 2 — g_nerve (12,): per-nerve gain [0,1]. Zero = nerve/fascicular lesion.
     #   Nerve order: [LR_L,MR_L,SR_L,IR_L,SO_L,IO_L, LR_R,MR_R,SR_R,IR_R,SO_R,IO_R]
     #   CN nerve lesion isolates individual muscles without affecting other nuclei.
     # Healthy default: all ones → transparent round-trip through plant.
-    g_nucleus:             jnp.ndarray  = G_NUCLEUS_DEFAULT  # (12,) motor nucleus gains
+    g_nucleus:             jnp.ndarray  = G_NUCLEUS_DEFAULT  # (12,) motor nucleus gains (one per side)
     g_nerve:               jnp.ndarray  = G_NERVE_DEFAULT    # (12,) per-nerve ceiling fraction: clips nerve at g_nerve×_NERVE_MAX
+    tau_mn:                float        = 0.005              # MN membrane TC (s); per-nerve low-pass on the
+                                                              # smooth-clipped brainstem drive. ~5 ms matches
+                                                              # oculomotor MN membrane TCs (Robinson 1981; Sylvestre
+                                                              # & Cullen 1999). Behaviorally invisible at healthy
+                                                              # plant TCs (~150–200 ms), but a clean state-level
+                                                              # hook for MN-pathology modelling (e.g. fatigue).
                                                               # 1.0 = transparent (ceiling >> normal burst); <1 = conduction block
                                                               # Nerve order: [LR_L,MR_L,SR_L,IR_L,SO_L,IO_L, LR_R,MR_R,SR_R,IR_R,SO_R,IO_R]
                                                               # INO: g_nerve[MR_L or MR_R] ↓  →  adducting saccades slow, fixation preserved
                                                               # CN6: g_nerve[LR_L or LR_R] ↓  →  abduction limited
 
-    # INO (internuclear ophthalmoplegia) — version_yaw gain for each MR subnucleus.
-    # The MLF (ABN → contralateral MR) is modelled as the version component of CN3_MR.
-    # Zeroing g_mlf_ver_L cuts version drive to left MR → left eye can't adduct on
-    # rightward gaze; vergence (vrg_yaw = +½) is preserved.
-    #   g_mlf_ver_L = 0 → left  INO  (right MLF pathway cut: ABN_R → MR_L)
-    #   g_mlf_ver_R = 0 → right INO  (left  MLF pathway cut: ABN_L → MR_R)
-    g_mlf_ver_L:           float        = 1.0   # version_yaw gain for CN3_MR_L
-    g_mlf_ver_R:           float        = 1.0   # version_yaw gain for CN3_MR_R
+    # INO (internuclear ophthalmoplegia) — synaptic gain on the MLF input to
+    # each MR motoneuron pool.  AIN_L → MR_R (right MLF) and AIN_R → MR_L
+    # (left MLF) are explicit edges in M_NERVE_PROJ; g_mlf_L/R scale them.
+    #   g_mlf_L = 0 → left  MLF cut → left  MR fails to adduct on rightward gaze
+    #   g_mlf_R = 0 → right MLF cut → right MR fails to adduct on leftward  gaze
+    # Vergence is preserved in either case (CN3_MR drives MR directly).
+    g_mlf_L:               float        = 1.0   # left  MLF synaptic gain (AIN_R → MR_L)
+    g_mlf_R:               float        = 1.0   # right MLF synaptic gain (AIN_L → MR_R)
 
 
 # ── Initialization ─────────────────────────────────────────────────────────────
@@ -597,6 +611,11 @@ def make_x0(brain_params=None):
         # Neural command at rest = 0 + 0 + tonic_acc + 0 = tonic_acc → plant settles.
         # acc_plant initial state lives in SimState.acc_plant (set in simulate()).
         x0 = x0.at[_IDX_ACC].set(jnp.array([0.0, brain_params.tonic_acc]))
+        # MN: start on the slow manifold for centre-gaze + tonic vergence so the
+        # nerves have their resting bias from t=0 (skips a ~5·tau_mn start-up
+        # transient at the very beginning of every simulation).
+        vv_rest = jnp.array([0.0, 0.0, 0.0, brain_params.tonic_verg, 0.0, 0.0])
+        x0 = x0.at[_IDX_MN].set(fcp.rest_state(vv_rest, brain_params))
     return x0
 
 
@@ -606,7 +625,7 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
     """Single ODE step for the brain subsystem.
 
     Args:
-        x_brain:      (62,)   brain state [x_vs (9) | x_ni (9) | x_sg | x_grav | x_head | x_pursuit | x_verg | x_acc]
+        x_brain:      (163,)  brain state — see top-of-file layout (self_motion | NI | SG | pursuit | va | target_mem | cyc_brain | EC_scene | EC_target | MN)
         sensory_out:  SensoryOutput bundled canal afferents + cyclopean delayed signals
                         .canal            (6,)    canal afferent rates
                         .otolith          (3,)    specific force in head frame (m/s²)
@@ -623,8 +642,8 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
         noise_acc:    scalar  accumulator diffusion noise sample (pre-scaled)
 
     Returns:
-        dx_brain: (62,)  dx_brain/dt
-        nerves:   (12,)  per-muscle nerve activations [L6 | R6] → plant
+        dx_brain: (163,) dx_brain/dt
+        nerves:   (12,)  per-muscle nerve activations [L6 | R6] → plant (= x_mn)
         ec_vel:   (3,)   version velocity efference (head frame, deg/s)
         ec_pos:   (3,)   eye position efference
         ec_verg:  (3,)   vergence efference
@@ -641,6 +660,7 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
     x_cyc_brain   = x_brain[_IDX_CYC_BRAIN]        # (43,) cyclopean brain LP block
     x_ec_scene    = x_brain[_IDX_EC_VEL_SCENE]     # (21,) scene EC cascade
     x_ec_target   = x_brain[_IDX_EC_VEL_TARGET]    # (21,) target EC cascade
+    x_mn          = x_brain[_IDX_MN]               # (12,) motor neuron firing rates
 
     ec_d_scene    = x_ec_scene[-3:]
     ec_d_target   = x_ec_target[-3:]
@@ -764,8 +784,8 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
         brain_params,
     )
 
-    # ── Final common pathway: nucleus encode → nerve activations ─────────────
-    nerves = fcp.step(jnp.concatenate([motor_cmd_ni, u_verg]), brain_params)   # (12,) [L6|R6]
+    # ── Final common pathway: nucleus encode → MN low-pass → nerve activations ─
+    dx_mn, nerves = fcp.step(x_mn, jnp.concatenate([motor_cmd_ni, u_verg]), brain_params)  # (12,) [L6|R6]
 
     # ── Efference copy signals returned for the simulator + EC cascades ──────
     # ec_vel feeds the matched-cascade EC blocks at the end of step (rotation to
@@ -796,6 +816,6 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
 
     # ── Pack state derivative ─────────────────────────────────────────────────
     dx_brain = jnp.concatenate([dx_self_motion, dx_ni, dx_sg, dx_pursuit, dx_va, dx_target_mem,
-                                dx_cyc_brain, dx_ec_scene, dx_ec_target])
+                                dx_cyc_brain, dx_ec_scene, dx_ec_target, dx_mn])
 
     return dx_brain, nerves, ec_vel, ec_pos, ec_verg, u_acc

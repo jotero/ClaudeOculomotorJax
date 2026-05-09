@@ -46,7 +46,7 @@ from oculomotor.models.brain_models.brain_model import (
     _IDX_PURSUIT, _IDX_NI, _IDX_NI_L, _IDX_NI_R, _IDX_NI_NULL,
     _IDX_VERG, _IDX_ACC, _IDX_VA, _IDX_SG, _IDX_SELF_MOTION,
     _IDX_VS, _IDX_VS_L, _IDX_VS_R, _IDX_VS_NULL, _IDX_GRAV, _IDX_HEAD,
-    _IDX_TARGET_MEM,
+    _IDX_TARGET_MEM, _IDX_MN,
     _TAU_TARGET_MEM_UPDATE, _TAU_TARGET_MEM_TRUST_RISE,
     _TAU_TARGET_MEM_TRUST_DECAY, _TAU_TARGET_MEM_CONSUME,
     _TARGET_MEM_TRUST_THRESHOLD,
@@ -788,6 +788,7 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
     x_ni_net     = x_ni[:3] - x_ni[3:6]
     x_v_copy     = x_va[6:9]
     x_acc_fast   = x_va[9]
+    x_mn         = x_brain[_IDX_MN]
 
     # Pack unified subset state and build matrices early so all gains live
     # in M (the matrix bundle). Step() consumes named readouts (w_est, ocr)
@@ -1038,7 +1039,8 @@ def step(x_brain, sensory_out, brain_params, noise_acc=0.0):
     ec_pos = x_ni_net
     ec_verg = u_verg
 
-    nerves = fcp.step(jnp.concatenate([motor_cmd_ni, u_verg]), brain_params)
+    dx_mn, nerves = fcp.step(x_mn, jnp.concatenate([motor_cmd_ni, u_verg]), brain_params)
+    dx_brain = dx_brain.at[_IDX_MN].set(dx_mn)
 
     return dx_brain, nerves, ec_vel, ec_pos, ec_verg, u_acc
 

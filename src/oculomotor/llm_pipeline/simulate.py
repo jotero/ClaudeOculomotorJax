@@ -263,17 +263,19 @@ All defaults match the healthy model. Only specify parameters that differ from h
 
 **g_nucleus** — 12-element list [0=paralysed, 1=intact]:
   [ABN_L, ABN_R, CN4_L, CN4_R, CN3_MR_L, CN3_MR_R, CN3_SR_L, CN3_SR_R, CN3_IR_L, CN3_IR_R, CN3_IO_L, CN3_IO_R]
+  ABN gain covers BOTH ipsilateral LR motoneurons AND the MLF outflow to contralateral MR
+  (intermingled populations).  CN VI nucleus palsy → horizontal gaze palsy to that side.
 
 **g_nerve** — 12-element list [0=paralysed, 1=intact]:
   Left eye indices 0–5: [LR_L, MR_L, SR_L, IR_L, SO_L, IO_L]
   Right eye indices 6–11: [LR_R, MR_R, SR_R, IR_R, SO_R, IO_R]
 
-**g_mlf_ver_L** — float [0–1]. 0 = left INO (left eye cannot adduct on rightward gaze; convergence intact).
-**g_mlf_ver_R** — float [0–1]. 0 = right INO (right eye cannot adduct on leftward gaze; convergence intact).
+**g_mlf_L** — float [0–1]. 0 = left INO (left eye cannot adduct on rightward gaze; convergence intact).
+**g_mlf_R** — float [0–1]. 0 = right INO (right eye cannot adduct on leftward gaze; convergence intact).
 
 INO is NOT a vestibular and NOT a cerebellar lesion. Do NOT set b_vs_L/R, canal_gains, tau_i, or
-K_pursuit for INO. The only parameter that changes is g_mlf_ver_L or g_mlf_ver_R.
-Complete patient block for left INO: `"patient": { "g_mlf_ver_L": 0.0 }`
+K_pursuit for INO. The only parameter that changes is g_mlf_L or g_mlf_R.
+Complete patient block for left INO: `"patient": { "g_mlf_L": 0.0 }`
 
 The table below maps all conditions to parameters — use it:
 
@@ -293,11 +295,11 @@ The table below maps all conditions to parameters — use it:
 | Rebound nystagmus | tau_ni_adapt=10.0 |
 | PAN | tau_vs_adapt=45.0 |
 | Esophoria / cover test | tonic_verg=8.0 |
-| Left INO | g_mlf_ver_L=0.0 |
-| Right INO | g_mlf_ver_R=0.0 |
-| Bilateral INO | g_mlf_ver_L=0.0, g_mlf_ver_R=0.0 |
+| Left INO | g_mlf_L=0.0 |
+| Right INO | g_mlf_R=0.0 |
+| Bilateral INO | g_mlf_L=0.0, g_mlf_R=0.0 |
 | CN VI nerve palsy (R) | g_nerve=[1,1,1,1,1,1,0,1,1,1,1,1] |
-| CN VI nucleus palsy (R) | g_nucleus=[1,0,1,1,1,1,1,1,1,1,1,1] |
+| CN VI nucleus palsy (R) → horizontal gaze palsy R | g_nucleus=[1,0,1,1,1,1,1,1,1,1,1,1] |
 | CN III nerve palsy (R) | g_nerve=[1,1,1,1,1,1,1,0,0,0,1,0] |
 | CN IV nerve palsy (R) | g_nerve=[1,1,1,1,1,1,1,1,1,1,0,1] |
 | Partial CN VI palsy (recovering) | g_nerve=[1,1,1,1,1,1,0.4,1,1,1,1,1] |

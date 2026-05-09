@@ -66,16 +66,16 @@ THETA_CN3 = with_brain(THETA,
 THETA_CN4 = with_brain(THETA,
     g_nerve=G_NERVE_DEFAULT.at[SO_R].set(0.0))
 
-# Left INO: version_yaw drive to L MR (CN3_MR_L) cut
+# Left INO: left MLF cut (AIN_R → MR_L synaptic gain = 0)
 #   Rightward saccade: R eye abducts normally, L eye adduction slow/absent
-THETA_INO_L = with_brain(THETA, g_mlf_ver_L=0.0)
+THETA_INO_L = with_brain(THETA, g_mlf_L=0.0)
 
-# Right INO: version_yaw drive to R MR (CN3_MR_R) cut
+# Right INO: right MLF cut (AIN_L → MR_R synaptic gain = 0)
 #   Leftward saccade: L eye abducts normally, R eye adduction slow/absent
-THETA_INO_R = with_brain(THETA, g_mlf_ver_R=0.0)
+THETA_INO_R = with_brain(THETA, g_mlf_R=0.0)
 
-# Bilateral INO (BIMLF): both MR subnuclei lose version drive
-THETA_BIMLF = with_brain(THETA, g_mlf_ver_L=0.0, g_mlf_ver_R=0.0)
+# Bilateral INO (BIMLF): both MLFs cut
+THETA_BIMLF = with_brain(THETA, g_mlf_L=0.0, g_mlf_R=0.0)
 
 CONDITIONS_9POS = [
     ('Healthy',                           THETA),
@@ -365,7 +365,7 @@ def _graded_palsy(show):
 
     cn6_eyes = [_sim_seq(with_brain(THETA, g_nerve=G_NERVE_DEFAULT.at[LR_R].set(float(g))))
                 for g in gains]
-    ino_eyes = [_sim_seq(with_brain(THETA, g_mlf_ver_L=float(g)))
+    ino_eyes = [_sim_seq(with_brain(THETA, g_mlf_L=float(g)))
                 for g in gains]
 
     # 2 rows (L eye / R eye) × 2 cols (CN VI / INO)

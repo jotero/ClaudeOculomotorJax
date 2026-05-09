@@ -177,8 +177,8 @@ def _build_params(patient: Patient):
         tonic_verg      = patient.tonic_verg,
         g_nucleus       = jnp.array(patient.g_nucleus, dtype=jnp.float32),
         g_nerve         = jnp.array(patient.g_nerve,   dtype=jnp.float32),
-        g_mlf_ver_L     = patient.g_mlf_ver_L,
-        g_mlf_ver_R     = patient.g_mlf_ver_R,
+        g_mlf_L         = patient.g_mlf_L,
+        g_mlf_R         = patient.g_mlf_R,
     )
     return params
 

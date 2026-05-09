@@ -297,20 +297,24 @@ class Patient(BaseModel):
         default=[1.0] * 12,
         description=(
             "Per-nucleus gains [0=complete lesion, 1=intact]. 12 values in order:\n"
-            "  [0] ABN_L   — left  abducens nucleus  (CN VI, drives LR_L)\n"
-            "  [1] ABN_R   — right abducens nucleus  (CN VI, drives LR_R)\n"
+            "  [0] ABN_L   — left  abducens nucleus  (CN VI, drives LR_L AND MLF→MR_R)\n"
+            "  [1] ABN_R   — right abducens nucleus  (CN VI, drives LR_R AND MLF→MR_L)\n"
             "  [2] CN4_L   — left  trochlear nucleus (CN IV, drives contralateral SO_R)\n"
             "  [3] CN4_R   — right trochlear nucleus (CN IV, drives contralateral SO_L)\n"
-            "  [4] CN3_MR_L — left  CN III medial rectus subnucleus (drives MR_L)\n"
-            "  [5] CN3_MR_R — right CN III medial rectus subnucleus (drives MR_R)\n"
+            "  [4] CN3_MR_L — left  CN III medial rectus subnucleus (vergence drive to MR_L)\n"
+            "  [5] CN3_MR_R — right CN III medial rectus subnucleus (vergence drive to MR_R)\n"
             "  [6] CN3_SR_L — left  CN III superior rectus subnucleus\n"
             "  [7] CN3_SR_R — right CN III superior rectus subnucleus\n"
             "  [8] CN3_IR_L — left  CN III inferior rectus subnucleus\n"
             "  [9] CN3_IR_R — right CN III inferior rectus subnucleus\n"
             " [10] CN3_IO_L — left  CN III inferior oblique subnucleus\n"
             " [11] CN3_IO_R — right CN III inferior oblique subnucleus\n"
+            "ABN gain covers BOTH the LR motoneuron pool and the AIN→MLF→contralateral-MR\n"
+            "outflow on the same side (intermingled populations — any real abducens-nucleus\n"
+            "lesion takes them out together → horizontal gaze palsy to that side).\n"
             "Examples:\n"
-            "  CN VI nucleus palsy (R): index 1 → 0  → right LR paralysed\n"
+            "  CN VI nucleus palsy (R): index 1 → 0  → right LR paralysed AND left MR\n"
+            "    fails to adduct on rightward gaze → horizontal gaze palsy to the right.\n"
             "  CN IV nucleus palsy (R): index 3 → 0  → left SO paralysed (contralateral projection)\n"
             "  CN III nucleus palsy (R): indices 5,7,9,11 → 0  → right MR/SR/IR/IO paralysed"
         )
@@ -344,25 +348,23 @@ class Patient(BaseModel):
     )
 
     # ── MLF (medial longitudinal fasciculus) integrity ─────────────────────────
-    g_mlf_ver_L: float = Field(
+    g_mlf_L: float = Field(
         default=1.0,
         description=(
-            "Version-yaw gain for the left MR subnucleus (CN3_MR_L). "
-            "Models the MLF internuclear pathway from right ABN → left MR. "
-            "0 = left INO: left eye adduction is absent on rightward conjugate gaze; "
-            "convergence (vergence component) is preserved. "
+            "Synaptic gain on the left MLF input to MR_L motoneurons (AIN_R → MR_L). "
+            "0 = left INO: left eye adduction absent on rightward conjugate gaze; "
+            "convergence preserved (CN3_MR_L direct vergence drive intact). "
             "Partial values (0.3–0.7) = incomplete INO / recovering INO. "
             "Healthy = 1.0."
         )
     )
-    g_mlf_ver_R: float = Field(
+    g_mlf_R: float = Field(
         default=1.0,
         description=(
-            "Version-yaw gain for the right MR subnucleus (CN3_MR_R). "
-            "Models the MLF internuclear pathway from left ABN → right MR. "
+            "Synaptic gain on the right MLF input to MR_R motoneurons (AIN_L → MR_R). "
             "0 = right INO: right eye adduction absent on leftward conjugate gaze; "
             "convergence preserved. "
-            "Set both g_mlf_ver_L=0 and g_mlf_ver_R=0 for bilateral INO (BIMLF). "
+            "Set both g_mlf_L=0 and g_mlf_R=0 for bilateral INO (BIMLF). "
             "Healthy = 1.0."
         )
     )
@@ -383,7 +385,7 @@ class Patient(BaseModel):
                 raise ValueError(f'{info.field_name}[{i}]={g} out of range [0, 1]')
         return v
 
-    @field_validator('g_mlf_ver_L', 'g_mlf_ver_R')
+    @field_validator('g_mlf_L', 'g_mlf_R')
     @classmethod
     def _check_mlf(cls, v, info):
         if not (0.0 <= v <= 1.0):
@@ -548,15 +550,15 @@ class SimulationScenario(BaseModel):
         Right hypertropia worst in left gaze and left head tilt.
 
     Left INO (right eye adducts normally, LEFT eye adduction lag on rightward gaze):
-        patient: {g_mlf_ver_L: 0.0}
+        patient: {g_mlf_L: 0.0}
         Use rightward saccade stimulus. Left eye yaw will be slow/absent.
-        Convergence is preserved (vrg component intact).
+        Convergence is preserved (CN3_MR_L direct vergence drive intact).
 
     Right INO (left eye adducts normally, RIGHT eye adduction lag on leftward gaze):
-        patient: {g_mlf_ver_R: 0.0}
+        patient: {g_mlf_R: 0.0}
 
     Bilateral INO / BIMLF:
-        patient: {g_mlf_ver_L: 0.0, g_mlf_ver_R: 0.0}
+        patient: {g_mlf_L: 0.0, g_mlf_R: 0.0}
 
     Partial CN VI nerve palsy (incomplete, recovering):
         patient: {g_nerve: [1,1,1,1,1,1, 0.3,1,1,1,1,1]}     ← LR_R at 30%
