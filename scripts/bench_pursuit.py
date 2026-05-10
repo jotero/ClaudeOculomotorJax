@@ -164,8 +164,8 @@ def _sinusoidal(show):
 
         st   = _run(THETA, t_np, jnp.array(pt3), jnp.array(vt3), key=ci + 20)
         # Version eye position = mean of left and right
-        eye_L = np.array(st.plant[:, :2])
-        eye_R = np.array(st.plant[:, 3:5])
+        eye_L = np.array(st.plant.left[:, :2])
+        eye_R = np.array(st.plant.right[:, :2])
         eye   = (eye_L + eye_R) / 2.0
 
         mask = t_np > 2.0  # skip warm-up

@@ -64,14 +64,17 @@ def read_activations(state):
     return state
 
 
-def step(state,
+def step(activations,
          target_slip, target_visible, target_pos,
          ec_d_target,
          brain_params):
     """Single ODE step for target-side perception.
 
+    Activation-driven: working-memory pop firing rates come from `activations`
+    (acts.pt).  State == Activations for pt today (identity projection).
+
     Args:
-        state:           pt.State   working memory (mem_pos(3) | mem_trust scalar)
+        activations:     pt.Activations  mem_pos (3,) | mem_trust (scalar)
         target_slip:     (3,)    raw delayed retinal target velocity (eye frame, deg/s)
         target_visible:  scalar  delayed cyclopean target visibility gate ∈ [0,1]
         target_pos:      (3,)    delayed cyclopean retinal target position (eye frame, deg)
@@ -114,8 +117,8 @@ def step(state,
     # retinal error. No efference copy: if a saccade lands accurately, the
     # next flash will reset the memory to ~0; otherwise the residual error
     # drives a corrective saccade.
-    x_mem = state.mem_pos
-    trust = state.mem_trust
+    x_mem = activations.mem_pos
+    trust = activations.mem_trust
 
     # Memory drain proportional to delayed-EC magnitude. Whenever the eye is
     # moving (saccade burst, fast pursuit overshoot, head-impulse fast-phase),

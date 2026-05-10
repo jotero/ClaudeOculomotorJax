@@ -100,11 +100,15 @@ def read_weights(state):
     return Weights(null=state.null)
 
 
-def step(state, u_vel, brain_params, u_tonic=0.0):
+def step(activations, weights, u_vel, brain_params, u_tonic=0.0):
     """Single ODE step: bilateral NI dynamics + null adaptation + motor command.
 
+    Activation-driven: bilateral pop firing rates come from `activations`
+    (acts.ni); the null adaptation register comes from `weights` (weights.ni).
+
     Args:
-        state:        ni.State   (L, R, null) — each (3,)
+        activations:  ni.Activations  (L, R) firing rates, each (3,)
+        weights:      ni.Weights      (null,) adaptation register, (3,)
         u_vel:        (3,)  combined eye-velocity command (deg/s) — sign-flipped upstream
         brain_params: BrainParams
         u_tonic:      (3,)  tonic position-offset set-point (e.g. OCR).
@@ -116,12 +120,12 @@ def step(state, u_vel, brain_params, u_tonic=0.0):
                             consistent with the actual eye position.
 
     Returns:
-        dstate: ni.State   state derivative
+        dstate: ni.State   state derivative (L, R, null)
         u_p:    (3,)       pulse-step motor command to plant
     """
-    x_L    = state.L
-    x_R    = state.R
-    x_null = state.null
+    x_L    = activations.L
+    x_R    = activations.R
+    x_null = weights.null
 
     b_ni   = jnp.asarray(brain_params.b_ni,  dtype=jnp.float32)
     L      = brain_params.orbital_limit

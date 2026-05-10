@@ -63,17 +63,10 @@ _DISTANCE_EPSILON        = 1e-6   # m — guard against zero/negative distance
 
 
 N_STATES  = 0   # T-VOR is stateless (was 3 — see history; the lowpass on v_lin was inert)
-N_INPUTS  = 10  # v_lin(3) + a_lin(3) + x_verg_yaw(1) + eye_pos(3) — see _IDX_INPUT_* below
 N_OUTPUTS = 3
 
-# Bundled-input layout — match the SSM convention: step(x, u, theta).
-_IDX_INPUT_V_LIN      = slice(0, 3)   # head linear velocity (m/s, head frame) → integrating path
-_IDX_INPUT_A_LIN      = slice(3, 6)   # head linear acceleration (m/s², head frame) → direct path
-_IDX_INPUT_VERG_YAW   = 6             # absolute vergence (deg) → distance D
-_IDX_INPUT_EYE_POS    = slice(7, 10)  # gaze direction [yaw, pitch, roll] (deg)
 
-
-def step(u, brain_params):
+def step(v_lin, a_lin, verg_yaw, eye_pos, brain_params):
     """T-VOR step: convert head linear velocity / acceleration to angular eye VELOCITY.
 
     Stateless. Two parallel pathways feeding the same cross-product formula:
@@ -95,11 +88,13 @@ def step(u, brain_params):
     to disable.
 
     Args:
-        u:            (10,) bundled input vector:
-                            [_IDX_INPUT_V_LIN]    = head linear velocity (3,) (m/s)
-                            [_IDX_INPUT_A_LIN]    = head linear acceleration (3,) (m/s²)
-                            [_IDX_INPUT_VERG_YAW] = absolute vergence (deg) → distance D
-                            [_IDX_INPUT_EYE_POS]  = gaze direction (3,) [yaw,pitch,roll] (deg)
+        v_lin:        (3,)   head linear velocity (m/s, head frame) — from
+                              brain-wide acts.sm.v_lin
+        a_lin:        (3,)   head linear acceleration (m/s², head frame) —
+                              from acts.sm.a_lin
+        verg_yaw:     scalar absolute vergence (deg) → distance D
+        eye_pos:      (3,)   gaze direction [yaw, pitch, roll] (deg) —
+                              decoded.ni.net (NI net eye position)
         brain_params: BrainParams (reads g_tvor, K_phasic_tvor, g_tvor_verg,
                                    g_tvor_l2_cyclo, distance_npc, ipd_brain)
 
@@ -107,10 +102,7 @@ def step(u, brain_params):
         omega_tvor:     (3,)  angular eye-velocity command (deg/s) → NI velocity input
         verg_rate_tvor: (3,)  H/V/cyclo-vergence rates (deg/s) → vergence slow integrator
     """
-    v_lin      = u[_IDX_INPUT_V_LIN]
-    a_lin      = u[_IDX_INPUT_A_LIN]
-    x_verg_yaw = u[_IDX_INPUT_VERG_YAW]
-    eye_pos    = u[_IDX_INPUT_EYE_POS]
+    x_verg_yaw = verg_yaw
     ipd        = brain_params.ipd_brain
     # ── Vergence-derived distance and effective 1/distance ──────────────────
     # The math everywhere below needs 1/D, never D itself, so build an inverse-

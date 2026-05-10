@@ -101,11 +101,15 @@ def decode_states(acts):
     return Decoded(net=acts.R - acts.L)
 
 
-def step(state, target_slip_ec, brain_params):
+def step(activations, target_slip_ec, brain_params):
     """Single ODE step: bilateral pursuit integrator with Smith predictor.
 
+    Activation-driven: pop firing rates come from `activations` (acts.pu), supplied
+    by the brain-wide registry.  State == Activations for pursuit (rectified
+    pops), so this is functionally identical to reading state directly today.
+
     Args:
-        state:           pursuit.State  — non-negative pops (R, L) each (3,)
+        activations:     pursuit.Activations  R, L pops (each (3,))
         target_slip_ec:  (3,)  EC-corrected target slip (deg/s)
                                 = target_slip + motor_ec · target_motion_visible
         brain_params:    BrainParams  (K_pursuit, K_phasic_pursuit, tau_pursuit)
@@ -114,7 +118,7 @@ def step(state, target_slip_ec, brain_params):
         dstate:    pursuit.State  state derivative (dR, dL)
         u_pursuit: (3,)           net pursuit velocity command (deg/s) → NI
     """
-    x_net = state.R - state.L
+    x_net = activations.R - activations.L
     K_ph  = brain_params.K_phasic_pursuit
 
     # Smith predictor on the NET memory (preserves single-integrator dynamics).
@@ -126,8 +130,8 @@ def step(state, target_slip_ec, brain_params):
 
     leak = -1.0 / brain_params.tau_pursuit
     dstate = State(
-        R = leak * state.R + brain_params.K_pursuit * drive_R,
-        L = leak * state.L + brain_params.K_pursuit * drive_L,
+        R = leak * activations.R + brain_params.K_pursuit * drive_R,
+        L = leak * activations.L + brain_params.K_pursuit * drive_L,
     )
 
     # Net activation sent downstream (NI / EC).  Identical to old single-state output.

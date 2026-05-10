@@ -191,7 +191,7 @@ def _rebound(show):
         fontsize=12, fontweight='bold')
 
     ax = axes[0]
-    ax.plot(t_arr, np.array(st_null.plant[:,   0]), color=C_GEN,     lw=1.5, label='With null adaptation (rebound)')
+    ax.plot(t_arr, np.array(st_null.plant.left[:, 0]), color=C_GEN,     lw=1.5, label='With null adaptation (rebound)')
     ax.plot(t_arr, np.array(st_nonull.plant.left[:, 0]), color='#888888', lw=1.5, ls='--', label='No null adaptation')
     ax.axhline(20, color='gray', lw=0.7, ls=':', alpha=0.5, label='Target 20°')
     ax.axvline(HOLD_DUR, color='k', lw=0.8, ls='--', alpha=0.5)

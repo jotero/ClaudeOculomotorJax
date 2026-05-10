@@ -47,33 +47,28 @@ Internal flow:
     GE  →  g_est (gravity estimate, cross-product dynamics)
     Vergence → u_verg → split ±½ to L/R motor commands
 
-State vector  x_brain = [x_self_motion (21) | x_ni (9) | x_sg (18) | x_pursuit (6) | x_va (11)
-                          | x_target_mem (4) | x_cyc_brain (43) | x_ec_scene (21) | x_ec_target (21)
-                          | x_mn (12)]
-N_STATES = computed dynamically (sm.N_STATES + ni.N_STATES + sg.N_STATES + ... + fcp.N_STATES)
+Brain state — `BrainState` NamedTuple, perception → motor order:
+    pc   — perception_cyclopean (binocular fusion + brain LP)
+    sm   — self-motion observer (VS bilateral pops + GE + HE)
+    pt   — target perception working memory
+    sg   — saccade generator (e_held + OPN + accumulators + EBN/IBN)
+    pu   — bilateral pursuit pops
+    va   — vergence + accommodation
+    ni   — bilateral NI pops + null adaptation
+    fcp  — motor neurons (final common pathway)
+    ec   — efference-copy cascades (scene + target paths)
 
-Index constants (relative to x_brain):
-    _IDX_VS       — velocity storage states   (9,)  = left(3) + right(3) + null(3)
-    _IDX_VS_L     — left  VN population       (3,)
-    _IDX_VS_R     — right VN population       (3,)
-    _IDX_VS_NULL  — VS null adaptation state  (3,)
-    _IDX_NI       — neural integrator states  (9,)  = left(3) + right(3) + null(3)
-    _IDX_NI_L     — left  NPH population      (3,)
-    _IDX_NI_R     — right NPH population      (3,)
-    _IDX_NI_NULL  — NI null adaptation state  (3,)
-    _IDX_SG       — saccade generator states  (18,) = e_held(3)+z_opn(1)+z_acc(1)+z_trig(1)+x_ebn_R(3)+x_ebn_L(3)+x_ibn_R(3)+x_ibn_L(3)
-    _IDX_GRAV     — gravity estimator states  (9,)
-    _IDX_HEAD     — heading estimator states  (3,)
-    _IDX_PURSUIT  — pursuit velocity memory   (6,)  = right(3) + left(3)  (push-pull)
-    _IDX_VERG     — vergence position memory  (9,)
-    _IDX_EC_VEL_SCENE  — cascade_lp_step delay of ec_vel_eye matched to scene_angular_vel (21,)
-    _IDX_EC_VEL_TARGET — cascade_lp_step delay of ec_vel_eye matched to target_vel (21,)
-    _IDX_MN            — motor neuron firing rates [LR_L..IO_L, LR_R..IO_R] (12,)
+Each subsystem owns its own `State` NamedTuple; `BrainState` aggregates them
+under named fields.  No flat-array layout — read fields directly via
+`brain_state.<sub>.<field>`.  `N_STATES = 163` is kept for legacy info only.
 
 Outputs of step():
-    dx_brain     (156,)  state derivative
-    motor_cmd_L  (3,)    pulse-step motor command → left  plant
-    motor_cmd_R  (3,)    pulse-step motor command → right plant
+    dbrain      BrainState  state derivative
+    nerves      (12,)       per-muscle nerve activations [L6 | R6] → plant
+    ec_vel      (3,)        version velocity efference (head frame, deg/s)
+    ec_pos      (3,)        eye position efference (= NI net)
+    ec_verg     (3,)        vergence efference (full vergence command)
+    u_acc       scalar      total lens-plant input (D)
 """
 
 from typing import NamedTuple
@@ -89,87 +84,24 @@ from oculomotor.models.brain_models  import saccade_generator      as sg
 from oculomotor.models.brain_models  import pursuit                as pu
 from oculomotor.models.brain_models  import tvor                   as tv
 from oculomotor.models.brain_models  import final_common_pathway   as fcp
+from oculomotor.models.brain_models  import efference_copy          as ec
 from oculomotor.models.brain_models  import listing
 
 from oculomotor.models.sensory_models.sensory_model import SensoryOutput
 from oculomotor.models.brain_models.final_common_pathway import G_NUCLEUS_DEFAULT, G_NERVE_DEFAULT
 from oculomotor.models.plant_models.muscle_geometry           import R_BASELINE_DEFAULT
-from oculomotor.models.plant_models.readout         import rotation_matrix
-from oculomotor.models.sensory_models.retina        import ypr_to_xyz, xyz_to_ypr, cascade_lp_step
-from oculomotor.models.sensory_models.retina               import velocity_saturation
+# EC cascade math (rotation, saturation, cascade_lp_step) lives in
+# `efference_copy.py` now — no need to import the helpers here.
 
 
 # ── State layout ───────────────────────────────────────────────────────────────
-# Two unified subsystems (self_motion = VS+GE+HE; va = vergence+accommodation)
-# come first/last respectively; the per-subsystem aliases below let external
-# code (benches, LLM pipeline) keep importing _IDX_VS / _IDX_GRAV / _IDX_HEAD /
-# _IDX_VERG / _IDX_ACC unchanged.
-#
-# Block order: self_motion | NI | SG | pursuit | va
-# T-VOR is stateless (tv.N_STATES == 0) — no slice.
-# acc_plant (1 state) is in SimState.acc_plant — not part of x_brain.
+# Brain state is a nested NamedTuple (BrainState below) — no flat array, no
+# `_IDX_*` slice constants.  Each subsystem owns its `State` NT; this module
+# aggregates them under named fields.
 
-# Post-delay EC: TWO separate cascade_lp_step delays for ec_vel_eye, one matched
-# to the scene_angular_vel slip cascade (tau_smooth_motion ~0.02 s) and one
-# matched to the target_vel slip cascade (tau_smooth_target_vel ~0.15 s). The
-# two slip paths use different LP TCs in perception_cyclopean (scene = tighter,
-# target = much smoother), so we need two separate ECs whose impulse responses
-# match each path's slip shape — otherwise post-delay subtraction can't cancel
-# them cleanly.
-_EC_VEL_N_SHARP   = 6                                       # sharp cascade stages (shared between paths)
-_EC_VEL_N_LP      = 1                                       # smoothing LP stages (shared)
-_EC_VEL_SCENE_N   = (_EC_VEL_N_SHARP + _EC_VEL_N_LP) * 3    # 21 states — scene path EC
-_EC_VEL_TARGET_N  = (_EC_VEL_N_SHARP + _EC_VEL_N_LP) * 3    # 21 states — target path EC
-
-N_STATES = sm.N_STATES + ni.N_STATES + sg.N_STATES + pu.N_STATES + va.N_STATES + pt.N_STATES + pc.N_STATES + _EC_VEL_SCENE_N + _EC_VEL_TARGET_N + fcp.N_STATES
-#        = 21 + 9 + 18 + 3 + 11 + 4 + 43 + 21 + 21 + 12 = 163
-
-# ── Top-level offsets ─────────────────────────────────────────────────────────
-_o_sm    = 0
-_o_ni    = _o_sm   + sm.N_STATES         # 21
-_o_sg    = _o_ni   + ni.N_STATES         # 30
-_o_pu    = _o_sg   + sg.N_STATES         # 48
-_o_va    = _o_pu   + pu.N_STATES         # 51
-_o_tm    = _o_va   + va.N_STATES         # 62
-_o_pc    = _o_tm   + pt.N_STATES         # 66  (perception_cyclopean brain LP block)
-_o_ec_s  = _o_pc   + pc.N_STATES         # 109 (scene EC start)
-_o_ec_t  = _o_ec_s + _EC_VEL_SCENE_N     # 130 (target EC start)
-_o_mn    = _o_ec_t + _EC_VEL_TARGET_N    # 151 (motor neuron states start)
-
-_IDX_SELF_MOTION   = slice(_o_sm,    _o_sm    + sm.N_STATES)      # (21,)
-_IDX_NI            = slice(_o_ni,    _o_ni    + ni.N_STATES)      #  (9,)
-_IDX_SG            = slice(_o_sg,    _o_sg    + sg.N_STATES)      # (18,)
-_IDX_PURSUIT       = slice(_o_pu,    _o_pu    + pu.N_STATES)      #  (3,)
-_IDX_VA            = slice(_o_va,    _o_va    + va.N_STATES)      # (11,)
-_IDX_TARGET_MEM    = slice(_o_tm,    _o_tm    + pt.N_STATES)      #  (4,) perception_target memory
-_IDX_CYC_BRAIN     = slice(_o_pc,    _o_pc    + pc.N_STATES)      # (43,) perception_cyclopean brain LP
-_IDX_EC_VEL_SCENE  = slice(_o_ec_s,  _o_ec_s  + _EC_VEL_SCENE_N)  # (21,) scene EC cascade
-_IDX_EC_VEL_TARGET = slice(_o_ec_t,  _o_ec_t  + _EC_VEL_TARGET_N) # (21,) target EC cascade
-_IDX_MN            = slice(_o_mn,    _o_mn    + fcp.N_STATES)     # (12,) motor neuron firing rates
-
-# ── Backward-compat aliases for sub-states ────────────────────────────────────
-# External code (benches, llm_pipeline) still references the per-module slices.
-# These alias into the unified self_motion / va blocks above so renames don't
-# need to ripple through the rest of the codebase.
-
-# Velocity storage sub-slices (within self_motion block)
-_IDX_VS      = slice(_o_sm,     _o_sm + 9)        # (9,)
-_IDX_VS_L    = slice(_o_sm,     _o_sm + 3)        # (3,) left  VN pop
-_IDX_VS_R    = slice(_o_sm + 3, _o_sm + 6)        # (3,) right VN pop
-_IDX_VS_NULL = slice(_o_sm + 6, _o_sm + 9)        # (3,) null adaptation
-
-# Gravity estimator + heading estimator (within self_motion block)
-_IDX_GRAV    = slice(_o_sm + 9,  _o_sm + 18)      # (9,)  g_est | a_lin | rf
-_IDX_HEAD    = slice(_o_sm + 18, _o_sm + 21)      # (3,)  v_lin
-
-# Neural integrator sub-slices (within NI block)
-_IDX_NI_L    = slice(_o_ni,     _o_ni + 3)        # (3,) left  NPH pop
-_IDX_NI_R    = slice(_o_ni + 3, _o_ni + 6)        # (3,) right NPH pop
-_IDX_NI_NULL = slice(_o_ni + 6, _o_ni + 9)        # (3,) null adaptation
-
-# Vergence + accommodation sub-slices (within va block)
-_IDX_VERG    = slice(_o_va,     _o_va + 9)        # (9,)
-_IDX_ACC     = slice(_o_va + 9, _o_va + 11)       # (2,)
+N_STATES = (sm.N_STATES + ni.N_STATES + sg.N_STATES + pu.N_STATES + va.N_STATES
+            + pt.N_STATES + pc.N_STATES + 2 * ec.N_PER_PATH + fcp.N_STATES)
+#        = 21 + 9 + 18 + 3 + 11 + 4 + 43 + 21 + 21 + 12 = 163  (kept for legacy info)
 
 
 # ── Brain state (nested NamedTuple) ───────────────────────────────────────────
@@ -185,85 +117,43 @@ class BrainState(NamedTuple):
     """Top-level brain state — one field per subsystem.
 
     Ordered perception → cognition → motor → efference:
-        pc        perception_cyclopean (binocular fusion + brain LP)
-        sm        self-motion observer (VS + GE + HE)
-        pt        target working memory (FEF/dlPFC)
-        sg        saccade generator
-        pu        smooth pursuit
-        va        vergence + accommodation
-        ni        neural integrator (final premotor stage)
-        fcp       motor neurons (final common pathway)
-        ec_scene  scene-path efference copy cascade (post-motor delay buffer)
-        ec_target target-path efference copy cascade
+        pc   perception_cyclopean (binocular fusion + brain LP)
+        sm   self-motion observer (VS + GE + HE)
+        pt   target working memory (FEF/dlPFC)
+        sg   saccade generator
+        pu   smooth pursuit
+        va   vergence + accommodation
+        ni   neural integrator (final premotor stage)
+        fcp  motor neurons (final common pathway)
+        ec   efference-copy cascades (scene + target paths)
     """
     # Perception
-    pc:        pc.State              # perception_cyclopean brain LP
-    sm:        sm.State              # self-motion (VS + GE + HE)
-    pt:        pt.State              # target perception working memory
+    pc:   pc.State              # perception_cyclopean brain LP
+    sm:   sm.State              # self-motion (VS + GE + HE)
+    pt:   pt.State              # target perception working memory
     # Motor planning + execution
-    sg:        sg.State              # saccade generator
-    pu:        pu.State              # smooth pursuit
-    va:        va.State              # vergence + accommodation
-    ni:        ni.State              # neural integrator
-    fcp:       fcp.State             # motor neurons
+    sg:   sg.State              # saccade generator
+    pu:   pu.State              # smooth pursuit
+    va:   va.State              # vergence + accommodation
+    ni:   ni.State              # neural integrator
+    fcp:  fcp.State             # motor neurons
     # Efference copy
-    ec_scene:  jnp.ndarray           # (_EC_VEL_SCENE_N,)  scene-path EC cascade
-    ec_target: jnp.ndarray           # (_EC_VEL_TARGET_N,) target-path EC cascade
+    ec:   ec.State              # scene + target EC cascades
 
 
 def rest_brain_state():
     """Initial BrainState — all zeros for cascade buffers and pops."""
     return BrainState(
-        pc        = pc.rest_state(),
-        sm        = sm.rest_state(),
-        pt        = pt.rest_state(),
-        sg        = sg.rest_state(),
-        pu        = pu.rest_state(),
-        va        = va.rest_state(),
-        ni        = ni.rest_state(),
-        fcp       = fcp.zero_state(),
-        ec_scene  = jnp.zeros(_EC_VEL_SCENE_N),
-        ec_target = jnp.zeros(_EC_VEL_TARGET_N),
+        pc   = pc.rest_state(),
+        sm   = sm.rest_state(),
+        pt   = pt.rest_state(),
+        sg   = sg.rest_state(),
+        pu   = pu.rest_state(),
+        va   = va.rest_state(),
+        ni   = ni.rest_state(),
+        fcp  = fcp.zero_state(),
+        ec   = ec.rest_state(),
     )
-
-
-# ── Legacy flat-array adapters (deleted once simulator migrates to BrainState) ─
-
-def from_array(x_brain):
-    """(N_STATES,) flat array → BrainState.
-
-    Note: the flat-array layout follows the *original* offset order (sm, ni,
-    sg, pu, va, pt, pc, ec_scene, ec_target, fcp) for legacy compatibility.
-    The BrainState NT field order (perception → motor) is independent.
-    """
-    return BrainState(
-        pc        = pc.from_array(x_brain[_IDX_CYC_BRAIN]),
-        sm        = sm.from_array(x_brain[_IDX_SELF_MOTION]),
-        pt        = pt.from_array(x_brain[_IDX_TARGET_MEM]),
-        sg        = sg.from_array(x_brain[_IDX_SG]),
-        pu        = pu.from_array(x_brain[_IDX_PURSUIT]),
-        va        = va.from_array(x_brain[_IDX_VA]),
-        ni        = ni.from_array(x_brain[_IDX_NI]),
-        fcp       = fcp.from_array(x_brain[_IDX_MN]),
-        ec_scene  = x_brain[_IDX_EC_VEL_SCENE],
-        ec_target = x_brain[_IDX_EC_VEL_TARGET],
-    )
-
-
-def to_array(state):
-    """BrainState → (N_STATES,) flat array (original offset order)."""
-    return jnp.concatenate([
-        sm.to_array(state.sm),
-        ni.to_array(state.ni),
-        sg.to_array(state.sg),
-        pu.to_array(state.pu),
-        va.to_array(state.va),
-        pt.to_array(state.pt),
-        pc.to_array(state.pc),
-        state.ec_scene,
-        state.ec_target,
-        fcp.to_array(state.fcp),
-    ])
 
 
 # ── Phase-2 registries (Activations / Decoded / Weights) ─────────────────────
@@ -315,8 +205,8 @@ def read_activations(brain_state):
     )
 
 
-def decode_states(acts):
-    """Aggregate per-module decoded readouts (push-pull nets).
+def decode_activations(acts):
+    """Aggregate per-module decoded readouts (push-pull L−R / R−L nets).
 
     Pure function of `acts` — no raw state involvement.
     """
@@ -817,21 +707,20 @@ def make_x0(brain_params=None):
     # transient at the very beginning of every simulation).
     if brain_params is not None:
         vv_rest = jnp.array([0.0, 0.0, 0.0, brain_params.tonic_verg, 0.0, 0.0])
-        fcp_state = fcp.State(rates=fcp.rest_state(vv_rest, brain_params))
+        fcp_state = fcp.State(mn=fcp.rest_state(vv_rest, brain_params))
     else:
         fcp_state = fcp.zero_state()
 
     return BrainState(
-        pc        = pc.rest_state(),
-        sm        = sm_state,
-        pt        = pt.rest_state(),
-        sg        = sg_state,
-        pu        = pu.rest_state(),
-        va        = va_state,
-        ni        = ni.rest_state(),
-        fcp       = fcp_state,
-        ec_scene  = jnp.zeros(_EC_VEL_SCENE_N),
-        ec_target = jnp.zeros(_EC_VEL_TARGET_N),
+        pc   = pc.rest_state(),
+        sm   = sm_state,
+        pt   = pt.rest_state(),
+        sg   = sg_state,
+        pu   = pu.rest_state(),
+        va   = va_state,
+        ni   = ni.rest_state(),
+        fcp  = fcp_state,
+        ec   = ec.rest_state(),
     )
 
 
@@ -859,33 +748,39 @@ def step(brain_state, sensory_out, brain_params, noise_acc=0.0):
         u_acc:        scalar total lens-plant input (D) — neural + CA/C, drives acc_plant
     """
     # ── Activation / Decoded / Weights registries ────────────────────────────
-    # Built once per step.  Cross-subsystem reads MUST go through these.
-    # `weights` is exposed for contract uniformity (long-term: setpoints
-    # become learnable parameters).
+    # Built once per step.  Subsystems read these instead of raw state.
+    # `weights` holds setpoint-like registers (vs_null, ni_null, e_held);
+    # long-term these become learnable parameters of the network.
     acts     = read_activations(brain_state)
-    decoded  = decode_states(acts)
+    decoded  = decode_activations(acts)
     weights  = read_weights(brain_state)
-    del weights   # not yet consumed by any subsystem; kept above for the contract
 
+    # ── Efference-copy reads (all four assembled in one place) ──────────────
+    # ec_pos / ec_verg are state-only readouts of the current (or 1-step-lagged)
+    # version / vergence eye position — used by perception_cyclopean for the
+    # post-delay EC subtraction.  ec_d_scene / ec_d_target are the delayed EC
+    # cascade outputs (matched-impulse-response copies of the version-velocity
+    # command), used to cancel self-generated motion in the slip cascades.
+    ec_acts     = ec.read_activations(brain_state.ec)
     x_ni_net    = decoded.ni.net
-    ec_d_scene  = brain_state.ec_scene[-3:]
-    ec_d_target = brain_state.ec_target[-3:]
+    ec_pos      = decoded.ni.net
+    ec_verg     = (acts.va.verg_fast + acts.va.verg_tonic
+                   + jnp.array([brain_params.tonic_verg, 0.0, 0.0]))
+    ec_d_scene  = ec_acts.scene
+    ec_d_target = ec_acts.target
 
     # ── Cyclopean perception: binocular fusion + brain LP smoothing ──────────
-    # Uses ec_pos = x_ni_net (current) and a lagged ec_verg approximation from
-    # the vergence integrator state (avoids the va↔cyclopean circular dependency
-    # — exact ec_verg from this step's va.step isn't available yet).
-    ec_pos_lagged  = decoded.ni.net
-    ec_verg_lagged = acts.va.verg_fast + acts.va.verg_tonic \
-                     + jnp.array([brain_params.tonic_verg, 0.0, 0.0])
+    # ec_pos / ec_verg are 1-step-delayed via the ODE state read order — the
+    # exact same-step ec_verg from this step's va.step isn't available yet, so
+    # we use the state-based reconstruction above.  Negligible lag (one dt).
     dpc, cyc = pc.step(
         brain_state.pc, sensory_out.retina_L, sensory_out.retina_R,
-        ec_pos_lagged, ec_verg_lagged, brain_params,
+        ec_pos, ec_verg, brain_params,
     )
 
     # ── Target path: encapsulated in perception_target.step ───────────────────
     dpt, target_slip_for_pursuit, tgt_pos_eff, tgt_vis_eff = pt.step(
-        brain_state.pt,
+        acts.pt,
         cyc.target_vel,
         cyc.target_visible,
         cyc.target_pos,
@@ -894,17 +789,17 @@ def step(brain_state, sensory_out, brain_params, noise_acc=0.0):
     )
 
     # ── Self-motion observer (VS + GE + HE) — single unified step ────────────
+    # Activation-driven: VS pops + GE/HE observer states come from `acts.sm`;
+    # the vs_null setpoint comes from `weights.sm`.
     dsm, w_est, g_est, v_lin, a_lin_est = sm.step(
-        brain_state.sm,
-        jnp.concatenate([
-            sensory_out.canal,
-            cyc.scene_angular_vel,
-            sensory_out.otolith,
-            cyc.scene_linear_vel,
-            jnp.array([cyc.scene_visible]),
-            ec_d_scene,
-        ]),
-        brain_params,
+        acts.sm, weights.sm,
+        canal          = sensory_out.canal,
+        scene_slip     = cyc.scene_angular_vel,
+        gia            = sensory_out.otolith,
+        scene_lin_vel  = cyc.scene_linear_vel,
+        scene_visible  = cyc.scene_visible,
+        ec_d_scene     = ec_d_scene,
+        brain_params   = brain_params,
     )
 
     # OCR: world frame [x=right, y=up, z=fwd]. Right-ear-down → g_est[0] < 0 → -g_est[0] > 0.
@@ -912,10 +807,10 @@ def step(brain_state, sensory_out, brain_params, noise_acc=0.0):
     ocr = jnp.array([0.0, 0.0, -brain_params.g_ocr * g_est[0]])
 
     # ── Pursuit on EC-corrected, gated target slip (from perception_target) ─
-    dpu, u_pursuit = pu.step(brain_state.pu, target_slip_for_pursuit, brain_params)
+    dpu, u_pursuit = pu.step(acts.pu, target_slip_for_pursuit, brain_params)
 
     # ── Saccade generator (target selection + Listing's corrections internal) ──
-    dsg, u_burst = sg.step(brain_state.sg, tgt_pos_eff, tgt_vis_eff,
+    dsg, u_burst = sg.step(acts.sg, weights.sg, tgt_pos_eff, tgt_vis_eff,
                             x_ni_net, ocr, w_est, brain_params, noise_acc)
 
     # ── Translational VOR (T-VOR): vestibular + visual fusion, distance-scaled ───
@@ -931,11 +826,12 @@ def step(brain_state, sensory_out, brain_params, noise_acc=0.0):
     aca_term = brain_params.AC_A * _DEG_PER_PD * acts.va.acc_fast
     current_vergence_yaw = acts.va.verg_fast[0] + acts.va.verg_tonic[0] + aca_term
     omega_tvor, verg_rate_tvor = tv.step(
-        jnp.concatenate([v_lin,
-                         a_lin_est,
-                         jnp.array([current_vergence_yaw]),
-                         x_ni_net]),
-        brain_params)
+        v_lin    = v_lin,
+        a_lin    = a_lin_est,
+        verg_yaw = current_vergence_yaw,
+        eye_pos  = x_ni_net,
+        brain_params = brain_params,
+    )
 
     # ── Neural integrator: VOR + saccades + pursuit + T-VOR → version motor command ───
     # OCR is a tonic position-offset set-point (gravity-driven); passed as u_tonic so it
@@ -966,7 +862,7 @@ def step(brain_state, sensory_out, brain_params, noise_acc=0.0):
     # Both shift the NI's leak target so x_net leaks toward the correct torsion
     # at SS without relying purely on velocity-level corrections to maintain it.
     u_tonic = ocr.at[2].add(brain_params.listing_gain * cyc_torsion_target)
-    dni, motor_cmd_ni = ni.step(brain_state.ni, u_ni_in, brain_params, u_tonic=u_tonic)
+    dni, motor_cmd_ni = ni.step(acts.ni, weights.ni, u_ni_in, brain_params, u_tonic=u_tonic)
 
     # ── Vergence + Accommodation — single unified step ────────────────────────
     # Internal sequencing (state-based AC/A & CA/C → vergence → accommodation)
@@ -975,60 +871,44 @@ def step(brain_state, sensory_out, brain_params, noise_acc=0.0):
     # synaptic latency and avoiding intra-step iteration.
     z_act_verg = 1.0 - acts.sg.gate_opn
     dva, u_verg, u_acc = va.step(
-        brain_state.va,
-        jnp.concatenate([
-            jnp.array([cyc.defocus]),
-            cyc.target_disparity,
-            verg_rate_tvor,
-            jnp.array([z_act_verg]),
-        ]),
-        brain_params,
+        acts.va,
+        defocus          = cyc.defocus,
+        target_disparity = cyc.target_disparity,
+        verg_rate_tvor   = verg_rate_tvor,
+        z_act            = z_act_verg,
+        brain_params     = brain_params,
     )
 
     # ── Final common pathway: nucleus encode → MN low-pass → nerve activations ─
-    dfcp, nerves = fcp.step(brain_state.fcp,
+    # MN firing rates come from the brain-wide activations registry (`acts.fcp`),
+    # which applies the cell-body f-I curve clip via fcp.read_activations.
+    # FCP step is fully activation-driven — it does NOT need raw brain_state.fcp.
+    dfcp, nerves = fcp.step(acts.fcp,
                              jnp.concatenate([motor_cmd_ni, u_verg]),
                              brain_params)
 
-    # ── Efference copy signals returned for the simulator + EC cascades ──────
-    # ec_vel feeds the matched-cascade EC blocks at the end of step (rotation to
-    # eye frame happens inside the cascade update). ec_pos / ec_verg are also
-    # returned so the simulator can pipe them back as needed; perception_cyclopean
-    # consumes ec_pos and ec_verg directly from x_ni_net + x_va via the lagged
-    # readout near the top of step.
-    ec_vel  = u_burst + u_pursuit + omega_tvor   # version velocity efference (deg/s)
-    ec_pos  = x_ni_net                            # eye position efference (head frame, deg)
-    ec_verg = u_verg                              # full vergence command (3,) [H,V,T]
-
-    # ── Update post-delay EC state — two cascades in parallel ────────────────
-    # Same input (rotated + saturated ec_vel_eye), different LP smoothing TCs
-    # to match the corresponding slip cascades:
-    #   - x_ec_scene  uses tau_vis_smooth_motion       (matches scene_angular_vel)
-    #   - x_ec_target uses tau_vis_smooth_target_vel   (matches target_vel)
-    R_eye_ec       = rotation_matrix(ypr_to_xyz(ec_pos))
-    ec_vel_eye     = xyz_to_ypr(R_eye_ec.T @ ypr_to_xyz(ec_vel))
-    ec_vel_eye_in  = velocity_saturation(ec_vel_eye, brain_params.v_max_okr)
-    dx_ec_scene    = cascade_lp_step(brain_state.ec_scene, ec_vel_eye_in,
-                                     brain_params.tau_vis_sharp,
-                                     brain_params.tau_vis_smooth_motion,
-                                     _EC_VEL_N_SHARP, 3, _EC_VEL_N_LP)
-    dx_ec_target   = cascade_lp_step(brain_state.ec_target, ec_vel_eye_in,
-                                     brain_params.tau_vis_sharp,
-                                     brain_params.tau_vis_smooth_target_vel,
-                                     _EC_VEL_N_SHARP, 3, _EC_VEL_N_LP)
+    # ── Efference copy: cascade advance + return signals ─────────────────────
+    # ec_vel = version-velocity efference; drives both EC cascades inside ec.step
+    # (which applies frame rotation, retinal saturation, and matched LP cascades).
+    # ec_pos was assembled at the top from decoded.ni.net (same as x_ni_net).
+    # ec_verg returned to caller is the FULL vergence command (u_verg from
+    # va.step) — distinct from the lagged ec_verg used by perception_cyclopean
+    # at the top of step (which was state-based to break the va↔pc loop).
+    ec_vel       = u_burst + u_pursuit + omega_tvor
+    ec_verg_cmd  = u_verg
+    dec          = ec.step(brain_state.ec, ec_vel, ec_pos, brain_params)
 
     # ── Pack state derivative ─────────────────────────────────────────────────
     dbrain = BrainState(
-        pc        = dpc,
-        sm        = dsm,
-        pt        = dpt,
-        sg        = dsg,
-        pu        = dpu,
-        va        = dva,
-        ni        = dni,
-        fcp       = dfcp,
-        ec_scene  = dx_ec_scene,
-        ec_target = dx_ec_target,
+        pc   = dpc,
+        sm   = dsm,
+        pt   = dpt,
+        sg   = dsg,
+        pu   = dpu,
+        va   = dva,
+        ni   = dni,
+        fcp  = dfcp,
+        ec   = dec,
     )
 
-    return dbrain, nerves, ec_vel, ec_pos, ec_verg, u_acc
+    return dbrain, nerves, ec_vel, ec_pos, ec_verg_cmd, u_acc

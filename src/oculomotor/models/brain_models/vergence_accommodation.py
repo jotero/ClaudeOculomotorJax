@@ -16,12 +16,12 @@ State layout (relative to x_va, total 11 states):
     x_verg (9,)   _IDX_VERG  [0:9]   — x_fast(3) | x_slow(3) | x_copy(3)
     x_acc  (2,)   _IDX_ACC   [9:11]  — x_fast    | x_slow            (scalar)
 
-Bundled inputs to step() (length N_INPUTS=8):
+Inputs to step() (explicit named arguments):
 
-    defocus            (1,)   _IDX_INPUT_DEFOCUS         — delayed cyclopean defocus (D)
-    target_disparity   (3,)   _IDX_INPUT_TARGET_DISP     — delayed binocular disparity (deg)
-    verg_rate_tvor     (3,)   _IDX_INPUT_VERG_RATE_TVOR  — T-VOR vergence rate (deg/s)
-    z_act              (1,)   _IDX_INPUT_Z_ACT           — OPN gate (SVBN trigger)
+    defocus            scalar  delayed cyclopean defocus (D)
+    target_disparity   (3,)    delayed binocular disparity (deg)
+    verg_rate_tvor     (3,)    T-VOR vergence rate (deg/s)
+    z_act              scalar  OPN gate (SVBN trigger; 1 − gate_opn)
 
 Outputs from step():
 
@@ -125,43 +125,40 @@ def read_activations(state):
     return state
 
 # Bundled-input layout
-N_INPUTS  = 1 + 3 + 3 + 1   # 8
-N_OUTPUTS = 3   # primary output for SSM convention is u_verg; auxiliaries via tuple
-
-_IDX_INPUT_DEFOCUS        = 0
-_IDX_INPUT_TARGET_DISP    = slice(1, 4)
-_IDX_INPUT_VERG_RATE_TVOR = slice(4, 7)
-_IDX_INPUT_Z_ACT          = 7
+N_OUTPUTS = 3   # primary output is u_verg; auxiliaries via tuple
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # step() — entire near-response math, inlined
 # ─────────────────────────────────────────────────────────────────────────────
 
-def step(state, u, brain_params):
+def step(activations, defocus, target_disparity, verg_rate_tvor, z_act,
+         brain_params):
     """Single ODE step for the unified near-response (vergence + accommodation).
 
+    Activation-driven: the five vergence/accommodation pop firing rates come
+    from the brain-wide activations registry.  Most are linear copies of the
+    state today; eventual L/R splits + nonlinearities go in read_activations.
+
     Args:
-        state:        va.State    bundled state (5 firing-rate fields)
-        u:            (8,)  bundled input — see _IDX_INPUT_* above
-        brain_params: BrainParams
+        activations:      va.Activations  (verg_fast, verg_tonic, verg_copy,
+                                            acc_fast, acc_slow)
+        defocus:          scalar  delayed cyclopean defocus (D)
+        target_disparity: (3,)    delayed binocular disparity (deg)
+        verg_rate_tvor:   (3,)    T-VOR vergence rate (deg/s)
+        z_act:            scalar  saccadic OPN gate (SVBN trigger)
+        brain_params:     BrainParams
 
     Returns:
         dstate : va.State  state derivative
         u_verg : (3,)      vergence position command (deg) → FCP per-eye split
         u_acc  : scalar    total lens-plant input (D) — neural + CA/C
     """
-    x_verg_v     = state.verg_fast
-    x_verg_tonic = state.verg_tonic
-    x_verg_copy  = state.verg_copy
-    x_acc_fast   = state.acc_fast
-    x_acc_slow   = state.acc_slow
-
-    # ── Split bundled inputs ────────────────────────────────────────────────
-    defocus          = u[_IDX_INPUT_DEFOCUS]
-    target_disparity = u[_IDX_INPUT_TARGET_DISP]
-    verg_rate_tvor   = u[_IDX_INPUT_VERG_RATE_TVOR]
-    z_act            = u[_IDX_INPUT_Z_ACT]
+    x_verg_v     = activations.verg_fast
+    x_verg_tonic = activations.verg_tonic
+    x_verg_copy  = activations.verg_copy
+    x_acc_fast   = activations.acc_fast
+    x_acc_slow   = activations.acc_slow
 
     # Robinson local feedback for the SVBN burst only: subtract x_verg_copy
     # (integrated burst command) from disparity so the burst self-terminates.
@@ -261,26 +258,11 @@ def step(state, u, brain_params):
     return dstate, u_verg, u_acc
 
 
-# ── Legacy flat-array adapters (deleted once brain_model migrates to BrainState) ─
-
 N_STATES  = 9 + 2   # 11
-_IDX_VERG = slice(0, 9)
-_IDX_ACC  = slice(9, 11)
-
-
-def from_array(x_va):
-    """(11,) flat array → va.State."""
-    return State(
-        verg_fast  = x_va[0:3],
-        verg_tonic = x_va[3:6],
-        verg_copy  = x_va[6:9],
-        acc_fast   = x_va[9],
-        acc_slow   = x_va[10],
-    )
 
 
 def to_array(state):
-    """va.State → (11,) flat array."""
+    """va.State → (11,) flat array — legacy adapter."""
     return jnp.concatenate([
         state.verg_fast, state.verg_tonic, state.verg_copy,
         jnp.array([state.acc_fast, state.acc_slow]),
@@ -289,9 +271,5 @@ def to_array(state):
 
 __all__ = [
     "step", "State", "Activations", "rest_state", "read_activations",
-    "from_array", "to_array",
-    "N_STATES", "N_INPUTS", "N_OUTPUTS",
-    "_IDX_VERG", "_IDX_ACC",
-    "_IDX_INPUT_DEFOCUS", "_IDX_INPUT_TARGET_DISP", "_IDX_INPUT_VERG_RATE_TVOR",
-    "_IDX_INPUT_Z_ACT",
+    "to_array", "N_STATES", "N_OUTPUTS",
 ]

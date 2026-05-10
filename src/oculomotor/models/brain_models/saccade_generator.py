@@ -210,10 +210,21 @@ def burst_velocity(e, p):
 
 # ── SSM step ──────────────────────────────────────────────────────────────────
 
-def step(state, pos_delayed, target_visible, x_ni, ocr, w_est, p, noise_acc=0.0):
+def step(activations, weights, pos_delayed, target_visible, x_ni, ocr, w_est,
+         p, noise_acc=0.0):
     """Single ODE step: target selection + burst dynamics + burst output.
 
-    Target selection (inside step — uses brain-internal x_ni, not plant state):
+    Activation-driven: burst neuron firing rates and trigger/accumulator
+    activations come from `activations` (acts.sg).  The Robinson held-error
+    setpoint comes from `weights` (weights.sg).
+
+    Note: gate_opn in `activations` is the clipped firing-rate proxy; the
+    underlying OPN membrane state (z_opn) is recovered from gate_opn via the
+    inverse projection (gate × _OPN_TONIC) — this is the firing rate's
+    interpretation as state for the LP dynamics, identical for the typical
+    operating range.
+
+    Target selection (uses brain-internal x_ni, not plant state):
         target_visible ≈ 1  (in visual field):
             e_cmd = clip(pos_delayed + ocr, −orbital_limit − x_ni, +orbital_limit − x_ni)
         target_visible ≈ 0  (quick-phase generator — target outside ~90° visual field):
@@ -221,7 +232,8 @@ def step(state, pos_delayed, target_visible, x_ni, ocr, w_est, p, noise_acc=0.0)
             Predictive centripetal quick phase.
 
     Args:
-        state:         sg.State     SG state (see module docstring)
+        activations:   sg.Activations  gate_opn, z_acc, z_trig, ebn_R/L, ibn_R/L
+        weights:       sg.Weights      e_held (Robinson held-error setpoint)
         pos_delayed:   (3,)         delayed retinal position error (deg)
         target_visible: scalar       visual-field gate (≈1 in-field, ≈0 out-of-field)
         x_ni:          (3,)         NI net state — brain's eye-position estimate (deg)
@@ -240,15 +252,15 @@ def step(state, pos_delayed, target_visible, x_ni, ocr, w_est, p, noise_acc=0.0)
     # summed velocity command before NI integration), so SG aims at H/V only
     # and torsion drops out of the velocity-level rule here.
 
-    # ── State extraction ──────────────────────────────────────────────────────
-    e_held  = state.e_held
-    z_opn   = state.z_opn
-    z_acc   = state.z_acc
-    z_trig  = state.z_trig
-    x_ebn_R = state.ebn_R
-    x_ebn_L = state.ebn_L
-    x_ibn_R = state.ibn_R
-    x_ibn_L = state.ibn_L
+    # ── Activation reads ──────────────────────────────────────────────────────
+    e_held  = weights.e_held
+    z_opn   = activations.gate_opn * _OPN_TONIC   # gate_opn = clip(z_opn/100); invert
+    z_acc   = activations.z_acc
+    z_trig  = activations.z_trig
+    x_ebn_R = activations.ebn_R
+    x_ebn_L = activations.ebn_L
+    x_ibn_R = activations.ibn_R
+    x_ibn_L = activations.ibn_L
 
     # ── Target selection ──────────────────────────────────────────────────────
     # In-field: saccade aims at the landed gaze (current x_ni + retinal error

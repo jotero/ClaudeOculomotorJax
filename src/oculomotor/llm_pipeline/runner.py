@@ -191,7 +191,9 @@ def _extract_signals(states, params, t_np: np.ndarray) -> dict:
         e_pd     = C_pos @ x_vis_
         gate     = jnp.clip((C_target_visible @ x_vis_)[0], 0.0, 1.0)
         x_ni_net = state.brain.ni.L - state.brain.ni.R   # (3,)
-        _, u     = sg_mod.step(state.brain.sg, e_pd, gate, x_ni_net,
+        sg_acts  = sg_mod.read_activations(state.brain.sg)
+        sg_w     = sg_mod.read_weights(state.brain.sg)
+        _, u     = sg_mod.step(sg_acts, sg_w, e_pd, gate, x_ni_net,
                                 jnp.zeros(3), jnp.zeros(3), params.brain)
         return u
     u_burst = np.array(jax.vmap(_burst_at)(states))  # (T, 3)

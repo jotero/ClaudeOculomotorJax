@@ -93,113 +93,131 @@ def _smooth_clip(z, g_max):
 # ── State + registries ────────────────────────────────────────────────────────
 
 class State(NamedTuple):
-    """FCP state — 14 motor neurons (12 muscle MNs + AIN_L + AIN_R).
+    """FCP state — 14 motor neuron membrane states.
+
+    Each entry is a membrane-potential-like accumulator integrated by the LP
+    dynamics in step().  `mn` is NOT a firing rate — the cell-body f-I curve
+    that rectifies it to [0, NERVE_MAX] lives in `read_activations`.
 
     AIN_L and AIN_R are abducens internuclear neurons whose axons enter the
     MLF and synapse on contralateral CN3_MR motoneurons (no extraocular
-    muscle output).
+    muscle output).  Their firing rates show up in the Activations registry
+    alongside the 12 muscle MNs.
     """
-    rates: jnp.ndarray   # (14,) [LR_L,LR_R,CN4_L,CN4_R,MR_L,MR_R,SR_L,SR_R,IR_L,IR_R,IO_L,IO_R,AIN_L,AIN_R]
+    mn: jnp.ndarray   # (14,) [LR_L,LR_R,CN4_L,CN4_R,MR_L,MR_R,SR_L,SR_R,IR_L,IR_R,IO_L,IO_R,AIN_L,AIN_R]
 
 
 class Activations(NamedTuple):
-    """FCP firing rates — only the 12 muscle MNs (AINs project internally via MLF)."""
-    mn_rates: jnp.ndarray   # (12,) per-muscle MN firing rates  [oculomotor / trochlear / abducens]
+    """FCP firing rates — cell-body f-I curve applied."""
+    mn: jnp.ndarray   # (14,) firing rates (clipped to [0, NERVE_MAX])
 
 
 def zero_state():
     """All-zero state — useful as a NT-PyTree shape template."""
-    return State(rates=jnp.zeros(14))
+    return State(mn=jnp.zeros(14))
 
 
 def read_activations(state):
-    """MN states ARE firing rates by construction (LP + smooth-clip f-I curve).
+    """Project MN membrane state → firing rates via the cell-body f-I curve.
 
-    Only the 12 muscle MNs are exposed — AINs project internally via MLF,
-    not to the plant.
+    `state.mn` is a membrane-potential-like accumulator integrated by the LP
+    dynamics in step().  The cell-body f-I curve maps it to firing rate by
+    rectifying (≥0) and capping at NERVE_MAX.  Downstream axonal effects
+    (MLF cap, nerve cap) are additional and applied in step().
     """
-    return Activations(mn_rates=state.rates[:12])
+    return Activations(mn=_smooth_clip(state.mn, _NERVE_MAX))
 
 
-def step(state, premotor_activity, brain_params):
+def step(activations, premotor_activity, brain_params):
     """Single ODE step: premotor activity → motor neurons → output nerves.
 
-        dx_mn  =  (premotor + mlf  −  x_mn) / tau_mn
+        dx_mn  =  (premotor_in + mlf  −  rates) / tau_mn
 
-    MLF is a motor-neuron-to-motor-neuron connection: AIN MN axons enter the
-    MLF tract (conduction cap = g_mlf · NERVE_MAX), terminate on contralateral
-    CN3_MR motoneurons.  Only CN3_MR_L and CN3_MR_R receive MLF input; for
-    every other MN the MLF term is zero.
+    Activation-driven architecture:
+      • The cell-body f-I curve clip lives in `read_activations` — applied
+        once at the brain level via `brain_model.read_activations`.  The
+        caller passes the resulting `activations.mn` (firing rates) here.
+      • Premotor synaptic input is clipped at NERVE_MAX (cell-body f-I curve
+        at the synapse) so the membrane integrator stays bounded — under
+        normal operation `state.mn` ≈ `activations.mn`.
+      • Cross-projections (MLF: AIN → contralateral CN3_MR) and the nerve
+        output are both driven by ACTIVATIONS (firing rates), not raw state.
+        Axons carry spike rates, not membrane potential.
+
+    Two-stage clip:
+        1. Cell body  (in read_activations)         → cap at NERVE_MAX
+        2. Axonal     (in step, on MLF / nerves)    → cap at g_mlf · NERVE_MAX
+                                                       or g_nerve · NERVE_MAX
+    Healthy gains (g=1) make the axonal cap = NERVE_MAX (no extra effect);
+    lesion (g<1) brings the cap below NERVE_MAX and starts limiting.
 
     Args:
-        state:              fcp.State  MN firing rates (14,) in nucleus order
-                             [ABN_L, ABN_R, CN4_L, CN4_R, CN3_MR_L, CN3_MR_R,
-                              CN3_SR_L, CN3_SR_R, CN3_IR_L, CN3_IR_R,
-                              CN3_IO_L, CN3_IO_R, AIN_L, AIN_R]
-        premotor_activity:  (6,) [version (3,) | vergence (3,)] — output of NI +
-                             saccade burst + pursuit + vergence integrators
+        activations:        fcp.Activations  cell-body firing rates (14,) —
+                             supplied by the brain-wide activations registry
+        premotor_activity:  (6,)             [version (3,) | vergence (3,)] — NI +
+                             saccade burst + pursuit + vergence integrator output
         brain_params:       BrainParams (g_nucleus, g_nerve, g_mlf_L/R, tau_mn)
 
     Returns:
-        dstate: fcp.State  state derivative
-        nerves: (12,) axonal firing rates to extraocular muscles
-                 [LR_L, MR_L, SR_L, IR_L, SO_L, IO_L,
-                  LR_R, MR_R, SR_R, IR_R, SO_R, IO_R]
+        dstate: fcp.State  state derivative (membrane integrator)
+        nerves: (12,)      axonal firing rates to extraocular muscles
+                            [LR_L, MR_L, SR_L, IR_L, SO_L, IO_L,
+                             LR_R, MR_R, SR_R, IR_R, SO_R, IO_R]
     """
-    x_mn = state.rates
-    # Premotor input arriving at each MN's synapses: linear projection of the
-    # upstream brain command via M_NUCLEUS, scaled by g_nucleus (cell-loss
-    # gain; AIN_L/R inherit ABN_L/R gain — intermingled populations), then
-    # rectified and capped at the premotor neurons' biophysical max NERVE_MAX.
-    # The ×2 doubling compensates for the antagonist sitting at the rectified
-    # zero floor — agonist alone has to carry the full push-pull amplitude.
+    rates = activations.mn   # cell-body firing rates from brain registry
+
+    # Premotor synaptic input: linear projection of the upstream brain command
+    # via M_NUCLEUS, scaled by g_nucleus (cell-loss gain; AIN_L/R inherit
+    # ABN_L/R gain — intermingled populations).  The ×2 doubling compensates
+    # for the antagonist sitting at the rectified zero floor — agonist alone
+    # has to carry the full push-pull amplitude.  Clipped at the cell-body
+    # NERVE_MAX so the membrane integrator stays bounded.
     g_nuc12  = brain_params.g_nucleus
     g_nuc14  = jnp.concatenate([g_nuc12, g_nuc12[:2]])
     premotor = _smooth_clip(g_nuc14 * (M_NUCLEUS @ premotor_activity) * 2.0,
-                            _NERVE_MAX)                                          # (14,)
+                             _NERVE_MAX)                                          # (14,)
 
-    # MLF input: AIN MN firing rates feed contralateral CN3_MR MNs through the
-    # MLF axon tract.  Conduction cap (g_mlf · NERVE_MAX) is frequency-selective —
-    # tonic AIN drive (small) gets through; saccade burst (large) is capped.
-    # Zero everywhere except CN3_MR_L and CN3_MR_R.
+    # MLF: AIN firing rates feed contralateral CN3_MR through the MLF tract.
+    # MLF axon conduction cap (g_mlf_L/R · NERVE_MAX) is frequency-selective.
+    # Driven by AIN ACTIVATIONS.
     mlf = jnp.zeros(N_STATES) \
-        .at[CN3_MR_L].set(_smooth_clip(x_mn[AIN_R], brain_params.g_mlf_L * _NERVE_MAX)) \
-        .at[CN3_MR_R].set(_smooth_clip(x_mn[AIN_L], brain_params.g_mlf_R * _NERVE_MAX))
+        .at[CN3_MR_L].set(_smooth_clip(rates[AIN_R], brain_params.g_mlf_L * _NERVE_MAX)) \
+        .at[CN3_MR_R].set(_smooth_clip(rates[AIN_L], brain_params.g_mlf_R * _NERVE_MAX))
 
-    # MN dynamics: linear LP integrating premotor + MLF inputs.
-    dx_mn = (premotor + mlf - x_mn) / brain_params.tau_mn
+    # MN dynamics: linear LP integrating premotor + MLF inputs; leak uses
+    # the current firing rate (= membrane state under normal operation since
+    # premotor is clipped at NERVE_MAX → integrator stays bounded).
+    dx_mn = (premotor + mlf - rates) / brain_params.tau_mn
 
-    # Output nerves: muscle-MN firing rates permuted to nerve order via
-    # M_NERVE_PROJ (with AIN→MR stripped — AIN reaches MR through MLF, not
+    # Nerves: muscle-MN ACTIVATIONS + tonic baseline, projected to nerve order
+    # via M_NERVE_PROJ (AIN→MR stripped — AIN reaches MR through MLF, not
     # directly).  The per-nucleus tonic baseline is scaled by the same
     # g_nucleus that scales dynamic firing, so a partial nuclear lesion
-    # (e.g. g_nucleus[ABN_R]=0.5) reduces the surviving population's tone
-    # AND its active response equally — half-lesion produces both slowed
-    # saccades AND tonic strabismus from the now-asymmetric baseline.
-    # Uniform symmetric baseline (default) is invisible at the plant
-    # (zero-sum decode columns); asymmetry — whether intrinsic or induced
-    # by lesion gains — produces tonic eye drift.
-    # Axon conduction cap (g_nerve · NERVE_MAX) acts on the output.
+    # (e.g. g_nucleus[ABN_R]=0.5) reduces both tonic AND active drive equally
+    # — half-lesion produces both slowed saccades AND tonic strabismus.
+    # Uniform symmetric baseline (default) is invisible at the plant (zero-sum
+    # decode columns); asymmetry — intrinsic or lesion-induced — drives drift.
+    # Axon conduction cap (g_nerve · NERVE_MAX) acts at the cranial nerve.
     m_proj   = M_NERVE_PROJ \
         .at[MR_L, AIN_R].set(0.0) \
         .at[MR_R, AIN_L].set(0.0)
     r_base12 = brain_params.r_baseline
     r_base14 = jnp.concatenate([r_base12, jnp.zeros(2)])    # AIN doesn't project to nerves
-    nerves   = _smooth_clip(m_proj @ (x_mn + g_nuc14 * r_base14),
+    nerves   = _smooth_clip(m_proj @ (rates + g_nuc14 * r_base14),
                             brain_params.g_nerve * _NERVE_MAX)                   # (12,)
-    return State(rates=dx_mn), nerves
+    return State(mn=dx_mn), nerves
 
 
 # ── Legacy flat-array adapters (deleted once brain_model migrates to BrainState) ─
 
 def from_array(x_mn):
     """(14,) flat array → fcp.State."""
-    return State(rates=x_mn)
+    return State(mn=x_mn)
 
 
 def to_array(state):
     """fcp.State → (14,) flat array."""
-    return state.rates
+    return state.mn
 
 
 def rest_state(premotor_activity, brain_params):

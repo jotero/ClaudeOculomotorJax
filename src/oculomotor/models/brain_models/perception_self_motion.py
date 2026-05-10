@@ -20,13 +20,14 @@ State layout (relative to x_self_motion, total 21 states):
     x_grav (9,)   _IDX_GRAV  [9:18]  — gravity estimate, a_lin, rf state
     x_head (3,)   _IDX_HEAD  [18:21] — head linear velocity v_lin
 
-Bundled inputs to step() (length N_INPUTS=16):
+Inputs to step() (explicit named arguments):
 
-    canal           (6,)   _IDX_INPUT_CANAL          — canal afferents (deg/s)
-    scene_slip      (3,)   _IDX_INPUT_SLIP           — retinal scene slip (deg/s)
-    gia             (3,)   _IDX_INPUT_GIA            — otolith GIA (m/s², head frame)
-    scene_lin_vel   (3,)   _IDX_INPUT_SCENE_LIN_VEL  — scene translational flow (m/s)
-    scene_visible   (1,)   _IDX_INPUT_SCENE_VISIBLE  — gates HE visual fusion
+    canal           (6,)   canal afferents (deg/s)
+    scene_slip      (3,)   delayed retinal scene slip (deg/s, eye frame)
+    gia             (3,)   otolith GIA (m/s², head frame)
+    scene_lin_vel   (3,)   delayed scene translational flow (m/s)
+    scene_visible   scalar delayed cyclopean scene presence gate
+    ec_d_scene      (3,)   delayed efference copy matched to scene_angular_vel cascade
 
 Outputs from step():
 
@@ -160,18 +161,7 @@ def decode_states(acts):
 def read_weights(state):
     return Weights(vs_null=state.vs_null)
 
-# Bundled-input layout (length 19) — RAW sensory inputs + ec_d_scene; gating
-# (post-delay EC subtraction + magnitude/directional gate on scene slip and
-# scene_linear_vel) is now done INSIDE step() using ec_d_scene.
-N_INPUTS  = 6 + 3 + 3 + 3 + 1 + 3
 N_OUTPUTS = 3   # primary output for SSM convention is w_est; auxiliaries via tuple
-
-_IDX_INPUT_CANAL         = slice(0, 6)
-_IDX_INPUT_SLIP          = slice(6, 9)     # RAW delayed scene slip (eye frame)
-_IDX_INPUT_GIA           = slice(9, 12)
-_IDX_INPUT_SCENE_LIN_VEL = slice(12, 15)   # RAW delayed scene linear velocity
-_IDX_INPUT_SCENE_VISIBLE = 15
-_IDX_INPUT_EC_D_SCENE    = slice(16, 19)   # delayed EC (cascade-matched to scene slip)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -344,8 +334,15 @@ def _he_step(x_head, a_lin, scene_lin_vel, scene_visible, brain_params):
 # Public step() — orchestrates VS → GE → HE
 # ─────────────────────────────────────────────────────────────────────────────
 
-def step(state, u, brain_params):
+def step(activations, weights, canal, scene_slip, gia, scene_lin_vel,
+         scene_visible, ec_d_scene, brain_params):
     """Single ODE step for the unified self-motion observer.
+
+    Activation-driven: cross-projections and recurrence read firing rates from
+    `activations` (supplied by the caller via the brain-wide registry).
+    Setpoint-like registers (vs_null) are read from `weights`.  Most current
+    projections are identity copies of state, but read_activations is the
+    formal hook for L/R splits + rectification when those land.
 
     Internal sequencing (matches Laurens & Angelaki 2017):
       0. Post-delay EC subtraction + magnitude / directional gates on the
@@ -357,11 +354,15 @@ def step(state, u, brain_params):
          leaky integration toward v_lin.
 
     Args:
-        state:         sm.State  bundled state (vs_L/R/null + g_est + a_lin + rf + v_lin)
-        u:             (19,) bundled input  — see _IDX_INPUT_* above
-                              [canal | scene_slip(raw) | gia | scene_lin_vel(raw)
-                               | scene_visible | ec_d_scene]
-        brain_params:  BrainParams — reads VS/GE/HE params + v_crit_ec_gate,
+        activations:    sm.Activations  vs_R/L, g_est, a_lin, rf, v_lin
+        weights:        sm.Weights      vs_null
+        canal:          (6,)   canal afferents (deg/s)
+        scene_slip:     (3,)   RAW delayed scene slip (eye frame, deg/s)
+        gia:            (3,)   otolith GIA (m/s², head frame)
+        scene_lin_vel:  (3,)   RAW delayed scene linear velocity (m/s)
+        scene_visible:  scalar delayed cyclopean scene presence gate ∈ [0,1]
+        ec_d_scene:     (3,)   delayed EC matched to scene_angular_vel cascade
+        brain_params:   BrainParams — VS/GE/HE params + v_crit_ec_gate,
                                       n_ec_gate, alpha_ec_dir, bias_ec_dir
 
     Returns:
@@ -371,22 +372,17 @@ def step(state, u, brain_params):
         v_lin          : (3,)  head linear velocity (m/s, head frame)
         a_lin_est      : (3,)  linear-acc estimate (m/s², head frame) — for T-VOR direct
     """
-    # Repack state into the flat sub-blocks the internal helpers expect.
-    x_vs   = jnp.concatenate([state.vs_L, state.vs_R, state.vs_null])
-    x_grav = jnp.concatenate([state.g_est, state.a_lin, state.rf])
-    x_head = state.v_lin
+    # Repack the registry views into the flat sub-blocks the internal helpers
+    # expect.  vs_null comes from `weights` (it's a setpoint register, not a
+    # firing rate); the rest come from `activations`.
+    x_vs   = jnp.concatenate([activations.vs_L, activations.vs_R, weights.vs_null])
+    x_grav = jnp.concatenate([activations.g_est, activations.a_lin, activations.rf])
+    x_head = activations.v_lin
 
-    # GE state read (rf and a_lin are 1-step delayed via ODE state)
-    rf_state  = state.rf
-    a_lin_est = state.a_lin
-
-    # Input split — RAW sensory + delayed EC
-    canal         = u[_IDX_INPUT_CANAL]
-    scene_slip    = u[_IDX_INPUT_SLIP]
-    gia           = u[_IDX_INPUT_GIA]
-    scene_lin_vel = u[_IDX_INPUT_SCENE_LIN_VEL]
-    scene_visible = u[_IDX_INPUT_SCENE_VISIBLE]
-    ec_d_scene    = u[_IDX_INPUT_EC_D_SCENE]
+    # rf and a_lin used here are 1-step delayed via the ODE state — the
+    # activations registry was built at the start of the brain step.
+    rf_state  = activations.rf
+    a_lin_est = activations.a_lin
 
     # 0. Post-delay EC subtraction + saccadic-suppression gates on scene path.
     #    Visibility-gating ensures EC contribution = 0 when scene was invisible.
