@@ -1,50 +1,83 @@
-"""Cerebellum — single-rule prediction-error correction.
+"""Cerebellum — forward-model prediction-error correction + EC delay cascades.
 
-Framework (see docs/cerebellum.md):
+Anatomical split (Leigh & Zee; Cannon & Robinson 1985; Lisberger):
 
-    u_cereb = K_cereb · ( s_actual − s_pred )                                  (Eq 1)
+  Flocculus (FL)            → NI integrator extension (gaze-holding).
+                              Reads NI net + null state, outputs positive
+                              feedback that cancels the brainstem NI leak,
+                              extending effective TC from intrinsic ~1–3 s
+                              to ~25 s (or ∞ for K_cereb_fl = 1).
+                              Lesion → gaze-evoked nystagmus.
 
-The brainstem retains its own reactive feedback on the actual sensed signal;
-the cerebellum applies a separate gain on the prediction error against an
-internal forward model.  Each region differs only in WHAT it predicts and
-WHERE it injects the residual.
+  Ventral paraflocculus     → smooth-pursuit forward model.  Reads
+  (VPF / vermis VI–VII)       cyclopean target_vel + delayed EC; outputs
+                              gated prediction drive to the pursuit
+                              integrator.
+                              Lesion → reduced pursuit gain.
 
-Regions are split by prediction class:
+Both regions share the EC delay cascades (scene + target), which are
+maintained here as part of cerebellum state because they ARE the cerebellum's
+internal forward-model output (predicted retinal self-motion contribution at
+the same delay as the actual retinal signal).
 
-  Constant prediction (setpoint shift; cerebellum.md §3 limit) ──────────────
-    flocculus            (FL)    →  VS net  (gaze-stabilisation slip setpoint)
-    paraflocculus        (VPF)   →  NI net  (gaze-holding setpoint)
-    vermis_fastigial     (V/CFN) →  NI net  (tonic gaze offset)
-    nodulus_uvula        (NU)    →  VS axis (gravity-axis setpoint)
+Architectural rationale (cerebellum.md): the cerebellum maintains an
+internal forward model of how the eye responds to its own motor commands.
+The EC delay cascades ARE that forward model's output (predicted retinal
+self-motion contribution at the same delay as the actual retinal signal),
+so they belong here rather than in a separate efference_copy module.
 
-  Dynamic prediction (forward model; cerebellum.md §4.3) ───────────────────
-    pursuit_paraflocc    (PU)    →  pursuit drive
-        s_actual = target_slip   (delayed retinal target velocity, eye frame)
-        s_pred   = −ec_d_target  (predicted slip from self-motion only —
-                                  stationary-target prior; ec_d_target lives
-                                  in efference_copy.py and is rotated/saturated/
-                                  cascaded to match the target slip path)
-        pred_err = target_slip + ec_d_target   (residual ≈ true v_target)
-        drive    = K_pu · K_mag · K_dir · pred_err
-            K_mag (Hill on |ec_d_target|)  closes during fast self-motion
-            K_dir (sigmoid on slip · ec_d alignment)  suppresses opposite-sign
-                  residuals (self-motion case) and passes aligned/zero-slip
-                  residuals (steady pursuit, fixation).
+Pursuit region (cerebellum.md §4.3)
+───────────────────────────────────
+    s_pred   = − target_visible · ec_d_target_no_torsion       (stationary-
+                                                                target prior)
+    pred_err = target_slip − s_pred                            (diagnostic)
+    drive    = gate · K_cereb_pu · (−s_pred)
+             = gate · K_cereb_pu · target_visible · ec_d_target_no_torsion
 
-The drive's sign matches doc Eq 1; consuming subsystems wire it according to
-their own dynamics:
-  - For populations whose s_actual IS the population state (gaze hold), the
-    consumer adds −drive to dx/dt (or equivalently sets K negative) to pin
-    state to s_pred.
-  - For populations whose s_actual is an upstream signal (pursuit), the
-    consumer adds +drive forward as integrator input.
+    gate     = K_mag(|ec_d_target|) · K_dir(slip · ec_d alignment)
 
-Lesion model: g_cereb · g_<region> · K_<region> → 0 zeros the drive while
-leaving pred_err as a pure diagnostic.
+The brainstem direct path k·target_slip is added downstream in
+brain_model.step.  The combined pursuit input becomes:
 
-State:  none  (N_STATES = 0).  The pursuit region's "forward model" is just
-the already-cascaded ec_d_target — its delay buffer lives in
-efference_copy.py, not here.
+    pursuit_in = K_pursuit_direct · target_slip + cb drive
+
+Implicit cancellation: target_slip ≈ −eye_velocity (delayed) and
+ec_d_target ≈ +eye_velocity (delayed by the same cascade), so the two terms
+naturally cancel during fast eye movements without an engineered cancel
+term.
+
+Lesion (K_cereb_pu = 0): drive vanishes.  Pursuit falls back to the
+brainstem direct path on raw self-motion-contaminated slip → reduced
+slow-phase gain (the classic flocculus-lesion phenotype).
+
+EC cascades
+───────────
+    Scene path:   tau_vis_smooth_motion        (~20 ms LP)   — matches
+                  perception_cyclopean's scene_angular_vel cascade shape
+    Target path:  tau_vis_smooth_target_vel    (~150 ms LP)  — matches
+                  perception_cyclopean's target_vel cascade shape
+
+Both share the same `tau_vis_sharp` 6-stage gamma cascade (matches the
+per-eye retina sharp cascade).  The motor command (ec_vel, head frame) is
+rotated into eye frame using ec_pos, then saturated by v_max_okr (scene)
+and v_max_pursuit (target) to mirror the retinal saturation.
+
+State
+─────
+    scene  — (_N_PER_PATH,)  scene-path EC cascade buffer (21 states)
+    target — (_N_PER_PATH,)  target-path EC cascade buffer (21 states)
+
+Activations (read at top of brain_model.step from BrainState)
+────────────────────────────────────────────────────────────
+    ec_scene   — (3,) delayed scene EC (= state.scene[-3:])
+    ec_target  — (3,) delayed target EC (= state.target[-3:])
+    pred_err   — (3,) target_slip − s_pred  (diagnostic)
+    drive      — (3,) gated cerebellar pursuit drive
+
+Params: read flat from BrainParams — K_cereb_pu (0 = lesion), the shared
+trust-gate params (v_crit_ec_gate, n_ec_gate, alpha_ec_dir, bias_ec_dir),
+and the cascade params (tau_vis_sharp, tau_vis_smooth_motion,
+tau_vis_smooth_target_vel, v_max_okr, v_max_pursuit).
 """
 
 from typing import NamedTuple
@@ -52,219 +85,201 @@ from typing import NamedTuple
 import jax
 import jax.numpy as jnp
 
-
-N_STATES = 0
-
-
-# ─── Params ──────────────────────────────────────────────────────────────────
-
-class CerebellumParams(NamedTuple):
-    """Cerebellum parameters — flat NamedTuple, hand-set, no learning."""
-
-    # Lesion knobs (1.0 = intact, 0.0 = fully lesioned)
-    g_cereb: float = 1.0
-    g_flocculus: float = 1.0
-    g_paraflocculus: float = 1.0
-    g_vermis_fastigial: float = 1.0
-    g_nodulus_uvula: float = 1.0
-    g_pursuit: float = 1.0
-
-    # Per-region constant prediction (3-vector — yaw/pitch/roll or axis).
-    # The pursuit region does NOT use a constant theta_bias; its prediction is
-    # generated dynamically from ec_d_target.
-    theta_bias_fl:   tuple = (0.0, 0.0, 0.0)
-    theta_bias_vpf:  tuple = (0.0, 0.0, 0.0)
-    theta_bias_vcfn: tuple = (0.0, 0.0, 0.0)
-    theta_bias_nu:   tuple = (0.0, 0.0, 0.0)
-
-    # Per-region prediction-error gain (1/s for setpoint regions; dimensionless
-    # for pursuit since pred_err and target_slip are both deg/s).
-    K_fl:   float = 0.5
-    K_vpf:  float = 0.5
-    K_vcfn: float = 0.5
-    K_nu:   float = 0.5
-    K_pu:   float = 1.0   # Stage 1 default: drive_pu equals the pre-refactor
-                          # pt.target_slip_for_pursuit (K_mag·K_dir·pred_err) so
-                          # behavior is byte-equivalent before downstream tuning.
+from oculomotor.models.plant_models.readout import rotation_matrix
+from oculomotor.models.sensory_models.retina import (
+    cascade_lp_step, ypr_to_xyz, xyz_to_ypr, velocity_saturation,
+)
 
 
-def with_cerebellum(theta: CerebellumParams, **overrides) -> CerebellumParams:
-    """Return a copy of `theta` with the named fields replaced."""
-    return theta._replace(**overrides)
+# ── Cascade geometry ──────────────────────────────────────────────────────────
+# 6-stage sharp gamma + 1-stage smoothing LP, on 3 axes per cascade.
+
+_N_SHARP   = 6
+_N_LP      = 1
+_N_AXES    = 3
+N_PER_PATH = (_N_SHARP + _N_LP) * _N_AXES   # 21 states per cascade
+
+N_STATES   = 2 * N_PER_PATH + 3             # scene + target + MN forward-model LP
 
 
-# ─── Inputs / Outputs ────────────────────────────────────────────────────────
+# ── State + Activations ───────────────────────────────────────────────────────
 
-class CerebellumInputs(NamedTuple):
-    """Brainstem signals the cerebellum reads."""
-    x_vs_net:        jnp.ndarray   # (3,)  VS net signal     (deg/s)
-    x_ni_net:        jnp.ndarray   # (3,)  NI net signal     (deg)
-    x_vs_axis:       jnp.ndarray   # (3,)  VS axis signal    (axis units)
-    target_slip:     jnp.ndarray   # (3,)  delayed retinal target velocity, eye frame (deg/s)
-    target_visible:  jnp.ndarray   # scalar delayed cyclopean target visibility ∈ [0,1]
-    ec_d_target:     jnp.ndarray   # (3,)  delayed EC matched to target_vel cascade (deg/s)
+class State(NamedTuple):
+    """Cerebellum state — EC cascade buffers + MN forward-model LP.
 
-
-class _RegionOut(NamedTuple):
-    """Internal: single-region readout (bias, pred_err, drive)."""
-    bias: jnp.ndarray
-    pred_err: jnp.ndarray
-    drive: jnp.ndarray
-
-
-class CerebellumOut(NamedTuple):
-    """Per-region readouts and drives (each field shape (3,))."""
-    # Constant-prediction regions
-    bias_fl:       jnp.ndarray
-    pred_err_fl:   jnp.ndarray
-    drive_fl:      jnp.ndarray
-    bias_vpf:      jnp.ndarray
-    pred_err_vpf:  jnp.ndarray
-    drive_vpf:     jnp.ndarray
-    bias_vcfn:     jnp.ndarray
-    pred_err_vcfn: jnp.ndarray
-    drive_vcfn:    jnp.ndarray
-    bias_nu:       jnp.ndarray
-    pred_err_nu:   jnp.ndarray
-    drive_nu:      jnp.ndarray
-    # Dynamic-prediction region (pursuit)
-    pred_err_pu:   jnp.ndarray   # raw pred error, ungated (target_slip + ec_d_target)
-    drive_pu:      jnp.ndarray   # K_pu · K_mag · K_dir · pred_err  → pursuit integrator
-
-
-# ─── Region rule ─────────────────────────────────────────────────────────────
-
-def _region(K_eff, s_actual, s_pred) -> _RegionOut:
-    """One cerebellar region per doc Eq 1: u_cereb = K · (s_actual − s_pred).
-
-        bias     = K_eff · s_pred                  (diagnostic only)
-        pred_err = s_actual − s_pred
-        drive    = K_eff · pred_err
-
-    Sign convention: positive K_eff transmits the prediction error forward.
-    Use negative K_eff (or subtract `drive` at the consumer) for setpoint
-    regions where the cerebellar contribution must pull the population state
-    toward s_pred (cerebellum.md §3, Eq 3).
+    `mn_lp` is the forward model of the FCP motor-neuron membrane LP
+    (tau_mn ≈ 5 ms).  The actual eye velocity that the retina sees has
+    already been smoothed by MN dynamics (motor command → MN → nerves →
+    plant), so the EC cascade input — which is meant to mirror the slip
+    cascade input — must also be MN-smoothed.  The LP sits BEFORE the
+    saturation so that ec_vel_eye undergoes the same MN-then-saturate
+    pipeline that the slip cascade implicitly applies (eye_vel_actual is
+    already MN-LP'd, then sees retinal saturation).
     """
-    s_pred   = jnp.asarray(s_pred, dtype=jnp.float32)
-    pred_err = s_actual - s_pred
-    bias     = K_eff * s_pred
-    drive    = K_eff * pred_err
-    return _RegionOut(bias=bias, pred_err=pred_err, drive=drive)
+    scene:  jnp.ndarray   # (21,) cascade buffer matching scene_angular_vel
+    target: jnp.ndarray   # (21,) cascade buffer matching target_vel
+    mn_lp:  jnp.ndarray   # (3,)  forward-model MN-membrane LP (tau_mn)
 
 
-def _pursuit_region(K_eff, target_slip, target_visible, ec_d_target,
-                    v_crit, n_hill, alpha_dir, bias_dir) -> _RegionOut:
-    """Dynamic-prediction region for smooth pursuit.
+class Activations(NamedTuple):
+    """Cerebellar readouts."""
+    # EC delay cascade outputs (delayed self-motion predictions)
+    ec_scene:    jnp.ndarray   # (3,) delayed EC for scene path
+    ec_target:   jnp.ndarray   # (3,) delayed EC for target path
+    # Ventral paraflocculus (VPF) — smooth pursuit forward model
+    pred_err:    jnp.ndarray   # (3,) target_slip − s_pred  (diagnostic)
+    vpf_drive:   jnp.ndarray   # (3,) gated cerebellar pursuit drive → pursuit_in
+    # Flocculus (FL) — NI integrator extension (Cannon & Robinson 1985)
+    fl_drive:    jnp.ndarray   # (3,) leak-cancellation feedback → u_ni_in
 
-    Forward model: stationary-target prior → predicted slip = −self-motion EC.
-    Visibility-gated so EC contribution is zero whenever the target was
-    invisible at the delayed time (raw target_slip is also zero in that case).
-    Torsion is zeroed because the retina is 2-D.
 
-        s_pred   = − target_visible · ec_d_target_no_torsion
-        pred_err = target_slip − s_pred  =  target_slip + visible·ec_d_target
-        drive    = K_eff · K_mag · K_dir · pred_err
+def rest_state():
+    """Zero state — both EC cascades + MN LP empty."""
+    return State(scene=jnp.zeros(N_PER_PATH),
+                 target=jnp.zeros(N_PER_PATH),
+                 mn_lp=jnp.zeros(3))
 
-    K_mag closes during fast self-motion; K_dir suppresses opposite-sign
-    residuals (true self-motion case) and passes aligned/zero-slip residuals
-    (steady pursuit, fixation).  Both gates were previously in
-    perception_target.py and are part of the cerebellar trust signal — they
-    decide WHEN to believe the prediction error.
+
+# ── Activation read (thin: just state tail reads) ─────────────────────────────
+
+def read_activations(brain_state, brain_params):
+    """Read cerebellar activations from BrainState.
+
+    Trivial wrapper that re-runs `step` against the current state with
+    `ec_vel = ec_pos = 0` to extract activations only — the cascade
+    derivative is discarded.  All forward-model and trust-gate computation
+    lives in `step` (where the cerebellum's per-step processing belongs);
+    this function just exists so brain_model.read_activations can populate
+    `acts.cb` from state at the top of brain_model.step.
+    """
+    ni_net  = brain_state.ni.L - brain_state.ni.R
+    ni_null = brain_state.ni.null
+    _, acts = step(brain_state.cb,
+                   ec_vel=jnp.zeros(3), ec_pos=jnp.zeros(3),
+                   ni_net=ni_net, ni_null=ni_null,
+                   target_slip=brain_state.pc.target_vel,
+                   target_visible=brain_state.pc.target_visible[-1],
+                   brain_params=brain_params)
+    return acts
+
+
+# ── State step (advances the EC cascades) ─────────────────────────────────────
+
+def step(state, ec_vel, ec_pos, ni_net, ni_null,
+         target_slip, target_visible, brain_params):
+    """Cerebellum per-step processing.
+
+    Three jobs:
+      1. **Flocculus (FL) — NI integrator extension** (Cannon & Robinson
+         1985).  Reads NI net + null state; outputs leak-cancellation
+         feedback added back to NI input downstream:
+             fl_drive = K_cereb_fl · (ni_net − ni_null) / tau_i_per_axis
+
+      2. **VPF — pursuit forward model** (cerebellum.md §4.3):
+             s_pred    = − target_visible · ec_d_target_no_torsion
+             pred_err  = target_slip − s_pred                  (diagnostic)
+             gate      = K_mag(|ec_d_target|) · K_dir(slip · ec_d alignment)
+             vpf_drive = gate · K_cereb_pu · (−s_pred)
+
+      3. **EC cascade advance** — scene + target cascades match the
+         perception_cyclopean slip cascades (gamma/LP TCs + retinal
+         velocity-saturation ceiling).  MN forward-model LP smooths the
+         ec_vel before saturation so the EC mirrors the actual eye velocity
+         the retina sees through the MN pathway.
 
     Args:
-        K_eff:            effective per-region gain (g_cereb · g_pu · K_pu)
-        target_slip:      (3,)  delayed retinal target velocity, eye frame (deg/s)
-        target_visible:   scalar delayed cyclopean target visibility ∈ [0,1]
-        ec_d_target:      (3,)  delayed EC matched to target_vel cascade (deg/s)
-        v_crit, n_hill:   Hill magnitude-gate parameters (BrainParams)
-        alpha_dir, bias_dir: sigmoid directional-gate parameters (BrainParams)
-    """
-    ec_no_torsion = ec_d_target.at[2].set(0.0)
-    s_pred        = -target_visible * ec_no_torsion
-    pred_err      = target_slip - s_pred           # = target_slip + visible·ec_no_torsion
-
-    # Hill magnitude gate on |ec_d_target| (full vector incl. torsion is fine
-    # for the magnitude — it just measures self-motion speed).
-    K_mag = 1.0 / (1.0 + (jnp.linalg.norm(ec_d_target) / v_crit) ** n_hill)
-
-    # Directional gate: signed projection of raw delayed slip onto ec_d
-    # direction.  Slip and ec_d anti-parallel (self-motion residual) → close
-    # gate.  Aligned or near-zero slip (real motion / pursuit / fixation) →
-    # keep gate open.
-    ec_norm  = jnp.linalg.norm(ec_d_target) + 1e-9
-    ec_hat   = ec_d_target / ec_norm
-    slip_dot = jnp.dot(target_slip, ec_hat)
-    K_dir    = jax.nn.sigmoid((slip_dot + bias_dir) * alpha_dir)
-
-    drive = K_eff * K_mag * K_dir * pred_err
-    bias  = K_eff * s_pred                         # diagnostic only
-    return _RegionOut(bias=bias, pred_err=pred_err, drive=drive)
-
-
-# ─── Step ────────────────────────────────────────────────────────────────────
-
-def step(x_cereb, inputs: CerebellumInputs, theta: CerebellumParams,
-         brain_params=None):
-    """Single ODE step for the cerebellum.
-
-    Args:
-        x_cereb:      (0,) zero-length state — cerebellum is stateless
-        inputs:       CerebellumInputs
-        theta:        CerebellumParams (cerebellum-specific gains/biases/lesions)
-        brain_params: BrainParams — optional; required only when the pursuit
-                      region is engaged (it reads the shared Hill / directional
-                      gate parameters v_crit_ec_gate, n_ec_gate, alpha_ec_dir,
-                      bias_ec_dir from BrainParams).  Pass None for standalone
-                      smoke tests of the constant-prediction regions.
+        state:           cerebellum.State
+        ec_vel:          (3,)    version velocity efference (head frame, deg/s)
+        ec_pos:          (3,)    eye position (head frame, deg)
+        ni_net:          (3,)    NI net signal (decoded.ni.net) — for FL
+        ni_null:         (3,)    NI null adaptation state — for FL
+        target_slip:     (3,)    delayed cyclopean retinal target velocity
+        target_visible:  scalar  delayed cyclopean target visibility ∈ [0,1]
+        brain_params:    BrainParams
 
     Returns:
-        dx:  (0,) zero-length state derivative
-        out: CerebellumOut
+        dstate: cerebellum.State  state derivative
+        acts:   cerebellum.Activations  EC tails + VPF drive + FL drive
     """
-    g = theta.g_cereb
-    fl  = _region(g * theta.g_flocculus        * theta.K_fl,
-                  inputs.x_vs_net,  theta.theta_bias_fl)
-    vpf = _region(g * theta.g_paraflocculus    * theta.K_vpf,
-                  inputs.x_ni_net,  theta.theta_bias_vpf)
-    vc  = _region(g * theta.g_vermis_fastigial * theta.K_vcfn,
-                  inputs.x_ni_net,  theta.theta_bias_vcfn)
-    nu  = _region(g * theta.g_nodulus_uvula    * theta.K_nu,
-                  inputs.x_vs_axis, theta.theta_bias_nu)
+    bp = brain_params
 
-    if brain_params is None:
-        # Standalone path (tests / no pursuit wiring).  Pursuit drive is zero;
-        # pred_err still reports the raw residual so it remains diagnosable.
-        zero3 = jnp.zeros(3, dtype=jnp.float32)
-        ec_no_t = inputs.ec_d_target.at[2].set(0.0)
-        pe_pu   = inputs.target_slip + inputs.target_visible * ec_no_t
-        pu_out  = _RegionOut(bias=zero3, pred_err=pe_pu, drive=zero3)
-    else:
-        pu_out = _pursuit_region(
-            g * theta.g_pursuit * theta.K_pu,
-            inputs.target_slip, inputs.target_visible, inputs.ec_d_target,
-            brain_params.v_crit_ec_gate, brain_params.n_ec_gate,
-            brain_params.alpha_ec_dir, brain_params.bias_ec_dir,
-        )
+    # ── Frame transform: ec_vel head → eye frame ─────────────────────────
+    # All cerebellum computation downstream lives in eye frame (matching
+    # the slip cascade and cyclopean signals).
+    R_eye      = rotation_matrix(ypr_to_xyz(ec_pos))
+    ec_vel_eye = xyz_to_ypr(R_eye.T @ ypr_to_xyz(ec_vel))
 
-    out = CerebellumOut(
-        bias_fl=fl.bias,    pred_err_fl=fl.pred_err,    drive_fl=fl.drive,
-        bias_vpf=vpf.bias,  pred_err_vpf=vpf.pred_err,  drive_vpf=vpf.drive,
-        bias_vcfn=vc.bias,  pred_err_vcfn=vc.pred_err,  drive_vcfn=vc.drive,
-        bias_nu=nu.bias,    pred_err_nu=nu.pred_err,    drive_nu=nu.drive,
-        pred_err_pu=pu_out.pred_err, drive_pu=pu_out.drive,
+    # ── Flocculus (FL): NI leak cancellation ──────────────────────────────
+    # Cannon & Robinson 1985: floccular feedback to NPH/MVN turns the leaky
+    # brainstem NI into a near-perfect integrator.  Output is added to the
+    # NI input downstream (in brain_model.step):
+    #     u_ni_in_total = u_ni_in + fl_drive
+    #     dx_net/dt     = −(x_net − x_null)/tau_i + u_ni_in_total
+    #                   = u_ni_in   when fl_drive = leak amount, K_cereb_fl=1
+    # K_cereb_fl = 0  →  lesion: NI reverts to intrinsic leak (gaze-evoked
+    # nystagmus); K_cereb_fl = 1  →  perfect leak cancellation.
+    tau_i_axes = jnp.array([bp.tau_i,
+                             bp.tau_i * bp.tau_i_pitch_frac,
+                             bp.tau_i * bp.tau_i_roll_frac])
+    fl_drive = bp.K_cereb_fl * (ni_net - ni_null) / tau_i_axes
+
+    # ── VPF: pursuit forward model (uses cerebellum's own state for ec_target) ──
+    ec_scene  = state.scene[-3:]
+    ec_target = state.target[-3:]
+    ec_no_torsion = ec_target.at[2].set(0.0)
+    s_pred        = -target_visible * ec_no_torsion
+    pred_err      = target_slip - s_pred                   # diagnostic only
+
+    # Trust gate: closes during fast self-motion (Hill on |ec_target|) or
+    # when residual is anti-parallel to ec_d (sigmoid on slip · ec_d alignment).
+    K_mag = 1.0 / (1.0 + (jnp.linalg.norm(ec_target) / bp.v_crit_ec_gate)
+                   ** bp.n_ec_gate)
+    ec_norm  = jnp.linalg.norm(ec_target) + 1e-9
+    ec_hat   = ec_target / ec_norm
+    slip_dot = jnp.dot(target_slip, ec_hat)
+    K_dir    = jax.nn.sigmoid((slip_dot + bp.bias_ec_dir) * bp.alpha_ec_dir)
+    gate     = K_mag * K_dir
+
+    # VPF's pursuit drive = gated forward-model prediction.
+    vpf_drive = gate * bp.K_cereb_pu * (-s_pred)
+
+    # ── EC cascade advance ────────────────────────────────────────────────
+    # Forward-model MN LP applied BEFORE saturation.  The actual eye velocity
+    # that the retina sees has already been smoothed by MN dynamics (motor
+    # command → MN → nerves → plant → eye), so the slip cascade input is
+    # implicitly MN-LP'd.  For the EC cascade input to mirror it, we apply
+    # the same MN LP here before the retinal velocity saturation.
+    dmn_lp   = (ec_vel_eye - state.mn_lp) / bp.tau_mn
+    mn_lp_in = state.mn_lp                                # state-based input
+
+    ec_vel_scene_in  = velocity_saturation(mn_lp_in, bp.v_max_okr)      # NOT/AOS
+    ec_vel_target_in = velocity_saturation(mn_lp_in, bp.v_max_pursuit)  # MT/MST
+
+    dstate = State(
+        scene  = cascade_lp_step(state.scene,  ec_vel_scene_in,
+                                  bp.tau_vis_sharp,
+                                  bp.tau_vis_smooth_motion,
+                                  _N_SHARP, _N_AXES, _N_LP),
+        target = cascade_lp_step(state.target, ec_vel_target_in,
+                                  bp.tau_vis_sharp,
+                                  bp.tau_vis_smooth_target_vel,
+                                  _N_SHARP, _N_AXES, _N_LP),
+        mn_lp  = dmn_lp,
     )
+    acts = Activations(ec_scene=ec_scene, ec_target=ec_target,
+                       pred_err=pred_err, vpf_drive=vpf_drive,
+                       fl_drive=fl_drive)
+    return dstate, acts
 
-    dx = jnp.zeros((0,), dtype=jnp.float32)
-    return dx, out
 
-
-# ─── Smoke tests ─────────────────────────────────────────────────────────────
+# ── Smoke tests ───────────────────────────────────────────────────────────────
 # Run with:
 #   python -X utf8 -m oculomotor.models.brain_models.cerebellum
 
 if __name__ == "__main__":
     import numpy as np
+
+    from oculomotor.models.brain_models.brain_model import BrainParams, rest_brain_state
 
     def _close(a, b, tol=1e-6):
         return np.allclose(np.asarray(a), np.asarray(b), atol=tol)
@@ -277,174 +292,94 @@ if __name__ == "__main__":
     print("Cerebellum smoke tests")
     print("=" * 60)
 
-    x0 = jnp.zeros((0,), dtype=jnp.float32)
-    zero3 = jnp.zeros(3, dtype=jnp.float32)
-    inputs0 = CerebellumInputs(
-        x_vs_net=zero3, x_ni_net=zero3, x_vs_axis=zero3,
-        target_slip=zero3, target_visible=jnp.float32(0.0), ec_d_target=zero3,
-    )
+    bp     = BrainParams()
+    state0 = rest_brain_state()
+    zero3  = jnp.zeros(3, dtype=jnp.float32)
 
     # Shape contract
     print("\n[1] Shape contract")
-    dx, out = step(x0, inputs0, CerebellumParams())
-    _check("dx.shape == (0,)", dx.shape == (0,))
-    for f in out._fields:
-        _check(f"out.{f}.shape == (3,)", getattr(out, f).shape == (3,))
+    acts = read_activations(state0, bp)
+    _check("ec_scene shape",  acts.ec_scene.shape  == (3,))
+    _check("ec_target shape", acts.ec_target.shape == (3,))
+    _check("pred_err shape",  acts.pred_err.shape  == (3,))
+    _check("vpf_drive shape", acts.vpf_drive.shape == (3,))
+    _check("fl_drive shape",  acts.fl_drive.shape  == (3,))
 
-    # Zero-input identity
-    print("\n[2] Zero-input identity")
-    for f in out._fields:
-        _check(f"{f} == 0", _close(getattr(out, f), zero3))
+    # Zero-state identity
+    print("\n[2] Zero-state identity")
+    _check("ec_scene == 0",  _close(acts.ec_scene, zero3))
+    _check("ec_target == 0", _close(acts.ec_target, zero3))
+    _check("pred_err == 0",  _close(acts.pred_err, zero3))
+    _check("drive == 0",     _close(acts.vpf_drive, zero3))
 
-    # Pure-bias case (FL): drive == K · pred_err == K · (s_actual − s_pred) == K · (0 − θ_bias) == −θ_bias
-    print("\n[3] Pure-bias case (FL): drive = K · (s_actual − s_pred)")
-    theta = CerebellumParams(theta_bias_fl=(1.0, 0.0, 0.0), K_fl=1.0)
-    _, out = step(x0, inputs0, theta)
-    _check("bias_fl == (1, 0, 0)",      _close(out.bias_fl,     [1, 0, 0]))
-    _check("pred_err_fl == (-1, 0, 0)", _close(out.pred_err_fl, [-1, 0, 0]))
-    _check("drive_fl == (-1, 0, 0)",    _close(out.drive_fl,    [-1, 0, 0]))
-    _check("other regions unchanged",   _close(out.bias_vpf, zero3) and _close(out.drive_nu, zero3))
+    # State injection: target_slip drives pred_err
+    print("\n[3] Pursuit forward model: pred_err uses cyclopean target_vel + EC")
+    state_t = state0._replace(pc=state0.pc._replace(
+        target_vel=jnp.array([10.0, 0.0, 0.0]),
+        target_visible=state0.pc.target_visible.at[-1].set(1.0),
+    ))
+    acts = read_activations(state_t, bp)
+    _check("pred_err == target_slip when ec=0", _close(acts.pred_err, [10.0, 0.0, 0.0]))
+    _check("drive == 0 when ec=0",               _close(acts.vpf_drive, zero3))
 
-    # Pure-residual case (FL)
-    print("\n[4] Pure-residual case (FL)")
-    theta = CerebellumParams(K_fl=1.0)
-    inputs = inputs0._replace(x_vs_net=jnp.array([1.0, 0.0, 0.0]))
-    _, out = step(x0, inputs, theta)
-    _check("bias_fl == 0",             _close(out.bias_fl,     zero3))
-    _check("pred_err_fl == (1, 0, 0)", _close(out.pred_err_fl, [1, 0, 0]))
-    _check("drive_fl == (1, 0, 0)",    _close(out.drive_fl,    [1, 0, 0]))
+    # EC cascade injection
+    print("\n[4] EC cascade tail drives pursuit drive (torsion zeroed)")
+    cb_state = state0.cb._replace(target=state0.cb.target.at[-3].set(2.0).at[-1].set(5.0))
+    state_e  = state_t._replace(cb=cb_state)
+    acts = read_activations(state_e, bp)
+    _check("ec_target reads cascade tail", _close(acts.ec_target, [2.0, 0.0, 5.0]))
+    _check("drive yaw ≈ 2",                abs(float(acts.vpf_drive[0]) - 2.0) < 0.1)
+    _check("drive torsion zeroed",         abs(float(acts.vpf_drive[2])) < 1e-5)
+    _check("pred_err yaw = ts + visible · ec_no_torsion = 12",
+           _close(acts.pred_err, [12.0, 0.0, 0.0]))
 
-    # Algebraic identity drive == K_eff · pred_err
-    print("\n[5] Algebraic identity (constant-prediction regions)")
-    theta = CerebellumParams(
-        theta_bias_fl=(0.7, -0.3, 0.4),    theta_bias_vpf=(2.0, 1.0, -1.5),
-        theta_bias_vcfn=(0.5, 0.5, 0.5),   theta_bias_nu=(-0.1, 0.2, -0.3),
-        K_fl=0.4, K_vpf=0.6, K_vcfn=0.8, K_nu=1.2,
-    )
-    inputs = inputs0._replace(
-        x_vs_net=jnp.array([0.2, 0.1, -0.4]),
-        x_ni_net=jnp.array([1.5, 0.7, -2.0]),
-        x_vs_axis=jnp.array([0.0, 0.5, 0.0]),
-    )
-    _, out = step(x0, inputs, theta)
-    K_eff = {
-        "fl":   theta.g_cereb * theta.g_flocculus        * theta.K_fl,
-        "vpf":  theta.g_cereb * theta.g_paraflocculus    * theta.K_vpf,
-        "vcfn": theta.g_cereb * theta.g_vermis_fastigial * theta.K_vcfn,
-        "nu":   theta.g_cereb * theta.g_nodulus_uvula    * theta.K_nu,
-    }
-    for r in ("fl", "vpf", "vcfn", "nu"):
-        pe, drv = (getattr(out, f"{k}_{r}") for k in ("pred_err", "drive"))
-        _check(f"drive_{r} == K_eff · pred_err_{r}",
-               _close(drv, K_eff[r] * pe))
+    # Lesion
+    print("\n[5] Cerebellar pursuit lesion (K_cereb_pu = 0)")
+    bp_les = BrainParams(K_cereb_pu=0.0)
+    acts_les = read_activations(state_e, bp_les)
+    _check("vpf_drive == 0 under lesion", _close(acts_les.vpf_drive, zero3))
+    _check("pred_err unchanged",        _close(acts_les.pred_err, [12.0, 0.0, 0.0]))
+    _check("ec_target unchanged",       _close(acts_les.ec_target, [2.0, 0.0, 5.0]))
 
-    # Global lesion: drive zero, pred_err unchanged
-    print("\n[6] Global lesion (g_cereb = 0)")
-    theta_lesion = CerebellumParams(
-        g_cereb=0.0,
-        theta_bias_fl=(1.0, 1.0, 1.0), theta_bias_vpf=(2.0, 2.0, 2.0),
-        K_fl=10.0, K_vpf=10.0, K_vcfn=10.0, K_nu=10.0, K_pu=10.0,
-    )
-    inputs = inputs0._replace(
-        x_vs_net=jnp.array([3.0, 4.0, 5.0]),
-        x_ni_net=jnp.array([6.0, 7.0, 8.0]),
-        x_vs_axis=jnp.array([9.0, 10.0, 11.0]),
-    )
-    _, out = step(x0, inputs, theta_lesion)
-    for r in ("fl", "vpf", "vcfn", "nu"):
-        _check(f"drive_{r} == 0",  _close(getattr(out, f"drive_{r}"), zero3))
-    _check("pred_err_fl unchanged by lesion", not _close(out.pred_err_fl, zero3))
+    # FL — leak-cancellation drive scales with (ni_net − ni_null)/tau_i
+    print("\n[5b] Flocculus NI leak cancellation (K_cereb_fl)")
+    state_ni = state0._replace(ni=state0.ni._replace(
+        L=state0.ni.L.at[0].set(10.0),    # ni_net = +10 deg yaw
+        R=state0.ni.R.at[0].set(0.0),
+        null=state0.ni.null.at[0].set(2.0),  # x_null = +2 deg yaw
+    ))
+    acts_fl = read_activations(state_ni, BrainParams(K_cereb_fl=1.0))
+    expected_fl_yaw = 1.0 * (10.0 - 2.0) / 25.0      # = 0.32
+    _check("fl_drive yaw = K · (ni_net − ni_null)/tau_i",
+           _close(acts_fl.fl_drive, [expected_fl_yaw, 0.0, 0.0], tol=1e-3))
+    # Lesion: fl_drive = 0
+    acts_fl_les = read_activations(state_ni, BrainParams(K_cereb_fl=0.0))
+    _check("fl_drive == 0 under floccular lesion", _close(acts_fl_les.fl_drive, zero3))
 
-    # Per-region lesion
-    print("\n[7] Per-region lesion identity")
-    theta_with_bias = CerebellumParams(
-        theta_bias_fl=(1.0, 0.0, 0.0),    theta_bias_vpf=(0.0, 1.0, 0.0),
-        theta_bias_vcfn=(0.0, 0.0, 1.0),  theta_bias_nu=(1.0, 1.0, 1.0),
-        K_fl=1.0, K_vpf=1.0, K_vcfn=1.0, K_nu=1.0,
-    )
-    region_to_field = {
-        "g_flocculus": "fl", "g_paraflocculus": "vpf",
-        "g_vermis_fastigial": "vcfn", "g_nodulus_uvula": "nu",
-    }
-    for knob, suf in region_to_field.items():
-        theta_one = with_cerebellum(theta_with_bias, **{knob: 0.0})
-        _, out = step(x0, inputs0, theta_one)
-        _check(f"drive_{suf} == 0 ({knob}=0)", _close(getattr(out, f"drive_{suf}"), zero3))
-        for other in ("fl", "vpf", "vcfn", "nu"):
-            if other == suf:
-                continue
-            _check(f"drive_{other} != 0 ({knob}=0)",
-                   not _close(getattr(out, f"drive_{other}"), zero3))
-
-    # Pursuit region: standalone path (brain_params=None) gives raw pred_err, zero drive
-    print("\n[8] Pursuit region — standalone path (no brain_params)")
-    inputs_pu = inputs0._replace(
-        target_slip=jnp.array([3.0, 0.0, 0.0]),
-        target_visible=jnp.float32(1.0),
-        ec_d_target=jnp.array([2.0, 0.0, 5.0]),   # torsion 5 should be zeroed
-    )
-    _, out = step(x0, inputs_pu, CerebellumParams(K_pu=1.0))
-    _check("pred_err_pu == target_slip + visible · ec (torsion zeroed)",
-           _close(out.pred_err_pu, [5.0, 0.0, 0.0]))
-    _check("drive_pu == 0 (no brain_params)", _close(out.drive_pu, zero3))
-
-    # Pursuit region: full path with brain_params
-    print("\n[9] Pursuit region — full path (with brain_params gates)")
-    class _BP(NamedTuple):
-        v_crit_ec_gate: float = 50.0
-        n_ec_gate:      float = 6.0
-        alpha_ec_dir:   float = 0.4
-        bias_ec_dir:    float = 15.0
-    bp = _BP()
-    # Quiet self-motion: K_mag ≈ 1, K_dir ≈ sigmoid(15·0.4)·≈1 (slip_dot ≈ 0)
-    inputs_quiet = inputs0._replace(
-        target_slip=jnp.array([10.0, 0.0, 0.0]),
-        target_visible=jnp.float32(1.0),
-        ec_d_target=jnp.array([0.0, 0.0, 0.0]),
-    )
-    _, out = step(x0, inputs_quiet, CerebellumParams(K_pu=1.0), brain_params=bp)
-    # K_dir saturates at sigmoid(bias·alpha) = sigmoid(15·0.4) ≈ 0.9975 when slip_dot=0,
-    # so drive ≈ 0.9975 · pred_err (not exactly equal — gate is asymptotic).
-    K_dir_open = float(jax.nn.sigmoid(jnp.float32(bp.bias_ec_dir * bp.alpha_ec_dir)))
-    _check("drive_pu ≈ K_dir_open · pred_err when ec_d_target=0",
-           _close(out.drive_pu, K_dir_open * out.pred_err_pu, tol=1e-4))
-    # Lesion: g_pursuit=0
-    _, out_les = step(x0, inputs_quiet, CerebellumParams(K_pu=1.0, g_pursuit=0.0), brain_params=bp)
-    _check("drive_pu == 0 (g_pursuit=0)", _close(out_les.drive_pu, zero3))
-    _check("pred_err_pu unchanged by lesion",
-           _close(out_les.pred_err_pu, out.pred_err_pu))
-    # Fast self-motion: K_mag closes
-    inputs_fast = inputs0._replace(
-        target_slip=jnp.array([10.0, 0.0, 0.0]),
-        target_visible=jnp.float32(1.0),
-        ec_d_target=jnp.array([200.0, 0.0, 0.0]),   # huge self-motion
-    )
-    _, out_fast = step(x0, inputs_fast, CerebellumParams(K_pu=1.0), brain_params=bp)
-    K_mag_expected = 1.0 / (1.0 + (200.0 / 50.0) ** 6.0)
-    _check("|drive_pu| < 0.1·|pred_err_pu| when |ec_d| >> v_crit",
-           jnp.linalg.norm(out_fast.drive_pu) < 0.1 * jnp.linalg.norm(out_fast.pred_err_pu))
-    _check(f"K_mag matches Hill formula ({K_mag_expected:.4f})",
-           K_mag_expected < 0.001)
-
-    # with_cerebellum
-    print("\n[10] with_cerebellum helper")
-    base = CerebellumParams()
-    edited = with_cerebellum(base, K_fl=2.5, theta_bias_vpf=(0.1, 0.2, 0.3),
-                              K_pu=0.7, g_pursuit=0.5)
-    _check("K_fl updated",            edited.K_fl == 2.5)
-    _check("theta_bias_vpf updated",  edited.theta_bias_vpf == (0.1, 0.2, 0.3))
-    _check("K_pu updated",            edited.K_pu == 0.7)
-    _check("g_pursuit updated",       edited.g_pursuit == 0.5)
-    _check("g_cereb unchanged",       edited.g_cereb == base.g_cereb)
-    _check("theta_bias_fl unchanged", edited.theta_bias_fl == base.theta_bias_fl)
+    # step shape contract — returns (dstate, activations)
+    print("\n[6] step shape contract")
+    cb_rest = rest_state()
+    dstate, acts_step = step(cb_rest,
+                              ec_vel=jnp.array([100.0, 0.0, 0.0]),
+                              ec_pos=jnp.zeros(3),
+                              ni_net=zero3, ni_null=zero3,
+                              target_slip=zero3,
+                              target_visible=jnp.float32(1.0),
+                              brain_params=bp)
+    _check("dstate scene shape",  dstate.scene.shape  == (N_PER_PATH,))
+    _check("dstate target shape", dstate.target.shape == (N_PER_PATH,))
+    _check("step returns acts",   acts_step is not None)
 
     # JIT
-    print("\n[11] JIT compatibility (with brain_params)")
+    print("\n[7] JIT compatibility")
+    read_jit = jax.jit(read_activations)
     step_jit = jax.jit(step)
-    _, out_jit = step_jit(x0, inputs0, CerebellumParams(), bp)
-    _check("JIT compile + run", out_jit is not None)
-    _check("JIT output shape",  out_jit.bias_fl.shape == (3,))
-    _check("JIT pursuit shape", out_jit.drive_pu.shape == (3,))
+    acts_jit = read_jit(state0, bp)
+    dstate_jit, _ = step_jit(state0.cb, jnp.zeros(3), jnp.zeros(3),
+                              zero3, zero3,
+                              zero3, jnp.float32(1.0), bp)
+    _check("read_activations JIT",  acts_jit is not None)
+    _check("step JIT",              dstate_jit is not None)
 
     print("\n" + "=" * 60)
     print("All smoke tests passed.")

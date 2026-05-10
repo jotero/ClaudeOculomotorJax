@@ -72,8 +72,8 @@ _AXIS_H = 0
 _TAU_COPY_RESET = 0.02
 
 
-# ─── State-vector layout (62-state unified subset) ─────────────────────────
-N_FAST          = 52
+# ─── State-vector layout (64-state unified subset) ─────────────────────────
+N_FAST          = 54
 _F_PU           = slice( 0,  3)   # pursuit
 _F_NI_L         = slice( 3,  6)   # NI left  pop
 _F_NI_R         = slice( 6,  9)   # NI right pop
@@ -86,7 +86,7 @@ _F_GRAV_G       = slice(22, 25)   # gravity estimate
 _F_GRAV_A       = slice(25, 28)   # linear-acc estimate
 _F_GRAV_RF      = slice(28, 31)   # rotational feedback (Laurens)
 _F_HEAD         = slice(31, 34)   # head linear velocity v_lin
-# Saccade generator (18 states) — predominantly bilinear/sigmoid-gated dynamics in f
+# Saccade generator (20 states) — predominantly bilinear/sigmoid-gated dynamics in f
 _F_SG_E_HELD    = slice(34, 37)   # Robinson resettable integrator (held retinal error)
 _F_SG_Z_OPN     = 37              # OPN membrane potential (100 = tonic, ~0 = paused)
 _F_SG_Z_ACC     = 38              # rise-to-bound accumulator
@@ -95,6 +95,8 @@ _F_SG_X_EBN_R   = slice(40, 43)   # right EBN membrane potentials
 _F_SG_X_EBN_L   = slice(43, 46)   # left  EBN membrane potentials
 _F_SG_X_IBN_R   = slice(46, 49)   # right IBN membrane potentials
 _F_SG_X_IBN_L   = slice(49, 52)   # left  IBN membrane potentials
+_F_SG_Z_FAC     = 52              # BN facilitation (rises during OPN pause)
+_F_SG_Z_DEP     = 53              # BN depression  (slow follower of z_fac)
 
 N_SLOW          = 10
 _S_NI_NULL      = slice( 0,  3)
@@ -744,6 +746,8 @@ def _pack_subset(brain_state):
     x_fast = x_fast.at[_F_SG_X_EBN_L].set(sg_st.ebn_L)
     x_fast = x_fast.at[_F_SG_X_IBN_R].set(sg_st.ibn_R)
     x_fast = x_fast.at[_F_SG_X_IBN_L].set(sg_st.ibn_L)
+    x_fast = x_fast.at[_F_SG_Z_FAC  ].set(sg_st.z_fac)
+    x_fast = x_fast.at[_F_SG_Z_DEP  ].set(sg_st.z_dep)
 
     x_slow = jnp.zeros(N_SLOW)
     x_slow = x_slow.at[_S_NI_NULL ].set(ni_st.null)
@@ -784,6 +788,8 @@ def _scatter_subset(dbrain, dx_fast, dx_slow):
         z_opn  = dx_fast[_F_SG_Z_OPN],
         z_acc  = dx_fast[_F_SG_Z_ACC],
         z_trig = dx_fast[_F_SG_Z_TRIG],
+        z_fac  = dx_fast[_F_SG_Z_FAC],
+        z_dep  = dx_fast[_F_SG_Z_DEP],
         ebn_R  = dx_fast[_F_SG_X_EBN_R],
         ebn_L  = dx_fast[_F_SG_X_EBN_L],
         ibn_R  = dx_fast[_F_SG_X_IBN_R],
@@ -908,10 +914,19 @@ def step(brain_state, sensory_out, brain_params, noise_acc=0.0):
     #   - z_acc bilinear drain and gate_err·normalized_opn drive
     #   - z_opn bilinear (-z_opn · z_trig) coupling
     cereb_bn_factor = brain_params.g_opn_bn * act_opn       # cerebellar gain modulation
-    dx_ebn_R_corr = (jax.nn.relu( e_held) - x_ebn_R * cereb_bn_factor) / brain_params.tau_bn
-    dx_ebn_L_corr = (jax.nn.relu(-e_held) - x_ebn_L * cereb_bn_factor) / brain_params.tau_bn
-    dx_ibn_R_corr = (jax.nn.relu( e_held) - x_ibn_R * cereb_bn_factor) / brain_params.tau_bn
-    dx_ibn_L_corr = (jax.nn.relu(-e_held) - x_ibn_L * cereb_bn_factor) / brain_params.tau_bn
+    # Dynamic BN drive gain (short-term facilitation + depression).
+    z_fac = x_fast[_F_SG_Z_FAC]
+    z_dep = x_fast[_F_SG_Z_DEP]
+    g_dyn = 1.0 + brain_params.alpha_fac * z_fac - brain_params.alpha_dep * z_dep
+    dx_ebn_R_corr = (g_dyn * jax.nn.relu( e_held) - x_ebn_R * cereb_bn_factor) / brain_params.tau_bn
+    dx_ebn_L_corr = (g_dyn * jax.nn.relu(-e_held) - x_ebn_L * cereb_bn_factor) / brain_params.tau_bn
+    dx_ibn_R_corr = (g_dyn * jax.nn.relu( e_held) - x_ibn_R * cereb_bn_factor) / brain_params.tau_bn
+    dx_ibn_L_corr = (g_dyn * jax.nn.relu(-e_held) - x_ibn_L * cereb_bn_factor) / brain_params.tau_bn
+
+    # Facilitation/depression dynamics (entirely nonlinear via clipped act_opn).
+    pause_drive = 1.0 - normalized_opn
+    dz_fac = (pause_drive - z_fac) / brain_params.tau_fac
+    dz_dep = (z_fac        - z_dep) / brain_params.tau_dep
 
     # Robinson resettable integrator (sample-and-hold gated by OPN)
     de_held = -u_burst + normalized_opn**2 * (e_cur - e_held) / brain_params.tau_hold
@@ -1040,6 +1055,10 @@ def step(brain_state, sensory_out, brain_params, noise_acc=0.0):
     dx_fast = dx_fast.at[_F_SG_X_EBN_L].add(dx_ebn_L_corr)
     dx_fast = dx_fast.at[_F_SG_X_IBN_R].add(dx_ibn_R_corr)
     dx_fast = dx_fast.at[_F_SG_X_IBN_L].add(dx_ibn_L_corr)
+    # Facilitation/depression have no matrix contribution — their dynamics use
+    # the clipped act_opn (nonlinear), so we set the slots directly here.
+    dx_fast = dx_fast.at[_F_SG_Z_FAC].set(dz_fac)
+    dx_fast = dx_fast.at[_F_SG_Z_DEP].set(dz_dep)
 
     # ── Stage 4: motor readout ──────────────────────────────────────────────
     y = (M.E @ x_fast + M.G @ x_slow + M.F @ u_proc

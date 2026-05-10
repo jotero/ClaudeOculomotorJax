@@ -84,7 +84,13 @@
       "PowerShell(& \"d:\\\\OneDrive\\\\UC Berkeley\\\\OMlab - JOM\\\\Code\\\\ClaudeOculomotorJax\\\\.venv\\\\Scripts\\\\python.exe\" -X utf8 scripts\\\\bench_vor_okr.py 2>&1)",
       "PowerShell(& \"d:\\\\OneDrive\\\\UC Berkeley\\\\OMlab - JOM\\\\Code\\\\ClaudeOculomotorJax\\\\.venv\\\\Scripts\\\\python.exe\" -X utf8 scripts\\\\bench_vergence.py 2>&1)",
       "PowerShell(& \"d:\\\\OneDrive\\\\UC Berkeley\\\\OMlab - JOM\\\\Code\\\\ClaudeOculomotorJax\\\\.venv\\\\Scripts\\\\python.exe\" -X utf8 -c \"from oculomotor.sim import simulator; from oculomotor.models.brain_models import brain_model, unified_brain; print\\('OK'\\)\" 2>&1)",
-      "PowerShell($benches = @\\('bench_pursuit', 'bench_saccades', 'bench_vergence', 'bench_vor_okr', 'bench_fixation', 'bench_accommodation', 'bench_gravity', 'bench_listing', 'bench_tvor', 'bench_experiments'\\); foreach \\($b in $benches\\) { Write-Host \"=== $b ===\"; & \"d:\\\\OneDrive\\\\UC Berkeley\\\\OMlab - JOM\\\\Code\\\\ClaudeOculomotorJax\\\\.venv\\\\Scripts\\\\python.exe\" -X utf8 \"scripts\\\\$b.py\" 2>&1 | Select-Object -Last 4 })"
+      "PowerShell($benches = @\\('bench_pursuit', 'bench_saccades', 'bench_vergence', 'bench_vor_okr', 'bench_fixation', 'bench_accommodation', 'bench_gravity', 'bench_listing', 'bench_tvor', 'bench_experiments'\\); foreach \\($b in $benches\\) { Write-Host \"=== $b ===\"; & \"d:\\\\OneDrive\\\\UC Berkeley\\\\OMlab - JOM\\\\Code\\\\ClaudeOculomotorJax\\\\.venv\\\\Scripts\\\\python.exe\" -X utf8 \"scripts\\\\$b.py\" 2>&1 | Select-Object -Last 4 })",
+      "Bash(git stash *)",
+      "Bash(\"d:/OneDrive/UC Berkeley/OMlab - JOM/Code/ClaudeOculomotorJax/.venv/Scripts/python.exe\" -X utf8 scripts/bench_saccades.py)",
+      "Bash(\"d:/OneDrive/UC Berkeley/OMlab - JOM/Code/ClaudeOculomotorJax/.venv/Scripts/python.exe\" -X utf8 -m oculomotor.models.brain_models.cerebellum)",
+      "Bash(\"d:/OneDrive/UC Berkeley/OMlab - JOM/Code/ClaudeOculomotorJax/.venv/Scripts/python.exe\" -X utf8 scripts/bench_pursuit.py)",
+      "Bash(git checkout *)",
+      "Bash(\"d:/OneDrive/UC Berkeley/OMlab - JOM/Code/ClaudeOculomotorJax/.venv/Scripts/python.exe\" -X utf8 scripts/_diag_pursuit_sacs.py)"
     ],
     "additionalDirectories": [
       "d:\\OneDrive\\UC Berkeley\\OMlab - JOM\\Code\\ClaudeOculomotorJax\\outputs"

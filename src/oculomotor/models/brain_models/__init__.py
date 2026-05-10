@@ -9,7 +9,7 @@ Subpackages group physiologically-coupled modules:
 Top-level leaf modules (no subpackage):
 
   neural_integrator, saccade_generator, pursuit, tvor,
-  listing, efference_copy, final_common_pathway, brain_model
+  listing, cerebellum, final_common_pathway, brain_model
 
 The connector module ``brain_model`` wires everything together and owns the
 combined state layout, BrainParams, and per-step ODE evaluation order.
@@ -25,7 +25,7 @@ from oculomotor.models.brain_models import (
     pursuit,
     tvor,
     listing,
-    efference_copy,
+    cerebellum,
     final_common_pathway,
     brain_model,
 )
@@ -40,7 +40,7 @@ __all__ = [
     "pursuit",
     "tvor",
     "listing",
-    "efference_copy",
+    "cerebellum",
     "final_common_pathway",
     "brain_model",
 ]

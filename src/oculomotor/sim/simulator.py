@@ -214,6 +214,14 @@ def with_plant(params: Params, **kwargs) -> Params:
     return params._replace(plant=params.plant._replace(**kwargs))
 
 
+def with_cerebellum(params: Params, **kwargs) -> Params:
+    """Alias of `with_brain` for cerebellum fields (currently K_cereb_pu).
+
+    Re-routes through `with_brain` for naming clarity at call sites.
+    """
+    return with_brain(params, **kwargs)
+
+
 SIM_CONFIG_DEFAULT = SimConfig()
 PARAMS_DEFAULT     = default_params()
 
@@ -263,7 +271,7 @@ def with_vn_lesion(params: Params, side: str = 'left') -> Params:
 __all__ = [
     'SimState', 'ODE_ocular_motor', 'simulate',
     'Params', 'SimConfig', 'SensoryParams', 'PlantParams', 'BrainParams',
-    'default_params', 'with_brain', 'with_sensory', 'with_plant',
+    'default_params', 'with_brain', 'with_sensory', 'with_plant', 'with_cerebellum',
     'with_uvh', 'with_vn_lesion',
     'PARAMS_DEFAULT', 'SIM_CONFIG_DEFAULT',
 ]

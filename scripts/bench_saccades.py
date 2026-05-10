@@ -382,12 +382,16 @@ def _cascade(show, noisy=False):
         # matches target_vel cascade shape (heavier smoothing).
         tgt_ec_sat   = _vel_sat_np(vel_del,  params.sensory.v_max_target_vel)
         scene_ec_sat = _vel_sat_np(slip_del, params.sensory.v_max_scene_vel)
-        ec_scene     = np.array(st.brain.ec_scene)[:, -3:]   # last 3 = LP output
-        ec_target    = np.array(st.brain.ec_target)[:, -3:]
+        ec_scene     = np.array(st.brain.cb.scene)[:, -3:]   # last 3 = LP output
+        ec_target    = np.array(st.brain.cb.target)[:, -3:]
+        # EC traces are sign-flipped so they overlay the slip cascade if the
+        # cancellation is perfect (slip + ec ≈ 0  ⇔  slip ≈ −ec).  Mismatch
+        # between the dashed/dotted lines and the solid slip lines is the
+        # post-delay EC residual.
         axes[6, ci].plot(t_np, tgt_ec_sat[:, 0],   color='#7b2d8b', lw=1.2, label='tgt slip')
         axes[6, ci].plot(t_np, scene_ec_sat[:, 0], color='#1a7a4a', lw=1.2, label='scene slip')
-        axes[6, ci].plot(t_np, ec_scene[:, 0],     color='#1f4dab', lw=1.0, ls='--', label='EC scene')
-        axes[6, ci].plot(t_np, ec_target[:, 0],    color='#d62728', lw=1.0, ls=':',  label='EC target')
+        axes[6, ci].plot(t_np, -ec_scene[:, 0],    color='#1f4dab', lw=1.0, ls='--', label='−EC scene')
+        axes[6, ci].plot(t_np, -ec_target[:, 0],   color='#d62728', lw=1.0, ls=':',  label='−EC target')
         ax_fmt(axes[6, ci])
         if ci == 0: axes[6, ci].legend(fontsize=7)
 

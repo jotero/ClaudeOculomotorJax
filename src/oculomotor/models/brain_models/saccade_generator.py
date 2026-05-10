@@ -13,8 +13,8 @@ latches the retinal error at trigger onset and is frozen during the burst.
 The Robinson residual (e_held − x_copy) drives the burst and decreases
 monotonically to zero at burst end, regardless of target velocity.
 
-State:  x_sg = [e_held(3) | z_opn(1) | z_acc(1) | z_trig(1) |
-                 x_ebn_R(3) | x_ebn_L(3) | x_ibn_R(3) | x_ibn_L(3)]  (18 states)
+State:  x_sg = [e_held(3) | z_opn(1) | z_acc(1) | z_trig(1) | z_fac(1) | z_dep(1) |
+                 x_ebn_R(3) | x_ebn_L(3) | x_ibn_R(3) | x_ibn_L(3)]  (20 states)
 
     e_held  — Robinson's resettable integrator: latches e_cur at trigger onset; integrates −u_burst during burst.
                Sample-and-hold: between saccades tracks e_cur via τ_hold; frozen when OPN paused.
@@ -26,6 +26,12 @@ State:  x_sg = [e_held(3) | z_opn(1) | z_acc(1) | z_trig(1) |
                Provides smooth onset for OPN suppression, decoupled from z_acc drain.
                Sequence: z_acc > threshold → charge_sac → z_trig rises → OPN drops → IBN fires
                → IBN latches OPN + drains z_trig; OPN suppression drains z_acc.
+    z_fac   — BN facilitation: tracks (1 − act_opn/100) with TC τ_fac. Rises during OPN pause
+               (saccade), decays back when OPN returns. Modulates BN drive via g_dyn.
+               Not a firing rate — short-term presynaptic facilitation / use-dependent gain.
+    z_dep   — BN depression: follows z_fac with slower TC τ_dep. Persists after burst end,
+               leaving a transient post-saccadic dip in g_dyn (residual depression) that
+               recovers slowly. Models post-saccadic refractory weakness.
     x_ebn_R — right EBN membrane potentials (3,): driven by relu(+e_held) when act_opn<1; held negative by OPN
     x_ebn_L — left  EBN membrane potentials (3,): driven by relu(−e_held) when act_opn<1; held negative by OPN
     x_ibn_R — right IBN membrane potentials (3,): same drive as x_ebn_R; held negative by OPN
@@ -93,6 +99,10 @@ Output insertion (in simulator)
 
 Parameters
 ──────────
+    tau_fac        BN facilitation TC (s)             default 0.020
+    tau_dep        BN depression TC (s)               default 0.100
+    alpha_fac      facilitation gain (dimensionless)  default 0.0   (off; >0 boosts burst)
+    alpha_dep      depression gain (dimensionless)    default 0.0   (off; >0 dips post-burst)
     g_burst        burst ceiling (deg/s)              default 700.0
     threshold_sac  retinal-error trigger (deg)        default 0.5
     k_sac          sigmoid steepness (1/deg)          default 200.0
@@ -134,6 +144,8 @@ class State(NamedTuple):
     z_opn:  jnp.ndarray   # scalar          OPN membrane (≈100 tonic, ≈0 paused)
     z_acc:  jnp.ndarray   # scalar          rise-to-bound accumulator
     z_trig: jnp.ndarray   # scalar          trigger membrane (charges from acc)
+    z_fac:  jnp.ndarray   # scalar          BN facilitation (rises when OPN paused)
+    z_dep:  jnp.ndarray   # scalar          BN depression (slow follower of z_fac)
     ebn_R:  jnp.ndarray   # (3,)            right EBN membrane potentials
     ebn_L:  jnp.ndarray   # (3,)            left  EBN membrane potentials
     ibn_R:  jnp.ndarray   # (3,)            right IBN membrane potentials
@@ -152,8 +164,16 @@ class Activations(NamedTuple):
 
 
 class Weights(NamedTuple):
-    """SG tonic / null / setpoint registers (long-term: learned weights)."""
+    """SG tonic / null / setpoint registers (long-term: learned weights).
+
+    z_fac and z_dep are short-term modulatory states (not firing rates) that
+    set the dynamic BN gain g_dyn. They live here rather than in Activations
+    because no downstream subsystem reads them as a population rate — they
+    only modulate BN drive inside this module.
+    """
     e_held: jnp.ndarray   # (3,) signed   Robinson local-feedback held error / setpoint
+    z_fac:  jnp.ndarray   # scalar        BN facilitation register
+    z_dep:  jnp.ndarray   # scalar        BN depression register
 
 
 def rest_state():
@@ -163,6 +183,8 @@ def rest_state():
         z_opn  = jnp.float32(_OPN_TONIC),
         z_acc  = jnp.float32(0.0),
         z_trig = jnp.float32(0.0),
+        z_fac  = jnp.float32(0.0),
+        z_dep  = jnp.float32(0.0),
         ebn_R  = jnp.zeros(3),
         ebn_L  = jnp.zeros(3),
         ibn_R  = jnp.zeros(3),
@@ -171,9 +193,26 @@ def rest_state():
 
 
 def read_activations(state):
-    """Project SG state → SG Activations."""
+    """Project SG state → SG Activations.
+
+    NOTE: gate_opn is NOT clipped to [0, 1] here because the SG step()
+    reconstructs the OPN membrane potential as gate_opn · _OPN_TONIC for its
+    own dynamics, and the dynamics need the RAW z_opn (which dips deep below
+    zero during saccades — equilibrium of the IBN-driven inhibition is at
+    z_opn = −g_opn_pause = −500).  Clipping here was a bug: it left the
+    recovery rate computed at the clipped value (k_tonic · (100 − 0)) while
+    the true state was at large negative values, so OPN took 100s of ms to
+    return to tonic and e_held never restarted tracking → no catch-up
+    saccades during pursuit.
+
+    External consumers that interpret gate_opn AS A FIRING RATE must clip
+    themselves: `gate_opn_fr = jnp.clip(acts.sg.gate_opn, 0.0, 1.0)`.
+    Currently only vergence_accommodation (z_act_verg = 1 − gate_opn) reads
+    this — and that's robust since gate_opn ≥ 1 doesn't occur in normal
+    operation, only the negative excursion is the issue.
+    """
     return Activations(
-        gate_opn = jnp.clip(state.z_opn / _OPN_TONIC, 0.0, 1.0),
+        gate_opn = state.z_opn / _OPN_TONIC,    # unclipped — dynamics need raw z_opn
         z_acc    = state.z_acc,
         z_trig   = state.z_trig,
         ebn_R    = state.ebn_R,
@@ -184,8 +223,12 @@ def read_activations(state):
 
 
 def read_weights(state):
-    """SG Robinson held-error setpoint."""
-    return Weights(e_held=state.e_held)
+    """SG Robinson held-error setpoint + BN facilitation/depression registers."""
+    return Weights(
+        e_held = state.e_held,
+        z_fac  = state.z_fac,
+        z_dep  = state.z_dep,
+    )
 
 
 # ── Burst velocity (magnitude + direction) ────────────────────────────────────
@@ -254,6 +297,8 @@ def step(activations, weights, pos_delayed, target_visible, x_ni, ocr, w_est,
 
     # ── Activation reads ──────────────────────────────────────────────────────
     e_held  = weights.e_held
+    z_fac   = weights.z_fac
+    z_dep   = weights.z_dep
     z_opn   = activations.gate_opn * _OPN_TONIC   # gate_opn = clip(z_opn/100); invert
     z_acc   = activations.z_acc
     z_trig  = activations.z_trig
@@ -318,10 +363,15 @@ def step(activations, weights, pos_delayed, target_visible, x_ni, ocr, w_est,
     opn_gain   = 1.0 + p.g_opn_bn * act_opn        # multiplicative: TC = tau_bn/(1+g_opn_bn) when tonic
     opn_inh    = p.g_opn_bn_hold * act_opn          # additive offset: 0 during saccade
 
-    dx_ebn_R = (jax.nn.relu( e_held) - inh_from_L - opn_inh - x_ebn_R * opn_gain) / p.tau_bn
-    dx_ebn_L = (jax.nn.relu(-e_held) - inh_from_R - opn_inh - x_ebn_L * opn_gain) / p.tau_bn
-    dx_ibn_R = (jax.nn.relu( e_held) - inh_from_L - opn_inh - x_ibn_R * opn_gain) / p.tau_bn
-    dx_ibn_L = (jax.nn.relu(-e_held) - inh_from_R - opn_inh - x_ibn_L * opn_gain) / p.tau_bn
+    # Dynamic BN drive gain — short-term presynaptic facilitation/depression.
+    # g_dyn rises during OPN pause (z_fac builds), then dips below 1 after burst
+    # (z_dep persists as z_fac decays). alpha_fac=alpha_dep=0 → g_dyn≡1 (off).
+    g_dyn = 1.0 + p.alpha_fac * z_fac - p.alpha_dep * z_dep
+
+    dx_ebn_R = (g_dyn * jax.nn.relu( e_held) - inh_from_L - opn_inh - x_ebn_R * opn_gain) / p.tau_bn
+    dx_ebn_L = (g_dyn * jax.nn.relu(-e_held) - inh_from_R - opn_inh - x_ebn_L * opn_gain) / p.tau_bn
+    dx_ibn_R = (g_dyn * jax.nn.relu( e_held) - inh_from_L - opn_inh - x_ibn_R * opn_gain) / p.tau_bn
+    dx_ibn_L = (g_dyn * jax.nn.relu(-e_held) - inh_from_R - opn_inh - x_ibn_L * opn_gain) / p.tau_bn
 
     # ── Resettable integrator (Robinson 1975) ────────────────────────────────
     # Continuous pre-loading: e_held tracks pos_delayed (=e_cur) between saccades.
@@ -352,6 +402,16 @@ def step(activations, weights, pos_delayed, target_visible, x_ni, ocr, w_est,
               - z_acc / p.tau_acc_leak
               + noise_acc)
 
+    # ── BN dynamic-gain dynamics (facilitation + depression) ─────────────────
+    # z_fac tracks (1 − act_opn/100) with τ_fac (fast LP):
+    #   OPN paused (saccade) → drive≈1 → z_fac rises toward 1.
+    #   OPN tonic (between saccades) → drive≈0 → z_fac decays toward 0.
+    # z_dep follows z_fac with τ_dep (slow LP) — persists after z_fac falls,
+    # producing transient post-saccadic depression in g_dyn.
+    pause_drive = 1.0 - normalized_opn
+    dz_fac = (pause_drive - z_fac) / p.tau_fac
+    dz_dep = (z_fac - z_dep) / p.tau_dep
+
     # ── OPN latch dynamics ────────────────────────────────────────────────────
     # z_trig suppresses OPN initially (smooth onset via tau_trig, replaces raw charge_sac).
     # IBN latches OPN suppressed throughout burst (Schmitt trigger).
@@ -365,6 +425,8 @@ def step(activations, weights, pos_delayed, target_visible, x_ni, ocr, w_est,
         z_opn  = dz_opn,
         z_acc  = dz_acc,
         z_trig = dz_trig,
+        z_fac  = dz_fac,
+        z_dep  = dz_dep,
         ebn_R  = dx_ebn_R,
         ebn_L  = dx_ebn_L,
         ibn_R  = dx_ibn_R,
@@ -375,29 +437,31 @@ def step(activations, weights, pos_delayed, target_visible, x_ni, ocr, w_est,
 
 # ── Legacy flat-array adapters (deleted once brain_model migrates to BrainState) ─
 
-N_STATES  = 18
+N_STATES  = 20
 N_INPUTS  = 9
 N_OUTPUTS = 3
 
 
 def from_array(x_sg):
-    """(18,) flat array → sg.State."""
+    """(20,) flat array → sg.State."""
     return State(
         e_held = x_sg[0:3],
         z_opn  = x_sg[3],
         z_acc  = x_sg[4],
         z_trig = x_sg[5],
-        ebn_R  = x_sg[6:9],
-        ebn_L  = x_sg[9:12],
-        ibn_R  = x_sg[12:15],
-        ibn_L  = x_sg[15:18],
+        z_fac  = x_sg[6],
+        z_dep  = x_sg[7],
+        ebn_R  = x_sg[8:11],
+        ebn_L  = x_sg[11:14],
+        ibn_R  = x_sg[14:17],
+        ibn_L  = x_sg[17:20],
     )
 
 
 def to_array(state):
-    """sg.State → (18,) flat array."""
+    """sg.State → (20,) flat array."""
     return jnp.concatenate([
         state.e_held,
-        jnp.array([state.z_opn, state.z_acc, state.z_trig]),
+        jnp.array([state.z_opn, state.z_acc, state.z_trig, state.z_fac, state.z_dep]),
         state.ebn_R, state.ebn_L, state.ibn_R, state.ibn_L,
     ])
