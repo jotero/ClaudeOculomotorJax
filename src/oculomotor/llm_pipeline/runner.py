@@ -32,6 +32,7 @@ from oculomotor.sim.simulator import (
 from oculomotor.models.brain_models import saccade_generator as sg_mod
 from oculomotor.models.brain_models.perception_cyclopean import C_slip, C_pos, C_vel, C_target_visible
 from oculomotor.models.brain_models import perception_cyclopean as _pc_mod
+from oculomotor.analysis import read_brain_acts
 
 
 # ── Stimulus builder ──────────────────────────────────────────────────────────
@@ -204,6 +205,19 @@ def _extract_signals(states, params, t_np: np.ndarray) -> dict:
     z_acc  = np.array(sg_st.z_acc)
     z_trig = np.array(sg_st.z_trig)
 
+    # ── Cerebellar activations (vmapped over time) ───────────────────────────
+    cb = read_brain_acts(states, params).cb
+    cb_vpf_drive    = np.array(cb.vpf_drive)                  # (T, 3) gated target EC → pursuit
+    cb_fl_okr_drive = np.array(cb.fl_okr_drive)               # (T, 3) gated scene  EC → VS
+    cb_fl_drive     = np.array(cb.fl_drive)                   # (T, 3) NI leak cancellation
+    cb_fl_vs_drive  = np.array(cb.fl_vs_drive)                # (T, 3) VS leak cancellation
+    cb_nu_drive     = np.array(cb.nu_drive)                   # (T, 3) gravity-axis dumping
+    cb_sat_target   = np.array(cb.saccadic_suppression_target)  # (T,) pursuit gate
+    cb_sat_scene    = np.array(cb.saccadic_suppression_scene)   # (T,) scene gate
+    cb_pred_err     = np.array(cb.pred_err)                   # (T, 3) target_slip + ec (diagnostic)
+    cb_ec_target    = np.array(cb.ec_target)                  # (T, 3) delayed target EC
+    cb_ec_scene     = np.array(cb.ec_scene)                   # (T, 3) delayed scene  EC
+
     return dict(
         eye_pos        = version,          # conjugate version — used by most panels
         eye_pos_L      = eye_pos_L,        # per-eye: left
@@ -220,6 +234,17 @@ def _extract_signals(states, params, t_np: np.ndarray) -> dict:
         z_acc          = z_acc,
         z_trig         = z_trig,
         e_held         = e_held,
+        # Cerebellar signals
+        cb_vpf_drive    = cb_vpf_drive,
+        cb_fl_okr_drive = cb_fl_okr_drive,
+        cb_fl_drive     = cb_fl_drive,
+        cb_fl_vs_drive  = cb_fl_vs_drive,
+        cb_nu_drive     = cb_nu_drive,
+        cb_sat_target   = cb_sat_target,
+        cb_sat_scene    = cb_sat_scene,
+        cb_pred_err     = cb_pred_err,
+        cb_ec_target    = cb_ec_target,
+        cb_ec_scene     = cb_ec_scene,
     )
 
 
@@ -266,6 +291,9 @@ _PANEL_LABELS = {
     'pursuit_drive':     'Pursuit integrator (deg/s)',
     'refractory':        'Accumulator / trigger IBN',
     'vergence':          'Vergence angle (deg)',
+    # cerebellar diagnostic panels
+    'cerebellum_pursuit': 'Cerebellum — pursuit (deg/s)',
+    'cerebellum_vor':     'Cerebellum — VOR/OKR (deg/s)',
     # stimulus panels
     'target_position':   'Target position (deg)',
     'target_velocity':   'Target velocity (deg/s)',
@@ -391,6 +419,34 @@ def _draw_panel(ax, panel_name: str, t: np.ndarray, sig: dict,
         ax.legend(fontsize=6, loc='upper right')
         ax.set_ylabel('Vergence angle (deg)', fontsize=8)
 
+    # ── Cerebellar diagnostic panels ──────────────────────────────────────────
+
+    elif panel_name == 'cerebellum_pursuit':
+        # VPF pursuit EC correction + pursuit saccadic-suppression gate (right axis)
+        ax.plot(t, sig['cb_vpf_drive'][:, 0], color='#1f78b4', lw=1.3, label='VPF EC drive (vpf_drive)')
+        ax.plot(t, sig['cb_pred_err'][:, 0],  color='#7b3294', lw=0.9, ls=':', label='pred_err (slip+EC)')
+        ax.legend(fontsize=6, loc='upper left')
+        ax2 = ax.twinx()
+        ax2.plot(t, sig['cb_sat_target'], color='#999999', lw=1.1, ls='--', alpha=0.9)
+        ax2.set_ylim(-0.05, 1.10)
+        ax2.set_ylabel('sacc. supp. gate', fontsize=7, color='#777777')
+        ax2.tick_params(labelsize=6, colors='#777777')
+        ax.set_ylabel('Cerebellum — pursuit (deg/s)', fontsize=8)
+
+    elif panel_name == 'cerebellum_vor':
+        ax.plot(t, sig['cb_fl_drive'][:, 0],     color='#33a02c', lw=1.3, label='FL NI leak-cancel (fl_drive)')
+        ax.plot(t, sig['cb_fl_okr_drive'][:, 0], color='#1f78b4', lw=1.1, ls='-.', label='FL OKR EC (fl_okr_drive)')
+        ax.plot(t, sig['cb_nu_drive'][:, 0],     color='#e31a1c', lw=1.0, ls=':',  label='NU gravity dump (nu_drive)')
+        if np.any(np.abs(sig['cb_fl_vs_drive'][:, 0]) > 1e-3):
+            ax.plot(t, sig['cb_fl_vs_drive'][:, 0], color='#6a3d9a', lw=0.9, ls='--', label='FL VS leak-cancel')
+        ax.legend(fontsize=6, loc='upper left')
+        ax2 = ax.twinx()
+        ax2.plot(t, sig['cb_sat_scene'], color='#999999', lw=1.1, ls='--', alpha=0.9)
+        ax2.set_ylim(-0.05, 1.10)
+        ax2.set_ylabel('sacc. supp. gate', fontsize=7, color='#777777')
+        ax2.tick_params(labelsize=6, colors='#777777')
+        ax.set_ylabel('Cerebellum — VOR/OKR (deg/s)', fontsize=8)
+
     # ── Stimulus panels ───────────────────────────────────────────────────────
 
     elif panel_name == 'target_position':
@@ -414,64 +470,74 @@ def _draw_panel(ax, panel_name: str, t: np.ndarray, sig: dict,
         ax.legend(fontsize=6, loc='upper right')
 
     elif panel_name == 'visual_flags':
+        # Gantt-style timeline: one labelled lane per visual context channel.
+        # Filled bar = "on" (lit / target present), light-hatched bar = "off"
+        # (dark / target absent), with the state written in the bar and the
+        # transition times tick-marked on the time axis.
         bino = np.any(tpL != tpR)
-        ax.set_ylim(0, 1)
-        ax.set_yticks([])
+        ax.set_xlim(t[0], t[-1])
+        ax.set_facecolor('white')
+
+        # Build lane list: (label, flag_array, on_label, off_label, color_on)
+        lanes = [('Scene', sp, 'LIT', 'DARK', '#4dac26')]
+        if not bino:
+            lanes.append(('Target', tp_combined, 'TARGET ON', 'no target', '#e08214'))
+        else:
+            lanes.append(('L eye target', tpL, 'ON', 'covered', '#2166ac'))
+            lanes.append(('R eye target', tpR, 'ON', 'covered', '#d6604d'))
+
+        n_lanes = len(lanes)
+        ax.set_ylim(0, n_lanes)
+        ax.set_yticks([n_lanes - 0.5 - i for i in range(n_lanes)])
+        ax.set_yticklabels([lbl for lbl, *_ in lanes], fontsize=7)
+        ax.tick_params(axis='y', length=0)
         ax.set_ylabel('Visual context', fontsize=8)
 
-        # Layout: bottom row = scene, top row = target (split L/R if cover test)
-        S0, S1 = 0.04, 0.36      # scene row y-limits (data coords, ylim=[0,1])
-        T0, T1 = 0.44, 0.96      # target row
+        def _segments(t, flag):
+            """Yield (t0, t1, state) runs of a binary flag array."""
+            i0 = 0
+            cur = flag[0] > 0.5
+            for i in range(1, len(flag)):
+                v = flag[i] > 0.5
+                if v != cur:
+                    yield (t[i0], t[i], cur)
+                    i0, cur = i, v
+            yield (t[i0], t[-1], cur)
 
-        def _flag_spans(ax, t, flag, y0, y1, color_on, color_off, alpha_on=0.70, alpha_off=0.25):
-            """Draw axvspan blocks for a binary flag array."""
-            in_on = in_off = False
-            t0_on = t0_off = t[0]
-            for i in range(len(t)):
-                val = flag[i] > 0.5
-                if val and not in_on:
-                    if in_off:
-                        ax.axvspan(t0_off, t[i], ymin=y0, ymax=y1,
-                                   color=color_off, alpha=alpha_off, lw=0)
-                        in_off = False
-                    t0_on, in_on = t[i], True
-                elif not val and not in_off:
-                    if in_on:
-                        ax.axvspan(t0_on, t[i], ymin=y0, ymax=y1,
-                                   color=color_on, alpha=alpha_on, lw=0)
-                        in_on = False
-                    t0_off, in_off = t[i], True
-            if in_on:
-                ax.axvspan(t0_on, t[-1], ymin=y0, ymax=y1,
-                           color=color_on, alpha=alpha_on, lw=0)
-            if in_off:
-                ax.axvspan(t0_off, t[-1], ymin=y0, ymax=y1,
-                           color=color_off, alpha=alpha_off, lw=0)
+        all_transitions = set()
+        for lane_i, (lbl, flag, on_lbl, off_lbl, c_on) in enumerate(lanes):
+            y_bot = n_lanes - 1 - lane_i + 0.15
+            y_top = n_lanes - 1 - lane_i + 0.85
+            h     = y_top - y_bot
+            for (t0, t1, state) in _segments(t, flag):
+                if t1 - t0 <= 0:
+                    continue
+                if state:
+                    ax.add_patch(plt.Rectangle((t0, y_bot), t1 - t0, h,
+                                                facecolor=c_on, alpha=0.55,
+                                                edgecolor=c_on, lw=0.8))
+                else:
+                    ax.add_patch(plt.Rectangle((t0, y_bot), t1 - t0, h,
+                                                facecolor='#dddddd', alpha=0.45,
+                                                edgecolor='#bbbbbb', lw=0.5, hatch='///'))
+                # Label the run if it's wide enough to fit text
+                if (t1 - t0) > 0.04 * (t[-1] - t[0]):
+                    ax.text((t0 + t1) / 2, (y_bot + y_top) / 2,
+                            on_lbl if state else off_lbl,
+                            ha='center', va='center', fontsize=6,
+                            color='#1a1a1a' if state else '#666666')
+                if t0 > t[0] + 1e-9:
+                    all_transitions.add(round(float(t0), 4))
 
-        # Scene row — green when lit, red when dark
-        _flag_spans(ax, t, sp, S0, S1, '#4dac26', '#d73027', alpha_on=0.70, alpha_off=0.55)
-        ax.text(0.01, (S0 + S1) / 2, 'Scene', va='center', ha='left',
-                fontsize=7, color='#222222')
-
-        # Target row
-        if not bino:
-            _flag_spans(ax, t, tp_combined, T0, T1, '#d6604d', '#aaaaaa',
-                        alpha_on=0.75, alpha_off=0.30)
-            ax.text(0.01, (T0 + T1) / 2, 'Target', va='center', ha='left',
-                    fontsize=7, color='#222222')
-        else:  # cover-test: split into L/R sub-rows
-            mid = (T0 + T1) / 2 - 0.01
-            for (pres, y0, y1, lbl) in [(tpL, mid + 0.02, T1, 'L eye'),
-                                         (tpR, T0,        mid, 'R eye')]:
-                _flag_spans(ax, t, pres, y0, y1, '#d6604d', '#aaaaaa',
-                            alpha_on=0.75, alpha_off=0.30)
-                ax.text(0.01, (y0 + y1) / 2, lbl, va='center', ha='left',
-                        fontsize=7, color='#222222')
+        # Mark transition times on the x-axis
+        for tt in sorted(all_transitions):
+            ax.axvline(tt, color='#444444', lw=0.7, ls=':', alpha=0.6)
 
         # Scene velocity overlay on right y-axis (when non-zero)
         if np.any(np.abs(vs[:, 0]) > 0.5):
             ax2 = ax.twinx()
-            ax2.step(t, vs[:, 0], where='post', color='#8c510a', lw=1.3, alpha=0.85)
+            ax2.step(t, vs[:, 0], where='post', color='#8c510a', lw=1.3, alpha=0.85,
+                     label='scene vel')
             ax2.axhline(0, color='#8c510a', lw=0.4, alpha=0.5)
             vs_max = max(np.max(np.abs(vs[:, 0])), 1.0)
             ax2.set_ylim(-vs_max * 1.4, vs_max * 1.4)
@@ -480,7 +546,8 @@ def _draw_panel(ax, panel_name: str, t: np.ndarray, sig: dict,
 
     # Enforce a minimum visible range on velocity / derivative panels
     if panel_name in ('eye_velocity', 'head_velocity', 'saccade_burst', 'pursuit_drive',
-                      'target_velocity', 'scene_velocity'):
+                      'target_velocity', 'scene_velocity',
+                      'cerebellum_pursuit', 'cerebellum_vor'):
         lo, hi = ax.get_ylim()
         span = hi - lo
         if span < 5.0:

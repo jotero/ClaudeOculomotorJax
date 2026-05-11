@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>OculomotorJax — Parameter Reference</title>
+  <title>OMSim — Parameter Reference</title>
   <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
@@ -82,17 +82,18 @@ tr:last-child { border-bottom: none; }
   <nav>
     <h2>Sections</h2>
     <a href="#brainparams">BrainParams</a>
-    <a href="#brainparams-self_motion_estimation" style="padding-left:32px;font-size:11px;color:#aaa">Self Motion Estimation <span style="color:#666">(17)</span></a>
-    <a href="#brainparams-ungrouped" style="padding-left:32px;font-size:11px;color:#aaa">Ungrouped <span style="color:#666">(15)</span></a>
+    <a href="#brainparams-self_motion_estimation" style="padding-left:32px;font-size:11px;color:#aaa">Self Motion Estimation <span style="color:#666">(18)</span></a>
     <a href="#brainparams-neural_integrator" style="padding-left:32px;font-size:11px;color:#aaa">Neural Integrator <span style="color:#666">(7)</span></a>
+    <a href="#brainparams-ungrouped" style="padding-left:32px;font-size:11px;color:#aaa">Ungrouped <span style="color:#666">(18)</span></a>
     <a href="#brainparams-binocular" style="padding-left:32px;font-size:11px;color:#aaa">Binocular <span style="color:#666">(5)</span></a>
     <a href="#brainparams-saccade_generator" style="padding-left:32px;font-size:11px;color:#aaa">Saccade Generator <span style="color:#666">(29)</span></a>
     <a href="#brainparams-listing" style="padding-left:32px;font-size:11px;color:#aaa">Listing <span style="color:#666">(2)</span></a>
-    <a href="#brainparams-pursuit" style="padding-left:32px;font-size:11px;color:#aaa">Pursuit <span style="color:#666">(4)</span></a>
+    <a href="#brainparams-pursuit" style="padding-left:32px;font-size:11px;color:#aaa">Pursuit <span style="color:#666">(5)</span></a>
     <a href="#brainparams-vergence" style="padding-left:32px;font-size:11px;color:#aaa">Vergence <span style="color:#666">(12)</span></a>
     <a href="#brainparams-tvor" style="padding-left:32px;font-size:11px;color:#aaa">Tvor <span style="color:#666">(6)</span></a>
     <a href="#brainparams-accommodation" style="padding-left:32px;font-size:11px;color:#aaa">Accommodation <span style="color:#666">(9)</span></a>
     <a href="#brainparams-final_common_pathway" style="padding-left:32px;font-size:11px;color:#aaa">Final Common Pathway <span style="color:#666">(6)</span></a>
+    <a href="#brainparams-cerebellum" style="padding-left:32px;font-size:11px;color:#aaa">Cerebellum <span style="color:#666">(4)</span></a>
     <div style="height:8px"></div>
     <a href="#sensoryparams">SensoryParams</a>
     <a href="#sensoryparams-canals" style="padding-left:32px;font-size:11px;color:#aaa">Canals <span style="color:#666">(4)</span></a>
@@ -112,22 +113,22 @@ tr:last-child { border-bottom: none; }
     <a href="index.html">LLM simulator</a>
   </nav>
   <main>
-    <h1>OculomotorJax — Parameter Reference</h1>
+    <h1>OMSim — Parameter Reference</h1>
     <p class="meta">
-      Generated: <strong>2026-05-09 04:58</strong> &nbsp;|&nbsp;
-      Version: <strong>88db8fa-dirty</strong> &nbsp;|&nbsp;
+      Generated: <strong>2026-05-10 22:22</strong> &nbsp;|&nbsp;
+      Version: <strong>0d09a28-dirty</strong> &nbsp;|&nbsp;
       Schema: <strong>D:\OneDrive\UC Berkeley\OMlab - JOM\Code\ClaudeOculomotorJax\docs\parameters_schema.yaml</strong>
     </p>
     <input id="search" type="search" placeholder="Search parameters by name, description, anatomy, disorder…" autofocus>
     <div id="match-count" class="match-count"></div>
-    <div class="warning"><b>18 fields lack schema entries</b> and are flagged TODO below. Add to <code>docs/parameters_schema.yaml</code> to provide rich descriptions, anatomy, and disorder tags.</div><div class="warning"><b>2 stale schema entries</b> do not match any current field: <code>brain.b_vs_L, brain.b_vs_R</code>. Remove from YAML or rename to match the current code.</div>
+    <div class="warning"><b>21 fields lack schema entries</b> and are flagged TODO below. Add to <code>docs/parameters_schema.yaml</code> to provide rich descriptions, anatomy, and disorder tags.</div><div class="warning"><b>2 stale schema entries</b> do not match any current field: <code>brain.b_vs_L, brain.b_vs_R</code>. Remove from YAML or rename to match the current code.</div>
     
   <section class="section" id="brainparams">
-    <h2>BrainParams <small style="font-size:12px;font-weight:400;color:#888">(112 fields)</small></h2>
+    <h2>BrainParams <small style="font-size:12px;font-weight:400;color:#888">(121 fields)</small></h2>
     <p class="desc">Central neural model parameters — VS, NI, SG, gravity, vergence, accommodation, T-VOR, OCR, CN/MLF gains. Read by every brain submodule's <code>step()</code>.</p>
     
     <div class="subsection" id="brainparams-self_motion_estimation">
-      <h3>Self Motion Estimation <small style="font-size:11px;font-weight:400;color:#888">(17 fields)</small></h3>
+      <h3>Self Motion Estimation <small style="font-size:11px;font-weight:400;color:#888">(18 fields)</small></h3>
       <table class="param-table">
         <thead><tr>
           <th style="width:160px">Parameter</th>
@@ -308,170 +309,14 @@ tr:last-child { border-bottom: none; }
           <td class="anatomy-cell">MST translational flow → vestibular nuclei</td>
           <td></td>
         </tr>
-        </tbody>
-      </table>
-    </div>
-
-    <div class="subsection" id="brainparams-ungrouped">
-      <h3>Ungrouped <small style="font-size:11px;font-weight:400;color:#888">(15 fields)</small></h3>
-      <table class="param-table">
-        <thead><tr>
-          <th style="width:160px">Parameter</th>
-          <th style="width:90px">Default</th>
-          <th style="width:60px">Units</th>
-          <th style="width:110px">Valid range</th>
-          <th>Description</th>
-          <th style="width:170px">Anatomical locus</th>
-          <th style="width:200px">Disorders / notable values</th>
-        </tr></thead>
-        <tbody>
-        <tr>
-          <td class="param-name">v_crit_ec_gate<span class="todo">TODO: enrich schema</span></td>
-          <td><span class="default">50</span></td>
-          <td class="units"></td>
-          <td class="range-cell"></td>
-          <td class="desc-cell"><p>Hill threshold (deg/s); K=0.5 at this velocity.</p></td>
-          <td class="anatomy-cell"></td>
-          <td></td>
-        </tr>
 
         <tr>
-          <td class="param-name">n_ec_gate<span class="todo">TODO: enrich schema</span></td>
-          <td><span class="default">6</span></td>
-          <td class="units"></td>
-          <td class="range-cell"></td>
-          <td class="desc-cell"><p>Hill exponent.</p></td>
-          <td class="anatomy-cell"></td>
-          <td></td>
-        </tr>
-
-        <tr>
-          <td class="param-name">tau_ec_gate<span class="todo">TODO: enrich schema</span></td>
-          <td><span class="default">0.07</span></td>
-          <td class="units"></td>
-          <td class="range-cell"></td>
-          <td class="desc-cell"><p>1-pole LP TC for ec_vel_eye → mean delay = tau, peak of impulse response at t=0+ (anticipatory: fires immediately at saccade onset, ~50 ms earlier than the slip cascade's gamma peak at ≈40 ms). Tau matches slip cascade total mean delay (0.07 s).</p></td>
-          <td class="anatomy-cell"></td>
-          <td></td>
-        </tr>
-
-        <tr>
-          <td class="param-name">alpha_ec_dir<span class="todo">TODO: enrich schema</span></td>
-          <td><span class="default">0.4</span></td>
-          <td class="units"></td>
-          <td class="range-cell"></td>
-          <td class="desc-cell"><p>Directional gate sigmoid sharpness (1/(deg/s)). Sign-sensitive scalar gate on the EC-corrected slip, using the SIGNED projection of the *raw* delayed slip onto the ec_d direction. The intuition (per the saccade cascade plot): slip and EC are anti-parallel during self-motion, so a strongly *negative* projection means "slip and EC point opposite directions" — that's a self-motion case and the residual after EC sub should be suppressed harder. slip_dot = dot(raw_slip, ec_d_hat)   (signed deg/s) K = sigmoid((slip_dot + bias) · alpha) K large when slip_dot positive (same direction = real motion) or near zero (no slip → pass; matters for pursuit where raw target_slip ≈ 0). K small when slip_dot strongly negative (opposite to ec_d).</p></td>
-          <td class="anatomy-cell"></td>
-          <td></td>
-        </tr>
-
-        <tr>
-          <td class="param-name">bias_ec_dir<span class="todo">TODO: enrich schema</span></td>
-          <td><span class="default">15</span></td>
-          <td class="units"></td>
-          <td class="range-cell"></td>
-          <td class="desc-cell"><p>Sigmoid offset (deg/s); K=0.5 at slip_dot = -bias. K(0)≈0.998 (pursuit/quiescent slip), K(-15)=0.5, K(-25)≈0.018, K(-50)≈0. Larger bias = need more opposition before suppression triggers.</p></td>
-          <td class="anatomy-cell"></td>
-          <td></td>
-        </tr>
-
-        <tr>
-          <td class="param-name">tau_vis_sharp<span class="todo">TODO: enrich schema</span></td>
-          <td><span class="default">0.05</span></td>
-          <td class="units"></td>
-          <td class="range-cell"></td>
-          <td class="desc-cell"><p>sharp cascade mean delay (s); 6 stages × this/6 Shared by both scene and target EC cascades.</p></td>
-          <td class="anatomy-cell"></td>
-          <td></td>
-        </tr>
-
-        <tr>
-          <td class="param-name">tau_vis_smooth_motion<span class="todo">TODO: enrich schema</span></td>
-          <td><span class="default">0.02</span></td>
-          <td class="units"></td>
-          <td class="range-cell"></td>
-          <td class="desc-cell"><p>smoothing LP TC (s) for SCENE EC cascade. Must match SensoryParams.tau_vis_smooth_motion so the EC and slip cascades have the same shape → clean post-delay subtraction in brain_model.step.</p></td>
-          <td class="anatomy-cell"></td>
-          <td></td>
-        </tr>
-
-        <tr>
-          <td class="param-name">tau_vis_smooth_target_vel<span class="todo">TODO: enrich schema</span></td>
-          <td><span class="default">0.15</span></td>
-          <td class="units"></td>
-          <td class="range-cell"></td>
-          <td class="desc-cell"><p>smoothing LP TC (s) for TARGET EC cascade. Must match SensoryParams.tau_vis_smooth_target_vel. Heavier smoothing than scene because the visual target-velocity pathway is intrinsically slower (Krauzlis & Lisberger 1994).</p></td>
-          <td class="anatomy-cell"></td>
-          <td></td>
-        </tr>
-
-        <tr>
-          <td class="param-name">tau_vis_smooth_disparity<span class="todo">TODO: enrich schema</span></td>
-          <td><span class="default">0.15</span></td>
-          <td class="units"></td>
-          <td class="range-cell"></td>
-          <td class="desc-cell"><p>smoothing LP TC (s) for target_disparity cyclopean LP. V1 stereo correspondence is genuinely slow (~150 ms; Cumming & DeAngelis 2001).</p></td>
-          <td class="anatomy-cell"></td>
-          <td></td>
-        </tr>
-
-        <tr>
-          <td class="param-name">tau_vis_smooth_defocus<span class="todo">TODO: enrich schema</span></td>
-          <td><span class="default">0.2</span></td>
-          <td class="units"></td>
-          <td class="range-cell"></td>
-          <td class="desc-cell"><p>smoothing LP TC (s) for defocus cyclopean LP. Sloppy accommodation channel; combined with the lens plant TC (Schor & Bharadwaj 2006) produces realistic sluggish open-loop accommodation responses.</p></td>
-          <td class="anatomy-cell"></td>
-          <td></td>
-        </tr>
-
-        <tr>
-          <td class="param-name">tau_brain_pos<span class="todo">TODO: enrich schema</span></td>
-          <td><span class="default">0.03</span></td>
-          <td class="units"></td>
-          <td class="range-cell"></td>
-          <td class="desc-cell"><p>N-stage gamma TC (s) for target_pos / visibility brain phase (post-fusion). Total visual mean delay for these signals ≈ tau_vis_sharp + tau_brain_pos = 0.08 s.</p></td>
-          <td class="anatomy-cell"></td>
-          <td></td>
-        </tr>
-
-        <tr>
-          <td class="param-name">w_canal_gate<span class="todo">TODO: enrich schema</span></td>
-          <td><span class="default">2</span></td>
-          <td class="units"></td>
-          <td class="range-cell"></td>
-          <td class="desc-cell"><p>canal-gating threshold (deg/s) — Laurens 2017 Bayesian disambiguation extension. Used by the dynamic gate ρ = |ω × ĝ| / w_canal_gate; K_grav_eff = K_grav · √(1+ρ), K_lin_eff = K_lin / √(1+ρ). Lower threshold → gating engages at slower rotations. Set to 1e6 to disable for pure Laurens-2011 testing.</p></td>
-          <td class="anatomy-cell"></td>
-          <td></td>
-        </tr>
-
-        <tr>
-          <td class="param-name">listing_gain<span class="todo">TODO: enrich schema</span></td>
+          <td class="param-name">K_vor_direct</td>
           <td><span class="default">1</span></td>
-          <td class="units"></td>
-          <td class="range-cell"></td>
-          <td class="desc-cell"><p>master gain on the Listing's corrections (cyc_torsion_vel and cyclo_verg_rate). Set to 0 to disable both for debugging.</p></td>
-          <td class="anatomy-cell"></td>
-          <td></td>
-        </tr>
-
-        <tr>
-          <td class="param-name">proximal_d<span class="todo">TODO: enrich schema</span></td>
-          <td><span class="default">0</span></td>
-          <td class="units"></td>
-          <td class="range-cell"></td>
-          <td class="desc-cell"><p>perceived-distance prior (D = 1/m). Drives BOTH vergence (residual = proximal·IPD·180/π − u_verg[H]) and accommodation (residual = proximal − u_acc) toward a perceived-near target. The fast integrators absorb the residual; vision wins when present (closed-loop). Distinct from motor priors tonic_verg / tonic_acc: proximal_d is a perceptual-cue parameter (HMD, instrument myopia, awareness-of-near). 0 = no proximal effect. Zee (1992) SVBN saccadic vergence burst — asymmetric saturating gain y = sign(disp) · g · (1 − exp(−|disp|/X))     (deg/s); fires while OPN pauses (z_act≈1) Convergence much stronger than divergence (Zee Table 1: ~50°/s vs ~12°/s peaks). Set g_svbn_conv = g_svbn_div = 0 to disable the burst (slow vergence only). Zee (1992) Table 1: pure conv peak velocity 41–58 °/s for 10° amplitude; pure div 9.5–13 °/s for 2.5°. Saturating exponential y = g·(1 − exp(−|disp|/X)) tuned so y(10°, conv) ≈ 60·(1−e^{-10/3}) ≈ 58 °/s and y(2.5°, div) ≈ 14·(1−e^{-2.5/1}) ≈ 13 °/s.</p></td>
-          <td class="anatomy-cell"></td>
-          <td></td>
-        </tr>
-
-        <tr>
-          <td class="param-name">K_phasic_tvor<span class="todo">TODO: enrich schema</span></td>
-          <td><span class="default">1</span></td>
-          <td class="units"></td>
-          <td class="range-cell"></td>
-          <td class="desc-cell"><p>T-VOR direct (phasic) pathway gain (s) — multiplies a_lin in the cross-product formula to give a fast onset velocity that bypasses the heading-estimator (v_lin) integrator. Implicit units: s, since it converts a_lin (m/s²) into a v-equivalent (m/s) for the cross product. ~0.1–0.3 matches the ~100 ms short-latency T-VOR onset reported by Paige & Tomko (1991), Angelaki et al. (1999). Set 0 to disable direct pathway (integrator-only T-VOR).</p></td>
-          <td class="anatomy-cell"></td>
+          <td class="units">—</td>
+          <td class="range-cell">[0, +∞]</td>
+          <td class="desc-cell"><p>Postsynaptic gain on the gated raw scene slip feeding velocity storage — the OKR/VOR analog of K_pursuit_direct.  Pairs with K_cereb_okr.</p></td>
+          <td class="anatomy-cell">Brainstem reactive OKR pathway (raw scene slip → VS)</td>
           <td></td>
         </tr>
         </tbody>
@@ -559,6 +404,202 @@ tr:last-child { border-bottom: none; }
           <td class="desc-cell"><p>Null-adaptation TC: x_null slowly tracks current net position. After sustained eccentric gaze, x_null = E; on return to centre, NI leaks toward x_null = E → eye drifts back → corrective fast phase = rebound nystagmus.</p><div class="refs">Zee et al. (1980)</div></td>
           <td class="anatomy-cell">NPH null-adaptation circuit (cerebellar input)</td>
           <td><span class="tag tag-cerebellar">No rebound (cerebellar): 1000000</span></td>
+        </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="subsection" id="brainparams-ungrouped">
+      <h3>Ungrouped <small style="font-size:11px;font-weight:400;color:#888">(18 fields)</small></h3>
+      <table class="param-table">
+        <thead><tr>
+          <th style="width:160px">Parameter</th>
+          <th style="width:90px">Default</th>
+          <th style="width:60px">Units</th>
+          <th style="width:110px">Valid range</th>
+          <th>Description</th>
+          <th style="width:170px">Anatomical locus</th>
+          <th style="width:200px">Disorders / notable values</th>
+        </tr></thead>
+        <tbody>
+        <tr>
+          <td class="param-name">tau_vis_sharp<span class="todo">TODO: enrich schema</span></td>
+          <td><span class="default">0.05</span></td>
+          <td class="units"></td>
+          <td class="range-cell"></td>
+          <td class="desc-cell"><p>sharp cascade mean delay (s); 6 stages × this/6 Shared by both scene and target EC cascades.</p></td>
+          <td class="anatomy-cell"></td>
+          <td></td>
+        </tr>
+
+        <tr>
+          <td class="param-name">tau_vis_smooth_motion<span class="todo">TODO: enrich schema</span></td>
+          <td><span class="default">0.02</span></td>
+          <td class="units"></td>
+          <td class="range-cell"></td>
+          <td class="desc-cell"><p>smoothing LP TC (s) for SCENE EC cascade. Must match SensoryParams.tau_vis_smooth_motion so the EC and slip cascades have the same shape → clean post-delay subtraction in brain_model.step.</p></td>
+          <td class="anatomy-cell"></td>
+          <td></td>
+        </tr>
+
+        <tr>
+          <td class="param-name">tau_vis_smooth_target_vel<span class="todo">TODO: enrich schema</span></td>
+          <td><span class="default">0.075</span></td>
+          <td class="units"></td>
+          <td class="range-cell"></td>
+          <td class="desc-cell"><p>smoothing LP TC (s) for TARGET EC cascade. Must match SensoryParams.tau_vis_smooth_target_vel. Heavier smoothing than scene because the visual target-velocity pathway is intrinsically slower (Krauzlis & Lisberger 1994).</p></td>
+          <td class="anatomy-cell"></td>
+          <td></td>
+        </tr>
+
+        <tr>
+          <td class="param-name">tau_vis_smooth_disparity<span class="todo">TODO: enrich schema</span></td>
+          <td><span class="default">0.15</span></td>
+          <td class="units"></td>
+          <td class="range-cell"></td>
+          <td class="desc-cell"><p>smoothing LP TC (s) for target_disparity cyclopean LP. V1 stereo correspondence is genuinely slow (~150 ms; Cumming & DeAngelis 2001).</p></td>
+          <td class="anatomy-cell"></td>
+          <td></td>
+        </tr>
+
+        <tr>
+          <td class="param-name">tau_vis_smooth_defocus<span class="todo">TODO: enrich schema</span></td>
+          <td><span class="default">0.2</span></td>
+          <td class="units"></td>
+          <td class="range-cell"></td>
+          <td class="desc-cell"><p>smoothing LP TC (s) for defocus cyclopean LP. Sloppy accommodation channel; combined with the lens plant TC (Schor & Bharadwaj 2006) produces realistic sluggish open-loop accommodation responses.</p></td>
+          <td class="anatomy-cell"></td>
+          <td></td>
+        </tr>
+
+        <tr>
+          <td class="param-name">tau_brain_pos<span class="todo">TODO: enrich schema</span></td>
+          <td><span class="default">0.015</span></td>
+          <td class="units"></td>
+          <td class="range-cell"></td>
+          <td class="desc-cell"><p>N-stage gamma TC (s) for target_pos / visibility brain phase (post-fusion). Total visual mean delay for these signals ≈ tau_vis_sharp + tau_brain_pos = 0.08 s.</p></td>
+          <td class="anatomy-cell"></td>
+          <td></td>
+        </tr>
+
+        <tr>
+          <td class="param-name">tau_fac<span class="todo">TODO: enrich schema</span></td>
+          <td><span class="default">0.02</span></td>
+          <td class="units"></td>
+          <td class="range-cell"></td>
+          <td class="desc-cell"><p>BN facilitation rise/decay TC (s)</p></td>
+          <td class="anatomy-cell"></td>
+          <td></td>
+        </tr>
+
+        <tr>
+          <td class="param-name">tau_dep<span class="todo">TODO: enrich schema</span></td>
+          <td><span class="default">0.1</span></td>
+          <td class="units"></td>
+          <td class="range-cell"></td>
+          <td class="desc-cell"><p>BN depression follower TC (s) — sets post-saccadic recovery duration</p></td>
+          <td class="anatomy-cell"></td>
+          <td></td>
+        </tr>
+
+        <tr>
+          <td class="param-name">alpha_fac<span class="todo">TODO: enrich schema</span></td>
+          <td><span class="default">0</span></td>
+          <td class="units"></td>
+          <td class="range-cell"></td>
+          <td class="desc-cell"><p>facilitation gain: g_dyn rises by alpha_fac × z_fac during burst</p></td>
+          <td class="anatomy-cell"></td>
+          <td></td>
+        </tr>
+
+        <tr>
+          <td class="param-name">alpha_dep<span class="todo">TODO: enrich schema</span></td>
+          <td><span class="default">0</span></td>
+          <td class="units"></td>
+          <td class="range-cell"></td>
+          <td class="desc-cell"><p>depression gain: g_dyn dips by alpha_dep × z_dep after burst</p></td>
+          <td class="anatomy-cell"></td>
+          <td></td>
+        </tr>
+
+        <tr>
+          <td class="param-name">w_canal_gate<span class="todo">TODO: enrich schema</span></td>
+          <td><span class="default">2</span></td>
+          <td class="units"></td>
+          <td class="range-cell"></td>
+          <td class="desc-cell"><p>canal-gating threshold (deg/s) — Laurens 2017 Bayesian disambiguation extension. Used by the dynamic gate ρ = |ω × ĝ| / w_canal_gate; K_grav_eff = K_grav · √(1+ρ), K_lin_eff = K_lin / √(1+ρ). Lower threshold → gating engages at slower rotations. Set to 1e6 to disable for pure Laurens-2011 testing.</p></td>
+          <td class="anatomy-cell"></td>
+          <td></td>
+        </tr>
+
+        <tr>
+          <td class="param-name">listing_gain<span class="todo">TODO: enrich schema</span></td>
+          <td><span class="default">1</span></td>
+          <td class="units"></td>
+          <td class="range-cell"></td>
+          <td class="desc-cell"><p>master gain on the Listing's corrections (cyc_torsion_vel and cyclo_verg_rate). Set to 0 to disable both for debugging.</p></td>
+          <td class="anatomy-cell"></td>
+          <td></td>
+        </tr>
+
+        <tr>
+          <td class="param-name">proximal_d<span class="todo">TODO: enrich schema</span></td>
+          <td><span class="default">0</span></td>
+          <td class="units"></td>
+          <td class="range-cell"></td>
+          <td class="desc-cell"><p>perceived-distance prior (D = 1/m). Drives BOTH vergence (residual = proximal·IPD·180/π − u_verg[H]) and accommodation (residual = proximal − u_acc) toward a perceived-near target. The fast integrators absorb the residual; vision wins when present (closed-loop). Distinct from motor priors tonic_verg / tonic_acc: proximal_d is a perceptual-cue parameter (HMD, instrument myopia, awareness-of-near). 0 = no proximal effect. Zee (1992) SVBN saccadic vergence burst — asymmetric saturating gain y = sign(disp) · g · (1 − exp(−|disp|/X))     (deg/s); fires while OPN pauses (z_act≈1) Convergence much stronger than divergence (Zee Table 1: ~50°/s vs ~12°/s peaks). Set g_svbn_conv = g_svbn_div = 0 to disable the burst (slow vergence only). Zee (1992) Table 1: pure conv peak velocity 41–58 °/s for 10° amplitude; pure div 9.5–13 °/s for 2.5°. Saturating exponential y = g·(1 − exp(−|disp|/X)) tuned so y(10°, conv) ≈ 60·(1−e^{-10/3}) ≈ 58 °/s and y(2.5°, div) ≈ 14·(1−e^{-2.5/1}) ≈ 13 °/s.</p></td>
+          <td class="anatomy-cell"></td>
+          <td></td>
+        </tr>
+
+        <tr>
+          <td class="param-name">K_phasic_tvor<span class="todo">TODO: enrich schema</span></td>
+          <td><span class="default">1</span></td>
+          <td class="units"></td>
+          <td class="range-cell"></td>
+          <td class="desc-cell"><p>T-VOR direct (phasic) pathway gain (s) — multiplies a_lin in the cross-product formula to give a fast onset velocity that bypasses the heading-estimator (v_lin) integrator. Implicit units: s, since it converts a_lin (m/s²) into a v-equivalent (m/s) for the cross product. ~0.1–0.3 matches the ~100 ms short-latency T-VOR onset reported by Paige & Tomko (1991), Angelaki et al. (1999). Set 0 to disable direct pathway (integrator-only T-VOR).</p></td>
+          <td class="anatomy-cell"></td>
+          <td></td>
+        </tr>
+
+        <tr>
+          <td class="param-name">mlf_axis_weight<span class="todo">TODO: enrich schema</span></td>
+          <td><span class="default">[0.5, 0.0, 0.0]</span></td>
+          <td class="units"></td>
+          <td class="range-cell"></td>
+          <td class="desc-cell"><p>(no description)</p></td>
+          <td class="anatomy-cell"></td>
+          <td></td>
+        </tr>
+
+        <tr>
+          <td class="param-name">saccadic_suppression_threshold<span class="todo">TODO: enrich schema</span></td>
+          <td><span class="default">0.85</span></td>
+          <td class="units"></td>
+          <td class="range-cell"></td>
+          <td class="desc-cell"><p>raw_gate ≤ this → fully suppressed</p></td>
+          <td class="anatomy-cell"></td>
+          <td></td>
+        </tr>
+
+        <tr>
+          <td class="param-name">saccadic_suppression_steepness<span class="todo">TODO: enrich schema</span></td>
+          <td><span class="default">6</span></td>
+          <td class="units"></td>
+          <td class="range-cell"></td>
+          <td class="desc-cell"><p>power applied to thresholded gate 1.0 = transparent (ceiling >> normal burst); <1 = conduction block Nerve order: [LR_L,MR_L,SR_L,IR_L,SO_L,IO_L, LR_R,MR_R,SR_R,IR_R,SO_R,IO_R] INO: g_nerve[MR_L or MR_R] ↓  →  adducting saccades slow, fixation preserved CN6: g_nerve[LR_L or LR_R] ↓  →  abduction limited</p></td>
+          <td class="anatomy-cell"></td>
+          <td></td>
+        </tr>
+
+        <tr>
+          <td class="param-name">K_cereb_fl_vs<span class="todo">TODO: enrich schema</span></td>
+          <td><span class="default">0</span></td>
+          <td class="units"></td>
+          <td class="range-cell"></td>
+          <td class="desc-cell"><p>floccular VS leak-cancellation gain. Same Cannon-Robinson architecture applied to velocity storage. Default 0 because the current tau_vs = 20 s already represents the FL-extended effective TC; enabling this on top would push tau_vs → ∞ and break OKAN. To opt in: shorten tau_vs to its intrinsic brainstem value (~5 s) and set K_cereb_fl_vs = 0.75 to restore effective tau_vs ≈ 20 s with an explicit FL contribution that can be lesioned (K = 0 → tau_vs ≈ intrinsic 5 s, shortened OKAN).</p></td>
+          <td class="anatomy-cell"></td>
+          <td></td>
         </tr>
         </tbody>
       </table>
@@ -973,7 +1014,7 @@ tr:last-child { border-bottom: none; }
     </div>
 
     <div class="subsection" id="brainparams-pursuit">
-      <h3>Pursuit <small style="font-size:11px;font-weight:400;color:#888">(4 fields)</small></h3>
+      <h3>Pursuit <small style="font-size:11px;font-weight:400;color:#888">(5 fields)</small></h3>
       <table class="param-table">
         <thead><tr>
           <th style="width:160px">Parameter</th>
@@ -1022,6 +1063,16 @@ tr:last-child { border-bottom: none; }
           <td class="range-cell"></td>
           <td class="desc-cell"><p>MT/MST velocity saturation. Pursuit gain ≈1 up to ~30–40 deg/s, then falls (Fuchs 1967, Lisberger & Westbrook 1985).</p><div class="refs">Fuchs (1967) J Physiol · Lisberger & Westbrook (1985) J Neurosci</div></td>
           <td class="anatomy-cell">MT/MST velocity tuning ceiling</td>
+          <td></td>
+        </tr>
+
+        <tr>
+          <td class="param-name">K_pursuit_direct</td>
+          <td><span class="default">1</span></td>
+          <td class="units">—</td>
+          <td class="range-cell">[0, +∞]</td>
+          <td class="desc-cell"><p>Postsynaptic gain on the gated raw target slip (= saccadic_suppression · cyc.target_vel) that forms the brainstem direct pursuit drive.  Pairs with K_cereb_pu (cerebellar EC-correction).  Set to 0 to leave pursuit driven only by the cerebellar EC prediction.</p></td>
+          <td class="anatomy-cell">Brainstem reactive pursuit pathway (raw target slip)</td>
           <td></td>
         </tr>
         </tbody>
@@ -1417,6 +1468,62 @@ tr:last-child { border-bottom: none; }
           <td class="desc-cell"><p>Conduction cap on the right MLF axon tract.  Symmetric to g_mlf_L: 0 = right INO; partial = recovering.  Bilateral INO when both = 0.</p></td>
           <td class="anatomy-cell">Right MLF axon conduction (AIN_L → MR_R pathway)</td>
           <td><span class="tag tag-ino">Right INO: 0.0</span> <span class="tag tag-ino">Bilateral INO (BIMLF): 0.0</span></td>
+        </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="subsection" id="brainparams-cerebellum">
+      <h3>Cerebellum <small style="font-size:11px;font-weight:400;color:#888">(4 fields)</small></h3>
+      <table class="param-table">
+        <thead><tr>
+          <th style="width:160px">Parameter</th>
+          <th style="width:90px">Default</th>
+          <th style="width:60px">Units</th>
+          <th style="width:110px">Valid range</th>
+          <th>Description</th>
+          <th style="width:170px">Anatomical locus</th>
+          <th style="width:200px">Disorders / notable values</th>
+        </tr></thead>
+        <tbody>
+        <tr>
+          <td class="param-name">K_cereb_pu<span class="llm-tag" title="Exposed in the LLM Patient schema">LLM</span></td>
+          <td><span class="default">1</span></td>
+          <td class="units">—</td>
+          <td class="range-cell">[0, +∞]</td>
+          <td class="desc-cell"><p>Cerebellar pursuit EC-correction gain.  Multiplies the gated efference- copy correction added to the brainstem-direct pursuit slip.  1 = healthy (self-motion contamination of target slip cancelled, pursuit saccadic suppression intact); 0 = flocculus/paraflocculus pursuit lesion — pursuit driven by raw slip only, reduced gain during head motion, no pursuit saccadic suppression.</p></td>
+          <td class="anatomy-cell">Ventral paraflocculus / vermis VI–VII → pursuit pathway</td>
+          <td><span class="tag tag-cerebellar">Flocculus pursuit lesion: 0.0</span></td>
+        </tr>
+
+        <tr>
+          <td class="param-name">K_cereb_okr<span class="llm-tag" title="Exposed in the LLM Patient schema">LLM</span></td>
+          <td><span class="default">1</span></td>
+          <td class="units">—</td>
+          <td class="range-cell">[0, +∞]</td>
+          <td class="desc-cell"><p>Cerebellar OKR/VOR scene-path EC-correction gain.  Analog of K_cereb_pu for the velocity-storage / OKR pathway.  1 = healthy; 0 = VS driven by raw (gated) retinal scene slip only — loss of the cerebellar EC cancellation on the OKR pathway.</p></td>
+          <td class="anatomy-cell">Flocculus / vermis OKR adaptation → vestibular nuclei</td>
+          <td><span class="tag tag-cerebellar">Flocculus OKR EC-correction lesion: 0.0</span></td>
+        </tr>
+
+        <tr>
+          <td class="param-name">K_cereb_fl<span class="llm-tag" title="Exposed in the LLM Patient schema">LLM</span></td>
+          <td><span class="default">1</span></td>
+          <td class="units">—</td>
+          <td class="range-cell">[0, 1]</td>
+          <td class="desc-cell"><p>Floccular leak-cancellation gain for the position neural integrator. 1 = leak fully cancelled (near-perfect NI); 0 = no cancellation → NI leaks at its intrinsic tau_i (~25 s), producing centripetal drift / gaze-evoked nystagmus.  For pronounced GEN combine K_cereb_fl=0 with a short tau_i (3–8 s).</p><div class="refs">Cannon & Robinson (1985)</div></td>
+          <td class="anatomy-cell">Flocculus → NPH/MVN (Cannon & Robinson 1985)</td>
+          <td><span class="tag tag-cerebellar">Floccular gaze-evoked nystagmus: 0.0</span></td>
+        </tr>
+
+        <tr>
+          <td class="param-name">K_cereb_nu<span class="llm-tag" title="Exposed in the LLM Patient schema">LLM</span></td>
+          <td><span class="default">1</span></td>
+          <td class="units">—</td>
+          <td class="range-cell">[0, +∞]</td>
+          <td class="desc-cell"><p>Nodulus-uvula gravity-dumping gain.  1 = healthy (VS rotation axis dumped toward gravity → tilt suppression of post-rotatory nystagmus, bounded velocity-storage TC); 0 = nodulus/uvula lesion → prolonged velocity storage, loss of tilt suppression, periodic alternating nystagmus (combine with tau_vs_adapt ≈ 45 s for PAN).</p><div class="refs">Cohen, Raphan & Wearne (1990s)</div></td>
+          <td class="anatomy-cell">Nodulus + uvula → vestibular nuclei (Cohen, Raphan, Wearne)</td>
+          <td><span class="tag tag-cerebellar">Nodulus/uvula lesion: 0.0</span></td>
         </tr>
         </tbody>
       </table>

@@ -652,6 +652,86 @@ brain.K_pursuit:
   disorders:
     - {name: "Cerebellar pursuit deficit", value: 0.3, tag: cerebellar}
 
+brain.K_cereb_fl:
+  range: [0, 1]
+  group: cerebellum
+  units: "—"
+  anatomy: "Flocculus → NPH/MVN (Cannon & Robinson 1985)"
+  description: |
+    Floccular leak-cancellation gain for the position neural integrator.
+    1 = leak fully cancelled (near-perfect NI); 0 = no cancellation → NI
+    leaks at its intrinsic tau_i (~25 s), producing centripetal drift /
+    gaze-evoked nystagmus.  For pronounced GEN combine K_cereb_fl=0 with a
+    short tau_i (3–8 s).
+  references:
+    - "Cannon & Robinson (1985)"
+  disorders:
+    - {name: "Floccular gaze-evoked nystagmus", value: 0.0, tag: cerebellar}
+
+brain.K_cereb_pu:
+  range: [0, null]
+  group: cerebellum
+  units: "—"
+  anatomy: "Ventral paraflocculus / vermis VI–VII → pursuit pathway"
+  description: |
+    Cerebellar pursuit EC-correction gain.  Multiplies the gated efference-
+    copy correction added to the brainstem-direct pursuit slip.  1 = healthy
+    (self-motion contamination of target slip cancelled, pursuit saccadic
+    suppression intact); 0 = flocculus/paraflocculus pursuit lesion — pursuit
+    driven by raw slip only, reduced gain during head motion, no pursuit
+    saccadic suppression.
+  disorders:
+    - {name: "Flocculus pursuit lesion", value: 0.0, tag: cerebellar}
+
+brain.K_cereb_okr:
+  range: [0, null]
+  group: cerebellum
+  units: "—"
+  anatomy: "Flocculus / vermis OKR adaptation → vestibular nuclei"
+  description: |
+    Cerebellar OKR/VOR scene-path EC-correction gain.  Analog of K_cereb_pu
+    for the velocity-storage / OKR pathway.  1 = healthy; 0 = VS driven by
+    raw (gated) retinal scene slip only — loss of the cerebellar EC
+    cancellation on the OKR pathway.
+  disorders:
+    - {name: "Flocculus OKR EC-correction lesion", value: 0.0, tag: cerebellar}
+
+brain.K_cereb_nu:
+  range: [0, null]
+  group: cerebellum
+  units: "—"
+  anatomy: "Nodulus + uvula → vestibular nuclei (Cohen, Raphan, Wearne)"
+  description: |
+    Nodulus-uvula gravity-dumping gain.  1 = healthy (VS rotation axis
+    dumped toward gravity → tilt suppression of post-rotatory nystagmus,
+    bounded velocity-storage TC); 0 = nodulus/uvula lesion → prolonged
+    velocity storage, loss of tilt suppression, periodic alternating
+    nystagmus (combine with tau_vs_adapt ≈ 45 s for PAN).
+  references:
+    - "Cohen, Raphan & Wearne (1990s)"
+  disorders:
+    - {name: "Nodulus/uvula lesion", value: 0.0, tag: cerebellar}
+
+brain.K_pursuit_direct:
+  range: [0, null]
+  group: pursuit
+  units: "—"
+  anatomy: "Brainstem reactive pursuit pathway (raw target slip)"
+  description: |
+    Postsynaptic gain on the gated raw target slip (= saccadic_suppression ·
+    cyc.target_vel) that forms the brainstem direct pursuit drive.  Pairs
+    with K_cereb_pu (cerebellar EC-correction).  Set to 0 to leave pursuit
+    driven only by the cerebellar EC prediction.
+
+brain.K_vor_direct:
+  range: [0, null]
+  group: self_motion_estimation
+  units: "—"
+  anatomy: "Brainstem reactive OKR pathway (raw scene slip → VS)"
+  description: |
+    Postsynaptic gain on the gated raw scene slip feeding velocity storage —
+    the OKR/VOR analog of K_pursuit_direct.  Pairs with K_cereb_okr.
+
 brain.K_phasic_pursuit:
   range: [0, null]
   group: pursuit

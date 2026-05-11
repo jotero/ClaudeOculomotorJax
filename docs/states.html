@@ -113,7 +113,7 @@ tr:last-child { border-bottom: none; }
 <main>
   <h1>Model states &amp; activations</h1>
   <div class="meta">
-    52 entries · 42 LLM-plottable ·
+    54 entries · 44 LLM-plottable ·
     Source: <code>docs/states_schema.yaml</code> ·
     Companion to <a href="parameters.html">parameters.html</a>.
   </div>
@@ -389,7 +389,7 @@ tr:last-child { border-bottom: none; }
     </div>
 
     <div class="subsection" id="brain-pursuit">
-      <h3>Pursuit <small style="font-size:11px;font-weight:400;color:#888">(1 signal)</small></h3>
+      <h3>Pursuit <small style="font-size:11px;font-weight:400;color:#888">(3 signals)</small></h3>
       <table>
         <thead><tr>
           <th style="width:140px">Signal</th>
@@ -404,15 +404,43 @@ tr:last-child { border-bottom: none; }
         </tr></thead>
         <tbody>
         <tr>
-          <td class="signal-name">pursuit <span class="llm-tag" title="Exposable to LLM custom-panel signal picker">LLM</span></td>
+          <td class="signal-name">pursuit_R <span class="llm-tag" title="Exposable to LLM custom-panel signal picker">LLM</span></td>
+          <td class="shape-cell">(3)</td>
+          <td class="axes-cell">yaw, pitch, roll</td>
+          <td class="units">deg/s (firing-rate equivalent)</td>
+          <td><div class="encodes-cell">rightward / upward / extorting pursuit memory (push-pull pop)</div><div class="frame-cell">frame: head</div></td>
+          <td><span class="repr-tag repr-rectified">rectified-firing-rate</span><div class="activation-cell">activation: max(state, 0)  — non-negative directional firing rate</div><div class="baseline-cell">baseline: 0 deg/s (rest)</div></td>
+          <td class="desc-cell"><p>Rightward/upward/extorting half of the bilateral pursuit integrator. Each axis integrates only the rectified positive part of the Smith predictor error  e_pred = (target_slip_ec − x_net) / (1 + K_phasic). Identity  max(0, e) − max(0, −e) = e  preserves the net Smith dynamics of the pre-bilateral single-integrator model.</p><div class="population">ipsi-direction-preferring MT/MST</div><div class="refs">Lisberger (1988) · Krauzlis & Lisberger (1994)</div></td>
+          <td class="anatomy-cell"><div><span class="ax-tag">y · a · w</span> Right MT/MST + cerebellar flocculus (rightward-preferring)</div>
+<div><span class="ax-tag">p · i · t · c · h</span> Right MT/MST (upward-preferring)</div>
+<div><span class="ax-tag">r · o · l · l</span> Right MT/MST (extorting-preferring)</div></td>
+          <td><span class="computation">brain[_IDX_PURSUIT][0:3]</span></td>
+        </tr>
+
+        <tr>
+          <td class="signal-name">pursuit_L <span class="llm-tag" title="Exposable to LLM custom-panel signal picker">LLM</span></td>
+          <td class="shape-cell">(3)</td>
+          <td class="axes-cell">yaw, pitch, roll</td>
+          <td class="units">deg/s (firing-rate equivalent)</td>
+          <td><div class="encodes-cell">leftward / downward / intorting pursuit memory (push-pull pop)</div><div class="frame-cell">frame: head</div></td>
+          <td><span class="repr-tag repr-rectified">rectified-firing-rate</span><div class="activation-cell">activation: max(state, 0)  — non-negative directional firing rate</div><div class="baseline-cell">baseline: 0 deg/s (rest)</div></td>
+          <td class="desc-cell"><p>Leftward/downward/intorting half of the bilateral pursuit integrator. Mirror of pursuit_R — integrates the rectified negative part of the Smith predictor error.</p><div class="population">contra-direction-preferring MT/MST</div><div class="refs">Lisberger (1988) · Krauzlis & Lisberger (1994)</div></td>
+          <td class="anatomy-cell"><div><span class="ax-tag">y · a · w</span> Left MT/MST + cerebellar flocculus (leftward-preferring)</div>
+<div><span class="ax-tag">p · i · t · c · h</span> Left MT/MST (downward-preferring)</div>
+<div><span class="ax-tag">r · o · l · l</span> Left MT/MST (intorting-preferring)</div></td>
+          <td><span class="computation">brain[_IDX_PURSUIT][3:6]</span></td>
+        </tr>
+
+        <tr>
+          <td class="signal-name">pursuit_net <span class="llm-tag" title="Exposable to LLM custom-panel signal picker">LLM</span></td>
           <td class="shape-cell">(3)</td>
           <td class="axes-cell">yaw, pitch, roll</td>
           <td class="units">deg/s</td>
-          <td><div class="encodes-cell">pursuit eye-velocity command (Smith-predictor integrator)</div><div class="frame-cell">frame: head</div></td>
-          <td><span class="repr-tag repr-firing-rate">linear-firing-rate</span><div class="activation-cell">activation: state  (signed; downstream consumers read directly — bilateral split deferred to Phase 3)</div></td>
-          <td class="desc-cell"><p>Leaky pursuit integrator state — eye-velocity command for smooth pursuit.  K_pursuit controls rise TC; tau_pursuit the leak.  Smith predictor cancels saccadic contamination via efference copy.</p><div class="refs">Lisberger (1988) · Krauzlis & Lisberger (1994)</div></td>
-          <td class="anatomy-cell">Pursuit integrator (cerebellar floc/paraflocculus + MST)</td>
-          <td><span class="computation">brain[_IDX_PURSUIT]</span></td>
+          <td><div class="encodes-cell">signed pursuit memory (NET = pursuit_R − pursuit_L)</div><div class="frame-cell">frame: head</div></td>
+          <td><span class="repr-tag repr-firing-rate">linear-firing-rate</span><div class="activation-cell">activation: x_R − x_L  (signed)</div></td>
+          <td class="desc-cell"><p>Net signed pursuit memory — what the eye actually receives.  Identical in dynamics to the pre-bilateral single-integrator state, by construction (push-pull populations preserve the linear Smith predictor exactly).</p><div class="refs">Lisberger (1988) · Krauzlis & Lisberger (1994)</div></td>
+          <td class="anatomy-cell">Pursuit integrator NET (downstream readout to NI / EC cascade)</td>
+          <td><span class="computation">pursuit.decode_states(acts).net = acts.R − acts.L</span></td>
         </tr>
         </tbody>
       </table>
@@ -1030,9 +1058,9 @@ tr:last-child { border-bottom: none; }
           <td class="units">deg/s</td>
           <td><div class="encodes-cell">pursuit velocity command (integrator + phasic feed-through)</div><div class="frame-cell">frame: head</div></td>
           <td><span class="repr-tag repr-firing-rate">linear-firing-rate</span><div class="activation-cell">activation: state</div></td>
-          <td class="desc-cell"><p>Smooth-pursuit eye-velocity command.  Sum of leaky integrator (x_pursuit) and phasic direct-path feed-through (K_phasic_pursuit · target_slip).</p></td>
+          <td class="desc-cell"><p>Smooth-pursuit eye-velocity command.  Sum of NET pursuit memory (x_R − x_L) and phasic direct-path feed-through (K_phasic_pursuit · e_pred).</p></td>
           <td class="anatomy-cell">Pursuit velocity drive (integrator + phasic feed-through)</td>
-          <td><span class="computation">x_pursuit + K_phasic_pursuit · e_vel_pred</span></td>
+          <td><span class="computation">(x_pursuit_R − x_pursuit_L) + K_phasic_pursuit · e_vel_pred</span></td>
         </tr>
         </tbody>
       </table>

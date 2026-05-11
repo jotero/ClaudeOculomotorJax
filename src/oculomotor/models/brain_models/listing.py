@@ -34,34 +34,31 @@ import jax.numpy as jnp
 HALF_ANGLE = jnp.pi / 360.0
 
 
-def listing_corrections(eye_pos, vel_hv, vergence_angle, primary_pos, l2_frac):
-    """Combined Listing's-law corrections — three outputs used by brain_model.
+def listing_corrections(eye_pos, vel_hv, vergence_angle, primary_pos, l2_frac, gain):
+    """Combined Listing's-law corrections — three 3-D vectors ready to add.
 
-      cyc_torsion_vel    → add to the SUMMED velocity command's torsion axis
-                           (u_total[2]) BEFORE NI integration. Ensures the
-                           cyclopean eye position satisfies the half-angle rule
-                           DURING the gaze shift.
+      u_ni_correction → add directly to u_ni_in.  Cyclopean half-angle
+                        velocity correction on the torsion axis (axis 2).
+                        Ensures eye position satisfies the half-angle rule
+                        DURING the gaze shift.
 
-      cyc_torsion_target → add to NI's u_tonic torsion axis. Acts as a Listing-
-                           consistent set-point so the NI's leak naturally pulls
-                           torsion toward Listing's plane between/after movements,
-                           rather than relying on the velocity correction alone
-                           to fight the leak.
+      u_tonic_listing → add directly to u_tonic.  Listing-prescribed torsion
+                        set-point that the NI's leak pulls toward, so torsion
+                        relaxes onto Listing's plane between/after movements.
 
-      cyclo_verg_rate    → add to the vergence cyclo-vergence axis input
-                           (verg_rate_tvor[2] in the vergence step). Drives the
-                           per-eye torsion difference (T_L − T_R) that arises
-                           when each eye's Listing plane tilts ±verg/2 around
-                           head-vertical and the eye moves vertically.
+      verg_rate_listing → add directly to verg_rate_tvor.  Cyclo-vergence
+                        rate from the L2 component (each eye's Listing plane
+                        tilted ±verg/2 about head-vertical → per-eye torsion
+                        difference T_L − T_R when the eye moves vertically).
+
+    All three returns are pre-multiplied by `gain` and embedded into 3-D
+    vectors with the non-torsion axes zero, so the caller just does
+    `u_ni_in += listing.listing_corrections(...)[0]` without any indexing.
 
     Math:
-      Cyclopean half-angle (set-point and rate):
-        T_LL(H, V)   =  −(H − H₀)·(V − V₀)·π/360                (set-point)
-        Ṫ_LL         =  −π/360 · [(H − H₀)·V̇ + (V − V₀)·Ḣ]     (rate)
-
-      L2 (each eye's Listing plane tilts ±verg/2 about head-vertical):
-        Cyclo-vergence rate (T_L − T_R) = −V̇ · sin(verg) ≈ −V̇ · verg [rad]
-        Convert verg from deg → rad:  rate = −l2_frac · V̇ · radians(verg)
+      T_LL(H, V)  =  −(H − H₀)·(V − V₀)·π/360                 (set-point)
+      Ṫ_LL        =  −π/360 · [(H − H₀)·V̇ + (V − V₀)·Ḣ]     (rate)
+      L2 rate     =  −l2_frac · V̇ · radians(verg)              (cyclo-vergence)
 
     Args:
         eye_pos        : (3,) cyclopean eye position [H, V, T] (deg)
@@ -69,11 +66,13 @@ def listing_corrections(eye_pos, vel_hv, vergence_angle, primary_pos, l2_frac):
         vergence_angle : scalar absolute vergence (deg)
         primary_pos    : (2,) [H₀, V₀] primary position (deg)
         l2_frac        : scalar [0..1] L2 fraction (0 = disabled, 0.5 = physiological)
+        gain           : scalar  multiplier applied to all three outputs
+                                 (`brain_params.listing_gain`)
 
     Returns:
-        cyc_torsion_vel    : float  cyclopean torsional velocity correction (deg/s)
-        cyc_torsion_target : float  Listing-prescribed torsion set-point (deg)
-        cyclo_verg_rate    : float  cyclo-vergence rate from L2 (deg/s)
+        u_ni_correction   : (3,) [0, 0, gain · cyc_torsion_vel]      → u_ni_in
+        u_tonic_listing   : (3,) [0, 0, gain · cyc_torsion_target]   → u_tonic
+        verg_rate_listing : (3,) [0, 0, gain · cyclo_verg_rate]      → verg_rate_tvor
     """
     dH = eye_pos[0] - primary_pos[0]
     dV = eye_pos[1] - primary_pos[1]
@@ -82,4 +81,11 @@ def listing_corrections(eye_pos, vel_hv, vergence_angle, primary_pos, l2_frac):
     cyc_torsion_vel    = -HALF_ANGLE * (dH * V_dot + dV * H_dot)
     cyc_torsion_target = -HALF_ANGLE * dH * dV
     cyclo_verg_rate    = -l2_frac * V_dot * jnp.radians(vergence_angle)
-    return cyc_torsion_vel, cyc_torsion_target, cyclo_verg_rate
+
+    z = jnp.float32(0.0)
+    g = gain
+    return (
+        jnp.array([z, z, g * cyc_torsion_vel]),     # → u_ni_in
+        jnp.array([z, z, g * cyc_torsion_target]),  # → u_tonic
+        jnp.array([z, z, g * cyclo_verg_rate]),     # → verg_rate_tvor
+    )

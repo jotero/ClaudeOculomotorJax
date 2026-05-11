@@ -414,7 +414,10 @@ class BrainParams(NamedTuple):
     # unaffected). Heun stability: dt/τ_fac = 0.05, dt/τ_dep = 0.01.
     tau_fac:               float = 0.020  # BN facilitation rise/decay TC (s)
     tau_dep:               float = 0.100  # BN depression follower TC (s) — sets post-saccadic recovery duration
-    alpha_fac:             float = 0.0    # facilitation gain: g_dyn rises by alpha_fac × z_fac during burst
+    alpha_fac:             float = 1.0    # facilitation gain: g_dyn = 1 + alpha_fac·z_fac during burst —
+                                            # post-inhibitory-rebound boost of the burst neurons (z_fac rises
+                                            # toward 1 while OPN is paused).  ~1.0 steepens the main sequence
+                                            # toward 700(1−e^{−A/7}) without de-stabilising the burst loop.
     alpha_dep:             float = 0.0    # depression gain: g_dyn dips by alpha_dep × z_dep after burst
 
     # Saccade target selection — handled inside the saccade generator
@@ -471,7 +474,14 @@ class BrainParams(NamedTuple):
     # Smooth pursuit — leaky integrator + Smith predictor (Lisberger 1988)
     K_pursuit:             float = 4.0    # pursuit integration gain (1/s); rise TC ≈ 1/K_pursuit
     K_phasic_pursuit:      float = 5.0    # pursuit direct feedthrough (dim'less); fast onset
-    tau_pursuit:           float = 40.0   # pursuit leak TC (s); ~40 s → ~97.5% gain at 1 Hz
+    tau_pursuit:           float = 40.0   # pursuit-pop open-loop leak TC (s).  The
+                                            # behaviorally observed pursuit memory TC is the
+                                            # CLOSED-loop tau_eff = tau·(1+K_ph) / [(1+K_ph)+K_pursuit·tau],
+                                            # which at defaults (K_pursuit=4, K_ph=5) ≈ 1.45 s
+                                            # — matches Bennett & Barnes (2003) extra-retinal
+                                            # velocity-memory τ ≈ 1–3 s.  Long `tau_pursuit` here
+                                            # keeps steady-state pursuit gain near unity (~99%)
+                                            # without affecting the closed-loop decay shape.
     v_max_pursuit:         float = 40.0   # MT/MST velocity saturation (deg/s); clip on target slip + EC
                                            # Pursuit gain ≈1 up to ~30–40 deg/s, then falls (Fuchs 1967 J Physiol;
                                            # Lisberger & Westbrook 1985 J Neurosci). MT tuned 10–64 deg/s
@@ -639,8 +649,8 @@ class BrainParams(NamedTuple):
     # threshold = 0 + steepness = 1 reproduces the raw linear gate.  Larger
     # threshold or steepness pushes intermediate gate values toward 0, so
     # only near-fully-open raw gates (cascaded_sat ≈ 0) pass through.
-    saccadic_suppression_threshold:    float = 0.4   # raw_gate ≤ this → fully suppressed
-    saccadic_suppression_steepness:    float = 2.0   # power applied to thresholded gate
+    saccadic_suppression_threshold:    float = 0.85  # raw_gate ≤ this → fully suppressed
+    saccadic_suppression_steepness:    float = 6.0   # power applied to thresholded gate
                                                               # 1.0 = transparent (ceiling >> normal burst); <1 = conduction block
                                                               # Nerve order: [LR_L,MR_L,SR_L,IR_L,SO_L,IO_L, LR_R,MR_R,SR_R,IR_R,SO_R,IO_R]
                                                               # INO: g_nerve[MR_L or MR_R] ↓  →  adducting saccades slow, fixation preserved
@@ -684,12 +694,21 @@ class BrainParams(NamedTuple):
                                                   # Lesion (K_cereb_pu = 0) zeros this →
                                                   # pursuit falls back to raw target_slip
                                                   # → reduced gain (flocculus phenotype).
-    K_pursuit_direct:      float        = 1.0   # brainstem reactive gain on raw
-                                                  # target_slip — the "direct path".
-                                                  # Always-on; not gated by cerebellar
-                                                  # trust.  Set to 0 to disable the
-                                                  # direct path entirely (cerebellum
-                                                  # contributes only EC prediction).
+    K_pursuit_direct:      float        = 1.0   # brainstem reactive gain on
+                                                  # gated raw target_slip (= sat ·
+                                                  # cyc.target_vel) — the direct path.
+                                                  # Saccadic suppression still acts on
+                                                  # this term via `sat`.
+    K_vor_direct:          float        = 1.0   # brainstem reactive gain on the gated
+                                                  # raw scene slip (= sat · cyc.scene_angular_vel)
+                                                  # feeding VS / OKR — analog of
+                                                  # K_pursuit_direct for the scene path.
+    K_cereb_okr:           float        = 1.0   # cerebellar OKR EC-correction gain.
+                                                  # Multiplies acts.cb.fl_okr_drive
+                                                  # (= sat · scene_visible · ec_scene)
+                                                  # in the scene PE assembly.  Lesion
+                                                  # (K=0): no scene EC correction, VS
+                                                  # driven by gated raw slip only.
     K_cereb_fl:            float        = 1.0   # floccular NI leak-cancellation gain
                                                   # (Cannon & Robinson 1985).  Adds
                                                   # positive feedback K · (x_net − x_null)
@@ -851,7 +870,8 @@ def step(brain_state, sensory_out, brain_params, noise_acc=0.0):
                    + jnp.array([brain_params.tonic_verg, 0.0, 0.0]))
     # EC cascade tails come from cerebellum activations (acts.cb), already
     # built by read_activations(brain_state, brain_params) at the top of step.
-    ec_d_scene  = acts.cb.ec_scene
+    # ec_scene / ec_target are still consumed by pt.step (target perception
+    # memory) and by the cerebellum's own internal computations.
     ec_d_target = acts.cb.ec_target
 
     # ── Cyclopean perception: binocular fusion + brain LP smoothing ──────────
@@ -859,8 +879,12 @@ def step(brain_state, sensory_out, brain_params, noise_acc=0.0):
     # exact same-step ec_verg from this step's va.step isn't available yet, so
     # we use the state-based reconstruction above.  Negligible lag (one dt).
     dpc, cyc = pc.step(
-        brain_state.pc, sensory_out.retina_L, sensory_out.retina_R,
-        ec_pos, ec_verg, brain_params,
+        state        = brain_state.pc,
+        retina_L     = sensory_out.retina_L,
+        retina_R     = sensory_out.retina_R,
+        ec_pos       = ec_pos,
+        ec_verg      = ec_verg,
+        brain_params = brain_params,
     )
 
     # ── Target path: working memory only (FEF/dlPFC) → SG ────────────────────
@@ -868,47 +892,65 @@ def step(brain_state, sensory_out, brain_params, noise_acc=0.0):
     # cerebellum (pursuit region — see cb.step below).  pt.step now produces
     # only the SG-relevant signals.
     dpt, tgt_pos_eff, tgt_vis_eff = pt.step(
-        acts.pt,
-        cyc.target_visible,
-        cyc.target_pos,
-        ec_d_target,
+        activations    = acts.pt,
+        target_visible = cyc.target_visible,
+        target_pos     = cyc.target_pos,
+        ec_d_target    = ec_d_target,
     )
 
     # ── Cerebellum: pursuit-region activations are read at the top of step()
     # via `acts.cb` (computed by cerebellum.read_activations from BrainState
     # pc + ec).  No state to update; pursuit input is assembled below.
 
+    # ── Scene-path PE assembly (saccadic suppression on RAW slip + cerebellar
+    #    gated EC correction).  Mirrors the pursuit-side pattern below:
+    #        slip_pe_for_vs = K_vor_direct · sat · cyc.scene_angular_vel
+    #                       + K_cereb_okr  · acts.cb.fl_okr_drive
+    #    where fl_okr_drive is the cerebellum's pre-gated scene EC correction
+    #    (= sat · scene_visible · ec_scene).  At default gains the sum equals
+    #    sat · (cyc.scene_angular_vel + scene_visible · ec_scene).  Flocculus-
+    #    OKR lesion (K_cereb_okr = 0): VS driven by raw gated slip only.
+    sat_vs        = acts.cb.saccadic_suppression_scene
+    slip_pe_for_vs = (brain_params.K_vor_direct * sat_vs * cyc.scene_angular_vel
+                     + brain_params.K_cereb_okr * acts.cb.fl_okr_drive)
+    scene_lin_pe  = sat_vs * cyc.scene_linear_vel
+
     # ── Self-motion observer (VS + GE + HE) — single unified step ────────────
     # Activation-driven: VS pops + GE/HE observer states come from `acts.sm`;
     # the vs_null setpoint comes from `weights.sm`.
     dsm, w_est, g_est, v_lin, a_lin_est = sm.step(
         acts.sm, weights.sm,
-        canal          = sensory_out.canal,
-        scene_slip     = cyc.scene_angular_vel,
-        gia            = sensory_out.otolith,
-        scene_lin_vel  = cyc.scene_linear_vel,
-        scene_visible  = cyc.scene_visible,
-        ec_d_scene     = ec_d_scene,
-        # Cerebellar VS contributions (FL leak-cancellation + NU gravity dumping)
-        fl_vs_drive    = acts.cb.fl_vs_drive,
-        nu_drive       = acts.cb.nu_drive,
-        saccadic_suppression_scene = acts.cb.saccadic_suppression_scene,
-        brain_params   = brain_params,
+        canal           = sensory_out.canal,
+        gia             = sensory_out.otolith,
+        slip_pe_for_vs  = slip_pe_for_vs,
+        scene_lin_pe    = scene_lin_pe,
+        scene_visible   = cyc.scene_visible,
+        fl_vs_drive     = acts.cb.fl_vs_drive,
+        nu_drive        = acts.cb.nu_drive,
+        brain_params    = brain_params,
     )
 
     # OCR: world frame [x=right, y=up, z=fwd]. Right-ear-down → g_est[0] < 0 → -g_est[0] > 0.
     # Positive motor roll = left-ear-down (left-hand rule); negative = right-ear-down.
     ocr = jnp.array([0.0, 0.0, -brain_params.g_ocr * g_est[0]])
 
-    # ── Pursuit input: gated, EC-corrected slip (symmetric with OKR) ─────────
-    # Cerebellum produces `vpf_drive = gate · (target_slip + K_cereb_pu ·
-    # target_visible · ec_d_target_no_torsion)` — the full pursuit drive
-    # signal, EC-corrected and gated against self-motion contamination.
-    # `K_pursuit_direct` is the brainstem postsynaptic gain on that signal.
-    # No separate raw-slip path; that prevented the gate from closing the
-    # whole input during saccades.
-    target_slip_for_pursuit = brain_params.K_pursuit_direct * acts.cb.vpf_drive
-    dpu, u_pursuit = pu.step(acts.pu, target_slip_for_pursuit, brain_params)
+    # ── Pursuit input: saccadically-gated brainstem direct + cerebellar EC
+    #   pursuit_in = K_pursuit_direct · sat · cyc.target_vel + K_cereb_pu · vpf_drive
+    # where vpf_drive = sat · target_visible · ec_no_torsion, so both terms
+    # scale with the saccadic-suppression gate `sat` (≈ slip + vis·ec at K=1,
+    # ×sat).  IMPORTANT: the gate strengthen MUST be mild
+    # (`saccadic_suppression_threshold ≈ 0`, `steepness ≈ 1`) — an aggressive
+    # gate throttles pursuit between catch-up saccades, where the gate cascade
+    # has not fully reopened.  Floccular lesion (K_cereb_pu = 0): gated raw
+    # slip only — no EC correction, reduced gain during head motion.
+    sat_pu                  = acts.cb.saccadic_suppression_target
+    target_slip_for_pursuit = (brain_params.K_pursuit_direct * sat_pu * cyc.target_vel
+                               + brain_params.K_cereb_pu     * acts.cb.vpf_drive)
+    dpu, u_pursuit = pu.step(
+        activations    = acts.pu,
+        target_slip_ec = target_slip_for_pursuit,
+        brain_params   = brain_params,
+    )
 
     # ── Saccade generator (target selection + Listing's corrections internal) ──
     dsg, u_burst = sg.step(acts.sg, weights.sg, tgt_pos_eff, tgt_vis_eff,
@@ -959,17 +1001,18 @@ def step(brain_state, sensory_out, brain_params, noise_acc=0.0):
     # doesn't trigger a redundant velocity-level correction (the burst already
     # ends on the plane via the LL-aware e_target).
     smooth_vel_hv = (u_pursuit + omega_tvor)[:2]
-    cyc_torsion_vel, cyc_torsion_target, cyclo_verg_rate = listing.listing_corrections(
+    ll_u_ni, ll_u_tonic, ll_verg_rate = listing.listing_corrections(
         x_ni_net, smooth_vel_hv, current_vergence_yaw,
         brain_params.listing_primary, brain_params.listing_l2_frac,
+        brain_params.listing_gain,
     )
-    u_ni_in        = u_ni_in.at[2].add(brain_params.listing_gain * cyc_torsion_vel)
-    verg_rate_tvor = verg_rate_tvor.at[2].add(brain_params.listing_gain * cyclo_verg_rate)
+    u_ni_in        = u_ni_in        + ll_u_ni
+    verg_rate_tvor = verg_rate_tvor + ll_verg_rate
 
     # NI tonic = OCR (gravity) + Listing's prescribed torsion (gaze-dependent).
     # Both shift the NI's leak target so x_net leaks toward the correct torsion
     # at SS without relying purely on velocity-level corrections to maintain it.
-    u_tonic = ocr.at[2].add(brain_params.listing_gain * cyc_torsion_target)
+    u_tonic = ocr + ll_u_tonic
     dni, motor_cmd_ni = ni.step(acts.ni, weights.ni, u_ni_in, brain_params, u_tonic=u_tonic)
 
     # ── Vergence + Accommodation — single unified step ────────────────────────
@@ -1011,14 +1054,21 @@ def step(brain_state, sensory_out, brain_params, noise_acc=0.0):
     vs_net_full  = brain_state.sm.vs_L - brain_state.sm.vs_R
     vs_null_full = brain_state.sm.vs_null
     rf_full      = brain_state.sm.rf
-    dcb, _       = cb.step(brain_state.cb, ec_vel, ec_pos,
-                            ni_net=ni_net_full, ni_null=ni_null_full,
-                            vs_net=vs_net_full, vs_null=vs_null_full,
-                            rf=rf_full,
-                            w_est=w_est,
-                            target_slip=cyc.target_vel,
-                            target_visible=cyc.target_visible,
-                            brain_params=brain_params)
+    dcb, _ = cb.step(
+        state          = brain_state.cb,
+        ec_vel         = ec_vel,
+        ec_pos         = ec_pos,
+        ni_net         = ni_net_full,
+        ni_null        = ni_null_full,
+        vs_net         = vs_net_full,
+        vs_null        = vs_null_full,
+        rf             = rf_full,
+        w_est          = w_est,
+        target_slip    = cyc.target_vel,
+        target_visible = cyc.target_visible,
+        scene_visible  = cyc.scene_visible,
+        brain_params   = brain_params,
+    )
 
     # ── Pack state derivative ─────────────────────────────────────────────────
     dbrain = BrainState(

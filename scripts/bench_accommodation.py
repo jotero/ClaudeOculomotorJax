@@ -44,12 +44,13 @@ IPD  = 0.064   # m, default inter-pupillary distance
 
 SECTION = dict(
     id='accommodation',
-    title='6. Vergence–Accommodation',
+    title='6. Accommodation (preliminary)',
     description=(
-        'AC/A and CA/C cross-links: accommodation driven by binocular disparity (near step), '
-        'lens-forced accommodation driving vergence via AC/A, and prism-forced vergence '
-        'driving accommodation via CA/C.  Plant dynamics follow Read & Schor (2022): '
-        'τ_plant ≈ 0.156 s, τ_fast ≈ 2.5 s, G_fast = 8.'
+        'PRELIMINARY — not yet re-validated against the recent cerebellar / '
+        'final-common-pathway refactors. Core figures only: isolated accommodation '
+        'step (AC/A = CA/C = 0), near step with cross-coupling on (disparity → '
+        'accommodation, AC/A → vergence), and the gradient AC/A / CA/C regression. '
+        'Plant dynamics follow Read & Schor (2022): τ_plant ≈ 0.156 s, τ_fast ≈ 2.5 s, G_fast = 8.'
     ),
 )
 
@@ -1035,28 +1036,20 @@ def _gradient_aca_cac(show):
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 def run(show=SHOW):
-    print('\n=== Accommodation ===')
-    print('  1/10 isolated step (AC/A=CA/C=0) …')
-    f1  = _isolated_step(show)
-    print('  2/10 isolated amplitudes …')
-    f2  = _isolated_amplitudes(show)
-    print('  3/10 isolated dark-focus drift …')
-    f3  = _isolated_dark_focus(show)
-    print('  4/10 near step (cross-coupling on) …')
-    f4  = _near_step(show)
-    print('  5/10 lens-driven AC/A (single +2D step) …')
-    f5  = _lens_aca(show)
-    print('  6/10 prism-driven CA/C …')
-    f6  = _prism_cac(show)
-    print('  7/10 plant step response …')
-    f7  = _lens_step_response(show)
-    print('  8/10 fixation disparity curves …')
-    f8  = _fixation_disparity_curves(show)
-    print('  9/10 refractive error …')
-    f9  = _refractive_error(show)
-    print(' 10/10 gradient AC/A and CA/C regression …')
-    f10 = _gradient_aca_cac(show)
-    return [f1, f2, f3, f4, f5, f6, f7, f8, f9, f10]
+    # Trimmed to a core set of figures (2026-05-11) — the near-response
+    # (vergence + accommodation) subsystem has not been re-validated against
+    # the recent cerebellar / FCP refactors, so only the essential
+    # accommodation behaviours are shown here.  The full suite of isolated /
+    # plant / fixation-disparity / refractive-error figures still lives in
+    # this module (helper functions retained) but is not run by default.
+    print('\n=== Accommodation (core subset) ===')
+    print('  1/3  isolated step (AC/A=CA/C=0) …')
+    f1 = _isolated_step(show)
+    print('  2/3  near step (cross-coupling on) …')
+    f2 = _near_step(show)
+    print('  3/3  gradient AC/A and CA/C regression …')
+    f3 = _gradient_aca_cac(show)
+    return [f1, f2, f3]
 
 
 if __name__ == '__main__':

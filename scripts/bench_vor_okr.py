@@ -62,6 +62,25 @@ def _simulate(theta, t_arr, head_vel=None, scene_vel=None, scene_present=None,
 
 # ── Figure 1: Raphan 1979 Fig.9 replication ───────────────────────────────────
 
+def _bin_average(t, y, bin_s=0.5):
+    """Bin a (T,) signal in `bin_s`-second windows; return (centers, means).
+
+    Used to display SPV as discrete points so post-saccadic spikes get
+    averaged out into the slow-phase trend, à la Raphan's original Fig.9.
+    """
+    t = np.asarray(t); y = np.asarray(y)
+    t0, t1 = float(t[0]), float(t[-1])
+    edges = np.arange(t0, t1 + bin_s, bin_s)
+    idx   = np.clip(((t - t0) / bin_s).astype(int), 0, len(edges) - 2)
+    means = np.full(len(edges) - 1, np.nan)
+    for k in range(len(edges) - 1):
+        m = (idx == k)
+        if m.any():
+            means[k] = np.nanmean(y[m])
+    centers = 0.5 * (edges[:-1] + edges[1:])
+    return centers, means
+
+
 def _raphan(show):
     """3×2 Raphan 1979 Fig.9 replication: SPV (left col) + CUP/INT/SPV (right col)."""
     V_STIM   = 30.0
@@ -155,10 +174,16 @@ def _raphan(show):
         ax.text(0.02, 0.92, letter, transform=ax.transAxes,
                 fontsize=12, fontweight='bold', va='top')
 
+    # SPV traces are shown as 0.5-s binned scatter so post-saccadic spikes
+    # average into the slow-phase trend (matches Raphan's original Fig.9
+    # presentation: discrete data points, not a continuous trace).
+    spv_kw = dict(s=18, marker='o', edgecolors='none', color=utils.C['spv'])
+
     # A — VOR dark: SPV only
     ax = axes[0, 0]
     ax.plot(t_vor, -hv_1d,    color=utils.C['head'], lw=1.0, ls=':', alpha=0.7, label='−head vel')
-    ax.plot(t_vor, spv_vor_d, color=utils.C['spv'],  lw=1.8, label='S.P.VEL')
+    t_b, y_b = _bin_average(t_vor, spv_vor_d, 0.5)
+    ax.scatter(t_b, y_b, label='S.P.VEL', **spv_kw)
     if tau_vor is not None:
         ax.plot(t_fit_vor, y_fit_vor, color='tomato', lw=1.5, ls='--', label=f'fit τ={tau_vor:.1f}s')
     ax.axvline(0.0, **vl); ax.axvline(ON_DUR, **vl)
@@ -167,7 +192,8 @@ def _raphan(show):
 
     # B — VOR dark: SPV + Cupula + Integrator
     ax = axes[0, 1]
-    ax.plot(t_vor, spv_vor_d, color=utils.C['spv'],  lw=1.8, label='S.P.VEL')
+    t_b, y_b = _bin_average(t_vor, spv_vor_d, 0.5)
+    ax.scatter(t_b, y_b, label='S.P.VEL', **spv_kw)
     ax.plot(t_vor, cup_vor,   color=utils.C['canal'], lw=1.2, ls='--', label='Cupula')
     ax.plot(t_vor, int_vor,   color=utils.C['vs'],    lw=1.2, ls='-.',  label='Integrator (VS)')
     ax.axvline(0.0, **vl); ax.axvline(ON_DUR, **vl)
@@ -178,7 +204,8 @@ def _raphan(show):
     ax = axes[1, 0]
     scene_ref = np.where((t_okn >= 0.0) & (t_okn < ON_DUR), V_STIM, 0.0)
     ax.plot(t_okn, scene_ref,  color=utils.C['scene'], lw=1.0, ls=':', alpha=0.7, label='scene vel')
-    ax.plot(t_okn, spv_okn_d,  color=utils.C['spv'],   lw=1.8, label='S.P.VEL')
+    t_b, y_b = _bin_average(t_okn, spv_okn_d, 0.5)
+    ax.scatter(t_b, y_b, label='S.P.VEL', **spv_kw)
     if tau_okan is not None:
         ax.plot(t_fit_okan, y_fit_okan, color='tomato', lw=1.5, ls='--', label=f'OKAN τ={tau_okan:.1f}s')
     ax.axvline(0.0, **vl); ax.axvline(ON_DUR, **vl)
@@ -187,7 +214,8 @@ def _raphan(show):
 
     # D — OKN + OKAN: SPV + Cupula (≈0) + Integrator
     ax = axes[1, 1]
-    ax.plot(t_okn, spv_okn_d, color=utils.C['spv'],   lw=1.8, label='S.P.VEL')
+    t_b, y_b = _bin_average(t_okn, spv_okn_d, 0.5)
+    ax.scatter(t_b, y_b, label='S.P.VEL', **spv_kw)
     ax.plot(t_okn, cup_okn,   color=utils.C['canal'],  lw=1.2, ls='--', label='Cupula')
     ax.plot(t_okn, int_okn,   color=utils.C['vs'],     lw=1.2, ls='-.',  label='Integrator (VS)')
     ax.axvline(0.0, **vl); ax.axvline(ON_DUR, **vl)
@@ -197,7 +225,8 @@ def _raphan(show):
     # E — VVOR: SPV only
     ax = axes[2, 0]
     ax.plot(t_vor, -hv_1d,    color=utils.C['head'], lw=1.0, ls=':', alpha=0.7, label='−head vel')
-    ax.plot(t_vor, spv_vvor_d, color=utils.C['spv'],  lw=1.8, label=f'S.P.VEL (gain={vvor_gain:.2f})')
+    t_b, y_b = _bin_average(t_vor, spv_vvor_d, 0.5)
+    ax.scatter(t_b, y_b, label=f'S.P.VEL (gain={vvor_gain:.2f})', **spv_kw)
     ax.axvline(0.0, **vl); ax.axvline(ON_DUR, **vl)
     ax.set_ylabel('deg/s'); ax.set_xlabel('Time (s)')
     ax.set_title(f'Rotation {V_STIM:.0f} deg/s in light → stop in dark')
@@ -205,7 +234,8 @@ def _raphan(show):
 
     # F — VVOR: SPV + Cupula + Integrator
     ax = axes[2, 1]
-    ax.plot(t_vor, spv_vvor_d, color=utils.C['spv'],   lw=1.8, label='S.P.VEL')
+    t_b, y_b = _bin_average(t_vor, spv_vvor_d, 0.5)
+    ax.scatter(t_b, y_b, label='S.P.VEL', **spv_kw)
     ax.plot(t_vor, cup_vvor,   color=utils.C['canal'],  lw=1.2, ls='--', label='Cupula')
     ax.plot(t_vor, int_vvor,   color=utils.C['vs'],     lw=1.2, ls='-.',  label='Integrator (VS)')
     ax.axvline(0.0, **vl); ax.axvline(ON_DUR, **vl)
@@ -410,7 +440,10 @@ SECTION = dict(
     id='vor_okr', title='2. VOR / OKR',
     description='Vestibulo-ocular reflex and optokinetic response. '
                 'Replicates Raphan et al. (1979) Fig.9: VOR in dark, OKN+OKAN, and VVOR. '
-                'Tests post-rotatory and OKAN time constants, VVOR gain, and nystagmus waveform.',
+                'Slow-phase velocity shown as 0.5-s binned scatter (post-saccadic spikes averaged into the '
+                'slow-phase trend). Tests post-rotatory and OKAN time constants, VVOR gain, and nystagmus waveform. '
+                'Scene slip → VS goes through K_vor_direct·(saccadically-gated slip) + K_cereb_okr·(cerebellar EC '
+                'correction); nodulus-uvula gravity dumping (K_cereb_nu) sets the velocity-storage TC.',
 )
 
 

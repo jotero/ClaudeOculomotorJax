@@ -196,21 +196,24 @@ others at their defaults.  Auto-generated from docs/parameters_schema.yaml.
 
 Gaze-evoked nystagmus (GEN) — IMPORTANT
 ----------------------------------------
-GEN requires a leaky neural integrator (tau_i small) so gaze positions drift
-centripetally.  But in a lit room with a target, smooth pursuit compensates
-that drift → no nystagmus is visible.
+GEN requires a leaky neural integrator so gaze positions drift centripetally.
+Two ways to make the NI leaky:
+  - K_cereb_fl = 0  → the floccular Cannon-Robinson leak-cancellation is lost;
+                      NI leaks at its intrinsic tau_i (~25 s).  For pronounced
+                      GEN, ALSO shorten tau_i (3–8 s).
+  - tau_i = 3–8 s   → directly shortens the NI TC (brainstem NPH lesion).
 
-To simulate GEN you must therefore impair BOTH:
-    tau_i    = 3–8 s    (leaky NI; cerebellar/brainstem lesion)
-    K_pursuit = 0.1–0.3  (severely impaired pursuit; cerebellar)
-With K_pursuit ≥ 1 pursuit compensates the NI drift and GEN disappears,
-even when tau_i is very short.
+But in a lit room with a target, smooth pursuit compensates the drift → no
+nystagmus visible.  To see GEN in the light you must ALSO impair pursuit:
+    K_cereb_pu = 0    (or K_pursuit = 0.1–0.3)
+With healthy pursuit (K_pursuit ≥ 1, K_cereb_pu = 1) the drift is masked even
+with a very leaky NI.
 
 In the dark (scene_present=False, target_present=False) pursuit and OKR are
-absent, so GEN is always visible with a leaky NI regardless of K_pursuit.
+absent, so GEN is always visible with a leaky NI regardless of pursuit gain.
 
 Quick reference — typical cerebellar patient for GEN:
-    tau_i=4, K_pursuit=0.2, tau_vs=5, K_vs=0.05
+    K_cereb_fl=0, tau_i=4, K_cereb_pu=0  (or K_pursuit=0.2), tau_vs=5, K_vs=0.05
 """
 
 
@@ -225,6 +228,9 @@ class PlotConfig(BaseModel):
         'velocity_storage', 'neural_integrator',
         'saccade_burst', 'pursuit_drive', 'refractory',
         'vergence',
+        # Cerebellar diagnostic panels
+        'cerebellum_pursuit', 'cerebellum_vor',
+        # Stimulus panels
         'target_position', 'target_velocity', 'scene_velocity', 'visual_flags',
     ]] = Field(
         description=(
@@ -232,9 +238,14 @@ class PlotConfig(BaseModel):
             "  VOR / HIT:    ['head_velocity', 'eye_velocity', 'eye_position']\n"
             "  OKN / OKAN:   ['scene_velocity', 'visual_flags', 'eye_velocity', 'eye_position', 'velocity_storage']\n"
             "  Saccades:     ['target_position', 'eye_position', 'eye_velocity', 'saccade_burst', 'refractory']\n"
-            "  Pursuit:      ['eye_position', 'eye_velocity', 'pursuit_drive']\n"
+            "  Pursuit:      ['eye_position', 'eye_velocity', 'pursuit_drive', 'cerebellum_pursuit']\n"
             "  Vergence / cover test: ['eye_position', 'vergence', 'neural_integrator']\n"
-            "  Full cascade: all panels"
+            "  Cerebellar lesions (flocculus/paraflocculus/nodulus): add 'cerebellum_pursuit' and/or 'cerebellum_vor'\n"
+            "  Full cascade: all panels\n"
+            "Panel meanings:\n"
+            "  cerebellum_pursuit — VPF pursuit EC correction (vpf_drive), pursuit saccadic-suppression gate, pred_err\n"
+            "  cerebellum_vor     — flocculus NI leak-cancellation (fl_drive), OKR EC correction (fl_okr_drive),"
+            " nodulus-uvula gravity dumping (nu_drive), scene saccadic-suppression gate"
         )
     )
     title: str = Field(default='', description="Figure title (auto-set from description if empty).")

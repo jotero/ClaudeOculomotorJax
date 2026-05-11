@@ -259,6 +259,33 @@ All defaults match the healthy model. Only specify parameters that differ from h
 | tau_verg_tonic (s) | 20.0 | Tonic vergence (slow adapter) TC. Minutes-scale dark-vergence drift |
 | tonic_verg (deg) | 3.67 | Tonic (brainstem) vergence baseline. 3.67° ≈ 1 m dark vergence. Increase for esophoric patients |
 
+### Cerebellar parameters — flocculus / paraflocculus / nodulus-uvula
+
+The cerebellum contributes four separable functions, each with its own gain
+(default 1 = healthy, 0 = full lesion of that function):
+
+| Parameter | Healthy | Lesion (=0) phenotype | Anatomy |
+|-----------|:-------:|------------------------|---------|
+| K_cereb_fl | 1.0 | Gaze-evoked nystagmus: NI leak no longer cancelled → eye drifts centripetally with TC = tau_i (~25 s). For pronounced GEN combine with short tau_i (e.g. 4 s). | Flocculus → NPH/MVN (Cannon & Robinson 1985) |
+| K_cereb_pu | 1.0 | Reduced smooth-pursuit gain during head motion + loss of pursuit's saccadic suppression (cerebellum no longer cancels self-motion contamination of target slip). Brainstem direct path (K_pursuit_direct·slip) still drives pursuit. | Ventral paraflocculus / vermis VI–VII |
+| K_cereb_okr | 1.0 | Loss of the cerebellar EC correction on the OKR/VOR scene path; VS driven by raw (gated) retinal slip only. Combined with vestibular slip-coupling this raises OKR slow-phase noise. | Flocculus / vermis OKR adaptation |
+| K_cereb_nu | 1.0 | Prolonged velocity-storage TC, loss of tilt suppression of post-rotatory nystagmus, periodic alternating nystagmus (with tau_vs_adapt also lowered). | Nodulus + uvula → vestibular nuclei (Cohen, Raphan, Wearne) |
+
+Brainstem direct (always-on) gains that pair with the cerebellar ones:
+  - K_pursuit_direct (default 1.0): brainstem reactive gain on gated raw target slip → pursuit.
+  - K_vor_direct (default 1.0): brainstem reactive gain on gated raw scene slip → VS / OKR.
+
+Saccadic-suppression shaping (rarely changed): saccadic_suppression_threshold (default 0.85),
+saccadic_suppression_steepness (default 6.0) — contrast amplification on the suppression gate.
+
+K_cereb_fl_vs (default 0.0) — optional floccular Cannon-Robinson extension applied to
+velocity storage instead of the position integrator; leave at 0 unless explicitly modelling
+VS-TC extension (it changes the effective tau_vs and would need tau_vs retuned).
+
+Note: `tau_vs` itself ALSO controls velocity-storage decay (peripheral side). For a
+nodulus/uvula lesion you can either set `K_cereb_nu=0` (mechanistic) or shorten `tau_vs`
+(phenomenological) — prefer K_cereb_nu=0 when the question is about cerebellar anatomy.
+
 ### Cranial nerve and MLF lesions — use ONLY the parameters below, not VN/cerebellar params
 
 The final common pathway has THREE distinct lesion types, each with different physiology:
@@ -305,14 +332,14 @@ The table below maps all conditions to parameters — use it:
 | Right vestibular neuritis | canal_gains=[1,1,1,0,0,0], b_vs_R=70 |
 | Left VN infarct | b_vs_L=0 |
 | Bilateral vestibular loss | canal_gains=[0,0,0,0,0,0], b_vs_L=0, b_vs_R=0 |
-| Nodulus / uvula lesion | tau_vs=1.5, K_vs=0.05 |
-| Cerebellar GEN (dark) | tau_i=4.0 |
-| Cerebellar GEN (lit room) | tau_i=4.0, K_pursuit=0.2 (BOTH required) |
+| Nodulus / uvula lesion | K_cereb_nu=0.0  (or phenomenologically tau_vs=1.5, K_vs=0.05) |
+| Floccular gaze-evoked nystagmus (dark) | K_cereb_fl=0.0  (add tau_i=4.0 for pronounced GEN) |
+| Cerebellar GEN (lit room) | K_cereb_fl=0.0, tau_i=4.0, K_pursuit=0.2 (pursuit can't mask the drift) |
 | Complete saccadic palsy | g_burst=0.0 |
 | Slow saccades (PSP, SCA) | g_burst=250 |
-| Pursuit deficit (cerebellar) | K_pursuit=0.3, K_phasic_pursuit=1.0, tau_pursuit=8 |
+| Flocculus/paraflocculus pursuit lesion | K_cereb_pu=0.0  (or graded K_pursuit=0.3, K_phasic_pursuit=1.0, tau_pursuit=8) |
 | Rebound nystagmus | tau_ni_adapt=10.0 |
-| PAN | tau_vs_adapt=45.0 |
+| PAN | K_cereb_nu=0.0, tau_vs_adapt=45.0 |
 | Esophoria / cover test | tonic_verg=8.0 |
 | Left INO | g_mlf_L=0.0 |
 | Right INO | g_mlf_R=0.0 |

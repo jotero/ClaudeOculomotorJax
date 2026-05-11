@@ -22,7 +22,7 @@ from oculomotor.sim.simulator import (
 )
 from oculomotor.sim import kinematics as km
 from oculomotor.models.brain_models.perception_cyclopean import C_pos  # noqa: F401
-from oculomotor.analysis import ax_fmt, extract_burst, extract_sg, ni_net, read_brain_decoded
+from oculomotor.analysis import ax_fmt, extract_burst, extract_sg, ni_net, read_brain_decoded, read_brain_acts
 
 SHOW  = '--show' in sys.argv
 DT    = 0.001
@@ -227,6 +227,11 @@ def _cascade(show):
     eye = (np.array(st.plant.left[:, 0]) + np.array(st.plant.right[:, 0])) / 2.0
     ev  = np.gradient(eye, DT)
     x_pur = np.array(read_brain_decoded(st, THETA).pu.net[:, 0])  # NET yaw memory
+    # Saccadic-suppression gate on the pursuit pathway — if this sits near 0
+    # for most of the inter-saccade interval, the pursuit input (= sat·(slip+ec))
+    # is being throttled and the pursuit integrator drains between catch-up
+    # saccades (staircase eye position instead of smooth ramp).
+    sat_pu = np.array(read_brain_acts(st, THETA).cb.saccadic_suppression_target)
 
     n_rows = 7
     fig, axes = plt.subplots(n_rows, 1, figsize=(12, 2.5 * n_rows))
@@ -278,9 +283,11 @@ def _cascade(show):
 
     axes[4].plot(t_np, sg['z_acc'], color='#e08214', lw=1.5, label='z_acc')
     axes[4].plot(t_np, sg['z_opn'] / 100, color='#1b7837', lw=1.5, label='OPN (norm, 1=tonic)')
+    axes[4].plot(t_np, sat_pu, color='#9467bd', lw=1.5, ls='--', label='sacc. supp. gate (pursuit)')
     axes[4].axhline(THETA.brain.threshold_acc, color='#e08214', lw=0.8, ls=':')
+    axes[4].axhline(1.0, color='#9467bd', lw=0.6, ls=':', alpha=0.5)
     axes[4].set_ylim(-0.05, 1.15)
-    axes[4].set_ylabel('Accumulator'); axes[4].set_title('Catch-up Saccade Trigger')
+    axes[4].set_ylabel('Accumulator / gate'); axes[4].set_title('Catch-up Saccade Trigger + Saccadic-Suppression Gate')
     axes[4].legend(fontsize=8)
 
     axes[5].plot(t_np, sg['u_burst'][:,0], color=utils.C['burst'], lw=1.5, label='burst (catch-up)')
@@ -315,7 +322,10 @@ def _cascade(show):
 SECTION = dict(
     id='pursuit', title='4. Smooth Pursuit',
     description='Smooth pursuit and catch-up saccades. Tests velocity gain at multiple speeds, '
-                'sinusoidal tracking, and the pursuit integrator + saccade interaction cascade.',
+                'sinusoidal tracking, and the pursuit integrator + saccade interaction cascade. '
+                'Pursuit input = K_pursuit_direct·(saccadically-gated retinal slip) + K_cereb_pu·(cerebellar '
+                'EC correction); the closed-loop pursuit memory τ_eff ≈ 1.45 s (Smith predictor) despite the '
+                'long pop-leak τ_pursuit = 40 s.',
 )
 
 

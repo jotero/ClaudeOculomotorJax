@@ -57,11 +57,11 @@ PARAMS_VERG_ASYM_DEBUG = with_brain(
 
 
 SECTION = dict(
-    id='vergence', title='5. Vergence',
-    description='Binocular vergence eye movements driven by disparity. '
-                'Symmetric convergence isolates vergence dynamics. '
-                'Asymmetric vergence combines a version saccade with a depth change. '
-                'Fixation disparity benchmark measures residual vergence error vs. target distance.',
+    id='vergence', title='5. Vergence (preliminary)',
+    description='PRELIMINARY — not yet re-validated against the recent cerebellar / '
+                'final-common-pathway refactors. Core figures only: symmetric + asymmetric '
+                'vergence (both directions), the vergence signal cascade (4 conditions), '
+                'and the vergence main sequence (peak velocity vs amplitude).',
 )
 
 
@@ -739,17 +739,17 @@ def _main_sequence(show):
 
 
 def run(show=False):
-    print('\n=== Vergence ===')
+    # Trimmed to a core set (2026-05-11) — the vergence subsystem has not been
+    # re-validated against the recent cerebellar / FCP refactors.  The
+    # fixation-disparity-vs-distance and diplopia figures are still defined in
+    # this module but not run by default.
+    print('\n=== Vergence (core subset) ===')
     figs = []
-    print('  1/5  symmetric + asymmetric (both directions) …')
+    print('  1/3  symmetric + asymmetric (both directions) …')
     figs.append(_vergence_bidir(show))
-    print('  2/5  fixation disparity vs. distance …')
-    figs.append(_fixation_distance(show))
-    print('  3/5  diplopia: fusion gate and fused vs. diplopic …')
-    figs.append(_diplopia(show))
-    print('  4/5  vergence cascade (4 conditions) …')
+    print('  2/3  vergence cascade (4 conditions) …')
     figs.append(_vergence_cascade(show))
-    print('  5/5  main sequence (sym + asym) …')
+    print('  3/3  main sequence (sym + asym) …')
     figs.append(_main_sequence(show))
     return figs
 

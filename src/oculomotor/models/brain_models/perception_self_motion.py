@@ -345,9 +345,14 @@ def _he_step(x_head, a_lin, scene_lin_vel, scene_visible, brain_params):
 # Public step() — orchestrates VS → GE → HE
 # ─────────────────────────────────────────────────────────────────────────────
 
-def step(activations, weights, canal, scene_slip, gia, scene_lin_vel,
-         scene_visible, ec_d_scene, fl_vs_drive, nu_drive,
-         saccadic_suppression_scene, brain_params):
+def step(activations, weights,
+         # Vestibular afferents
+         canal, gia,
+         # Visual scene PE (sat·slip + cerebellum's gated EC correction; assembled in brain_model)
+         slip_pe_for_vs, scene_lin_pe, scene_visible,
+         # Cerebellar leak-cancellation / gravity dumping (from acts.cb)
+         fl_vs_drive, nu_drive,
+         brain_params):
     """Single ODE step for the unified self-motion observer.
 
     Activation-driven: cross-projections and recurrence read firing rates from
@@ -401,14 +406,16 @@ def step(activations, weights, canal, scene_slip, gia, scene_lin_vel,
     # cerebellum (acts.cb.nu_drive), so rf is no longer used here.
     a_lin_est = activations.a_lin
 
-    # 0. Prediction error on the scene path: slip + EC, then multiplied by
-    #    the cerebellar saccadic-suppression gate (= 1 − cascaded-saturation-
-    #    flag) so retinal evidence is muted during high-speed self-motion.
-    slip_pe         = saccadic_suppression_scene * (scene_slip + scene_visible * ec_d_scene)
-    scene_lin_pe    = saccadic_suppression_scene * scene_lin_vel
+    # 0. Scene PE is assembled in brain_model as:
+    #        slip_pe_for_vs = K_vor_direct · sat · cyc.scene_angular_vel
+    #                       + K_cereb_okr  · fl_okr_drive
+    #    where fl_okr_drive = sat · scene_visible · ec_scene is the cerebellum's
+    #    pre-gated EC correction.  Saccadic suppression acts on the raw retinal
+    #    input directly upstream of this step.  scene_lin_pe is the matching
+    #    gated linear-velocity signal for the heading estimator.
 
     # 1. VS — angular velocity estimate
-    dx_vs, w_est = _vs_step(x_vs, canal, slip_pe, fl_vs_drive, nu_drive, brain_params)
+    dx_vs, w_est = _vs_step(x_vs, canal, slip_pe_for_vs, fl_vs_drive, nu_drive, brain_params)
 
     # 2. GE — gravity + linear-acc estimates (rf updated for next step)
     dx_grav, g_est = _ge_step(x_grav, w_est, gia, brain_params)

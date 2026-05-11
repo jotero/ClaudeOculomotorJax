@@ -53,10 +53,24 @@ per-eye retina sharp cascade).  The motor command (ec_vel, head frame) is
 rotated into eye frame using ec_pos, then saturated by v_max_okr (scene)
 and v_max_pursuit (target) to mirror the retinal saturation.
 
+Plant forward model
+───────────────────
+The cerebellum keeps an internal first-order Robinson plant (`x_p_pred`)
+driven by its own copy of the motor command (`ec_pos` = NI_net, plus the
+MN-lagged phasic term).  `x_p_pred` lags NI_net by ~tau_p exactly as the
+real plant does, so the head→eye rotation used to build the EC matches the
+position the retina actually rotates through — even mid-saccade, when
+NI_net leads the actual eye by several degrees and the nonlinear
+`R_eye(pos)` would otherwise inject a large eccentricity-dependent frame
+mismatch between the EC and the retinal slip.
+
 State
 ─────
-    scene  — (_N_PER_PATH,)  scene-path EC cascade buffer (21 states)
-    target — (_N_PER_PATH,)  target-path EC cascade buffer (21 states)
+    scene    — (_N_PER_PATH,)  scene-path EC cascade buffer (21 states)
+    target   — (_N_PER_PATH,)  target-path EC cascade buffer (21 states)
+    mn_lp1/2 — (3,) ×2          two-stage MN-membrane forward-model LP
+    x_p_pred — (3,)             plant forward model: predicted actual eye pos
+    sat_*    — (7,) ×2          saturation-flag delay cascades
 
 Activations (read at top of brain_model.step from BrainState)
 ────────────────────────────────────────────────────────────
@@ -90,9 +104,10 @@ _N_AXES    = 3
 N_PER_PATH = (_N_SHARP + _N_LP) * _N_AXES   # 21 states per cascade
 
 _N_SAT_PER_PATH = (_N_SHARP + _N_LP) * 1    # 7 scalar cascade states for sat-flag
-N_STATES   = 2 * N_PER_PATH + 6 + 2 * _N_SAT_PER_PATH
-                                            # scene + target EC + two MN LPs + two
-                                            # scalar saturation-flag cascades
+N_STATES   = 2 * N_PER_PATH + 6 + 3 + 2 * _N_SAT_PER_PATH
+                                            # scene + target EC + two MN LPs +
+                                            # plant forward-model x_p_pred (3) +
+                                            # two scalar saturation-flag cascades
 
 
 # ── State + Activations ───────────────────────────────────────────────────────
@@ -116,6 +131,13 @@ class State(NamedTuple):
     target:     jnp.ndarray   # (21,) cascade buffer matching target_vel
     mn_lp1:     jnp.ndarray   # (3,)  first MN-membrane LP (AIN/ABN side)
     mn_lp2:     jnp.ndarray   # (3,)  second MN-membrane LP (CN3-MR side, via MLF)
+    x_p_pred:   jnp.ndarray   # (3,)  plant forward-model: predicted actual eye
+                              #       position (head frame, deg).  First-order
+                              #       Robinson plant driven by the cerebellum's
+                              #       internal copy of the motor command — lags
+                              #       NI_net by ~tau_p, matching the real plant
+                              #       so the EC rotation uses the position the
+                              #       retina actually sees, not NI_net.
     sat_scene:  jnp.ndarray   # (7,)  scene saturation-flag scalar cascade
     sat_target: jnp.ndarray   # (7,)  target saturation-flag scalar cascade
 
@@ -125,14 +147,18 @@ class Activations(NamedTuple):
     # EC delay cascade outputs (delayed self-motion predictions)
     ec_scene:        jnp.ndarray   # (3,) delayed EC for scene path
     ec_target:       jnp.ndarray   # (3,) delayed EC for target path
-    # Ventral paraflocculus (VPF) — smooth pursuit forward model
-    pred_err:        jnp.ndarray   # (3,) target_slip + ec_correction (PE)
-    vpf_drive:       jnp.ndarray   # (3,) gated cerebellar pursuit drive → pursuit_in
-    # Saccadic-suppression gates (1 − cascaded saturation flag).  Multiplied
-    # onto the corresponding PE so retinal evidence is down-weighted during
-    # high-speed self-motion (when both slip and EC have saturated).
-    saccadic_suppression_scene:  jnp.ndarray   # scalar  → multiplies scene PE in sm.step
-    saccadic_suppression_target: jnp.ndarray   # scalar  → multiplies target PE (vpf_drive)
+    # Cerebellar EC corrections (gated by the saccadic-suppression factor).
+    # Both have the form `sat · visibility · ec_no_torsion` and sum cleanly
+    # with the brainstem direct path (= sat · raw_slip) in brain_model.
+    pred_err:        jnp.ndarray   # (3,) target_slip + ec_correction (PE, diagnostic)
+    vpf_drive:       jnp.ndarray   # (3,) gated target EC → pursuit (Ventral paraflocculus)
+    fl_okr_drive:    jnp.ndarray   # (3,) gated scene EC → VS (Flocculus / vermis OKR)
+    # Saccadic-suppression gates (1 − cascaded saturation flag).  Applied to
+    # the RAW retinal input (cyc.scene_angular_vel / cyc.target_vel) directly
+    # in brain_model; cerebellum's own EC corrections above are pre-gated by
+    # the same factor so brainstem-direct + cerebellar sum stays consistent.
+    saccadic_suppression_scene:  jnp.ndarray   # scalar  → multiplies cyc.scene_angular_vel
+    saccadic_suppression_target: jnp.ndarray   # scalar  → multiplies cyc.target_vel
     # Flocculus (FL) — leak cancellation (Cannon & Robinson 1985)
     fl_drive:        jnp.ndarray   # (3,) NI leak-cancellation feedback → u_ni_in
     fl_vs_drive:     jnp.ndarray   # (3,) VS leak-cancellation feedback → VS dx_pop
@@ -141,11 +167,12 @@ class Activations(NamedTuple):
 
 
 def rest_state():
-    """Zero state — both EC cascades + both MN LPs + sat-flag cascades empty."""
+    """Zero state — both EC cascades + both MN LPs + plant pred + sat cascades."""
     return State(scene=jnp.zeros(N_PER_PATH),
                  target=jnp.zeros(N_PER_PATH),
                  mn_lp1=jnp.zeros(3),
                  mn_lp2=jnp.zeros(3),
+                 x_p_pred=jnp.zeros(3),
                  sat_scene=jnp.zeros(_N_SAT_PER_PATH),
                  sat_target=jnp.zeros(_N_SAT_PER_PATH))
 
@@ -179,6 +206,7 @@ def read_activations(brain_state, brain_params):
                    w_est=jnp.zeros(3),
                    target_slip=brain_state.pc.target_vel,
                    target_visible=brain_state.pc.target_visible[-1],
+                   scene_visible=brain_state.pc.scene_visible[-1],
                    brain_params=brain_params)
     return acts
 
@@ -187,7 +215,7 @@ def read_activations(brain_state, brain_params):
 
 def step(state, ec_vel, ec_pos, ni_net, ni_null,
          vs_net, vs_null, rf, w_est,
-         target_slip, target_visible, brain_params):
+         target_slip, target_visible, scene_visible, brain_params):
     """Cerebellum per-step processing.
 
     Three jobs:
@@ -203,14 +231,17 @@ def step(state, ec_vel, ec_pos, ni_net, ni_null,
 
       3. **EC cascade advance** — scene + target cascades match the
          perception_cyclopean slip cascades (gamma/LP TCs + retinal
-         velocity-saturation ceiling).  MN forward-model LP smooths the
-         ec_vel before saturation so the EC mirrors the actual eye velocity
-         the retina sees through the MN pathway.
+         velocity-saturation ceiling).  Pipeline: MN forward-model LP →
+         plant forward model (x_p_pred) → head→eye rotation through
+         x_p_pred → retinal velocity saturation → visual delay cascade.
+         Using x_p_pred (a lagged copy of the real plant) rather than
+         ec_pos (= NI_net) for the rotation keeps the EC's frame-mix term
+         matched to the retinal slip even mid-saccade.
 
     Args:
         state:           cerebellum.State
         ec_vel:          (3,)    version velocity efference (head frame, deg/s)
-        ec_pos:          (3,)    eye position (head frame, deg)
+        ec_pos:          (3,)    eye position command = NI_net (head frame, deg)
         ni_net:          (3,)    NI net signal (decoded.ni.net) — for FL
         ni_null:         (3,)    NI null adaptation state — for FL
         target_slip:     (3,)    delayed cyclopean retinal target velocity
@@ -263,29 +294,35 @@ def step(state, ec_vel, ec_pos, ni_net, ni_null,
     ec_target = state.target[-3:]
     ec_no_torsion = ec_target.at[2].set(0.0)
 
-    # ── Pure prediction error (no gates) ──────────────────────────────────────
-    # vpf_drive = pred_err = slip + EC_correction
+    # ── Cerebellar pursuit contribution: CB2 ──────────────────────────────────
+    # The pursuit input downstream is:
+    #     pursuit_in = K_pursuit_direct · target_slip + K_cereb_pu · vpf_drive
+    # where the first term is the brainstem direct (raw retinal slip) path and
+    # the second is THIS cerebellar contribution.  Defining
+    #     vpf_drive = sat_gate · (target_visible · ec_no_torsion)
+    #               − (1 − sat_gate) · target_slip
+    # makes the SUM at default gains (K_pursuit_direct = K_cereb_pu = 1) equal
+    # to the previous full output:
+    #     pursuit_in = slip + sat·vis·ec − (1−sat)·slip = sat·(slip + vis·ec)
+    # The first half (sat · vis · ec) is the EC correction (cancels self-
+    # motion contamination of slip).  The second half (−(1−sat) · slip) is
+    # the cerebellum's *cancellation of the brainstem direct path* during
+    # saccades — so when the gate closes, the brainstem slip is silenced.
     #
-    # The cerebellum predicts the slip that would arise from current self-
-    # motion alone (predicted_self_slip = −ec_correction).  The prediction
-    # error is the discrepancy between actual slip and that prediction:
-    #     PE = slip − predicted_self_slip = slip + ec_correction
-    # Pursuit drives on the PE; the pursuit module's internal Smith predictor
-    # handles steady-state self-sustaining.
-    #
-    # K_cereb_pu scales the cerebellum's EC contribution (lesion → K=0 → no
-    # self-motion cancellation → raw slip drives pursuit; classic flocculus
-    # phenotype with reduced effective gain during head motion).
-    ec_correction = bp.K_cereb_pu * target_visible * ec_no_torsion
-    pred_err      = target_slip + ec_correction
-    vpf_drive     = pred_err
+    # Lesion (K_cereb_pu = 0): pursuit driven by raw slip alone — no EC
+    # correction (reduced gain during head motion) AND no saccadic
+    # suppression of pursuit (the classic flocculus phenotype).
+    ec_correction = target_visible * ec_no_torsion
+    pred_err      = target_slip + ec_correction              # diagnostic only
 
     # ── EC cascade advance ────────────────────────────────────────────────
     # Order mirrors the vision pathway from motor command to retinal cascade:
-    #   MN lag → rotation (head→eye frame) → saturation → visual delays.
+    #   MN lag → plant forward model → rotation (head→eye frame) → saturation
+    #   → visual delays.
     # The motor command lives in the head frame, the MN pool low-passes it
-    # there, the plant then turns that into eye rotation (frame transform
-    # via ec_pos), and only then does the retinal saturation see it.
+    # there, the plant turns that into eye rotation (a first-order lag — the
+    # cerebellum keeps its own copy x_p_pred), the frame transform uses that
+    # predicted position, and only then does the retinal saturation see it.
 
     # 1. Two-stage MN forward-model LP (head frame).  Mirrors the FCP MN
     #    pathway: half the conjugate yaw command reaches its muscle through
@@ -300,28 +337,44 @@ def step(state, ec_vel, ec_pos, ni_net, ni_null,
     w_mlf    = bp.mlf_axis_weight                          # (3,) — yaw 0.5, others 0
     mn_lp_in = (1.0 - w_mlf) * state.mn_lp1 + w_mlf * state.mn_lp2
 
-    # 2. Rotation: head-frame velocity → eye-frame velocity using current
-    #    ec_pos.  Same transform the retina applies to actual eye velocity.
-    R_eye        = rotation_matrix(ypr_to_xyz(ec_pos))
-    mn_lp_in_eye = xyz_to_ypr(R_eye.T @ ypr_to_xyz(mn_lp_in))
-    w_est_eye    = xyz_to_ypr(R_eye.T @ ypr_to_xyz(w_est))
+    # 2. Plant forward model (head frame).  First-order Robinson plant driven
+    #    by the cerebellum's internal copy of the motor command:
+    #        motor_cmd_pred = ec_pos + tau_p · mn_lp_in        (pulse-step sum)
+    #        dx_p_pred/dt   = (motor_cmd_pred − x_p_pred) / tau_p
+    #                       = mn_lp_in + (ec_pos − x_p_pred) / tau_p
+    #    so x_p_pred lags NI_net (ec_pos) by ~tau_p exactly as the real plant
+    #    does — eye_vel_pred is the eye velocity the retina actually sees, and
+    #    x_p_pred is the eye position the retina rotates through.  At steady
+    #    state eye_vel_pred → mn_lp_in and x_p_pred → ec_pos.
+    eye_vel_pred = mn_lp_in + (ec_pos - state.x_p_pred) / bp.tau_p
+    d_x_p_pred   = eye_vel_pred
 
-    # 3. Retinal velocity saturation, offset by −w_est_eye: gain rolloff is
-    #    computed on the residual (motor_cmd + w_est ≈ eye_vel_in_world).
+    # 3. Rotation: head-frame velocity → eye-frame velocity using the
+    #    predicted plant position x_p_pred.  Same transform the retina
+    #    applies to the actual eye velocity through the actual eye position —
+    #    so using x_p_pred (not ec_pos = NI_net) keeps the frame-mix term in
+    #    the EC matched to the retina even mid-saccade, where NI_net leads
+    #    the actual eye position by several degrees.
+    R_eye         = rotation_matrix(ypr_to_xyz(state.x_p_pred))
+    eye_vel_pred_eye = xyz_to_ypr(R_eye.T @ ypr_to_xyz(eye_vel_pred))
+    w_est_eye        = xyz_to_ypr(R_eye.T @ ypr_to_xyz(w_est))
+
+    # 4. Retinal velocity saturation, offset by −w_est_eye: gain rolloff is
+    #    computed on the residual (eye_vel_pred + w_est ≈ eye_vel_in_world).
     #    During perfect VOR the residual is zero so the cascade input passes
     #    through unchanged.
     v_offset_eye     = -w_est_eye
-    ec_vel_scene_in  = velocity_saturation(mn_lp_in_eye, bp.v_max_okr,
+    ec_vel_scene_in  = velocity_saturation(eye_vel_pred_eye, bp.v_max_okr,
                                             v_offset=v_offset_eye)      # NOT/AOS
-    ec_vel_target_in = velocity_saturation(mn_lp_in_eye, bp.v_max_pursuit,
+    ec_vel_target_in = velocity_saturation(eye_vel_pred_eye, bp.v_max_pursuit,
                                             v_offset=v_offset_eye)      # MT/MST
 
-    # 4. Saccadic-suppression flags = 1 − cosine-rolloff gain.  Detects when
-    #    the residual eye-velocity (mn_lp_in_eye + w_est_eye) is fast enough
-    #    that the retinal-pathway saturation is engaged.  Two flags because
-    #    target (v_max_pursuit) and scene (v_max_okr) have different
+    # 5. Saccadic-suppression flags = 1 − cosine-rolloff gain.  Detects when
+    #    the residual eye-velocity (eye_vel_pred_eye + w_est_eye) is fast
+    #    enough that the retinal-pathway saturation is engaged.  Two flags
+    #    because target (v_max_pursuit) and scene (v_max_okr) have different
     #    thresholds.  Flag ∈ [0, 1]:  0 = no saturation, 1 = full clamp.
-    v_rel  = mn_lp_in_eye - v_offset_eye           # = mn_lp_in_eye + w_est_eye
+    v_rel  = eye_vel_pred_eye - v_offset_eye       # = eye_vel_pred_eye + w_est_eye
     speed  = jnp.linalg.norm(v_rel)
 
     def _sat_flag(spd, v_sat):
@@ -333,7 +386,7 @@ def step(state, ec_vel, ec_pos, ni_net, ni_null,
     sat_scene_now  = _sat_flag(speed, bp.v_max_okr)
     sat_target_now = _sat_flag(speed, bp.v_max_pursuit)
 
-    # 5. Visual delay cascade for the saturation flags — same gamma + LP TCs
+    # 6. Visual delay cascade for the saturation flags — same gamma + LP TCs
     #    as their corresponding EC paths, so the gate is delay-aligned with
     #    the slip / EC it modulates.
     d_sat_scene  = cascade_lp_step(state.sat_scene,  sat_scene_now,
@@ -345,7 +398,7 @@ def step(state, ec_vel, ec_pos, ni_net, ni_null,
                                     bp.tau_vis_smooth_target_vel,
                                     _N_SHARP, 1, _N_LP)
 
-    # 6. Visual delay cascade for the slip/EC signal (gamma sharp + LP) below.
+    # 7. Visual delay cascade for the slip/EC signal (gamma sharp + LP) below.
 
     # Cascaded saturation flags (LP tails) → gates applied to PEs downstream.
     # Contrast-amplification: `clip((raw_gate − thr)/(1 − thr), 0, 1) ** k`
@@ -364,8 +417,17 @@ def step(state, ec_vel, ec_pos, ni_net, ni_null,
     saccadic_suppression_scene  = _strengthen(1.0 - sat_d_scene)
     saccadic_suppression_target = _strengthen(1.0 - sat_d_target)
 
-    # Apply target gate inside cerebellum (pursuit pathway).
-    vpf_drive = saccadic_suppression_target * vpf_drive
+    # Cerebellar EC corrections — pre-gated by saccadic suppression.
+    # brain_model assembles:
+    #     pursuit_in     = K_pursuit_direct · sat_target · cyc.target_vel + K_cereb_pu  · vpf_drive
+    #     slip_pe_for_vs = K_vor_direct     · sat_scene  · cyc.scene_ang  + K_cereb_okr · fl_okr_drive
+    # so both the brainstem-direct path and the cerebellar EC scale with the
+    # same gate.  The gate must be MILD (`saccadic_suppression_threshold ≈ 0`,
+    # `steepness ≈ 1` → gate ≈ 1 − cascaded_sat) — an aggressive strengthen
+    # would throttle pursuit between catch-up saccades, where the gate cascade
+    # has not fully reopened.
+    vpf_drive    = saccadic_suppression_target * target_visible * ec_no_torsion
+    fl_okr_drive = saccadic_suppression_scene  * scene_visible  * ec_scene
 
     dstate = State(
         scene  = cascade_lp_step(state.scene,  ec_vel_scene_in,
@@ -378,11 +440,13 @@ def step(state, ec_vel, ec_pos, ni_net, ni_null,
                                   _N_SHARP, _N_AXES, _N_LP),
         mn_lp1     = d_mn1,
         mn_lp2     = d_mn2,
+        x_p_pred   = d_x_p_pred,
         sat_scene  = d_sat_scene,
         sat_target = d_sat_target,
     )
     acts = Activations(ec_scene=ec_scene, ec_target=ec_target,
                        pred_err=pred_err, vpf_drive=vpf_drive,
+                       fl_okr_drive=fl_okr_drive,
                        saccadic_suppression_scene=saccadic_suppression_scene,
                        saccadic_suppression_target=saccadic_suppression_target,
                        fl_drive=fl_drive, fl_vs_drive=fl_vs_drive,
@@ -430,36 +494,40 @@ if __name__ == "__main__":
     _check("pred_err == 0",  _close(acts.pred_err, zero3))
     _check("drive == 0",     _close(acts.vpf_drive, zero3))
 
-    # Pure prediction-error formulation: vpf_drive = pred_err = slip + K·vis·ec.
-    print("\n[3] Pure PE: pred_err = target_slip + K_cereb_pu · vis · ec_no_torsion")
+    # Cerebellum outputs vpf_drive = sat · target_visible · ec_no_torsion
+    # (the gated EC correction).  Brain_model assembles the full CB2:
+    #   CB2 = vpf_drive − (1 − sat) · cyc.target_vel
+    #   pursuit_in = K_pursuit_direct · cyc.target_vel + K_cereb_pu · CB2
+    print("\n[3] vpf_drive ≈ 0 when no EC (cerebellum has no correction to offer)")
     state_t = state0._replace(pc=state0.pc._replace(
         target_vel=jnp.array([10.0, 0.0, 0.0]),
         target_visible=state0.pc.target_visible.at[-1].set(1.0),
     ))
     acts = read_activations(state_t, bp)
     _check("pred_err == target_slip when ec=0", _close(acts.pred_err, [10.0, 0.0, 0.0]))
-    _check("vpf_drive == pred_err",             _close(acts.vpf_drive, acts.pred_err))
+    _check("vpf_drive ≈ 0 when ec=0",  _close(acts.vpf_drive, zero3, tol=1e-3))
 
     # EC cascade injection
-    print("\n[4] EC cascade tail: pred_err = ts + vis · ec_no_torsion, drive = pred_err")
+    print("\n[4] EC cascade tail: vpf_drive = sat · vis · ec_no_torsion")
     cb_state = state0.cb._replace(target=state0.cb.target.at[-3].set(2.0).at[-1].set(5.0))
     state_e  = state_t._replace(cb=cb_state)
     acts = read_activations(state_e, bp)
     _check("ec_target reads cascade tail", _close(acts.ec_target, [2.0, 0.0, 5.0]))
     _check("pred_err yaw = 10 + 1 · 2 = 12",
            _close(acts.pred_err, [12.0, 0.0, 0.0]))
-    _check("vpf_drive torsion zeroed",     abs(float(acts.vpf_drive[2])) < 1e-5)
-    _check("vpf_drive yaw = pred_err yaw = 12",
-           abs(float(acts.vpf_drive[0]) - 12.0) < 1e-3)
+    _check("vpf_drive torsion zeroed", abs(float(acts.vpf_drive[2])) < 1e-5)
+    # With sat ≈ 1 at rest: vpf_drive = sat · vis · ec_no_torsion = 1 · 1 · 2 = 2
+    _check("vpf_drive yaw ≈ 2 (gate open)",
+           abs(float(acts.vpf_drive[0]) - 2.0) < 1e-3)
 
-    # Lesion: K_cereb_pu = 0 → no EC correction → pred_err = raw target_slip.
-    print("\n[5] Cerebellar pursuit lesion (K_cereb_pu = 0) → no EC correction")
+    # Cerebellum-internal output is invariant to brain-side K_cereb_pu;
+    # the lesion is applied downstream in brain_model.
+    print("\n[5] vpf_drive invariant under K_cereb_pu (lesion handled in brain_model)")
     bp_les = BrainParams(K_cereb_pu=0.0)
     acts_les = read_activations(state_e, bp_les)
-    _check("pred_err = target_slip (no EC correction)",
-           _close(acts_les.pred_err, [10.0, 0.0, 0.0]))
-    _check("vpf_drive = pred_err under lesion",
-           _close(acts_les.vpf_drive, acts_les.pred_err))
+    _check("pred_err unchanged", _close(acts_les.pred_err, [12.0, 0.0, 0.0]))
+    _check("vpf_drive unchanged",
+           _close(acts_les.vpf_drive, acts.vpf_drive))
     _check("ec_target unchanged",       _close(acts_les.ec_target, [2.0, 0.0, 5.0]))
 
     # FL — leak-cancellation drive scales with (ni_net − ni_null)/tau_i
@@ -488,6 +556,7 @@ if __name__ == "__main__":
                               w_est=zero3,
                               target_slip=zero3,
                               target_visible=jnp.float32(1.0),
+                              scene_visible=jnp.float32(1.0),
                               brain_params=bp)
     _check("dstate scene shape",  dstate.scene.shape  == (N_PER_PATH,))
     _check("dstate target shape", dstate.target.shape == (N_PER_PATH,))
@@ -500,7 +569,7 @@ if __name__ == "__main__":
     acts_jit = read_jit(state0, bp)
     dstate_jit, _ = step_jit(state0.cb, jnp.zeros(3), jnp.zeros(3),
                               zero3, zero3, zero3, zero3, zero3, zero3,
-                              zero3, jnp.float32(1.0), bp)
+                              zero3, jnp.float32(1.0), jnp.float32(1.0), bp)
     _check("read_activations JIT",  acts_jit is not None)
     _check("step JIT",              dstate_jit is not None)
 

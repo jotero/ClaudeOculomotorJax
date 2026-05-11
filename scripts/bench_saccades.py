@@ -474,15 +474,16 @@ def _cascade(show, noisy=False):
         # Effective EC = exactly what the brain adds to slip in pred_err:
         #   scene path:   PE = scene_slip  + scene_visible  · ec_d_scene
         #   target path:  PE = target_slip + K_cereb_pu · target_visible · ec_no_torsion
-        scene_vis  = np.array(acts.pc.scene_visible)                 # (T,)
-        tgt_vis    = np.array(acts.pc.target_visible)                # (T,)
+        # RAW EC cascade outputs — what the cerebellum's forward model emits,
+        # independent of the downstream K_cereb / saccadic-suppression / visibility
+        # gains.  This is the right thing to compare against the slip cascade:
+        # if the EC is a good forward model, −EC ≈ slip (the eye-motion
+        # contribution to retinal slip).  The torsion axis is zeroed on the
+        # target path (matching pred_err's ec_no_torsion).
         ec_scene   = np.array(acts.cb.ec_scene)                      # (T, 3)
         ec_target  = np.array(acts.cb.ec_target)                     # (T, 3)
         ec_target_no_torsion = ec_target.copy()
         ec_target_no_torsion[:, 2] = 0.0
-        ec_scene_eff  = scene_vis[:, None] * ec_scene
-        ec_target_eff = (float(params.brain.K_cereb_pu)
-                          * tgt_vis[:, None] * ec_target_no_torsion)
 
         # Row 5: PRE-cascade slip + effective EC (after clipping, before the
         # 6-stage gamma + LP).  Saturated retinal slip in eye frame for
@@ -500,16 +501,17 @@ def _cascade(show, noisy=False):
         axes[5, ci].set_ylim(min(ylo, -1.0), max(yhi, 1.0))
         if ci == 0: axes[5, ci].legend(fontsize=7)
 
-        # Row 6: POST-cascade slip + effective EC.  EC sign-flipped so it
-        # overlays the slip when cancellation is perfect (slip + EC ≈ 0
-        # ⇔ −EC ≈ slip).  The "effective EC" is exactly what enters pred_err
-        # on each path:
-        #   scene  PE = scene_slip  + scene_visible  · ec_d_scene
-        #   target PE = target_slip + K_cereb_pu · target_visible · ec_no_torsion
-        axes[6, ci].plot(t_np, vel_del[:, 0],         color='#7b2d8b', lw=1.2, label='tgt slip')
-        axes[6, ci].plot(t_np, -ec_target_eff[:, 0], color='#d62728', lw=1.0, ls=':',  label='−EC target (eff)')
-        axes[6, ci].plot(t_np, slip_del[:, 0],        color='#1a7a4a', lw=1.2, label='scene slip')
-        axes[6, ci].plot(t_np, -ec_scene_eff[:, 0],  color='#1f4dab', lw=1.0, ls='--', label='−EC scene (eff)')
+        # Row 6: POST-cascade slip + RAW EC cascade output.  EC sign-flipped so
+        # it overlays the slip when the forward model is good (−EC ≈ slip ⇔
+        # slip + EC ≈ 0).  The gap between them is the EC-vs-slip residual
+        # (dynamics mismatch — MN/MLF model vs actual FCP path, fl_drive, plant).
+        # This is the raw cerebellar EC cascade tail (acts.cb.ec_*), NOT scaled
+        # by K_cereb / saccadic suppression / visibility — so it stays meaningful
+        # even when pursuit is disabled (K_cereb_pu = 0).
+        axes[6, ci].plot(t_np, vel_del[:, 0],               color='#7b2d8b', lw=1.2, label='tgt slip')
+        axes[6, ci].plot(t_np, -ec_target_no_torsion[:, 0], color='#d62728', lw=1.0, ls=':',  label='−EC target (cascade)')
+        axes[6, ci].plot(t_np, slip_del[:, 0],              color='#1a7a4a', lw=1.2, label='scene slip')
+        axes[6, ci].plot(t_np, -ec_scene[:, 0],             color='#1f4dab', lw=1.0, ls='--', label='−EC scene (cascade)')
         ax_fmt(axes[6, ci])
         ylo, yhi = axes[6, ci].get_ylim()
         axes[6, ci].set_ylim(min(ylo, -1.0), max(yhi, 1.0))
@@ -580,7 +582,10 @@ def _cascade(show, noisy=False):
 SECTION = dict(
     id='saccades', title='1. Saccades',
     description='Saccade kinematics and internal signal cascade. Tests main sequence (amplitude–velocity), '
-                'oblique trajectory linearity, double-step refractoriness, and the full Robinson cascade.',
+                'oblique trajectory linearity, double-step refractoriness, and the full Robinson cascade. '
+                'The cascade figure also shows the cerebellar saccadic-suppression gates (pre- and post-delay), '
+                'the pre- vs post-cascade slip + efference-copy comparison (cerebellum EC matched to the retinal '
+                'cascade incl. the two-stage MN / MLF forward model), and the pursuit / VS / T-VOR drives during a saccade.',
 )
 
 

@@ -110,8 +110,7 @@ def step(activations, target_slip_ec, brain_params):
 
     Args:
         activations:     pursuit.Activations  R, L pops (each (3,))
-        target_slip_ec:  (3,)  EC-corrected target slip (deg/s)
-                                = target_slip + motor_ec · target_motion_visible
+        target_slip_ec:  (3,)  EC-corrected, suppression-gated pursuit input
         brain_params:    BrainParams  (K_pursuit, K_phasic_pursuit, tau_pursuit)
 
     Returns:

@@ -413,7 +413,7 @@ def _build_html(brain_fields, sensory_fields, plant_fields, schema_path,
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>OculomotorJax — Parameter Reference</title>
+  <title>OMSim — Parameter Reference</title>
   <style>{_HTML_CSS}</style>
 </head>
 <body>
@@ -427,7 +427,7 @@ def _build_html(brain_fields, sensory_fields, plant_fields, schema_path,
     <a href="index.html">LLM simulator</a>
   </nav>
   <main>
-    <h1>OculomotorJax — Parameter Reference</h1>
+    <h1>OMSim — Parameter Reference</h1>
     <p class="meta">
       Generated: <strong>{ts}</strong> &nbsp;|&nbsp;
       Version: <strong>{ver}</strong> &nbsp;|&nbsp;
