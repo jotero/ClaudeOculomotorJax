@@ -25,7 +25,10 @@ from oculomotor.models.sensory_models.sensory_model import (
 )
 from oculomotor.models.brain_models.perception_cyclopean import C_slip
 from oculomotor.sim import kinematics as km
-from oculomotor.analysis import ax_fmt, extract_canal, vs_net, vs_null, ni_net, fit_tc, extract_spv_states
+from oculomotor.analysis import (
+    ax_fmt, extract_canal, vs_net, vs_null, ni_net, fit_tc, extract_spv_states,
+    read_brain_acts,
+)
 
 SHOW  = '--show' in sys.argv
 DT    = 0.001
@@ -303,8 +306,8 @@ def _cascade(show):
     st_o   = _simulate(THETA_NOISELESS, t_okn, scene_vel=sv,
                        scene_present=sp, target_present=jnp.zeros(T_okn), key=6)
 
-    # Delayed cyclopean scene slip — 1-pole LP buffer, shape (T, 3); take yaw.
-    slip   = np.array(st_o.brain.pc.scene_angular_vel)[:, 0]
+    # Delayed cyclopean scene slip via acts.pc — yaw component.
+    slip   = np.array(read_brain_acts(st_o, THETA_NOISELESS).pc.scene_angular_vel)[:, 0]
     x_vs_o = vs_net(st_o)[:, 0]
     x_ni_o = ni_net(st_o)[:, 0]
     eye_o  = np.array(st_o.plant.left[:, 0])

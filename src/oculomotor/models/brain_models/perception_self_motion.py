@@ -168,19 +168,26 @@ N_OUTPUTS = 3   # primary output for SSM convention is w_est; auxiliaries via tu
 # Velocity Storage — bilateral push-pull (Raphan, Matsuo & Cohen 1979)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _vs_step(x_vs, canal, slip, rf, brain_params):
+def _vs_step(x_vs, canal, slip, fl_vs_drive, nu_drive, brain_params):
     """VS internal step.
 
     Two populations (A/B) with opposite preferred directions; net = x_A − x_B.
     Push-pull on canal and visual inputs; per-axis tau (yaw/pitch/roll fractions);
-    null adaptation extends effective TC for sustained stimuli; rf (Laurens)
-    couples gravity-estimate mismatch back as a perceived rotation.
+    null adaptation extends effective TC for sustained stimuli.
+
+    Cerebellar inputs (Cohen, Raphan, Wearne for NU; Cannon-Robinson for FL):
+        nu_drive    — nodulus+uvula gravity-axis dumping (replaces the old
+                       in-place K_gd · rf computation).
+        fl_vs_drive — floccular leak cancellation, extends effective tau_vs.
 
     Args:
-        x_vs:   (9,) [x_A | x_B | x_null] (deg/s)
-        canal:  (6,) canal afferents (deg/s)
-        slip:   (3,) scene retinal slip [yaw,pitch,roll] (deg/s)
-        rf:     (3,) Laurens rotational feedback [yaw,pitch,roll] (deg/s)
+        x_vs:        (9,) [x_A | x_B | x_null] (deg/s)
+        canal:       (6,) canal afferents (deg/s)
+        slip:        (3,) scene retinal slip [yaw,pitch,roll] (deg/s)
+        fl_vs_drive: (3,) NET-level FL feedback (yaw/pitch/roll); applied
+                          push-pull to bilateral pops to cancel leak.
+        nu_drive:    (3,) NET-level NU dumping signal (yaw/pitch/roll);
+                          applied push-pull (replaces old K_gd · rf).
         brain_params: BrainParams
 
     Returns:
@@ -219,10 +226,14 @@ def _vs_step(x_vs, canal, slip, rf, brain_params):
     D = jnp.concatenate([brain_params.g_vor * PINV_SENS,
                         -brain_params.g_vis * jnp.eye(3)], axis=1)
 
-    # Rotational feedback (Laurens & Angelaki 2011) — push-pull across populations
-    rf6 = brain_params.K_gd * jnp.concatenate([rf, -rf])
+    # Cerebellar inputs to VS (push-pull split of the NET-level signals):
+    #   - nu_drive: nodulus gravity-axis dumping (was K_gd · rf inline).
+    #   - fl_vs_drive: floccular leak cancellation (positive feedback that
+    #     extends effective tau_vs by adding back the leak amount).
+    nu6   = jnp.concatenate([ nu_drive,    -nu_drive])     # was rf6
+    fl_vs6 = 0.5 * jnp.concatenate([ fl_vs_drive, -fl_vs_drive])
 
-    dx_pop  = A @ (x_pop - SP) + B @ u_lin - rf6
+    dx_pop  = A @ (x_pop - SP) + B @ u_lin - nu6 + fl_vs6
     w_est   = C @ x_pop + D @ u_lin
     dx_null = (w_est - x_null) / brain_params.tau_vs_adapt
 
@@ -335,7 +346,8 @@ def _he_step(x_head, a_lin, scene_lin_vel, scene_visible, brain_params):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def step(activations, weights, canal, scene_slip, gia, scene_lin_vel,
-         scene_visible, ec_d_scene, brain_params):
+         scene_visible, ec_d_scene, fl_vs_drive, nu_drive,
+         saccadic_suppression_scene, brain_params):
     """Single ODE step for the unified self-motion observer.
 
     Activation-driven: cross-projections and recurrence read firing rates from
@@ -345,8 +357,13 @@ def step(activations, weights, canal, scene_slip, gia, scene_lin_vel,
     formal hook for L/R splits + rectification when those land.
 
     Internal sequencing (matches Laurens & Angelaki 2017):
-      0. Post-delay EC subtraction + magnitude / directional gates on the
-         RAW delayed scene slip (and on scene_linear_vel by Hill K_mag).
+      0. Prediction error on the scene path, gated by cerebellar saccadic
+         suppression:
+             PE_scene_raw = scene_slip + scene_visible · ec_d_scene
+             PE_scene     = saccadic_suppression_scene · PE_scene_raw
+         The gate closes during high-speed self-motion (when both slip and
+         EC have saturated), down-weighting retinal evidence that would
+         otherwise drive VS in the wrong direction.
       1. VS uses rf_state from the (1-step delayed) ODE state — breaks the
          VS↔GE algebraic loop with negligible lag (τ_rf_state ≈ 5 ms).
       2. GE then runs with the freshly-computed w_est from VS.
@@ -362,8 +379,7 @@ def step(activations, weights, canal, scene_slip, gia, scene_lin_vel,
         scene_lin_vel:  (3,)   RAW delayed scene linear velocity (m/s)
         scene_visible:  scalar delayed cyclopean scene presence gate ∈ [0,1]
         ec_d_scene:     (3,)   delayed EC matched to scene_angular_vel cascade
-        brain_params:   BrainParams — VS/GE/HE params + v_crit_ec_gate,
-                                      n_ec_gate, alpha_ec_dir, bias_ec_dir
+        brain_params:   BrainParams — VS/GE/HE params
 
     Returns:
         dstate         : sm.State  state derivative
@@ -379,32 +395,27 @@ def step(activations, weights, canal, scene_slip, gia, scene_lin_vel,
     x_grav = jnp.concatenate([activations.g_est, activations.a_lin, activations.rf])
     x_head = activations.v_lin
 
-    # rf and a_lin used here are 1-step delayed via the ODE state — the
-    # activations registry was built at the start of the brain step.
-    rf_state  = activations.rf
+    # a_lin used here is 1-step delayed via the ODE state — the activations
+    # registry was built at the start of the brain step.  rf_state was the
+    # input to the old K_gd · rf computation; that has now moved to the
+    # cerebellum (acts.cb.nu_drive), so rf is no longer used here.
     a_lin_est = activations.a_lin
 
-    # 0. Post-delay EC subtraction + saccadic-suppression gates on scene path.
-    #    Visibility-gating ensures EC contribution = 0 when scene was invisible.
-    scene_slip_corr = scene_slip + scene_visible * ec_d_scene
-    K_mag_scene     = 1.0 / (1.0 + (jnp.linalg.norm(ec_d_scene) / brain_params.v_crit_ec_gate)
-                              ** brain_params.n_ec_gate)
-    ec_norm_s       = jnp.linalg.norm(ec_d_scene) + 1e-9
-    slip_dot_s      = jnp.dot(scene_slip, ec_d_scene / ec_norm_s)
-    K_dir_s         = jax.nn.sigmoid((slip_dot_s + brain_params.bias_ec_dir)
-                                      * brain_params.alpha_ec_dir)
-    slip_gated      = K_mag_scene * K_dir_s * scene_slip_corr
-    scene_lin_gated = K_mag_scene * scene_lin_vel
+    # 0. Prediction error on the scene path: slip + EC, then multiplied by
+    #    the cerebellar saccadic-suppression gate (= 1 − cascaded-saturation-
+    #    flag) so retinal evidence is muted during high-speed self-motion.
+    slip_pe         = saccadic_suppression_scene * (scene_slip + scene_visible * ec_d_scene)
+    scene_lin_pe    = saccadic_suppression_scene * scene_lin_vel
 
     # 1. VS — angular velocity estimate
-    dx_vs, w_est = _vs_step(x_vs, canal, slip_gated, rf_state, brain_params)
+    dx_vs, w_est = _vs_step(x_vs, canal, slip_pe, fl_vs_drive, nu_drive, brain_params)
 
     # 2. GE — gravity + linear-acc estimates (rf updated for next step)
     dx_grav, g_est = _ge_step(x_grav, w_est, gia, brain_params)
 
     # 3. HE — head linear velocity (consumes the prior step's a_lin to avoid
     #         needing the freshly-computed â here)
-    dx_head, v_lin = _he_step(x_head, a_lin_est, scene_lin_gated, scene_visible, brain_params)
+    dx_head, v_lin = _he_step(x_head, a_lin_est, scene_lin_pe, scene_visible, brain_params)
 
     dstate = State(
         vs_L    = dx_vs[_VS_IDX_A],

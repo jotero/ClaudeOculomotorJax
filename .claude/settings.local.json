@@ -90,7 +90,14 @@
       "Bash(\"d:/OneDrive/UC Berkeley/OMlab - JOM/Code/ClaudeOculomotorJax/.venv/Scripts/python.exe\" -X utf8 -m oculomotor.models.brain_models.cerebellum)",
       "Bash(\"d:/OneDrive/UC Berkeley/OMlab - JOM/Code/ClaudeOculomotorJax/.venv/Scripts/python.exe\" -X utf8 scripts/bench_pursuit.py)",
       "Bash(git checkout *)",
-      "Bash(\"d:/OneDrive/UC Berkeley/OMlab - JOM/Code/ClaudeOculomotorJax/.venv/Scripts/python.exe\" -X utf8 scripts/_diag_pursuit_sacs.py)"
+      "Bash(\"d:/OneDrive/UC Berkeley/OMlab - JOM/Code/ClaudeOculomotorJax/.venv/Scripts/python.exe\" -X utf8 scripts/_diag_pursuit_sacs.py)",
+      "PowerShell(& \"d:\\\\OneDrive\\\\UC Berkeley\\\\OMlab - JOM\\\\Code\\\\ClaudeOculomotorJax\\\\.venv\\\\Scripts\\\\python.exe\" -X utf8 -c \"from scripts.bench_saccades import _cascade; _cascade\\(show=False, noisy=False\\)\")",
+      "PowerShell(& \"d:\\\\OneDrive\\\\UC Berkeley\\\\OMlab - JOM\\\\Code\\\\ClaudeOculomotorJax\\\\.venv\\\\Scripts\\\\python.exe\" -X utf8 -m oculomotor.models.brain_models.cerebellum 2>&1)",
+      "PowerShell(& \"d:\\\\OneDrive\\\\UC Berkeley\\\\OMlab - JOM\\\\Code\\\\ClaudeOculomotorJax\\\\.venv\\\\Scripts\\\\python.exe\" -X utf8 -c \"import scripts.bench_pursuit; import scripts.bench_experiments; import scripts.bench_vor_okr; import scripts.bench_saccades; print\\('all imports OK'\\)\")",
+      "PowerShell(& \"d:\\\\OneDrive\\\\UC Berkeley\\\\OMlab - JOM\\\\Code\\\\ClaudeOculomotorJax\\\\.venv\\\\Scripts\\\\python.exe\" -X utf8 scripts/bench_pursuit.py 2>&1)",
+      "PowerShell(& \"d:\\\\OneDrive\\\\UC Berkeley\\\\OMlab - JOM\\\\Code\\\\ClaudeOculomotorJax\\\\.venv\\\\Scripts\\\\python.exe\" -X utf8 scripts/bench_vor_okr.py 2>&1)",
+      "PowerShell(& \"d:\\\\OneDrive\\\\UC Berkeley\\\\OMlab - JOM\\\\Code\\\\ClaudeOculomotorJax\\\\.venv\\\\Scripts\\\\python.exe\" -X utf8 -c \"import scripts.bench_saccades as b; from oculomotor.sim.simulator import with_brain; b.THETA_NOISELESS = with_brain\\(b.THETA_NOISELESS, K_pursuit_direct=0.0\\); b._cascade\\(show=False, noisy=False\\)\")",
+      "PowerShell(& \"d:\\\\OneDrive\\\\UC Berkeley\\\\OMlab - JOM\\\\Code\\\\ClaudeOculomotorJax\\\\.venv\\\\Scripts\\\\python.exe\" -X utf8 -c \"import scripts.bench_saccades as b; from oculomotor.sim.simulator import with_brain; b.THETA = with_brain\\(b.THETA, alpha_fac=0.5\\); b.THETA_NOISELESS = with_brain\\(b.THETA_NOISELESS, alpha_fac=0.5\\); from scripts.bench_saccades import _main_sequence, _cascade; _main_sequence\\(show=False\\); _cascade\\(show=False, noisy=False\\)\")"
     ],
     "additionalDirectories": [
       "d:\\OneDrive\\UC Berkeley\\OMlab - JOM\\Code\\ClaudeOculomotorJax\\outputs"

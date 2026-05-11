@@ -169,6 +169,7 @@ def rest_brain_state():
 class Activations(NamedTuple):
     """Brain-wide firing rates — perception → motor order."""
     # Perception
+    pc:  pc.Activations    # cyclopean cascade-tail delayed signals
     sm:  sm.Activations    # VS + GE + HE
     pt:  pt.Activations    # target memory
     # Motor
@@ -207,6 +208,7 @@ def read_activations(brain_state, brain_params):
     other subsystems are pure state→firing-rate projections.
     """
     return Activations(
+        pc  = pc.read_activations(brain_state.pc),
         sm  = sm.read_activations(brain_state.sm),
         pt  = pt.read_activations(brain_state.pt),
         sg  = sg.read_activations(brain_state.sg),
@@ -290,41 +292,14 @@ class BrainParams(NamedTuple):
                                           # OKR gain ≈1 below 30 deg/s, half-max ~60 deg/s, near-zero ~100 deg/s
                                           # (Cohen, Matsuo & Raphan 1977 J Neurophysiol; Demer & Zee 1984 J Neurophysiol).
 
-    # Saccadic-suppression / Kalman gate on the post-delay slip — multiplicative
-    # gain K(|ec_vel_lp|) on scene_slip → VS and target_slip → pursuit. Down-weights
-    # retinal evidence during fast self-motion, when the EC residual would otherwise
-    # contaminate the integrators. Hill-n form: K = 1/(1+(|v|/v_crit)^n).
-    #   v_crit ~200 deg/s leaves pursuit/OKR/VOR (≤80 deg/s) untouched (K>0.97)
-    #     and clamps saccade-range velocities (≥400 deg/s) hard (K<0.07).
-    #   n=4 gives a flat plateau through smooth-eye-movement range and a sharp drop.
-    #   tau_ec_gate matches tau_vis so the gate signal is delay-aligned with
-    #     the post-delay slip arriving at VS / pursuit.
-    v_crit_ec_gate:        float = 50.0   # Hill threshold (deg/s); K=0.5 at this velocity.
-    n_ec_gate:             float = 6.0    # Hill exponent.
-    tau_ec_gate:           float = 0.07   # 1-pole LP TC for ec_vel_eye → mean delay = tau,
-                                          # peak of impulse response at t=0+ (anticipatory:
-                                          # fires immediately at saccade onset, ~50 ms earlier
-                                          # than the slip cascade's gamma peak at ≈40 ms).
-                                          # Tau matches slip cascade total mean delay (0.07 s).
-    alpha_ec_dir:          float = 0.4    # Directional gate sigmoid sharpness (1/(deg/s)).
-                                          # Sign-sensitive scalar gate on the EC-corrected slip,
-                                          # using the SIGNED projection of the *raw* delayed slip
-                                          # onto the ec_d direction. The intuition (per the saccade
-                                          # cascade plot): slip and EC are anti-parallel during
-                                          # self-motion, so a strongly *negative* projection means
-                                          # "slip and EC point opposite directions" — that's a
-                                          # self-motion case and the residual after EC sub should
-                                          # be suppressed harder.
-                                          #   slip_dot = dot(raw_slip, ec_d_hat)   (signed deg/s)
-                                          #   K = sigmoid((slip_dot + bias) · alpha)
-                                          # K large when slip_dot positive (same direction = real
-                                          # motion) or near zero (no slip → pass; matters for
-                                          # pursuit where raw target_slip ≈ 0).
-                                          # K small when slip_dot strongly negative (opposite to ec_d).
-    bias_ec_dir:           float = 15.0   # Sigmoid offset (deg/s); K=0.5 at slip_dot = -bias.
-                                          # K(0)≈0.998 (pursuit/quiescent slip), K(-15)=0.5,
-                                          # K(-25)≈0.018, K(-50)≈0. Larger bias = need more
-                                          # opposition before suppression triggers.
+    # EC contribution to the post-delay slip — pure prediction error.
+    #
+    #     PE_scene  = scene_slip  + scene_visible  · ec_d_scene   → VS / OKR
+    #     PE_target = target_slip + target_visible · ec_d_target  → pursuit
+    #
+    # No multiplicative gain, no saccadic-suppression Hill — just the
+    # classical Robinson/Smith formulation.  The visibility scalar keeps the
+    # EC contribution zero when the scene/target was invisible.
 
     # Neural integrator — bilateral push-pull + null adaptation (Robinson 1975; rebound: Zee et al. 1980)
     # Per-axis TCs via fractions of tau_i (matches the VS pattern). Yaw uses tau_i directly;
@@ -346,7 +321,7 @@ class BrainParams(NamedTuple):
                                                 # Must match SensoryParams.tau_vis_smooth_motion so
                                                 # the EC and slip cascades have the same shape →
                                                 # clean post-delay subtraction in brain_model.step.
-    tau_vis_smooth_target_vel:  float = 0.15   # smoothing LP TC (s) for TARGET EC cascade.
+    tau_vis_smooth_target_vel:  float = 0.075  # smoothing LP TC (s) for TARGET EC cascade.
                                                 # Must match SensoryParams.tau_vis_smooth_target_vel.
                                                 # Heavier smoothing than scene because the visual
                                                 # target-velocity pathway is intrinsically slower
@@ -358,7 +333,7 @@ class BrainParams(NamedTuple):
                                                 # Sloppy accommodation channel; combined with the lens
                                                 # plant TC (Schor & Bharadwaj 2006) produces realistic
                                                 # sluggish open-loop accommodation responses.
-    tau_brain_pos:              float = 0.03   # N-stage gamma TC (s) for target_pos / visibility brain
+    tau_brain_pos:              float = 0.015  # N-stage gamma TC (s) for target_pos / visibility brain
                                                 # phase (post-fusion). Total visual mean delay for these
                                                 # signals ≈ tau_vis_sharp + tau_brain_pos = 0.08 s.
 
@@ -651,6 +626,21 @@ class BrainParams(NamedTuple):
                                                               # & Cullen 1999). Behaviorally invisible at healthy
                                                               # plant TCs (~150–200 ms), but a clean state-level
                                                               # hook for MN-pathology modelling (e.g. fatigue).
+    # Cerebellum MN forward-model: per-axis MLF participation in the conjugate
+    # motor pathway.  Yaw uses 0.5·(mn_lp1+mn_lp2) — half the agonist force
+    # (LR_R for right eye) is single-MN filtered, the other half (MR_L for
+    # left eye, via MLF) is double-MN filtered.  Pitch/roll use mn_lp1 alone
+    # (no MLF stage modelled on the vertical/torsional axes).
+    mlf_axis_weight:       jnp.ndarray  = jnp.array([0.5, 0.0, 0.0])
+
+    # Saccadic-suppression gate strength (contrast amplification on the raw
+    # `1 − cascaded_sat_flag` gate).  Applied as:
+    #     gate = clip((raw_gate − threshold) / (1 − threshold), 0, 1) ** steepness
+    # threshold = 0 + steepness = 1 reproduces the raw linear gate.  Larger
+    # threshold or steepness pushes intermediate gate values toward 0, so
+    # only near-fully-open raw gates (cascaded_sat ≈ 0) pass through.
+    saccadic_suppression_threshold:    float = 0.4   # raw_gate ≤ this → fully suppressed
+    saccadic_suppression_steepness:    float = 2.0   # power applied to thresholded gate
                                                               # 1.0 = transparent (ceiling >> normal burst); <1 = conduction block
                                                               # Nerve order: [LR_L,MR_L,SR_L,IR_L,SO_L,IO_L, LR_R,MR_R,SR_R,IR_R,SO_R,IO_R]
                                                               # INO: g_nerve[MR_L or MR_R] ↓  →  adducting saccades slow, fixation preserved
@@ -703,14 +693,34 @@ class BrainParams(NamedTuple):
     K_cereb_fl:            float        = 1.0   # floccular NI leak-cancellation gain
                                                   # (Cannon & Robinson 1985).  Adds
                                                   # positive feedback K · (x_net − x_null)
-                                                  # / tau_i_per_axis to NI input,
-                                                  # extending the effective integrator
-                                                  # TC.  K_cereb_fl = 1 → leak fully
-                                                  # cancelled (NI ≈ perfect integrator);
-                                                  # K_cereb_fl = 0 → floccular lesion,
-                                                  # NI reverts to intrinsic leak →
-                                                  # gaze-evoked nystagmus (eye drifts
-                                                  # back to centre with TC ~ tau_i).
+                                                  # / tau_i_per_axis to NI input.
+                                                  # K = 1 → NI ≈ perfect integrator;
+                                                  # K = 0 → floccular lesion, gaze-evoked
+                                                  # nystagmus.
+    K_cereb_fl_vs:         float        = 0.0   # floccular VS leak-cancellation gain.
+                                                  # Same Cannon-Robinson architecture
+                                                  # applied to velocity storage. Default
+                                                  # 0 because the current tau_vs = 20 s
+                                                  # already represents the FL-extended
+                                                  # effective TC; enabling this on top
+                                                  # would push tau_vs → ∞ and break OKAN.
+                                                  # To opt in: shorten tau_vs to its
+                                                  # intrinsic brainstem value (~5 s)
+                                                  # and set K_cereb_fl_vs = 0.75 to
+                                                  # restore effective tau_vs ≈ 20 s with
+                                                  # an explicit FL contribution that
+                                                  # can be lesioned (K = 0 → tau_vs ≈
+                                                  # intrinsic 5 s, shortened OKAN).
+    K_cereb_nu:            float        = 1.0   # nodulus + uvula axis-dumping gain
+                                                  # (Cohen, Raphan, Wearne).  Multiplies
+                                                  # K_gd · rf (the VS gravity-axis
+                                                  # damping signal) before it enters VS.
+                                                  # K_cereb_nu = 1 → full normal dumping
+                                                  # (tilt suppression, OVAR works);
+                                                  # K_cereb_nu = 0 → nodular lesion →
+                                                  # PAN (periodic alternating nystagmus)
+                                                  # + prolonged tau_vs + loss of tilt
+                                                  # suppression of post-rotatory nystagmus.
 
 
 # ── Initialization ─────────────────────────────────────────────────────────────
@@ -879,6 +889,10 @@ def step(brain_state, sensory_out, brain_params, noise_acc=0.0):
         scene_lin_vel  = cyc.scene_linear_vel,
         scene_visible  = cyc.scene_visible,
         ec_d_scene     = ec_d_scene,
+        # Cerebellar VS contributions (FL leak-cancellation + NU gravity dumping)
+        fl_vs_drive    = acts.cb.fl_vs_drive,
+        nu_drive       = acts.cb.nu_drive,
+        saccadic_suppression_scene = acts.cb.saccadic_suppression_scene,
         brain_params   = brain_params,
     )
 
@@ -886,13 +900,14 @@ def step(brain_state, sensory_out, brain_params, noise_acc=0.0):
     # Positive motor roll = left-ear-down (left-hand rule); negative = right-ear-down.
     ocr = jnp.array([0.0, 0.0, -brain_params.g_ocr * g_est[0]])
 
-    # ── Pursuit input: brainstem direct + cerebellar prediction ──────────────
-    #   pursuit_in = K_pursuit_direct · target_slip  +  cb drive
-    # The cerebellum's drive is already gated (by K_mag · K_dir trust signal,
-    # inside acts.cb.drive); the brainstem direct path is always-on.  Implicit
-    # cancellation between target_slip and ec_d_target handles saccades —
-    # no gating needed on the brainstem reactive path.
-    target_slip_for_pursuit = brain_params.K_pursuit_direct * cyc.target_vel + acts.cb.vpf_drive
+    # ── Pursuit input: gated, EC-corrected slip (symmetric with OKR) ─────────
+    # Cerebellum produces `vpf_drive = gate · (target_slip + K_cereb_pu ·
+    # target_visible · ec_d_target_no_torsion)` — the full pursuit drive
+    # signal, EC-corrected and gated against self-motion contamination.
+    # `K_pursuit_direct` is the brainstem postsynaptic gain on that signal.
+    # No separate raw-slip path; that prevented the gate from closing the
+    # whole input during saccades.
+    target_slip_for_pursuit = brain_params.K_pursuit_direct * acts.cb.vpf_drive
     dpu, u_pursuit = pu.step(acts.pu, target_slip_for_pursuit, brain_params)
 
     # ── Saccade generator (target selection + Listing's corrections internal) ──
@@ -993,8 +1008,14 @@ def step(brain_state, sensory_out, brain_params, noise_acc=0.0):
     ec_verg_cmd  = u_verg
     ni_net_full  = brain_state.ni.L - brain_state.ni.R
     ni_null_full = brain_state.ni.null
+    vs_net_full  = brain_state.sm.vs_L - brain_state.sm.vs_R
+    vs_null_full = brain_state.sm.vs_null
+    rf_full      = brain_state.sm.rf
     dcb, _       = cb.step(brain_state.cb, ec_vel, ec_pos,
                             ni_net=ni_net_full, ni_null=ni_null_full,
+                            vs_net=vs_net_full, vs_null=vs_null_full,
+                            rf=rf_full,
+                            w_est=w_est,
                             target_slip=cyc.target_vel,
                             target_visible=cyc.target_visible,
                             brain_params=brain_params)

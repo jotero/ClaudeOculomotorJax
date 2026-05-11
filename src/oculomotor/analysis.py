@@ -55,13 +55,38 @@ from oculomotor.models.sensory_models.sensory_model import (
     N_CANALS, FLOOR, _SOFTNESS, PINV_SENS,
 )
 from oculomotor.models.brain_models.perception_cyclopean import C_pos, C_target_visible
-from oculomotor.models.brain_models import saccade_generator as sg_mod
+from oculomotor.models.brain_models import saccade_generator   as sg_mod
+from oculomotor.models.brain_models import brain_model         as brain_mod
 
 try:
     from scipy.special import softplus as _sp_softplus
 except ImportError:  # fallback
     def _sp_softplus(x):
         return np.log1p(np.exp(x))
+
+
+# ── Brain registries (vmapped over time) ──────────────────────────────────────
+# These wrap the per-step `read_activations` / `decode_activations` /
+# `read_weights` from `brain_model` and the cyclopean output reader from
+# `perception_cyclopean` so benches and notebooks can pull canonical signals
+# directly from a (T, …) `SimState` trajectory without reaching into raw
+# state slices.  Each returns a NamedTuple with the same field structure as
+# the per-step registry, but with a leading time axis on every leaf.
+
+def read_brain_acts(states, theta):
+    """Brain-wide activations (T, …) — vmaps `brain_model.read_activations`."""
+    return jax.vmap(lambda bs: brain_mod.read_activations(bs, theta.brain))(states.brain)
+
+
+def read_brain_decoded(states, theta):
+    """Brain-wide decoded push-pull nets (T, …) — vmaps `decode_activations`."""
+    acts = read_brain_acts(states, theta)
+    return jax.vmap(brain_mod.decode_activations)(acts)
+
+
+def read_brain_weights(states):
+    """Brain-wide tonic/null/setpoint registers (T, …) — vmaps `read_weights`."""
+    return jax.vmap(brain_mod.read_weights)(states.brain)
 
 
 # ── State extractors ──────────────────────────────────────────────────────────

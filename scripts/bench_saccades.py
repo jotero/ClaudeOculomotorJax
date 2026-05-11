@@ -19,22 +19,91 @@ import matplotlib.pyplot as plt
 
 from oculomotor.sim.simulator import PARAMS_DEFAULT, with_brain, with_sensory, simulate
 from oculomotor.sim import kinematics as km
-from oculomotor.analysis import ax_fmt, extract_burst, extract_sg, ni_net, vs_net
-from oculomotor.models.brain_models.perception_cyclopean import C_vel as C_vel_sm, C_slip as C_slip_sm
+from oculomotor.analysis import (
+    ax_fmt, extract_burst, extract_sg, ni_net, vs_net,
+    read_brain_acts, read_brain_decoded,
+)
+from oculomotor.models.brain_models import tvor as tv_mod
+from oculomotor.models.sensory_models.retina import (
+    velocity_saturation, ypr_to_xyz, xyz_to_ypr,
+)
+from oculomotor.models.plant_models.readout import rotation_matrix
+
+
+def _omega_tvor_traj(states, brain_params):
+    """Recompute T-VOR omega over a SimState trajectory via vmap."""
+    _DEG_PER_PD = 0.5729
+    def _at(bs):
+        aca      = brain_params.AC_A * _DEG_PER_PD * bs.va.acc_fast
+        verg_yaw = bs.va.verg_fast[0] + bs.va.verg_tonic[0] + aca
+        eye_pos  = bs.ni.L - bs.ni.R
+        omega, _ = tv_mod.step(bs.sm.v_lin, bs.sm.a_lin, verg_yaw, eye_pos, brain_params)
+        return omega
+    return np.array(jax.vmap(_at)(states.brain))
+
+
+def _pre_cascade_signals(states, params, dt):
+    """Pre-cascade saturated slip + EC, in eye frame.
+
+    For the saccade bench (stationary target/scene/head), retinal slip on either
+    pathway equals −R_eye.T · eye_velocity_world.  The EC pre-cascade signal is
+    the MN-LP'd motor command rotated to eye frame and saturated with
+    `v_offset = −w_est_eye`, exactly as `cerebellum.step` does it.
+    """
+    sp = params.sensory
+    bp = params.brain
+
+    eye3d  = (np.array(states.plant.left) + np.array(states.plant.right)) / 2.0
+    vel3d  = np.gradient(eye3d, dt, axis=0)                  # (T, 3) deg/s world
+    ec_pos = np.array(ni_net(states))                         # (T, 3) eye pos
+    # Two-stage MN forward model with per-axis MLF weighting.  Matches
+    # cerebellum.step: yaw uses 0.5·(mn1+mn2), pitch/roll use mn1 alone.
+    mn_lp1 = np.array(states.brain.cb.mn_lp1)                 # (T, 3) head frame
+    mn_lp2 = np.array(states.brain.cb.mn_lp2)                 # (T, 3) head frame
+    w_mlf  = np.array(bp.mlf_axis_weight)                     # (3,)
+    mn_lp  = (1.0 - w_mlf) * mn_lp1 + w_mlf * mn_lp2          # (T, 3) effective
+    w_est  = np.array(vs_net(states))                         # (T, 3) head frame
+
+    def _at(vel_world, eye_pos, mnlp, w):
+        R_eye = rotation_matrix(ypr_to_xyz(eye_pos))
+        Rt    = R_eye.T
+        eye_vel_eye = xyz_to_ypr(Rt @ ypr_to_xyz(vel_world))
+        mnlp_eye    = xyz_to_ypr(Rt @ ypr_to_xyz(mnlp))
+        w_est_eye   = xyz_to_ypr(Rt @ ypr_to_xyz(w))
+        v_offset    = -w_est_eye
+
+        slip_eye        = -eye_vel_eye
+        slip_target_pre = velocity_saturation(slip_eye, sp.v_max_target_vel)
+        slip_scene_pre  = velocity_saturation(slip_eye, sp.v_max_scene_vel)
+
+        ec_target_pre = velocity_saturation(mnlp_eye, bp.v_max_pursuit, v_offset=v_offset)
+        ec_scene_pre  = velocity_saturation(mnlp_eye, bp.v_max_okr,     v_offset=v_offset)
+
+        # Raw (pre-cascade) saturation flag = 1 − cos_gain(|v_rel|), same
+        # as cerebellum.step computes before the gate cascade.
+        v_rel  = mnlp_eye - v_offset
+        speed  = jnp.linalg.norm(v_rel)
+        def _sat_flag(spd, v_sat):
+            v_zero = 2.0 * v_sat
+            t      = jnp.clip((spd - v_sat) / (v_zero - v_sat), 0.0, 1.0)
+            return 1.0 - 0.5 * (1.0 + jnp.cos(jnp.pi * t))
+        sat_t = _sat_flag(speed, bp.v_max_pursuit)
+        sat_s = _sat_flag(speed, bp.v_max_okr)
+
+        return (slip_target_pre, slip_scene_pre, ec_target_pre, ec_scene_pre,
+                sat_t, sat_s)
+
+    tg, sc, ect, ecs, sat_t, sat_s = jax.vmap(_at)(
+        jnp.array(vel3d), jnp.array(ec_pos),
+        jnp.array(mn_lp), jnp.array(w_est),
+    )
+    return (np.array(tg), np.array(sc), np.array(ect), np.array(ecs),
+            np.array(sat_t), np.array(sat_s))
 
 DT    = 0.001
 THETA = with_brain(PARAMS_DEFAULT, g_burst=700.0)
 THETA_NOISELESS = with_brain(with_sensory(THETA, sigma_canal=0.0, sigma_pos=0.0, sigma_vel=0.0), sigma_acc=0.0)
 SHOW  = '--show' in sys.argv
-
-
-def _vel_sat_np(v_arr, v_sat):
-    """Batch numpy cosine-rolloff saturation matching retina.velocity_saturation."""
-    v_zero  = 2.0 * v_sat
-    speeds  = np.linalg.norm(v_arr, axis=1, keepdims=True)
-    t       = np.clip((speeds - v_sat) / (v_zero - v_sat), 0.0, 1.0)
-    gain    = 0.5 * (1.0 + np.cos(np.pi * t))
-    return v_arr * gain
 
 
 def _primary_saccade(burst_yaw, eye_yaw, t_np, t_jump, threshold=20.0):
@@ -306,17 +375,23 @@ def _cascade(show, noisy=False):
     t_np = np.arange(0.0, T_end, DT)
     T    = len(t_np)
 
-    n_rows, n_cols = 8, len(amplitudes)
+    n_rows, n_cols = 9, len(amplitudes)
+    # Row 5 (pre-cascade) is zoomed in on the time axis, so x-axes are not
+    # shared across rows.  All other rows display the full 0-T_end window.
     fig, axes = plt.subplots(n_rows, n_cols,
-                             figsize=(4.5 * n_cols, 2.2 * n_rows), sharex=True)
+                             figsize=(4.5 * n_cols, 2.2 * n_rows), sharex=False)
     fig.suptitle('Saccade Signal Cascade' + noise_tag + '  ·  '
                  'cascade → accumulate → latch/freeze → burst → copy → refractory',
                  fontsize=11)
 
     row_labels = ['Eye + target pos (deg)', 'Cascade output + hold (deg)',
-                  'Residual error (deg)', 'Accum / latch + refractory',
-                  'Burst (deg/s) + eye velocity', 'Tgt vel + scene slip (deg/s)',
-                  'Slips + EC (deg/s)', 'u_pursuit + VS/OKR (deg/s)']
+                  'Accum / latch + refractory',
+                  'Burst (deg/s) + eye velocity',
+                  'Saccadic-suppression gates',
+                  'Pre-cascade slip + EC (deg/s)',
+                  'Post-cascade slip + EC (deg/s)',
+                  'Pursuit / VS drives (deg/s)',
+                  'Vert + tors eye vel (deg/s)']
     for r, lbl in enumerate(row_labels):
         axes[r, 0].set_ylabel(lbl, fontsize=8)
 
@@ -324,8 +399,10 @@ def _cascade(show, noisy=False):
         pt3 = _pt3(t_np, amp, t_jump=t_jump)
         st  = _run(t_np, pt3, key=ci, max_s=int(T_end/DT)+200, params=params)
         sg  = extract_sg(st, params)
-        eye = (np.array(st.plant.left[:, 0]) + np.array(st.plant.right[:, 0])) / 2.0
-        vel = np.gradient(eye, DT)
+        eye3d = (np.array(st.plant.left) + np.array(st.plant.right)) / 2.0    # (T, 3)
+        vel3d = np.gradient(eye3d, DT, axis=0)                                 # (T, 3)
+        eye   = eye3d[:, 0]
+        vel   = vel3d[:, 0]
         tgt = np.degrees(np.arctan2(np.array(pt3[:,0]), np.array(pt3[:,2])))
 
         axes[0, ci].set_title(f'{amp:.0f}°', fontsize=11)
@@ -343,68 +420,147 @@ def _cascade(show, noisy=False):
         ax_fmt(axes[1, ci])
         if ci == 0: axes[1, ci].legend(fontsize=7)
 
-        # Row 2: e_held = residual error (e_res = e_held — no separate x_copy)
-        axes[2, ci].plot(t_np, sg['e_held'][:,0], color=utils.C['target'], lw=1.5, label='e_held=e_res')
-        ax_fmt(axes[2, ci])
+        # Row 2: accumulator / trigger / latch + refractory (all 0–1 scale, same axis)
+        axes[2, ci].plot(t_np, sg['z_acc'],         color='#e08214', lw=1.5, label='z_acc')
+        axes[2, ci].plot(t_np, sg['z_trig'],         color='#c51b8a', lw=1.5, label='z_trig (trigger IBN)')
+        axes[2, ci].plot(t_np, sg['z_opn'] / 100,   color='#1b7837', lw=1.5, label='OPN (norm)')
+        axes[2, ci].axhline(params.brain.threshold_acc, color='#e08214', lw=0.8, ls=':')
+        axes[2, ci].set_ylim(-0.05, 1.15)
         if ci == 0: axes[2, ci].legend(fontsize=7)
 
-        # Row 3: accumulator / trigger / latch + refractory (all 0–1 scale, same axis)
-        axes[3, ci].plot(t_np, sg['z_acc'],         color='#e08214', lw=1.5, label='z_acc')
-        axes[3, ci].plot(t_np, sg['z_trig'],         color='#c51b8a', lw=1.5, label='z_trig (trigger IBN)')
-        axes[3, ci].plot(t_np, sg['z_opn'] / 100,   color='#1b7837', lw=1.5, label='OPN (norm)')
-        axes[3, ci].axhline(params.brain.threshold_acc, color='#e08214', lw=0.8, ls=':')
-        axes[3, ci].set_ylim(-0.05, 1.15)
+        # Row 3: eye velocity (yaw) + burst (yaw)
+        axes[3, ci].plot(t_np, vel,                color=utils.C['eye'],   lw=1.4, label='eye vel')
+        axes[3, ci].plot(t_np, sg['u_burst'][:,0], color=utils.C['burst'], lw=1.5, label='burst', zorder=3)
+        ax_fmt(axes[3, ci])
+        ylo, yhi = axes[3, ci].get_ylim()
+        axes[3, ci].set_ylim(min(ylo, -1.0), max(yhi, 1.0))
         if ci == 0: axes[3, ci].legend(fontsize=7)
 
-        # Row 4: eye velocity first, then burst on top
-        axes[4, ci].plot(t_np, vel,                color=utils.C['eye'],   lw=1.4, label='eye vel')
-        axes[4, ci].plot(t_np, sg['u_burst'][:,0], color=utils.C['burst'], lw=1.5, label='burst', zorder=3)
+        # ── Pursuit / OKR signal chain (rows 4–7) ────────────────────────────
+        # Pull canonical signals from the brain registries (vmapped over time)
+        # instead of reaching into raw state slices.
+        acts     = read_brain_acts(st, params)             # Activations(T, …)
+        decoded  = read_brain_decoded(st, params)          # Decoded(T, …)
+        vel_del  = np.array(acts.pc.target_vel)            # (T, 3) delayed target vel
+        slip_del = np.array(acts.pc.scene_angular_vel)     # (T, 3) delayed scene slip
+
+        x_purs   = np.array(decoded.pu.net)                # (T, 3) NET pursuit memory
+
+        # Pre-cascade signals (used in row 4 + row 5).  Also returns the raw
+        # (instant) saturation flags so we can plot the pre-cascade gate
+        # alongside the post-cascade strengthened gate in row 4.
+        (tgt_pre, scn_pre, ect_pre, ecs_pre,
+         raw_sat_tgt, raw_sat_scn) = _pre_cascade_signals(st, params, DT)
+
+        # Row 4: saccadic-suppression gates.  Solid lines = POST-cascade
+        # strengthened gates (acts.cb.saccadic_suppression_*, what actually multiplies
+        # the PE downstream).  Dotted lines = PRE-cascade raw gates
+        # (= 1 − instant saturation flag, no delay).  The cascade-induced
+        # delay between the two is the same as the slip/EC cascade delay,
+        # so the post-cascade gate is delay-aligned with PE.
+        gate_target_post = np.array(acts.cb.saccadic_suppression_target)
+        gate_scene_post  = np.array(acts.cb.saccadic_suppression_scene)
+        gate_target_pre  = 1.0 - raw_sat_tgt
+        gate_scene_pre   = 1.0 - raw_sat_scn
+        axes[4, ci].plot(t_np, gate_target_pre,  color='#7b2d8b', lw=1.0, ls=':',  label='target gate (pre)')
+        axes[4, ci].plot(t_np, gate_target_post, color='#7b2d8b', lw=1.5, label='target gate (post)')
+        axes[4, ci].plot(t_np, gate_scene_pre,   color='#1a7a4a', lw=1.0, ls=':',  label='scene gate (pre)')
+        axes[4, ci].plot(t_np, gate_scene_post,  color='#1a7a4a', lw=1.5, label='scene gate (post)')
+        axes[4, ci].axhline(1.0, color='gray', lw=0.6, ls=':')
+        axes[4, ci].set_ylim(-0.05, 1.10)
         ax_fmt(axes[4, ci])
         if ci == 0: axes[4, ci].legend(fontsize=7)
 
-        # ── Pursuit / OKR signal chain (rows 5–7) ────────────────────────────
-        # Cyclopean delayed signals — read the LP output (last 3 of each cascade buffer)
-        # directly from BrainState rather than via the C_* readout matrices.
-        pc_st        = st.brain.pc
-        vel_del      = np.array(pc_st.target_vel)[:, -3:]              # (T, 3) delayed target vel
-        slip_del     = np.array(pc_st.scene_angular_vel)[:, -3:]       # (T, 3) delayed scene slip
-        x_purs       = np.array(st.brain.pu.R - st.brain.pu.L)         # (T, 3) NET pursuit memory
+        # Effective EC = exactly what the brain adds to slip in pred_err:
+        #   scene path:   PE = scene_slip  + scene_visible  · ec_d_scene
+        #   target path:  PE = target_slip + K_cereb_pu · target_visible · ec_no_torsion
+        scene_vis  = np.array(acts.pc.scene_visible)                 # (T,)
+        tgt_vis    = np.array(acts.pc.target_visible)                # (T,)
+        ec_scene   = np.array(acts.cb.ec_scene)                      # (T, 3)
+        ec_target  = np.array(acts.cb.ec_target)                     # (T, 3)
+        ec_target_no_torsion = ec_target.copy()
+        ec_target_no_torsion[:, 2] = 0.0
+        ec_scene_eff  = scene_vis[:, None] * ec_scene
+        ec_target_eff = (float(params.brain.K_cereb_pu)
+                          * tgt_vis[:, None] * ec_target_no_torsion)
 
-        # Row 5: raw delayed velocities
-        axes[5, ci].plot(t_np, vel_del[:, 0],  color='darkorange', lw=1.2, label='tgt_vel')
-        axes[5, ci].plot(t_np, slip_del[:, 0], color='teal',       lw=1.2, label='scene_slip')
+        # Row 5: PRE-cascade slip + effective EC (after clipping, before the
+        # 6-stage gamma + LP).  Saturated retinal slip in eye frame for
+        # stationary target/scene/head (= −R_eye.T·eye_velocity), saturated EC
+        # = saturated mn_lp_eye with v_offset = −w_est_eye (same as
+        # cerebellum.step).  EC sign-flipped to overlay slip when cancellation
+        # is perfect at the input of the cascades.  Pre-cascade signals were
+        # already computed above (for the gate row).
+        axes[5, ci].plot(t_np, tgt_pre[:, 0], color='#7b2d8b', lw=1.2, label='tgt slip (pre)')
+        axes[5, ci].plot(t_np, -ect_pre[:, 0],color='#d62728', lw=1.0, ls=':',  label='−EC target (pre)')
+        axes[5, ci].plot(t_np, scn_pre[:, 0], color='#1a7a4a', lw=1.2, label='scene slip (pre)')
+        axes[5, ci].plot(t_np, -ecs_pre[:, 0],color='#1f4dab', lw=1.0, ls='--', label='−EC scene (pre)')
         ax_fmt(axes[5, ci])
+        ylo, yhi = axes[5, ci].get_ylim()
+        axes[5, ci].set_ylim(min(ylo, -1.0), max(yhi, 1.0))
         if ci == 0: axes[5, ci].legend(fontsize=7)
 
-        # Row 6: raw delayed slips + the corresponding post-delay EC cascade
-        # outputs that brain_model adds back during EC subtraction. Two ECs
-        # now: scene EC matches the scene_angular_vel cascade shape, target EC
-        # matches target_vel cascade shape (heavier smoothing).
-        tgt_ec_sat   = _vel_sat_np(vel_del,  params.sensory.v_max_target_vel)
-        scene_ec_sat = _vel_sat_np(slip_del, params.sensory.v_max_scene_vel)
-        ec_scene     = np.array(st.brain.cb.scene)[:, -3:]   # last 3 = LP output
-        ec_target    = np.array(st.brain.cb.target)[:, -3:]
-        # EC traces are sign-flipped so they overlay the slip cascade if the
-        # cancellation is perfect (slip + ec ≈ 0  ⇔  slip ≈ −ec).  Mismatch
-        # between the dashed/dotted lines and the solid slip lines is the
-        # post-delay EC residual.
-        axes[6, ci].plot(t_np, tgt_ec_sat[:, 0],   color='#7b2d8b', lw=1.2, label='tgt slip')
-        axes[6, ci].plot(t_np, scene_ec_sat[:, 0], color='#1a7a4a', lw=1.2, label='scene slip')
-        axes[6, ci].plot(t_np, -ec_scene[:, 0],    color='#1f4dab', lw=1.0, ls='--', label='−EC scene')
-        axes[6, ci].plot(t_np, -ec_target[:, 0],   color='#d62728', lw=1.0, ls=':',  label='−EC target')
+        # Row 6: POST-cascade slip + effective EC.  EC sign-flipped so it
+        # overlays the slip when cancellation is perfect (slip + EC ≈ 0
+        # ⇔ −EC ≈ slip).  The "effective EC" is exactly what enters pred_err
+        # on each path:
+        #   scene  PE = scene_slip  + scene_visible  · ec_d_scene
+        #   target PE = target_slip + K_cereb_pu · target_visible · ec_no_torsion
+        axes[6, ci].plot(t_np, vel_del[:, 0],         color='#7b2d8b', lw=1.2, label='tgt slip')
+        axes[6, ci].plot(t_np, -ec_target_eff[:, 0], color='#d62728', lw=1.0, ls=':',  label='−EC target (eff)')
+        axes[6, ci].plot(t_np, slip_del[:, 0],        color='#1a7a4a', lw=1.2, label='scene slip')
+        axes[6, ci].plot(t_np, -ec_scene_eff[:, 0],  color='#1f4dab', lw=1.0, ls='--', label='−EC scene (eff)')
         ax_fmt(axes[6, ci])
+        ylo, yhi = axes[6, ci].get_ylim()
+        axes[6, ci].set_ylim(min(ylo, -1.0), max(yhi, 1.0))
         if ci == 0: axes[6, ci].legend(fontsize=7)
 
-        # Row 7: pursuit output u_pursuit + VS net (OKR-driven since no head movement)
-        K_ph = float(params.brain.K_phasic_pursuit)
-        e_pred     = (tgt_ec_sat - x_purs) / (1.0 + K_ph)
-        u_purs_arr = x_purs + K_ph * e_pred
-        vs_out     = vs_net(st)                                  # (T, 3) VS net x_L−x_R
-        axes[7, ci].plot(t_np, u_purs_arr[:, 0], color='steelblue',  lw=1.5, label='u_pursuit')
-        axes[7, ci].plot(t_np, vs_out[:, 0],     color='#d45500',    lw=1.2, label='VS/OKR')
+        # Row 7: total pursuit motor command + w_est (= VS net = the total
+        # VOR/OKR drive) + omega_tvor.  The actual pursuit input to pu.step
+        # is K_pursuit_direct · acts.cb.vpf_drive, not the raw vel_del.
+        K_ph         = float(params.brain.K_phasic_pursuit)
+        vpf_drive    = np.array(acts.cb.vpf_drive)
+        pursuit_in   = float(params.brain.K_pursuit_direct) * vpf_drive   # (T, 3)
+        e_pred       = (pursuit_in - x_purs) / (1.0 + K_ph)
+        u_purs_arr   = x_purs + K_ph * e_pred
+        w_est_arr    = vs_net(st)                            # (T, 3) VS net = w_est
+        tvor_arr     = _omega_tvor_traj(st, params.brain)    # (T, 3) omega_tvor
+        axes[7, ci].plot(t_np, u_purs_arr[:, 0], color='steelblue', lw=1.5, label='u_pursuit')
+        axes[7, ci].plot(t_np, w_est_arr[:, 0],  color='#d45500',   lw=1.2, label='w_est = VS/OKR drive')
+        axes[7, ci].plot(t_np, tvor_arr[:, 0],   color='#6a3d9a',   lw=1.0, ls='--', label='omega_tvor')
         ax_fmt(axes[7, ci])
-        axes[7, ci].set_xlabel('Time (s)', fontsize=8)
+        ylo, yhi = axes[7, ci].get_ylim()
+        axes[7, ci].set_ylim(min(ylo, -1.0), max(yhi, 1.0))
         if ci == 0: axes[7, ci].legend(fontsize=7)
+
+        # Row 8: vertical (pitch) + torsional (roll) eye velocity — diagnostic
+        # check for unexpected off-axis components during pure-horizontal saccades.
+        # Floor ylim at ±1 deg/s so autoscale never magnifies float-precision noise.
+        axes[8, ci].plot(t_np, vel3d[:, 1], color='#1f78b4', lw=1.2, label='vertical (pitch)')
+        axes[8, ci].plot(t_np, vel3d[:, 2], color='#b15928', lw=1.2, label='torsional (roll)')
+        ax_fmt(axes[8, ci])
+        ylo, yhi = axes[8, ci].get_ylim()
+        axes[8, ci].set_ylim(min(ylo, -1.0), max(yhi, 1.0))
+        axes[8, ci].set_xlabel('Time (s)', fontsize=8)
+        if ci == 0: axes[8, ci].legend(fontsize=7)
+
+    # Per-row x-axis limits.  Row 5 zooms into the pre-cascade window;
+    # all other rows span the full trial.  Hide x-tick labels everywhere
+    # except the zoom row and the bottom row.
+    PRE_XLIM = (0.3, 0.6)
+    FULL_XLIM = (float(t_np[0]), float(t_np[-1]))
+    for r in range(n_rows):
+        for ci in range(n_cols):
+            ax = axes[r, ci]
+            if r == 5:
+                ax.set_xlim(*PRE_XLIM)
+            else:
+                ax.set_xlim(*FULL_XLIM)
+            if r not in (5, n_rows - 1):
+                ax.tick_params(labelbottom=False)
+            else:
+                ax.tick_params(labelbottom=True)
+                ax.set_xlabel('Time (s)', fontsize=8)
 
     fig.tight_layout()
     path, rp = utils.save_fig(fig, fname, show=show, params=params,

@@ -29,7 +29,7 @@ from oculomotor.models.brain_models.perception_cyclopean import (
 )
 from oculomotor.sim import kinematics as km
 from oculomotor.sim.kinematics import build_target
-from oculomotor.analysis import extract_spv_states
+from oculomotor.analysis import extract_spv_states, read_brain_acts
 
 SHOW  = '--show' in sys.argv
 DT    = 0.001
@@ -181,10 +181,11 @@ def _occlusion(show, *, save_name, plot_title, dist_m, lens_d, theta_base, dark_
         # CAC drive in D: CA_C (D/pd) × (x_verg_fast[H] / 0.5729 deg/pd)
         x_verg_v_h = np.array(st.brain.va.verg_fast)[:, 0]
         cac_drive  = float(theta_base.brain.CA_C) * (x_verg_v_h / 0.5729)
-        # Cyclopean cascade outputs (post-fusion brain LP) — read tail of each cascade buffer
-        cyc_motion  = np.array(st.brain.pc.target_vel)[:, 0]            # 1-pole LP: full buffer is the output, take H
-        cyc_disp    = np.array(st.brain.pc.target_disparity)[:, 0]      # H disparity
-        cyc_defocus = np.array(st.brain.pc.defocus)[:, -1]              # 1-pole LP scalar
+        # Cyclopean cascade outputs (post-fusion brain LP) — read via acts.pc
+        pc_acts     = read_brain_acts(st, theta_base).pc
+        cyc_motion  = np.array(pc_acts.target_vel)[:, 0]                # H component
+        cyc_disp    = np.array(pc_acts.target_disparity)[:, 0]          # H disparity
+        cyc_defocus = np.array(pc_acts.defocus)                         # scalar LP
 
         # Row 0: target visibility per eye as colored patches (L on top, R on bottom)
         tL_flag, tR_flag, _ts = flag_arrays[ci]

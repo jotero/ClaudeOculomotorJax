@@ -22,7 +22,7 @@ from oculomotor.sim.simulator import (
 )
 from oculomotor.sim import kinematics as km
 from oculomotor.models.brain_models.perception_cyclopean import C_pos  # noqa: F401
-from oculomotor.analysis import ax_fmt, extract_burst, extract_sg, ni_net
+from oculomotor.analysis import ax_fmt, extract_burst, extract_sg, ni_net, read_brain_decoded
 
 SHOW  = '--show' in sys.argv
 DT    = 0.001
@@ -78,7 +78,7 @@ def _velocity_range(show):
         eye_nop = (np.array(st_nop.plant.left[:, 0]) + np.array(st_nop.plant.right[:, 0])) / 2.0
         ev_pur  = np.gradient(eye_pur, DT)
         ev_nop  = np.gradient(eye_nop, DT)
-        u_pur   = np.array(st_pur.brain.pu.R[:, 0] - st_pur.brain.pu.L[:, 0])  # NET yaw (deg/s)
+        u_pur   = np.array(read_brain_decoded(st_pur, THETA).pu.net[:, 0])     # NET yaw (deg/s)
 
         axes[0, ci].set_title(f'{vel:.0f} deg/s', fontsize=10)
         for ax in axes[:, ci]:
@@ -226,7 +226,7 @@ def _cascade(show):
     sg  = extract_sg(st, THETA)
     eye = (np.array(st.plant.left[:, 0]) + np.array(st.plant.right[:, 0])) / 2.0
     ev  = np.gradient(eye, DT)
-    x_pur = np.array(st.brain.pu.R[:, 0] - st.brain.pu.L[:, 0])  # NET yaw memory
+    x_pur = np.array(read_brain_decoded(st, THETA).pu.net[:, 0])  # NET yaw memory
 
     n_rows = 7
     fig, axes = plt.subplots(n_rows, 1, figsize=(12, 2.5 * n_rows))

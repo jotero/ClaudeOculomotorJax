@@ -36,17 +36,27 @@ from oculomotor.models.sensory_models.retina import (
 )
 
 
+# Brain-side position / visibility cascade depth.  Kept high (6) so the
+# cascade response is sharp — many stages with short per-stage TC give an
+# impulse response close to a pure delay (not a smeared LP).  Total mean
+# delay = N · tau_brain_pos / N = tau_brain_pos; sharpness comes from the
+# stage count.  Default tau_brain_pos = 15 ms with N = 6 → per-stage TC
+# ≈ 2.5 ms (sharper than the retinal per-stage 8.3 ms at default
+# tau_vis_sharp = 50 ms).
+_N_STAGES_BRAIN_POS = 6
+
+
 # ── Brain LP state layout (post-fusion smoothing) ──────────────────────────────
 # (name, N_lp_stages, n_axes)
 _CYC_BRAIN_LAYOUT = [
-    ('scene_angular_vel',  1,                3),  # 1-pole LP
-    ('scene_linear_vel',   1,                3),  # 1-pole LP
-    ('target_pos',         _N_STAGES_OTHER,  3),  # N-stage gamma (matches sharp)
-    ('target_vel',         1,                3),  # 1-pole LP (long)
-    ('target_disparity',   1,                3),  # 1-pole LP (V1 stereo is slow)
-    ('scene_visible',      _N_STAGES_OTHER,  1),  # N-stage gamma
-    ('target_visible',     _N_STAGES_OTHER,  1),  # N-stage gamma
-    ('defocus',            1,                1),  # 1-pole LP
+    ('scene_angular_vel',  1,                       3),  # 1-pole LP
+    ('scene_linear_vel',   1,                       3),  # 1-pole LP
+    ('target_pos',         _N_STAGES_BRAIN_POS,     3),  # N-stage gamma (per-stage matches retinal sharp)
+    ('target_vel',         1,                       3),  # 1-pole LP (long)
+    ('target_disparity',   1,                       3),  # 1-pole LP (V1 stereo is slow)
+    ('scene_visible',      _N_STAGES_BRAIN_POS,     1),  # N-stage gamma
+    ('target_visible',     _N_STAGES_BRAIN_POS,     1),  # N-stage gamma
+    ('defocus',            1,                       1),  # 1-pole LP
 ]
 
 _CYC_BRAIN_SIZES   = {name: N * n for name, N, n in _CYC_BRAIN_LAYOUT}
@@ -230,7 +240,7 @@ class State(NamedTuple):
 
 def rest_state():
     """Zero state (all cascade buffers zero)."""
-    N = _N_STAGES_OTHER
+    N = _N_STAGES_BRAIN_POS
     return State(
         scene_angular_vel = jnp.zeros(3),
         scene_linear_vel  = jnp.zeros(3),
@@ -295,7 +305,7 @@ def step(state, retina_L, retina_R, ec_pos, ec_verg, brain_params):
     tau_disparity  = brain_params.tau_vis_smooth_disparity
     tau_defocus    = brain_params.tau_vis_smooth_defocus
     tau_brain_pos  = brain_params.tau_brain_pos
-    N              = _N_STAGES_OTHER
+    N              = _N_STAGES_BRAIN_POS
 
     dstate = State(
         scene_angular_vel = delay_cascade_step(state.scene_angular_vel, scene_angular_cyc,    tau_motion,     N=1),
@@ -321,6 +331,37 @@ def step(state, retina_L, retina_R, ec_pos, ec_verg, brain_params):
         defocus           = state.defocus[-1],
     )
     return dstate, cyc
+
+
+# ── Activation read (cascade-tail projection — canonical state→signal) ──────
+
+def read_activations(state):
+    """Read delayed cyclopean signals directly from `pc.State`.
+
+    Same projection that `step()` returns alongside `dstate` — exposed as
+    the module's `read_activations` so the brain-wide Activations registry
+    can pull cyclopean delayed signals from a stored trajectory without
+    re-running step.  `target_fusable` is not stored (it is computed inline
+    in `step()` from the per-eye disparity / motor-integrity gates), so
+    it appears as zero here; consumers that need it must run `step()`.
+    """
+    return CyclopeanOut(
+        scene_angular_vel = state.scene_angular_vel[-3:],
+        scene_linear_vel  = state.scene_linear_vel[-3:],
+        target_pos        = state.target_pos[-3:],
+        target_vel        = state.target_vel[-3:],
+        target_disparity  = state.target_disparity[-3:],
+        scene_visible     = state.scene_visible[-1],
+        target_visible    = state.target_visible[-1],
+        target_fusable    = jnp.float32(0.0),    # not stored — placeholder
+        defocus           = state.defocus[-1],
+    )
+
+
+# Module convention: `Activations = CyclopeanOut`.  The cascade-tail readout is
+# pc's canonical state→signal projection, so the same NamedTuple plays both
+# roles (no separate empty Activations tuple).
+Activations = CyclopeanOut
 
 
 # ── Legacy flat-array adapters (deleted once brain_model migrates to BrainState) ─
