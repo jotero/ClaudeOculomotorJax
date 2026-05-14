@@ -99,7 +99,11 @@
       "PowerShell(& \"d:\\\\OneDrive\\\\UC Berkeley\\\\OMlab - JOM\\\\Code\\\\ClaudeOculomotorJax\\\\.venv\\\\Scripts\\\\python.exe\" -X utf8 -c \"import scripts.bench_saccades as b; from oculomotor.sim.simulator import with_brain; b.THETA_NOISELESS = with_brain\\(b.THETA_NOISELESS, K_pursuit_direct=0.0\\); b._cascade\\(show=False, noisy=False\\)\")",
       "PowerShell(& \"d:\\\\OneDrive\\\\UC Berkeley\\\\OMlab - JOM\\\\Code\\\\ClaudeOculomotorJax\\\\.venv\\\\Scripts\\\\python.exe\" -X utf8 -c \"import scripts.bench_saccades as b; from oculomotor.sim.simulator import with_brain; b.THETA = with_brain\\(b.THETA, alpha_fac=0.5\\); b.THETA_NOISELESS = with_brain\\(b.THETA_NOISELESS, alpha_fac=0.5\\); from scripts.bench_saccades import _main_sequence, _cascade; _main_sequence\\(show=False\\); _cascade\\(show=False, noisy=False\\)\")",
       "PowerShell(& \"d:\\\\OneDrive\\\\UC Berkeley\\\\OMlab - JOM\\\\Code\\\\ClaudeOculomotorJax\\\\.venv\\\\Scripts\\\\python.exe\" -X utf8 -c \"import oculomotor.llm_pipeline.runner as r; import oculomotor.llm_pipeline.scenario as sc; print\\('imports OK'\\); print\\('panel literals include cerebellum:', 'cerebellum_pursuit' in str\\(sc.PlotConfig.model_fields['panels']\\)\\)\")",
-      "PowerShell(& \"d:\\\\OneDrive\\\\UC Berkeley\\\\OMlab - JOM\\\\Code\\\\ClaudeOculomotorJax\\\\.venv\\\\Scripts\\\\python.exe\" -X utf8 -c \"from scripts.bench_pursuit import _cascade; _cascade\\(show=False\\)\")"
+      "PowerShell(& \"d:\\\\OneDrive\\\\UC Berkeley\\\\OMlab - JOM\\\\Code\\\\ClaudeOculomotorJax\\\\.venv\\\\Scripts\\\\python.exe\" -X utf8 -c \"from scripts.bench_pursuit import _cascade; _cascade\\(show=False\\)\")",
+      "Bash(\"./.venv/Scripts/python.exe\" -X utf8)",
+      "Bash(\"./.venv/Scripts/python.exe\" -X utf8 -m oculomotor.models.brain_models.cerebellum)",
+      "Bash(./.venv/Scripts/python.exe -X utf8 -c ' *)",
+      "Bash(\"./.venv/Scripts/python.exe\" -X utf8 scripts/run_benchmarks.py)"
     ],
     "additionalDirectories": [
       "d:\\OneDrive\\UC Berkeley\\OMlab - JOM\\Code\\ClaudeOculomotorJax\\outputs"

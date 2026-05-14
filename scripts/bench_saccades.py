@@ -20,7 +20,7 @@ import matplotlib.pyplot as plt
 from oculomotor.sim.simulator import PARAMS_DEFAULT, with_brain, with_sensory, simulate
 from oculomotor.sim import kinematics as km
 from oculomotor.analysis import (
-    ax_fmt, extract_burst, extract_sg, ni_net, vs_net,
+    ax_fmt, extract_burst, extract_sg, vs_net,
     read_brain_acts, read_brain_decoded,
 )
 from oculomotor.models.brain_models import tvor as tv_mod
@@ -46,42 +46,47 @@ def _pre_cascade_signals(states, params, dt):
     """Pre-cascade saturated slip + EC, in eye frame.
 
     For the saccade bench (stationary target/scene/head), retinal slip on either
-    pathway equals −R_eye.T · eye_velocity_world.  The EC pre-cascade signal is
-    the MN-LP'd motor command rotated to eye frame and saturated with
-    `v_offset = −w_est_eye`, exactly as `cerebellum.step` does it.
+    pathway equals −R_eye.T · eye_velocity_world (using the *actual* plant
+    position + velocity).  The EC pre-cascade signal comes from the cerebellum's
+    motor forward model: x_p_pred = ½·(plant_pred_L + plant_pred_R) (a copy of
+    fcp.step + per-eye plant), eye_vel_pred = d/dt x_p_pred (head frame), rotated
+    to eye frame through x_p_pred and saturated with `v_offset = −w_est_eye` —
+    exactly as `cerebellum.step` does it.  Because the forward model carries the
+    FCP nonlinearities, x_p_pred ≈ the actual eye position and eye_vel_pred ≈
+    the actual eye velocity — EC and retinal slip stay frame-matched mid-saccade.
     """
     sp = params.sensory
     bp = params.brain
 
-    eye3d  = (np.array(states.plant.left) + np.array(states.plant.right)) / 2.0
-    vel3d  = np.gradient(eye3d, dt, axis=0)                  # (T, 3) deg/s world
-    ec_pos = np.array(ni_net(states))                         # (T, 3) eye pos
-    # Two-stage MN forward model with per-axis MLF weighting.  Matches
-    # cerebellum.step: yaw uses 0.5·(mn1+mn2), pitch/roll use mn1 alone.
-    mn_lp1 = np.array(states.brain.cb.mn_lp1)                 # (T, 3) head frame
-    mn_lp2 = np.array(states.brain.cb.mn_lp2)                 # (T, 3) head frame
-    w_mlf  = np.array(bp.mlf_axis_weight)                     # (3,)
-    mn_lp  = (1.0 - w_mlf) * mn_lp1 + w_mlf * mn_lp2          # (T, 3) effective
-    w_est  = np.array(vs_net(states))                         # (T, 3) head frame
+    eye3d    = (np.array(states.plant.left) + np.array(states.plant.right)) / 2.0
+    vel3d    = np.gradient(eye3d, dt, axis=0)                 # (T, 3) deg/s world
+    x_p_pred = 0.5 * (np.array(states.brain.cb.plant_pred_L)
+                      + np.array(states.brain.cb.plant_pred_R))   # (T, 3) conjugate fwd model
+    evp3d    = np.gradient(x_p_pred, dt, axis=0)              # (T, 3) = eye_vel_pred
+    w_est    = np.array(vs_net(states))                       # (T, 3) head frame
 
-    def _at(vel_world, eye_pos, mnlp, w):
-        R_eye = rotation_matrix(ypr_to_xyz(eye_pos))
-        Rt    = R_eye.T
-        eye_vel_eye = xyz_to_ypr(Rt @ ypr_to_xyz(vel_world))
-        mnlp_eye    = xyz_to_ypr(Rt @ ypr_to_xyz(mnlp))
-        w_est_eye   = xyz_to_ypr(Rt @ ypr_to_xyz(w))
-        v_offset    = -w_est_eye
-
-        slip_eye        = -eye_vel_eye
+    def _at(vel_world, eye_pos_actual, xpp, evp, w):
+        # Slip side: actual plant position + velocity (what the retina sees).
+        R_act = rotation_matrix(ypr_to_xyz(eye_pos_actual))
+        slip_eye        = -xyz_to_ypr(R_act.T @ ypr_to_xyz(vel_world))
         slip_target_pre = velocity_saturation(slip_eye, sp.v_max_target_vel)
         slip_scene_pre  = velocity_saturation(slip_eye, sp.v_max_scene_vel)
 
-        ec_target_pre = velocity_saturation(mnlp_eye, bp.v_max_pursuit, v_offset=v_offset)
-        ec_scene_pre  = velocity_saturation(mnlp_eye, bp.v_max_okr,     v_offset=v_offset)
+        # EC side: predicted eye velocity rotated through the predicted plant
+        # position x_p_pred — same transform the retina applies to the actual
+        # eye velocity through the actual eye position.
+        R_pred       = rotation_matrix(ypr_to_xyz(xpp))
+        Rt           = R_pred.T
+        ev_pred_eye  = xyz_to_ypr(Rt @ ypr_to_xyz(evp))
+        w_est_eye    = xyz_to_ypr(Rt @ ypr_to_xyz(w))
+        v_offset     = -w_est_eye
+
+        ec_target_pre = velocity_saturation(ev_pred_eye, bp.v_max_pursuit, v_offset=v_offset)
+        ec_scene_pre  = velocity_saturation(ev_pred_eye, bp.v_max_okr,     v_offset=v_offset)
 
         # Raw (pre-cascade) saturation flag = 1 − cos_gain(|v_rel|), same
         # as cerebellum.step computes before the gate cascade.
-        v_rel  = mnlp_eye - v_offset
+        v_rel  = ev_pred_eye - v_offset
         speed  = jnp.linalg.norm(v_rel)
         def _sat_flag(spd, v_sat):
             v_zero = 2.0 * v_sat
@@ -94,8 +99,8 @@ def _pre_cascade_signals(states, params, dt):
                 sat_t, sat_s)
 
     tg, sc, ect, ecs, sat_t, sat_s = jax.vmap(_at)(
-        jnp.array(vel3d), jnp.array(ec_pos),
-        jnp.array(mn_lp), jnp.array(w_est),
+        jnp.array(vel3d), jnp.array(eye3d), jnp.array(x_p_pred),
+        jnp.array(evp3d), jnp.array(w_est),
     )
     return (np.array(tg), np.array(sc), np.array(ect), np.array(ecs),
             np.array(sat_t), np.array(sat_s))
@@ -518,11 +523,18 @@ def _cascade(show, noisy=False):
         if ci == 0: axes[6, ci].legend(fontsize=7)
 
         # Row 7: total pursuit motor command + w_est (= VS net = the total
-        # VOR/OKR drive) + omega_tvor.  The actual pursuit input to pu.step
-        # is K_pursuit_direct · acts.cb.vpf_drive, not the raw vel_del.
+        # VOR/OKR drive) + omega_tvor.  The actual pursuit input (= what
+        # brain_model passes to pu.step as target_slip_ec) is the SUM of the
+        # brainstem-direct path and the cerebellar EC path:
+        #   pursuit_in = K_pursuit_direct·sat·cyc.target_vel + K_cereb_pu·vpf_drive
+        # NOT vpf_drive alone — vpf_drive (the cerebellar EC tail) can carry a
+        # ~150 ms post-saccadic decay, but it is cancelled by the matching
+        # retinal slip tail in the sum, so the true pursuit drive stays ~0.
         K_ph         = float(params.brain.K_phasic_pursuit)
-        vpf_drive    = np.array(acts.cb.vpf_drive)
-        pursuit_in   = float(params.brain.K_pursuit_direct) * vpf_drive   # (T, 3)
+        vpf_drive    = np.array(acts.cb.vpf_drive)                       # (T, 3) already sat·vis·ec
+        pursuit_in   = (float(params.brain.K_pursuit_direct)
+                          * gate_target_post[:, None] * vel_del
+                        + float(params.brain.K_cereb_pu) * vpf_drive)   # (T, 3)
         e_pred       = (pursuit_in - x_purs) / (1.0 + K_ph)
         u_purs_arr   = x_purs + K_ph * e_pred
         w_est_arr    = vs_net(st)                            # (T, 3) VS net = w_est

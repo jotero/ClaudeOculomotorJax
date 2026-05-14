@@ -170,6 +170,18 @@ def step(activations, weights, u_vel, brain_params, u_tonic=0.0):
     dx_null = (x_net - x_null_eff) / brain_params.tau_ni_adapt
 
     # ── Pulse-step motor command: lag cancellation feedthrough ────────────────
+    # Classic Robinson: `tau_p · u_vel` cancels the plant LP (tau_p).  The
+    # effective plant from the NI's perspective is actually `MN_LP × plant_LP`
+    # — the FCP motoneurons add a per-axis low-pass between motor_cmd_ni and
+    # the muscle nerves — so an exact compensation would pre-emphasize the
+    # pulse by `(tau_p + tau_mn_eff)·u_vel + tau_p·tau_mn_eff·u_vel'`.  Tried
+    # the first-order bump in isolation and it overshot at large amplitudes:
+    # the bigger pulse pulled the eye faster than NI_net climbs, but the SG's
+    # local feedback (e_held, x_copy, burst termination) is calibrated against
+    # the un-bumped pulse, so the burst keeps firing past where the eye is
+    # → bigger dynamic overshoot.  Reverted to the classic pulse-step; the
+    # residual ~0.1–0.3° dynamic overshoot is a realistic post-saccadic
+    # transient and a co-tuned SG fix is the proper way to retire it.
     u_p = x_net + brain_params.tau_p * u_vel
 
     return State(L=dx_L, R=dx_R, null=dx_null), u_p

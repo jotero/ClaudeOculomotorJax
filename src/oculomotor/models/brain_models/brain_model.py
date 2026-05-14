@@ -63,7 +63,8 @@ Brain state — `BrainState` NamedTuple, perception → motor order:
 
 Each subsystem owns its own `State` NamedTuple; `BrainState` aggregates them
 under named fields.  No flat-array layout — read fields directly via
-`brain_state.<sub>.<field>`.  `N_STATES = 163` is kept for legacy info only.
+`brain_state.<sub>.<field>`.  `N_STATES` (≈193) is kept for legacy info only
+and is computed from the sub-SSM sizes — never hand-maintain it.
 
 Outputs of step():
     dbrain      BrainState  state derivative
@@ -633,24 +634,24 @@ class BrainParams(NamedTuple):
     tau_mn:                float        = 0.005              # MN membrane TC (s); per-nerve low-pass on the
                                                               # smooth-clipped brainstem drive. ~5 ms matches
                                                               # oculomotor MN membrane TCs (Robinson 1981; Sylvestre
-                                                              # & Cullen 1999). Behaviorally invisible at healthy
-                                                              # plant TCs (~150–200 ms), but a clean state-level
-                                                              # hook for MN-pathology modelling (e.g. fatigue).
-    # Cerebellum MN forward-model: per-axis MLF participation in the conjugate
-    # motor pathway.  Yaw uses 0.5·(mn_lp1+mn_lp2) — half the agonist force
-    # (LR_R for right eye) is single-MN filtered, the other half (MR_L for
-    # left eye, via MLF) is double-MN filtered.  Pitch/roll use mn_lp1 alone
-    # (no MLF stage modelled on the vertical/torsional axes).
-    mlf_axis_weight:       jnp.ndarray  = jnp.array([0.5, 0.0, 0.0])
-
+                                                              # & Cullen 1999). Used both by the FCP and by the
+                                                              # cerebellum's internal fcp.step forward-model copy.
     # Saccadic-suppression gate strength (contrast amplification on the raw
     # `1 − cascaded_sat_flag` gate).  Applied as:
     #     gate = clip((raw_gate − threshold) / (1 − threshold), 0, 1) ** steepness
     # threshold = 0 + steepness = 1 reproduces the raw linear gate.  Larger
     # threshold or steepness pushes intermediate gate values toward 0, so
     # only near-fully-open raw gates (cascaded_sat ≈ 0) pass through.
-    saccadic_suppression_threshold:    float = 0.85  # raw_gate ≤ this → fully suppressed
-    saccadic_suppression_steepness:    float = 6.0   # power applied to thresholded gate
+    # Kept mild now that the cerebellar EC forward model (fcp.step copy) cancels
+    # the saccade's self-slip to ~0.2–1 deg/s — the gate is a backstop for the
+    # residual cancellation/timing error at the saccade edges, not the primary
+    # suppression.  An aggressive gate (the old 0.85/6.0) throttled pursuit to
+    # ~0.1 gain (10 deg/s ramp) because it stayed near 0 for most of the
+    # post-saccadic cascade-recovery window; 0.3/1.5 restores pursuit gain to
+    # ~0.92 (10 deg/s) / ~0.76 (20 deg/s) while still dipping the gate during
+    # the catch-up saccade itself.
+    saccadic_suppression_threshold:    float = 0.3   # raw_gate ≤ this → fully suppressed
+    saccadic_suppression_steepness:    float = 1.5   # power applied to thresholded gate
                                                               # 1.0 = transparent (ceiling >> normal burst); <1 = conduction block
                                                               # Nerve order: [LR_L,MR_L,SR_L,IR_L,SO_L,IO_L, LR_R,MR_R,SR_R,IR_R,SO_R,IO_R]
                                                               # INO: g_nerve[MR_L or MR_R] ↓  →  adducting saccades slow, fixation preserved

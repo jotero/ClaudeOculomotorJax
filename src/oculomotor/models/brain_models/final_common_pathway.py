@@ -70,12 +70,18 @@ N_STATES = 14
 
 # Biophysical maximum firing rate (deg/s equivalent), used for the premotor
 # f-I curve, MLF axon conduction cap, and cranial-nerve axon conduction cap.
-# Calibrated so that healthy peak MN firing during a 50° saccade (~240 deg/s,
-# limited by the upstream saccade-generator burst saturation) sits just below
-# the cap, while partial lesion gains in the clinically meaningful range
-# (g_mlf, g_nerve in [0.3, 0.85]) actually engage the clip → graded slowing
-# of saccades that matches the clinical INO / partial palsy spectrum.
-_NERVE_MAX = 250.0
+# Set ABOVE the healthy peak agonist-MN drive so a healthy big saccade is not
+# throttled by its own cell-body f-I ceiling.  The ×2 reciprocal-compensation
+# factor in the premotor encode means a big burst (motor_cmd ≈ 130–160 deg/s
+# mid-burst on a 40–60° saccade) pushes the agonist MN toward 2·motor_cmd ≈
+# 270–320; a 250-cap clipped that and pinned the peak eye velocity (a 40°,
+# 50° and 60° saccade all topped out at the same ~607 deg/s) and added an
+# undershoot/glissade.  350 leaves headroom up to ~60–65° while staying low
+# enough that MLF / cranial-nerve conduction-cap lesions in the clinically
+# meaningful range (g_mlf, g_nerve in [0.3, ~0.85] → cap ≤ ~300 < the ~320
+# healthy adducting-MN drive) still engage the clip → graded INO / partial-
+# palsy slowing.
+_NERVE_MAX = 350.0
 
 def _smooth_clip(z, g_max):
     """Smooth one-sided clip into [0, g_max] via softplus difference.

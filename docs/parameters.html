@@ -84,7 +84,7 @@ tr:last-child { border-bottom: none; }
     <a href="#brainparams">BrainParams</a>
     <a href="#brainparams-self_motion_estimation" style="padding-left:32px;font-size:11px;color:#aaa">Self Motion Estimation <span style="color:#666">(18)</span></a>
     <a href="#brainparams-neural_integrator" style="padding-left:32px;font-size:11px;color:#aaa">Neural Integrator <span style="color:#666">(7)</span></a>
-    <a href="#brainparams-ungrouped" style="padding-left:32px;font-size:11px;color:#aaa">Ungrouped <span style="color:#666">(18)</span></a>
+    <a href="#brainparams-ungrouped" style="padding-left:32px;font-size:11px;color:#aaa">Ungrouped <span style="color:#666">(17)</span></a>
     <a href="#brainparams-binocular" style="padding-left:32px;font-size:11px;color:#aaa">Binocular <span style="color:#666">(5)</span></a>
     <a href="#brainparams-saccade_generator" style="padding-left:32px;font-size:11px;color:#aaa">Saccade Generator <span style="color:#666">(29)</span></a>
     <a href="#brainparams-listing" style="padding-left:32px;font-size:11px;color:#aaa">Listing <span style="color:#666">(2)</span></a>
@@ -115,16 +115,16 @@ tr:last-child { border-bottom: none; }
   <main>
     <h1>OMSim — Parameter Reference</h1>
     <p class="meta">
-      Generated: <strong>2026-05-10 22:22</strong> &nbsp;|&nbsp;
-      Version: <strong>0d09a28-dirty</strong> &nbsp;|&nbsp;
+      Generated: <strong>2026-05-12 14:36</strong> &nbsp;|&nbsp;
+      Version: <strong>b8722b7-dirty</strong> &nbsp;|&nbsp;
       Schema: <strong>D:\OneDrive\UC Berkeley\OMlab - JOM\Code\ClaudeOculomotorJax\docs\parameters_schema.yaml</strong>
     </p>
     <input id="search" type="search" placeholder="Search parameters by name, description, anatomy, disorder…" autofocus>
     <div id="match-count" class="match-count"></div>
-    <div class="warning"><b>21 fields lack schema entries</b> and are flagged TODO below. Add to <code>docs/parameters_schema.yaml</code> to provide rich descriptions, anatomy, and disorder tags.</div><div class="warning"><b>2 stale schema entries</b> do not match any current field: <code>brain.b_vs_L, brain.b_vs_R</code>. Remove from YAML or rename to match the current code.</div>
+    <div class="warning"><b>20 fields lack schema entries</b> and are flagged TODO below. Add to <code>docs/parameters_schema.yaml</code> to provide rich descriptions, anatomy, and disorder tags.</div><div class="warning"><b>2 stale schema entries</b> do not match any current field: <code>brain.b_vs_L, brain.b_vs_R</code>. Remove from YAML or rename to match the current code.</div>
     
   <section class="section" id="brainparams">
-    <h2>BrainParams <small style="font-size:12px;font-weight:400;color:#888">(121 fields)</small></h2>
+    <h2>BrainParams <small style="font-size:12px;font-weight:400;color:#888">(120 fields)</small></h2>
     <p class="desc">Central neural model parameters — VS, NI, SG, gravity, vergence, accommodation, T-VOR, OCR, CN/MLF gains. Read by every brain submodule's <code>step()</code>.</p>
     
     <div class="subsection" id="brainparams-self_motion_estimation">
@@ -410,7 +410,7 @@ tr:last-child { border-bottom: none; }
     </div>
 
     <div class="subsection" id="brainparams-ungrouped">
-      <h3>Ungrouped <small style="font-size:11px;font-weight:400;color:#888">(18 fields)</small></h3>
+      <h3>Ungrouped <small style="font-size:11px;font-weight:400;color:#888">(17 fields)</small></h3>
       <table class="param-table">
         <thead><tr>
           <th style="width:160px">Parameter</th>
@@ -504,10 +504,10 @@ tr:last-child { border-bottom: none; }
 
         <tr>
           <td class="param-name">alpha_fac<span class="todo">TODO: enrich schema</span></td>
-          <td><span class="default">0</span></td>
+          <td><span class="default">1</span></td>
           <td class="units"></td>
           <td class="range-cell"></td>
-          <td class="desc-cell"><p>facilitation gain: g_dyn rises by alpha_fac × z_fac during burst</p></td>
+          <td class="desc-cell"><p>facilitation gain: g_dyn = 1 + alpha_fac·z_fac during burst — post-inhibitory-rebound boost of the burst neurons (z_fac rises toward 1 while OPN is paused).  ~1.0 steepens the main sequence toward 700(1−e^{−A/7}) without de-stabilising the burst loop.</p></td>
           <td class="anatomy-cell"></td>
           <td></td>
         </tr>
@@ -563,18 +563,8 @@ tr:last-child { border-bottom: none; }
         </tr>
 
         <tr>
-          <td class="param-name">mlf_axis_weight<span class="todo">TODO: enrich schema</span></td>
-          <td><span class="default">[0.5, 0.0, 0.0]</span></td>
-          <td class="units"></td>
-          <td class="range-cell"></td>
-          <td class="desc-cell"><p>(no description)</p></td>
-          <td class="anatomy-cell"></td>
-          <td></td>
-        </tr>
-
-        <tr>
           <td class="param-name">saccadic_suppression_threshold<span class="todo">TODO: enrich schema</span></td>
-          <td><span class="default">0.85</span></td>
+          <td><span class="default">0.3</span></td>
           <td class="units"></td>
           <td class="range-cell"></td>
           <td class="desc-cell"><p>raw_gate ≤ this → fully suppressed</p></td>
@@ -584,7 +574,7 @@ tr:last-child { border-bottom: none; }
 
         <tr>
           <td class="param-name">saccadic_suppression_steepness<span class="todo">TODO: enrich schema</span></td>
-          <td><span class="default">6</span></td>
+          <td><span class="default">1.5</span></td>
           <td class="units"></td>
           <td class="range-cell"></td>
           <td class="desc-cell"><p>power applied to thresholded gate 1.0 = transparent (ceiling >> normal burst); <1 = conduction block Nerve order: [LR_L,MR_L,SR_L,IR_L,SO_L,IO_L, LR_R,MR_R,SR_R,IR_R,SO_R,IO_R] INO: g_nerve[MR_L or MR_R] ↓  →  adducting saccades slow, fixation preserved CN6: g_nerve[LR_L or LR_R] ↓  →  abduction limited</p></td>
