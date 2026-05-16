@@ -84,16 +84,22 @@ N_STATES = 14
 _NERVE_MAX = 350.0
 
 def _smooth_clip(z, g_max):
-    """Smooth one-sided clip into [0, g_max] via softplus difference.
+    """Smooth one-sided ceiling clip at g_max — no rectification floor.
 
-    softplus(z) − softplus(z − g_max):
-        - z ≤ 0:    ≈ 0          (rectification floor)
-        - 0 < z < g_max:  ≈ z    (linear regime)
-        - z > g_max: ≈ g_max     (saturation)
-        - g_max = 0:  identically 0 everywhere  (full palsy → cell silent)
-    Knee width ~1 deg/s, negligible at typical firing-rate scales.
+    output = z − softplus(z − g_max):
+        - z << g_max:  ≈ z        (linear regime, passes negatives through)
+        - z >> g_max:  ≈ g_max    (saturation)
+        - g_max → 0:   ≈ min(z, 0)  (lesion attenuates positive drive only)
+    Originally this was a two-sided clip into [0, g_max] (rectification floor
+    at 0 from muscles only being able to pull, not push) — but the floor
+    introduced asymmetric dynamics that no linear pulse-step compensation
+    could invert, leaking into post-saccadic spurious pursuit drive.  Removing
+    the floor lets the antagonist motoneurons fire negatively (i.e., the
+    muscles can push as well as pull, in this model abstraction), which makes
+    the effective plant a clean cascade of two LPs that linear compensation
+    can invert cleanly.  See docs/plant_compensation.md.
     """
-    return jax.nn.softplus(z) - jax.nn.softplus(z - g_max)
+    return z - jax.nn.softplus(z - g_max)
 
 
 # ── State + registries ────────────────────────────────────────────────────────
@@ -174,13 +180,13 @@ def step(activations, premotor_activity, brain_params):
 
     # Premotor synaptic input: linear projection of the upstream brain command
     # via M_NUCLEUS, scaled by g_nucleus (cell-loss gain; AIN_L/R inherit
-    # ABN_L/R gain — intermingled populations).  The ×2 doubling compensates
-    # for the antagonist sitting at the rectified zero floor — agonist alone
-    # has to carry the full push-pull amplitude.  Clipped at the cell-body
-    # NERVE_MAX so the membrane integrator stays bounded.
+    # ABN_L/R gain — intermingled populations).  No ×2 here: the antagonist
+    # is now allowed to fire negatively (push-pull symmetric), so both sides
+    # carry the command and `M_PLANT_EYE @ nerves` round-trips to motor_cmd
+    # without a reciprocal-compensation factor.  Ceiling-clipped at NERVE_MAX.
     g_nuc12  = brain_params.g_nucleus
     g_nuc14  = jnp.concatenate([g_nuc12, g_nuc12[:2]])
-    premotor = _smooth_clip(g_nuc14 * (M_NUCLEUS @ premotor_activity) * 2.0,
+    premotor = _smooth_clip(g_nuc14 * (M_NUCLEUS @ premotor_activity),
                              _NERVE_MAX)                                          # (14,)
 
     # MLF: AIN firing rates feed contralateral CN3_MR through the MLF tract.
@@ -236,5 +242,5 @@ def rest_state(premotor_activity, brain_params):
     """
     g_nuc12 = brain_params.g_nucleus
     g_nuc14 = jnp.concatenate([g_nuc12, g_nuc12[:2]])
-    return _smooth_clip(g_nuc14 * (M_NUCLEUS @ premotor_activity) * 2.0,
+    return _smooth_clip(g_nuc14 * (M_NUCLEUS @ premotor_activity),
                         _NERVE_MAX)

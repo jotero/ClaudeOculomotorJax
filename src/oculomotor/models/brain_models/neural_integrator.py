@@ -58,10 +58,12 @@ import jax.numpy as jnp
 # ── State + registries ────────────────────────────────────────────────────────
 
 class State(NamedTuple):
-    """NI state — bilateral push-pull pops + null adaptation register."""
+    """NI state — bilateral push-pull pops + null adaptation + lead filter."""
     L:    jnp.ndarray   # (3,) left  NPH/INC pop  (rectified ≥ 0 by construction)
     R:    jnp.ndarray   # (3,) right NPH/INC pop  (rectified ≥ 0 by construction)
     null: jnp.ndarray   # (3,) signed adaptation register (drifts toward x_net)
+    u_lp: jnp.ndarray   # (3,) fast-LP of u_vel — supplies smoothed u_vel'
+                        # for the 2nd-order pulse-step (MN-LP cancellation)
 
 
 class Activations(NamedTuple):
@@ -78,11 +80,13 @@ class Decoded(NamedTuple):
 class Weights(NamedTuple):
     """NI tonic / null / setpoint registers (long-term: learned weights)."""
     null: jnp.ndarray   # (3,) signed   slow null adaptation register
+    u_lp: jnp.ndarray   # (3,) fast-LP register supplying smoothed u_vel'
+                        # for the 2nd-order MN-LP cancellation in the pulse-step
 
 
 def rest_state():
     """Zero state — used for SimState initialisation."""
-    return State(L=jnp.zeros(3), R=jnp.zeros(3), null=jnp.zeros(3))
+    return State(L=jnp.zeros(3), R=jnp.zeros(3), null=jnp.zeros(3), u_lp=jnp.zeros(3))
 
 
 def read_activations(state):
@@ -96,8 +100,8 @@ def decode_states(acts):
 
 
 def read_weights(state):
-    """NI null adaptation register."""
-    return Weights(null=state.null)
+    """NI null adaptation register + lead-filter register."""
+    return Weights(null=state.null, u_lp=state.u_lp)
 
 
 def step(activations, weights, u_vel, brain_params, u_tonic=0.0):
@@ -169,36 +173,44 @@ def step(activations, weights, u_vel, brain_params, u_tonic=0.0):
     # least directionally consistent with reported post-tilt-removal drift.
     dx_null = (x_net - x_null_eff) / brain_params.tau_ni_adapt
 
-    # ── Pulse-step motor command: lag cancellation feedthrough ────────────────
-    # Classic Robinson: `tau_p · u_vel` cancels the plant LP (tau_p).  The
-    # effective plant from the NI's perspective is actually `MN_LP × plant_LP`
-    # — the FCP motoneurons add a per-axis low-pass between motor_cmd_ni and
-    # the muscle nerves — so an exact compensation would pre-emphasize the
-    # pulse by `(tau_p + tau_mn_eff)·u_vel + tau_p·tau_mn_eff·u_vel'`.  Tried
-    # the first-order bump in isolation and it overshot at large amplitudes:
-    # the bigger pulse pulled the eye faster than NI_net climbs, but the SG's
-    # local feedback (e_held, x_copy, burst termination) is calibrated against
-    # the un-bumped pulse, so the burst keeps firing past where the eye is
-    # → bigger dynamic overshoot.  Reverted to the classic pulse-step; the
-    # residual ~0.1–0.3° dynamic overshoot is a realistic post-saccadic
-    # transient and a co-tuned SG fix is the proper way to retire it.
-    u_p = x_net + brain_params.tau_p * u_vel
+    # ── Pulse-step motor command: full MN_LP × plant_LP lag cancellation ──────
+    # Effective plant from the NI's perspective is `MN_LP × plant_LP` — the FCP
+    # motoneurons add a per-axis LP between motor_cmd_ni and the muscle nerves.
+    # In Laplace:
+    #     plant_inverse(s) = (1 + s·tau_p)(1 + s·tau_mn_eff)
+    #                      = 1 + (tau_p + tau_mn_eff)·s + tau_p·tau_mn_eff·s²
+    # → in time, motor_cmd = x_net + (tau_p + tau_mn_eff)·u_vel + tau_p·tau_mn_eff·u_vel'.
+    # The first two terms are algebraic.  The second-derivative term needs u_vel';
+    # implement via a fast lead-filter state `u_lp` (LP of u_vel at tau_fast ~ dt):
+    #   du_lp/dt = (u_vel − u_lp) / tau_fast       state — fast 1st-order LP
+    #   u_vel'   ≈ du_lp/dt = (u_vel − u_lp)/tau_fast    smoothed derivative
+    # tau_mn_eff per axis: yaw uses 1.5·tau_mn (MLF mix: half ABN→LR direct +
+    # half AIN→MLF→CN3_MR, both share tau_mn); pitch/roll use tau_mn alone.
+    # tau_fast = dt = 0.001 s sets the lead-filter pole — the residual eye lag
+    # behind NI_net is ~tau_fast (~1 ms), down from ~tau_mn_eff (~7 ms).
+    tau_mn_eff   = brain_params.tau_mn * jnp.array([1.5, 1.0, 1.0])
+    tau_fast     = 0.001     # lead-filter pole; sets the residual eye lag (~tau_fast)
+    u_vel_dot    = (u_vel - weights.u_lp) / tau_fast        # smoothed u_vel'
+    du_lp        = u_vel_dot                                # state derivative of u_lp
+    u_p = (x_net
+           + (brain_params.tau_p + tau_mn_eff) * u_vel
+           + (brain_params.tau_p * tau_mn_eff) * u_vel_dot)
 
-    return State(L=dx_L, R=dx_R, null=dx_null), u_p
+    return State(L=dx_L, R=dx_R, null=dx_null, u_lp=du_lp), u_p
 
 
 # ── Legacy flat-array adapters (deleted once brain_model migrates to BrainState) ─
 
-N_STATES  = 9   # x_L(3) + x_R(3) + x_null(3)
+N_STATES  = 12  # x_L(3) + x_R(3) + x_null(3) + u_lp(3)
 N_INPUTS  = 3
 N_OUTPUTS = 3
 
 
 def from_array(x_ni):
-    """(9,) flat array → ni.State."""
-    return State(L=x_ni[0:3], R=x_ni[3:6], null=x_ni[6:9])
+    """(12,) flat array → ni.State."""
+    return State(L=x_ni[0:3], R=x_ni[3:6], null=x_ni[6:9], u_lp=x_ni[9:12])
 
 
 def to_array(state):
-    """ni.State → (9,) flat array."""
-    return jnp.concatenate([state.L, state.R, state.null])
+    """ni.State → (12,) flat array."""
+    return jnp.concatenate([state.L, state.R, state.null, state.u_lp])

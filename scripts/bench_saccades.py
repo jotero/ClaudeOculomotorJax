@@ -20,7 +20,7 @@ import matplotlib.pyplot as plt
 from oculomotor.sim.simulator import PARAMS_DEFAULT, with_brain, with_sensory, simulate
 from oculomotor.sim import kinematics as km
 from oculomotor.analysis import (
-    ax_fmt, extract_burst, extract_sg, vs_net,
+    ax_fmt, extract_burst, extract_sg, ni_net, vs_net,
     read_brain_acts, read_brain_decoded,
 )
 from oculomotor.models.brain_models import tvor as tv_mod
@@ -60,9 +60,10 @@ def _pre_cascade_signals(states, params, dt):
 
     eye3d    = (np.array(states.plant.left) + np.array(states.plant.right)) / 2.0
     vel3d    = np.gradient(eye3d, dt, axis=0)                 # (T, 3) deg/s world
-    x_p_pred = 0.5 * (np.array(states.brain.cb.plant_pred_L)
-                      + np.array(states.brain.cb.plant_pred_R))   # (T, 3) conjugate fwd model
-    evp3d    = np.gradient(x_p_pred, dt, axis=0)              # (T, 3) = eye_vel_pred
+    # Cerebellum has no internal eye forward model now — it rotates through
+    # NI_net and uses u_ni_in as the eye velocity.  Reconstruct the same way.
+    x_p_pred = np.array(ni_net(states))                       # (T, 3) NI_net
+    evp3d    = np.gradient(x_p_pred, dt, axis=0)              # (T, 3) ≈ u_ni_in
     w_est    = np.array(vs_net(states))                       # (T, 3) head frame
 
     def _at(vel_world, eye_pos_actual, xpp, evp, w):

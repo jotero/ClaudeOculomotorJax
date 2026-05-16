@@ -54,38 +54,29 @@ head frame) is rotated into eye frame using x_p_pred, then saturated by
 v_max_okr (scene) and v_max_pursuit (target) to mirror the retinal
 saturation.
 
-Motor-pathway forward model
-───────────────────────────
-The cerebellum runs a *literal copy* of the chain the eye actually sees.
-In simulator.py the plant is driven by the FCP `nerves` output (NOT by
-motor_cmd_ni directly), so the chain is:
+No eye forward model
+────────────────────
+The Robinson pulse-step `motor_cmd_ni = NI_net + tau_p·u_ni_in` is supposed
+to cancel the plant LP exactly, leaving `x_p ≈ NI_net`.  In the current
+model the pulse cancels only the plant LP (not the FCP MN_LP), so there is
+a residual MN-LP-scale (~5 ms) position lag of the eye behind NI_net — but
+that's ~5 ms on top of a 75–150 ms visual cascade, a small perturbation
+post-cascade.  So the cerebellum no longer keeps an internal eye model: it
+just rotates the predicted eye velocity through `ec_pos = NI_net` and uses
+the velocity command directly as `eye_vel_pred = ec_vel + fl_drive` (the
+input the NI sees, ≈ u_ni_in modulo Listing / direct-VOR).  No state.
 
-    NI  →  pulse-step  ([NI_net + tau_p·ec_vel,  vergence ≈ 0])
-        →  fcp.step     (14-state MN forward model — M_NUCLEUS encode, ×2
-                          reciprocal compensation, NERVE_MAX f-I clips, MLF
-                          cross-projection, tau_mn LP, nerve caps, r_baseline)
-                          → nerves_pred (12,)
-        →  per-eye plant LP  (M_PLANT_EYE_{L,R} @ nerves_pred → tau_p LP)
-        →  eye  (x_p_pred = ½·(plant_pred_L + plant_pred_R), head frame)
-
-This carries the FCP *nonlinearities* (rectification floors, f-I ceilings,
-MLF caps) — at large saccade amplitudes the real eye velocity is well below
-the linear command→velocity map, so a linear forward model would over-
-predict it and the EC would over-cancel the retinal slip.  The head→eye
-rotation that builds the EC uses x_p_pred — the *actual* eye position the
-retina rotates through, which lags NI_net by several degrees mid-saccade
-(rotating the EC through NI_net would inject a large eccentricity-dependent
-frame mismatch).  At rest all forward-model states start at 0 and warm up
-within a few tau_mn / tau_p (covered by the simulator's warmup phase).
+This is the right scope-trade now that NERVE_MAX is bumped (so the FCP f-I
+clip doesn't engage during normal saccades) and the EC's visual delay
+cascade dominates the timing.  Previously we ran a `fcp.step` + plant LP
+copy (20 states) — overkill once the clip was retired — and then a single
+MN-LP (3 states) — also overkill at the cascade timescale.
 
 State
 ─────
-    scene        — (_N_PER_PATH,)  scene-path EC cascade buffer (21 states)
-    target       — (_N_PER_PATH,)  target-path EC cascade buffer (21 states)
-    fcp_pred     — (14,)           FCP MN-membrane forward-model state
-    plant_pred_L — (3,)            left-eye plant forward-model rotation vec
-    plant_pred_R — (3,)            right-eye plant forward-model rotation vec
-    sat_*        — (7,) ×2         saturation-flag delay cascades
+    scene    — (_N_PER_PATH,)  scene-path EC cascade buffer (21 states)
+    target   — (_N_PER_PATH,)  target-path EC cascade buffer (21 states)
+    sat_*    — (7,) ×2         saturation-flag delay cascades
 
 Activations (read at top of brain_model.step from BrainState)
 ────────────────────────────────────────────────────────────
@@ -104,9 +95,7 @@ from typing import NamedTuple
 import jax
 import jax.numpy as jnp
 
-from oculomotor.models.brain_models import final_common_pathway as fcp
 from oculomotor.models.plant_models.readout import rotation_matrix
-from oculomotor.models.plant_models.muscle_geometry import M_PLANT_EYE_L, M_PLANT_EYE_R
 from oculomotor.models.sensory_models.retina import (
     cascade_lp_step, ypr_to_xyz, xyz_to_ypr, velocity_saturation,
 )
@@ -120,51 +109,28 @@ _N_LP      = 1
 _N_AXES    = 3
 N_PER_PATH = (_N_SHARP + _N_LP) * _N_AXES   # 21 states per cascade
 
-_N_FCP   = fcp.N_STATES                     # 14 MN-membrane states (forward-model copy)
-_N_PLANT = 3                                # per-eye plant rotation vector
 _N_SAT_PER_PATH = (_N_SHARP + _N_LP) * 1    # 7 scalar cascade states for sat-flag
-N_STATES   = 2 * N_PER_PATH + _N_FCP + 2 * _N_PLANT + 2 * _N_SAT_PER_PATH
+N_STATES   = 2 * N_PER_PATH + 2 * _N_SAT_PER_PATH
                                             # scene + target EC +
-                                            # FCP forward model (14) +
-                                            # per-eye plant forward model (3 + 3) +
                                             # two scalar saturation-flag cascades
+                                            # (no plant forward model — see step docstring)
 
 
 # ── State + Activations ───────────────────────────────────────────────────────
 
 class State(NamedTuple):
-    """Cerebellum state — EC cascade buffers + motor-pathway forward model.
+    """Cerebellum state — EC cascade buffers + saturation-flag cascades.
 
-    The forward model is a *literal copy* of the actual motor chain the eye
-    (and hence the retina) sees — the same `fcp.step` + first-order plant the
-    simulator uses, fed the cerebellum's own copy of the motor command:
-
-        NI  →  pulse-step  ([NI_net + tau_p·ec_vel,  vergence≈0])
-            →  fcp.step      (14-state MN forward model: M_NUCLEUS encode,
-                              ×2 reciprocal compensation, NERVE_MAX clips,
-                              MLF cross-projection, tau_mn LP, nerve caps,
-                              r_baseline tonic)  → nerves_pred (12,)
-            →  per-eye plant LP   (M_PLANT_EYE_{L,R} @ nerves_pred → tau_p LP)
-            →  eye  (x_p_pred = ½·(plant_pred_L + plant_pred_R), head frame)
-
-    Crucially this carries the FCP's *nonlinearities* (rectification floors,
-    f-I ceilings, MLF caps) — at large saccade amplitudes the actual eye
-    velocity is well below the linear command→velocity map, and a linear
-    forward model would over-predict it (and hence the EC would over-cancel
-    the retinal slip).  The head→eye rotation that builds the EC uses
-    `x_p_pred` — the *actual* eye position the retina rotates through, which
-    lags NI_net by several degrees mid-saccade.
-
-    At rest all forward-model states start at zero and warm up within a few
-    tau_mn / tau_p of t=0 (covered by the simulator's warmup phase).
+    No internal eye-position forward model: the Robinson pulse-step inside
+    the NI is assumed to (mostly) cancel the plant lag, so the cerebellum
+    uses NI_net directly as its eye-position estimate for the head→eye
+    rotation, and the NI's velocity input `ec_vel + fl_drive` directly as
+    its eye-velocity estimate.  See the module docstring.
     """
-    scene:        jnp.ndarray   # (21,) cascade buffer matching scene_angular_vel
-    target:       jnp.ndarray   # (21,) cascade buffer matching target_vel
-    fcp_pred:     jnp.ndarray   # (14,) FCP MN-membrane forward-model state
-    plant_pred_L: jnp.ndarray   # (3,)  left-eye plant forward-model rotation vec
-    plant_pred_R: jnp.ndarray   # (3,)  right-eye plant forward-model rotation vec
-    sat_scene:    jnp.ndarray   # (7,)  scene saturation-flag scalar cascade
-    sat_target:   jnp.ndarray   # (7,)  target saturation-flag scalar cascade
+    scene:      jnp.ndarray   # (21,) cascade buffer matching scene_angular_vel
+    target:     jnp.ndarray   # (21,) cascade buffer matching target_vel
+    sat_scene:  jnp.ndarray   # (7,)  scene saturation-flag scalar cascade
+    sat_target: jnp.ndarray   # (7,)  target saturation-flag scalar cascade
 
 
 class Activations(NamedTuple):
@@ -192,12 +158,9 @@ class Activations(NamedTuple):
 
 
 def rest_state():
-    """Zero state — both EC cascades + motor forward model + sat cascades."""
+    """Zero state — both EC cascades + sat cascades."""
     return State(scene=jnp.zeros(N_PER_PATH),
                  target=jnp.zeros(N_PER_PATH),
-                 fcp_pred=jnp.zeros(_N_FCP),
-                 plant_pred_L=jnp.zeros(_N_PLANT),
-                 plant_pred_R=jnp.zeros(_N_PLANT),
                  sat_scene=jnp.zeros(_N_SAT_PER_PATH),
                  sat_target=jnp.zeros(_N_SAT_PER_PATH))
 
@@ -256,13 +219,12 @@ def step(state, ec_vel, ec_pos, ni_net, ni_null,
 
       3. **EC cascade advance** — scene + target cascades match the
          perception_cyclopean slip cascades (gamma/LP TCs + retinal
-         velocity-saturation ceiling).  Pipeline: motor-pathway forward
-         model (pulse-step → fcp.step [MN + MLF + clips] → per-eye plant LP
-         → x_p_pred) → head→eye rotation through x_p_pred → retinal velocity
-         saturation → visual delay cascade.  Using x_p_pred (≈ the actual
-         eye position the retina rotates through, which lags NI_net and
-         carries the FCP nonlinearities) rather than ec_pos (= NI_net) for
-         the rotation keeps the EC matched to the retinal slip mid-saccade.
+         velocity-saturation ceiling).  Pipeline: rotate (head→eye, through
+         ec_pos = NI_net) → retinal velocity saturation → visual delay
+         cascade.  No internal eye forward model; the Robinson pulse-step
+         in the NI is taken to (mostly) cancel the plant lag — the ~5 ms
+         residual MN-LP lag is small relative to the 75–150 ms visual
+         cascade and shows up as a small post-cascade timing offset only.
 
     Args:
         state:           cerebellum.State
@@ -343,47 +305,19 @@ def step(state, ec_vel, ec_pos, ni_net, ni_null,
 
     # ── EC cascade advance ────────────────────────────────────────────────
     # Order mirrors the path from motor command to retinal cascade:
-    #   pulse-step sum -> FCP (MN + MLF + clips) -> plant LP -> rotation
-    #   (head->eye) -> retinal saturation -> visual delays.
+    #   rotate (head->eye) -> retinal saturation -> visual delays.
+    # No internal eye forward model: rotate through NI_net (= ec_pos) and use
+    # the NI's velocity input (ec_vel + fl_drive ≈ u_ni_in) as the eye velocity
+    # estimate.  Conditional on the Robinson pulse-step cancelling the plant
+    # lag — currently it cancels only the plant LP (not the FCP MN_LP), so
+    # there's a ~5 ms residual eye lag behind NI_net.  That's small relative
+    # to the 75–150 ms visual cascade that follows.
+    x_p_pred     = ec_pos                       # NI_net is the eye position estimate
+    eye_vel_pred = ec_vel + fl_drive            # u_ni_in (mod Listing / direct-VOR ≈ 0)
 
-    # 1. Motor-pathway forward model (head frame) — a literal copy of the
-    #    chain the eye actually sees: the same fcp.step + first-order plant
-    #    the simulator uses, fed the cerebellum's own copy of the motor
-    #    command.  Carrying the FCP nonlinearities (rectification floors,
-    #    NERVE_MAX f-I ceilings, MLF caps, x2 reciprocal compensation,
-    #    r_baseline) matters: at large saccade amplitudes the real eye
-    #    velocity is well below the linear command->velocity map, so a linear
-    #    forward model over-predicts it and the EC over-cancels the slip.
-    #        premotor_pred = [NI_net + tau_p*(ec_vel + fl_drive),  verg ~ 0]  (6,)
-    #        d_fcp, nerves_pred = fcp.step(read_activations(fcp_pred),
-    #                                       premotor_pred, brain_params)
-    #        d_plant_pred_{L,R} = (M_PLANT_EYE_{L,R} @ nerves_pred[half]
-    #                              - plant_pred_{L,R}) / tau_p
-    #        x_p_pred     = 0.5*(plant_pred_L + plant_pred_R)   (conjugate eye pos)
-    #        eye_vel_pred = 0.5*(d_plant_pred_L + d_plant_pred_R)
-    #    The version command is `NI_net + tau_p*u_ni_in` where u_ni_in =
-    #    ec_vel + fl_drive (+ Listing + direct-VOR terms, ~0 for a stationary-
-    #    head saccade — not added here).  fl_drive (the floccular leak-cancel
-    #    feedback) is included so the forward-model eye velocity matches the
-    #    real one to <0.5 deg/s.  Vergence in the forward model is taken as 0
-    #    (saccade-conjugate scope); the orbital wall clip is omitted.
-    premotor_pred = jnp.concatenate(
-        [ec_pos + bp.tau_p * (ec_vel + fl_drive), jnp.zeros(3)])    # [version, verg=0]
-    fcp_acts_pred = fcp.read_activations(fcp.State(mn=state.fcp_pred))
-    d_fcp_state, nerves_pred = fcp.step(fcp_acts_pred, premotor_pred, bp)
-    d_fcp_pred = d_fcp_state.mn
-    motor_cmd_pred_L = M_PLANT_EYE_L @ nerves_pred[:6]
-    motor_cmd_pred_R = M_PLANT_EYE_R @ nerves_pred[6:]
-    d_plant_pred_L   = (motor_cmd_pred_L - state.plant_pred_L) / bp.tau_p
-    d_plant_pred_R   = (motor_cmd_pred_R - state.plant_pred_R) / bp.tau_p
-    x_p_pred     = 0.5 * (state.plant_pred_L + state.plant_pred_R)   # conjugate eye pos (head frame)
-    eye_vel_pred = 0.5 * (d_plant_pred_L  + d_plant_pred_R)         # conjugate eye vel (head frame)
-
-    # 2. Rotation: head-frame velocity → eye-frame velocity using the
-    #    predicted plant position x_p_pred.  Same transform the retina
-    #    applies to the actual eye velocity through the actual eye position —
-    #    so using x_p_pred (not ec_pos = NI_net) keeps the frame-mix term in
-    #    the EC matched to the retina even mid-saccade.
+    # 2. Rotation: head-frame velocity → eye-frame velocity using x_p_pred
+    #    (= NI_net here; assumed equal to the actual eye position to within
+    #    the pulse-step's lag-cancellation residual).
     R_eye         = rotation_matrix(ypr_to_xyz(x_p_pred))
     eye_vel_pred_eye = xyz_to_ypr(R_eye.T @ ypr_to_xyz(eye_vel_pred))
     w_est_eye        = xyz_to_ypr(R_eye.T @ ypr_to_xyz(w_est))
@@ -467,9 +401,6 @@ def step(state, ec_vel, ec_pos, ni_net, ni_null,
                                   bp.tau_vis_sharp,
                                   bp.tau_vis_smooth_target_vel,
                                   _N_SHARP, _N_AXES, _N_LP),
-        fcp_pred     = d_fcp_pred,
-        plant_pred_L = d_plant_pred_L,
-        plant_pred_R = d_plant_pred_R,
         sat_scene    = d_sat_scene,
         sat_target   = d_sat_target,
     )
